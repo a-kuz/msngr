@@ -1,0 +1,201 @@
+import SwiftUI
+import PhotosUI
+import MsngrCore
+
+struct SettingsView: View {
+    @EnvironmentObject var app: AppState
+    @Environment(\.dismiss) private var dismiss
+    @State private var displayName = ""
+    @State private var bio = ""
+    @State private var avatarItem: PhotosPickerItem?
+    @State private var me: User?
+    @State private var showPinSetup = false
+    @State private var pinEnabled = PinStore.hasPin()
+    @State private var biometrics = PinStore.biometricsEnabled()
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    HStack(spacing: 14) {
+                        PhotosPicker(selection: $avatarItem, matching: .images) {
+                            AvatarView(name: me?.displayName ?? "", avatarId: me?.avatarId)
+                                .frame(width: 66, height: 66)
+                                .overlay(alignment: .bottomTrailing) {
+                                    Image(systemName: "camera.fill")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.white)
+                                        .frame(width: 22, height: 22)
+                                        .background(Theme.accent, in: Circle())
+                                }
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            TextField("Имя", text: $displayName)
+                                .font(.headline)
+                            Text("@\(app.session?.username ?? "")")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    TextField("О себе", text: $bio, axis: .vertical)
+                        .lineLimit(1...3)
+                }
+
+                Section("Безопасность") {
+                    Toggle(isOn: $pinEnabled) {
+                        Label("Код-пароль", systemImage: "lock")
+                    }
+                    .onChange(of: pinEnabled) { _, on in
+                        if on { showPinSetup = true } else { PinStore.removePin() }
+                    }
+                    if pinEnabled {
+                        Toggle(isOn: $biometrics) {
+                            Label("Face ID", systemImage: "faceid")
+                        }
+                        .onChange(of: biometrics) { _, on in
+                            PinStore.setBiometricsEnabled(on)
+                        }
+                    }
+                    NavigationLink {
+                        BlockedListView()
+                    } label: {
+                        Label("Заблокированные", systemImage: "hand.raised")
+                    }
+                }
+
+                Section("Данные") {
+                    Button {
+                        app.media?.clearCache()
+                    } label: {
+                        HStack {
+                            Label("Очистить кэш медиа", systemImage: "trash")
+                            Spacer()
+                            Text(ByteCountFormatter.string(fromByteCount: app.media?.totalCacheSize() ?? 0,
+                                                           countStyle: .file))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Настройки")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Готово") {
+                        Task {
+                            try? await app.api.updateProfile(
+                                displayName: displayName.isEmpty ? nil : displayName,
+                                bio: bio.isEmpty ? nil : bio)
+                            dismiss()
+                        }
+                    }
+                }
+            }
+            .task {
+                me = try? await app.db.read { [id = app.session?.userId ?? ""] dbc in
+                    try User.fetchOne(dbc, key: id)
+                }
+                displayName = me?.displayName ?? ""
+                bio = me?.bio ?? ""
+            }
+            .onChange(of: avatarItem) { _, item in
+                guard let item else { return }
+                Task {
+                    if let data = try? await item.loadTransferable(type: Data.self),
+                       let prepared = ImageProcessor.prepareForSending(data, maxDimension: 640) {
+                        _ = try? await app.api.uploadAvatar(prepared.data)
+                    }
+                }
+            }
+            .sheet(isPresented: $showPinSetup) {
+                PinSetupView { pin in
+                    PinStore.setPin(pin)
+                    showPinSetup = false
+                } onCancel: {
+                    pinEnabled = false
+                    showPinSetup = false
+                }
+            }
+        }
+    }
+}
+
+struct PinSetupView: View {
+    var onSet: (String) -> Void
+    var onCancel: () -> Void
+    @State private var first = ""
+    @State private var entered = ""
+    @State private var stage = 0 // 0 = ввод, 1 = повтор
+
+    var body: some View {
+        VStack(spacing: 28) {
+            Spacer()
+            Text(stage == 0 ? "Придумайте код-пароль" : "Повторите код-пароль")
+                .font(.headline)
+            HStack(spacing: 18) {
+                ForEach(0..<4, id: \.self) { i in
+                    Circle()
+                        .strokeBorder(.secondary, lineWidth: 1.2)
+                        .background(Circle().fill(i < entered.count ? Color.primary : .clear))
+                        .frame(width: 14, height: 14)
+                }
+            }
+            PinPad { key in
+                switch key {
+                case .digit(let d):
+                    guard entered.count < 4 else { return }
+                    entered.append(d)
+                    if entered.count == 4 {
+                        if stage == 0 {
+                            first = entered
+                            entered = ""
+                            stage = 1
+                        } else if entered == first {
+                            onSet(entered)
+                        } else {
+                            Haptics.rigid()
+                            entered = ""
+                            stage = 0
+                        }
+                    }
+                case .delete:
+                    if !entered.isEmpty { entered.removeLast() }
+                case .biometrics:
+                    break
+                }
+            }
+            Button("Отмена", action: onCancel)
+            Spacer()
+        }
+    }
+}
+
+struct BlockedListView: View {
+    @EnvironmentObject var app: AppState
+    @State private var blocked: [User] = []
+
+    var body: some View {
+        List(blocked) { user in
+            HStack {
+                AvatarView(name: user.displayName, avatarId: user.avatarId)
+                    .frame(width: 36, height: 36)
+                Text(user.displayName)
+                Spacer()
+                Button("Разблокировать") {
+                    Task {
+                        try? await app.api.setBlocked(user.id, blocked: false)
+                        blocked.removeAll { $0.id == user.id }
+                    }
+                }
+                .font(.footnote)
+            }
+        }
+        .navigationTitle("Заблокированные")
+        .task {
+            guard let ids = try? await app.api.blockedUsers() else { return }
+            blocked = (try? await app.db.read { dbc in
+                try ids.compactMap { try User.fetchOne(dbc, key: $0) }
+            }) ?? []
+        }
+    }
+}

@@ -1,0 +1,364 @@
+import SwiftUI
+import PhotosUI
+import AVFoundation
+import MsngrCore
+
+struct ChatScreen: View {
+    let chatId: String
+    @StateObject private var model: ChatViewModel
+    @State private var text = ""
+    @State private var showScrollDown = false
+    @State private var showAttach = false
+    @State private var photoItems: [PhotosPickerItem] = []
+    @State private var showFilePicker = false
+    @State private var forwardMessage: Message?
+    @State private var viewerMedia: (Message, Int)?
+    @State private var messagesVC = MessagesViewController()
+    @EnvironmentObject var app: AppState
+
+    init(chatId: String) {
+        self.chatId = chatId
+        _model = StateObject(wrappedValue: ChatViewModel(chatId: chatId))
+    }
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Theme.chatBackground.ignoresSafeArea()
+            VStack(spacing: 0) {
+                if let pinned = model.pinnedMessage {
+                    pinnedBar(pinned)
+                }
+                MessagesView(vc: messagesVC, model: model,
+                             onTapMedia: { msg, idx, _ in viewerMedia = (msg, idx) },
+                             showScrollDown: $showScrollDown)
+                if model.chat?.isRequest == true {
+                    requestBanner
+                } else {
+                    InputBar(model: model, text: $text,
+                             onAttach: { showAttach = true },
+                             onSendVoice: sendVoice)
+                }
+            }
+            scrollDownButton
+        }
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) { header }
+        }
+        .onAppear {
+            model.start()
+            text = model.chat?.draft ?? ""
+            NotificationCoordinator.shared.activeChatId = chatId
+        }
+        .onDisappear {
+            model.saveDraft(text.isEmpty ? nil : text)
+            model.stop()
+            NotificationCoordinator.shared.activeChatId = nil
+        }
+        .confirmationDialog("Вложение", isPresented: $showAttach) {
+            Button("Фото или видео") { showAttach = false; photoPickerPresented = true }
+            Button("Файл") { showFilePicker = true }
+        }
+        .photosPicker(isPresented: $photoPickerPresented, selection: $photoItems,
+                      maxSelectionCount: 10, matching: .any(of: [.images, .videos]))
+        .onChange(of: photoItems) { _, items in
+            guard !items.isEmpty else { return }
+            photoItems = []
+            Task { await sendPicked(items) }
+        }
+        .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.item]) { result in
+            if case .success(let url) = result {
+                Task { await sendFile(url) }
+            }
+        }
+        .sheet(item: $forwardMessage) { msg in
+            ForwardPickerView { targetChatId in
+                model.forward(msg, to: targetChatId)
+                forwardMessage = nil
+            }
+        }
+        .fullScreenCover(isPresented: Binding(get: { viewerMedia != nil },
+                                              set: { if !$0 { viewerMedia = nil } })) {
+            if let (msg, idx) = viewerMedia {
+                MediaViewerView(message: msg, startIndex: idx)
+            }
+        }
+    }
+
+    @State private var photoPickerPresented = false
+
+    private var header: some View {
+        NavigationLink {
+            ChatInfoView(model: model)
+        } label: {
+            VStack(spacing: 1) {
+                Text(model.headerTitle)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                Text(model.headerSubtitle)
+                    .font(.caption)
+                    .foregroundStyle(model.headerSubtitle.contains("печатает") || model.headerSubtitle == "в сети"
+                                     ? Theme.accent : .secondary)
+                    .animation(.easeInOut(duration: 0.15), value: model.headerSubtitle)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func pinnedBar(_ msg: Message) -> some View {
+        HStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 1.5).fill(Theme.accent).frame(width: 3, height: 30)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Закреплённое сообщение")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Theme.accent)
+                Text(ChatViewModel.previewText(msg))
+                    .font(.footnote)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Button {
+                model.pin(nil)
+            } label: {
+                Image(systemName: "xmark").font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.bar)
+        .onTapGesture {
+            if let id = msg.msgId ?? msg.clientMsgId {
+                messagesVC.scrollTo(msgId: id)
+            }
+        }
+        .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
+    private var requestBanner: some View {
+        VStack(spacing: 10) {
+            Text("\(model.peer?.displayName ?? "Пользователь") хочет вам написать")
+                .font(.subheadline)
+            HStack(spacing: 12) {
+                Button("Заблокировать", role: .destructive) {
+                    Task {
+                        if let peer = model.peer {
+                            try? await app.api.setBlocked(peer.id, blocked: true)
+                        }
+                    }
+                }
+                .buttonStyle(.bordered)
+                Button("Принять") {
+                    withAnimation(Theme.spring) { model.acceptRequest() }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity)
+        .background(.bar)
+    }
+
+    private var scrollDownButton: some View {
+        Group {
+            if showScrollDown {
+                Button {
+                    messagesVC.scrollToBottom()
+                } label: {
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 40, height: 40)
+                            .background(.regularMaterial, in: Circle())
+                            .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
+                        if let unread = model.chat?.unreadCount, unread > 0 {
+                            Text("\(unread)")
+                                .font(.caption2.bold())
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 5)
+                                .frame(minWidth: 17, minHeight: 17)
+                                .background(Theme.accent, in: Capsule())
+                                .offset(x: 4, y: -4)
+                        }
+                    }
+                }
+                .padding(.trailing, 10)
+                .padding(.bottom, 68)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .animation(Theme.springFast, value: showScrollDown)
+    }
+
+    // MARK: - Отправка вложений
+
+    private func sendPicked(_ items: [PhotosPickerItem]) async {
+        var photos: [(Data, CGSize, String)] = [] // (jpeg, size, blurhash)
+        for item in items {
+            if item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) }) {
+                if let movie = try? await item.loadTransferable(type: VideoTransferable.self) {
+                    await sendVideo(movie.url)
+                }
+            } else if let data = try? await item.loadTransferable(type: Data.self),
+                      let prepared = ImageProcessor.prepareForSending(data) {
+                let bh = ImageProcessor.rgbaPixels(prepared.data).flatMap {
+                    BlurHash.encode(pixels: $0.pixels, width: $0.width, height: $0.height)
+                } ?? ""
+                photos.append((prepared.data, prepared.size, bh))
+            }
+        }
+        guard !photos.isEmpty else { return }
+
+        var infos: [MediaInfo] = []
+        for (jpeg, size, bh) in photos {
+            guard let up = try? await app.media.upload(jpeg) else { continue }
+            var info = MediaInfo(type: "photo", mediaId: up.mediaId, key: up.key,
+                                 hash: up.hash, size: up.size, mime: "image/jpeg")
+            info.w = Int(size.width)
+            info.h = Int(size.height)
+            info.blurhash = bh
+            infos.append(info)
+        }
+        guard !infos.isEmpty else { return }
+        if infos.count == 1 {
+            var c = ContentPayload(kind: "photo")
+            c.media = infos[0]
+            try? await app.engine.enqueue(content: c, chatId: chatId)
+        } else {
+            var c = ContentPayload(kind: "album")
+            c.album = infos
+            try? await app.engine.enqueue(content: c, chatId: chatId)
+        }
+    }
+
+    private func sendVideo(_ url: URL) async {
+        // компрессия в прогрессивный mp4 + превью-кадр
+        let asset = AVURLAsset(url: url)
+        guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset1280x720) else { return }
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("v-\(UUID().uuidString).mp4")
+        export.outputURL = out
+        export.outputFileType = .mp4
+        export.shouldOptimizeForNetworkUse = true // faststart
+        await export.export()
+        guard export.status == .completed, let data = try? Data(contentsOf: out) else { return }
+
+        // превью-кадр
+        let gen = AVAssetImageGenerator(asset: asset)
+        gen.appliesPreferredTrackTransform = true
+        var thumbInfo: (String, String, String)?
+        var blurhash = ""
+        var dims = CGSize(width: 16, height: 9)
+        if let cg = try? gen.copyCGImage(at: .init(seconds: 0.1, preferredTimescale: 600), actualTime: nil) {
+            dims = CGSize(width: cg.width, height: cg.height)
+            let ui = UIImage(cgImage: cg)
+            if let jpeg = ui.jpegData(compressionQuality: 0.7) {
+                if let up = try? await app.media.upload(jpeg) {
+                    thumbInfo = (up.mediaId, up.key, up.hash)
+                }
+                if let px = ImageProcessor.rgbaPixels(jpeg) {
+                    blurhash = BlurHash.encode(pixels: px.pixels, width: px.width, height: px.height) ?? ""
+                }
+            }
+        }
+        guard let up = try? await app.media.upload(data) else { return }
+        var info = MediaInfo(type: "video", mediaId: up.mediaId, key: up.key,
+                             hash: up.hash, size: up.size, mime: "video/mp4")
+        info.w = Int(dims.width)
+        info.h = Int(dims.height)
+        if let d = try? await asset.load(.duration) { info.dur = d.seconds }
+        info.blurhash = blurhash
+        if let t = thumbInfo {
+            info.thumbMediaId = t.0
+            info.thumbKey = t.1
+            info.thumbHash = t.2
+        }
+        var c = ContentPayload(kind: "video")
+        c.media = info
+        try? await app.engine.enqueue(content: c, chatId: chatId)
+        try? FileManager.default.removeItem(at: out)
+    }
+
+    private func sendFile(_ url: URL) async {
+        let secured = url.startAccessingSecurityScopedResource()
+        defer { if secured { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url), data.count < 100_000_000 else { return }
+        guard let up = try? await app.media.upload(data) else { return }
+        var info = MediaInfo(type: "file", mediaId: up.mediaId, key: up.key,
+                             hash: up.hash, size: up.size,
+                             mime: "application/octet-stream")
+        info.name = url.lastPathComponent
+        var c = ContentPayload(kind: "file")
+        c.media = info
+        try? await app.engine.enqueue(content: c, chatId: chatId)
+    }
+
+    private func sendVoice(_ url: URL, duration: TimeInterval, waveform: [Int]) {
+        Task {
+            guard let data = try? Data(contentsOf: url),
+                  let up = try? await app.media.upload(data) else { return }
+            var info = MediaInfo(type: "voice", mediaId: up.mediaId, key: up.key,
+                                 hash: up.hash, size: up.size, mime: "audio/mp4")
+            info.dur = duration
+            info.waveform = waveform
+            var c = ContentPayload(kind: "voice")
+            c.media = info
+            try? await app.engine.enqueue(content: c, chatId: chatId)
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+}
+
+struct VideoTransferable: Transferable {
+    let url: URL
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(contentType: .movie) { transferable in
+            SentTransferredFile(transferable.url)
+        } importing: { received in
+            let copy = FileManager.default.temporaryDirectory.appendingPathComponent("in-\(UUID().uuidString).mov")
+            try FileManager.default.copyItem(at: received.file, to: copy)
+            return VideoTransferable(url: copy)
+        }
+    }
+}
+
+/// Обёртка UIKit-списка сообщений.
+struct MessagesView: UIViewControllerRepresentable {
+    let vc: MessagesViewController
+    let model: ChatViewModel
+    var onTapMedia: (Message, Int, UIView) -> Void
+    @Binding var showScrollDown: Bool
+
+    func makeUIViewController(context: Context) -> MessagesViewController {
+        vc.onVisibleTopChanged = { show in
+            if showScrollDown != show { showScrollDown = show }
+        }
+        vc.onNeedOlder = { [weak model] in model?.loadOlder() }
+        vc.onReply = { [weak model] msg in
+            withAnimation(Theme.springFast) { model?.replyingTo = msg }
+        }
+        vc.onReact = { [weak model] msg, emoji in model?.react(msg, emoji: emoji) }
+        vc.onTapMedia = onTapMedia
+        vc.onContextAction = { [weak model] msg, action in
+            guard let model else { return }
+            switch action {
+            case .reply: withAnimation(Theme.springFast) { model.replyingTo = msg }
+            case .copy: UIPasteboard.general.string = msg.text
+            case .edit: withAnimation(Theme.springFast) { model.editing = msg }
+            case .pin: model.pin(msg)
+            case .forward: NotificationCenter.default.post(name: .forwardRequested, object: msg)
+            case .deleteForMe: model.delete(msg, forAll: false)
+            case .deleteForAll: model.delete(msg, forAll: true)
+            }
+        }
+        return vc
+    }
+
+    func updateUIViewController(_ vc: MessagesViewController, context: Context) {
+        vc.apply(model.feed)
+    }
+}
+
+extension Notification.Name {
+    static let forwardRequested = Notification.Name("forwardRequested")
+}
