@@ -12,11 +12,15 @@ targets:
     type: application
     platform: iOS
     sources: [Msngr]
+    entitlements:
+      path: Msngr/Msngr.entitlements
     dependencies:
       - package: MsngrKit
         product: MsngrCrypto
       - package: MsngrKit
         product: MsngrCore
+      - target: NotificationService
+        embed: true
     info:
       path: Msngr/Info.plist
       properties:
@@ -25,6 +29,7 @@ targets:
         NSMicrophoneUsageDescription: "Запись голосовых сообщений"
         NSCameraUsageDescription: "Фото и видео для отправки в чаты"
         NSPhotoLibraryUsageDescription: "Выбор фото и видео для отправки"
+        NSContactsUsageDescription: "Поиск знакомых, которые уже в Msngr"
         NSFaceIDUsageDescription: "Разблокировка приложения"
         UIBackgroundModes: [remote-notification]
         ITSAppUsesNonExemptEncryption: false
@@ -33,6 +38,34 @@ targets:
           - CFBundleURLSchemes: [msngr]
     settings:
       base:
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 0.1.0
+        GENERATE_INFOPLIST_FILE: false
+
+  NotificationService:
+    type: app-extension
+    platform: iOS
+    sources: [NotificationService]
+    entitlements:
+      path: NotificationService/NotificationService.entitlements
+    dependencies:
+      - package: MsngrKit
+        product: MsngrCrypto
+      - package: MsngrKit
+        product: MsngrCore
+    info:
+      path: NotificationService/Info.plist
+      properties:
+        CFBundleDisplayName: MsngrNotifications
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.enface.Msngr.NotificationService
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic

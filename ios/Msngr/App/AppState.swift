@@ -53,14 +53,22 @@ final class AppState: ObservableObject {
         Task { await bootstrap(s) }
     }
 
+    /// Общий с NSE контейнер (app group) для БД и ключей.
+    static var sharedContainer: URL {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: AppGroup.identifier)
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    }
+
     private func bootstrap(_ s: Session) async {
         OwnUser.id = s.userId
+        // NSE читает эти значения из shared defaults
+        UserDefaults(suiteName: AppGroup.identifier)?.set(s.userId, forKey: "ownUserId")
         do {
-            let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            let support = Self.sharedContainer
             try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
             db = try AppDatabase.open(at: support.appendingPathComponent("msngr.sqlite"))
             api = APIClient(baseURL: Self.httpBase, token: s.token)
-            store = try IdentityStore(db: db, masterKeyProvider: KeychainMasterKey())
+            store = try IdentityStore(db: db, masterKeyProvider: SharedFileMasterKey(containerURL: support))
             e2ee = E2EEManager(store: store, api: api, ownUserId: s.userId, ownDeviceId: s.deviceId)
             media = MediaManager(api: api,
                                  cacheDir: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]

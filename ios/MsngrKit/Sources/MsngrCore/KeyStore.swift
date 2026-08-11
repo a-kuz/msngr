@@ -53,6 +53,28 @@ public struct StaticMasterKey: MasterKeyProvider {
     public func masterKey() throws -> SymmetricKey { key }
 }
 
+/// Мастер-ключ в защищённом файле внутри общего контейнера (app group).
+/// Приложение и NSE читают один и тот же ключ без keychain-sharing.
+/// Файл защищён Data Protection (completeUntilFirstUserAuthentication — доступен
+/// NSE при заблокированном экране после первой разблокировки).
+public struct SharedFileMasterKey: MasterKeyProvider {
+    let url: URL
+
+    public init(containerURL: URL) {
+        self.url = containerURL.appendingPathComponent(".masterkey")
+    }
+
+    public func masterKey() throws -> SymmetricKey {
+        if let data = try? Data(contentsOf: url), data.count == 32 {
+            return SymmetricKey(data: data)
+        }
+        let key = SymmetricKey(size: .bits256)
+        let data = key.withUnsafeBytes { Data($0) }
+        try data.write(to: url, options: [.completeFileProtectionUntilFirstUserAuthentication, .atomic])
+        return key
+    }
+}
+
 /// Шифрование блобов состояния (ratchet, sender keys) мастер-ключом.
 enum StateCrypto {
     static func seal(_ data: Data, with key: SymmetricKey) throws -> Data {

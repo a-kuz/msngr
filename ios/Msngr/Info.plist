@@ -33,6 +33,8 @@
 	<false/>
 	<key>NSCameraUsageDescription</key>
 	<string>Фото и видео для отправки в чаты</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Поиск знакомых, которые уже в Msngr</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Разблокировка приложения</string>
 	<key>NSMicrophoneUsageDescription</key>
