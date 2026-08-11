@@ -330,8 +330,11 @@ struct MessagesView: UIViewControllerRepresentable {
     @Binding var showScrollDown: Bool
 
     func makeUIViewController(context: Context) -> MessagesViewController {
-        vc.onVisibleTopChanged = { show in
+        vc.onVisibleTopChanged = { [weak model] show in
             if showScrollDown != show { showScrollDown = show }
+            // проскроллено вверх → новейшие не видны → не отмечаем прочтение
+            model?.isViewingBottom = !show
+            if !show { model?.markVisibleRead() }
         }
         vc.onNeedOlder = { [weak model] in model?.loadOlder() }
         vc.onReply = { [weak model] msg in

@@ -268,8 +268,11 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    /// true, когда новейшие сообщения реально на экране (лента у низа).
+    var isViewingBottom = true
+
     func markVisibleRead() {
-        guard let chat, chat.lastSeq > chat.myReadUpTo else { return }
+        guard isViewingBottom, let chat, chat.lastSeq > chat.myReadUpTo else { return }
         Task { await app.engine.markRead(chatId: chatId, upToSeq: chat.lastSeq) }
     }
 
