@@ -109,13 +109,30 @@ ca.send({ t: "send", chatId: chat.chatId, clientMsgId: "cm-1", sentAt: Date.now(
 const sent2 = await ca.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-1" && f !== sent);
 check("idempotent resend same seq", !!sent2 && sent2.seq === 1 && sent2.msgId === sent.msgId);
 
-// 6. Receipts
+// 6. Message request: Bob ещё не принял чат → read-receipt не уходит
+const st0 = await api(`/api/chats/${chat.chatId}/history?fromSeq=0`, { token: bob.token });
+void st0;
+const stateRes = await fetch(BASE + "/api/chats", { headers: { authorization: `Bearer ${bob.token}` } }).then(r => r.json());
+const dchat = stateRes.chats.find((c2) => c2.state.chatId === chat.chatId);
+check("direct starts as request", dchat.state.members.find((m) => m.userId === bob.userId).accepted === false
+  && dchat.state.members.find((m) => m.userId === alice.userId).accepted === true);
+
+cb.send({ t: "read", chatId: chat.chatId, upToSeq: 1 });
+cb.send({ t: "typing", chatId: chat.chatId, kind: "text" });
+await new Promise((r) => setTimeout(r, 600));
+check("no read receipt before accept", !ca.frames.some((f) => f.t === "receipt" && f.kind === "read"));
+check("no typing before accept", !ca.frames.some((f) => f.t === "typing" && f.from === bob.userId));
+
+const acc = await api(`/api/chats/${chat.chatId}/accept`, { token: bob.token, body: {} });
+check("accept request", acc.ok);
+
+// Receipts после accept
 cb.send({ t: "recv", chatId: chat.chatId, seqs: [1] });
 const delivered = await ca.waitFor((f) => f.t === "receipt" && f.kind === "delivered");
 check("delivered receipt", !!delivered && delivered.by === bob.userId);
 cb.send({ t: "read", chatId: chat.chatId, upToSeq: 1 });
 const read = await ca.waitFor((f) => f.t === "receipt" && f.kind === "read");
-check("read receipt", !!read && read.upToSeq === 1);
+check("read receipt after accept", !!read && read.upToSeq === 1);
 
 // 7. Typing
 cb.send({ t: "typing", chatId: chat.chatId, kind: "text" });
@@ -191,7 +208,14 @@ const dl = await fetch(`${BASE}/api/media/${upJson.mediaId}`, {
 });
 check("media range download", dl.status === 206 && (await dl.arrayBuffer()).byteLength === 1024);
 
-// 15. Invite link
+// 15. Contact discovery по хэшам телефонов
+const ph = await api("/api/phone", { token: bob.token, body: { phoneHash: "hash_" + suffix } });
+const disc = await api("/api/contacts/discover", { token: alice.token,
+  body: { hashes: ["hash_" + suffix, "nonexistent"] } });
+check("contact discovery", ph.ok && disc.ok && disc.matches.length === 1
+  && disc.matches[0].id === bob.userId);
+
+// 16. Invite link
 const inv = await api(`/api/chats/${grp.chatId}/invite`, { token: alice.token, body: {} });
 check("invite created", inv.ok && inv.code);
 

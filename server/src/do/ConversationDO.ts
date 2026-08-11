@@ -118,6 +118,8 @@ export class ConversationDO implements DurableObject {
           userId: uid,
           role: b.kind === "group" && uid === b.createdBy ? "admin" : "member",
           joinedAt: now,
+          // message request: в direct получатель должен явно принять переписку
+          accepted: uid === b.createdBy || b.kind === "group",
         };
         this.members.set(uid, m);
         await this.state.storage.put("member:" + uid, m);
@@ -210,8 +212,24 @@ export class ConversationDO implements DurableObject {
         return json({ ok: true });
       }
 
+      case "/accept": {
+        const b = (await req.json()) as { userId: string };
+        const members = await this.loadMembers();
+        const m = members.get(b.userId);
+        if (!m) return err("not_member", 403);
+        if (!m.accepted) {
+          m.accepted = true;
+          await this.state.storage.put("member:" + b.userId, m);
+          await this.broadcastChat("members");
+        }
+        return json({ ok: true });
+      }
+
       case "/read": {
         const b = (await req.json()) as { userId: string; upToSeq: number };
+        const members = await this.loadMembers();
+        // до accept read-receipts автору не уходят (message request)
+        if (!members.get(b.userId)?.accepted) return json({ ok: true });
         const marks =
           (await this.state.storage.get<Record<string, number>>("readMarks")) ?? {};
         if (b.upToSeq > (marks[b.userId] ?? 0)) {
@@ -229,6 +247,8 @@ export class ConversationDO implements DurableObject {
         const b = (await req.json()) as { userId: string; kind: string | null };
         const members = await this.loadMembers();
         if (!members.has(b.userId)) return err("not_member", 403);
+        // до accept получатель невидим для автора заявки
+        if (!members.get(b.userId)!.accepted) return json({ ok: true });
         await this.fanout(
           { t: "typing", chatId: meta.chatId, from: b.userId, kind: b.kind },
           { except: b.userId }
@@ -273,7 +293,7 @@ export class ConversationDO implements DurableObject {
         const now = Date.now();
         for (const uid of b.add) {
           if (members.has(uid)) continue;
-          const m: ChatMember = { userId: uid, role: "member", joinedAt: now };
+          const m: ChatMember = { userId: uid, role: "member", joinedAt: now, accepted: true };
           members.set(uid, m);
           await this.state.storage.put("member:" + uid, m);
         }
@@ -355,6 +375,9 @@ export class ConversationDO implements DurableObject {
       case "/presence": {
         // от UserSessionDO: пользователь сменил online-статус → разослать участникам
         const b = (await req.json()) as { userId: string; online: boolean; lastSeen: number };
+        const members = await this.loadMembers();
+        // presence не-принявшего получателя не видна автору заявки
+        if (!members.get(b.userId)?.accepted) return json({ ok: true });
         await this.fanout(
           { t: "presence", userId: b.userId, online: b.online, lastSeen: b.lastSeen },
           { except: b.userId }

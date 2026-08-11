@@ -23,6 +23,7 @@ app.post("/api/register", async (c) => {
     identityKey: string; identitySignKey: string;
     signedPrekey: { id: number; key: string; sig: string };
     oneTimePrekeys: Array<{ id: number; key: string }>;
+    phoneHash?: string;
   }>();
   if (!/^[a-zA-Z0-9_]{3,32}$/.test(b.username)) return err("bad_username");
   if (!b.identityKey || !b.signedPrekey?.key) return err("bad_keys");
@@ -224,6 +225,14 @@ app.post("/api/chats/:id/members", async (c) => {
   return new Response(r.body, r);
 });
 
+app.post("/api/chats/:id/accept", async (c) => {
+  const { userId } = c.get("auth");
+  const r = await convStub(c.env, c.req.param("id")).fetch("https://do/accept", {
+    method: "POST", body: JSON.stringify({ userId }),
+  });
+  return new Response(r.body, r);
+});
+
 app.post("/api/chats/:id/leave", async (c) => {
   const { userId } = c.get("auth");
   const r = await convStub(c.env, c.req.param("id")).fetch("https://do/leave", {
@@ -360,6 +369,31 @@ app.post("/api/push-token", async (c) => {
     method: "POST",
     body: JSON.stringify({ deviceId, apnsToken: b.apnsToken, env: b.env }),
   });
+  return json({ ok: true });
+});
+
+// contact discovery: клиент шлёт SHA-256(E.164), сервер отвечает совпадениями
+app.post("/api/contacts/discover", async (c) => {
+  const b = await c.req.json<{ hashes: string[] }>();
+  const hashes = [...new Set(b.hashes)].slice(0, 5000);
+  if (!hashes.length) return json({ ok: true, matches: [] });
+  const matches: unknown[] = [];
+  for (let i = 0; i < hashes.length; i += 100) {
+    const chunk = hashes.slice(i, i + 100);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = await c.env.DB.prepare(
+      `SELECT id, username, display_name, avatar_id, phone_hash FROM users WHERE phone_hash IN (${placeholders})`
+    ).bind(...chunk).all();
+    matches.push(...rows.results);
+  }
+  return json({ ok: true, matches });
+});
+
+app.post("/api/phone", async (c) => {
+  const { userId } = c.get("auth");
+  const b = await c.req.json<{ phoneHash: string | null }>();
+  await c.env.DB.prepare("UPDATE users SET phone_hash = ? WHERE id = ?")
+    .bind(b.phoneHash, userId).run();
   return json({ ok: true });
 });
 

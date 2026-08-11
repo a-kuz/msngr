@@ -1,0 +1,41 @@
+name: Msngr
+options:
+  bundleIdPrefix: ai.enface
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+packages:
+  MsngrKit:
+    path: MsngrKit
+targets:
+  Msngr:
+    type: application
+    platform: iOS
+    sources: [Msngr]
+    dependencies:
+      - package: MsngrKit
+        product: MsngrCrypto
+      - package: MsngrKit
+        product: MsngrCore
+    info:
+      path: Msngr/Info.plist
+      properties:
+        CFBundleDisplayName: Msngr
+        UILaunchScreen: {}
+        NSMicrophoneUsageDescription: "Запись голосовых сообщений"
+        NSCameraUsageDescription: "Фото и видео для отправки в чаты"
+        NSPhotoLibraryUsageDescription: "Выбор фото и видео для отправки"
+        NSFaceIDUsageDescription: "Разблокировка приложения"
+        UIBackgroundModes: [remote-notification]
+        ITSAppUsesNonExemptEncryption: false
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        CFBundleURLTypes:
+          - CFBundleURLSchemes: [msngr]
+    settings:
+      base:
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 0.1.0
+        GENERATE_INFOPLIST_FILE: false

@@ -36,6 +36,8 @@ export interface ChatMember {
   userId: string;
   role: "admin" | "member";
   joinedAt: number;
+  /// message request: false = чат в заявках, receipts/presence автору не идут
+  accepted: boolean;
 }
 
 export interface ChatState {

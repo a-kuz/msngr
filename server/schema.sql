@@ -4,8 +4,10 @@ CREATE TABLE IF NOT EXISTS users (
   display_name TEXT NOT NULL,
   bio TEXT,
   avatar_id TEXT,
+  phone_hash TEXT,
   created_at INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone_hash);
 
 CREATE TABLE IF NOT EXISTS devices (
   id TEXT PRIMARY KEY,

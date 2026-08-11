@@ -238,6 +238,20 @@ export class UserSessionDO implements DurableObject {
         return;
 
       case "sync": {
+        // чаты, о которых клиент ещё не знает (создан/добавлен, пока был офлайн):
+        // прислать state и историю с нуля
+        const known = new Set(Object.keys(frame.cursors));
+        const listed = await this.state.storage.list<unknown>({ prefix: "chat:" });
+        for (const key of listed.keys()) {
+          const chatId = key.slice(5);
+          if (known.has(chatId)) continue;
+          const sr = await this.convStub(chatId).fetch("https://do/state");
+          const sj = (await sr.json()) as { ok: boolean; state?: unknown };
+          if (sj.ok && sj.state) {
+            this.send(ws, { t: "chat", chatId, event: "sync", state: sj.state } as ServerFrame);
+            frame.cursors[chatId] = 0; // и доиграть историю ниже
+          }
+        }
         // доигрывание пропущенных сообщений по курсорам клиента
         for (const [chatId, lastSeq] of Object.entries(frame.cursors)) {
           const res = await this.convStub(chatId).fetch(
