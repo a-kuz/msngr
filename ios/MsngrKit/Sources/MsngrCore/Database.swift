@@ -136,6 +136,21 @@ public enum AppDatabase {
                 t.column("text")
             }
         }
+        m.registerMigration("v2-pendingDecrypt") { db in
+            // сообщения, пришедшие раньше своего ключа (напр. групповое до sender-key):
+            // хранятся сырыми и переобрабатываются, когда ключ приходит
+            try db.create(table: "pendingDecrypt") { t in
+                t.column("chatId", .text).notNull().indexed()
+                t.column("msgId", .text).notNull()
+                t.column("seq", .integer).notNull()
+                t.column("fromUserId", .text).notNull()
+                t.column("fromDevice", .text).notNull()
+                t.column("sentAt", .double).notNull()
+                t.column("ts", .double).notNull()
+                t.column("body", .blob).notNull()  // JSON-конверт
+                t.primaryKey(["chatId", "msgId"])
+            }
+        }
         return m
     }
 }

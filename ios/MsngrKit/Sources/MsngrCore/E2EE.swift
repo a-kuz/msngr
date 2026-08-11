@@ -229,12 +229,31 @@ public final class E2EEManager: @unchecked Sendable {
         var session: DoubleRatchetSession
 
         if box.type == "pk" {
-            // возможно сессия уже есть (повторное pk при гонке) — сначала пробуем её
-            if var existing = try store.loadSession(peerUserId: fromUserId, peerDeviceId: fromDeviceId),
-               let plain = try? existing.decrypt(ratchetMsg) {
+            let existingSession = try store.loadSession(peerUserId: fromUserId, peerDeviceId: fromDeviceId)
+            // повторное pk в рамках живой сессии — сначала пробуем её
+            if var existing = existingSession, let plain = try? existing.decrypt(ratchetMsg) {
                 try store.saveSession(existing, peerUserId: fromUserId, peerDeviceId: fromDeviceId,
                                       theirIdentityDH: box.ik ?? "")
                 return try handleInner(plain, fromUserId: fromUserId, trustIssue: nil)
+            }
+            // сессия существует, но pk ею не расшифровался
+            if let existing = existingSession {
+                // устоявшаяся сессия → это replay/подмена начального конверта: игнорируем,
+                // не сбрасывая ratchet (защита от session-reset)
+                if existing.hasReceived {
+                    return .undecryptable(reason: "stale_pk_ignored")
+                }
+                // свежая наша initiator-сессия + встречный pk = glare (обе стороны
+                // инициировали). Детерминированный тай-брейкер по identity-ключу:
+                // сторона с меньшим ключом оставляет свою сессию, другая принимает pk.
+                if let theirIk = box.ik.flatMap({ Data(base64urlEncoded: $0) }) {
+                    let ourIk = try store.identity().dh.publicKey.rawRepresentation
+                    if ourIk.lexicographicallyPrecedes(theirIk) {
+                        // мы «Alice» — оставляем свою сессию, встречный pk отбрасываем
+                        return .undecryptable(reason: "glare_kept_ours")
+                    }
+                    // мы «Bob» — принимаем pk собеседника (перезаписываем свою ниже)
+                }
             }
             guard let ikB64 = box.ik, let ik = Data(base64urlEncoded: ikB64),
                   let ekB64 = box.ek, let ek = Data(base64urlEncoded: ekB64),

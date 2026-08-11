@@ -131,6 +131,21 @@ final class DoubleRatchetTests: XCTestCase {
         XCTAssertThrowsError(try bob.decrypt(RatchetMessage(header: m.header, ciphertext: bad)))
     }
 
+    func testReplayedFirstMessageDoesNotResetRatchet() throws {
+        // Боб получил pk-сообщение и завёл сессию; затем прогнал ratchet.
+        // Повторная подача того же pk (replay) не должна сбрасывать сессию.
+        var (alice, bob) = try makeSessions()
+        let pk = try alice.encrypt(Data("first".utf8))
+        XCTAssertEqual(try bob.decrypt(pk), Data("first".utf8))
+        // ratchet вперёд
+        let reply = try bob.encrypt(Data("reply".utf8))
+        XCTAssertEqual(try alice.decrypt(reply), Data("reply".utf8))
+        let second = try alice.encrypt(Data("second".utf8))
+        XCTAssertEqual(try bob.decrypt(second), Data("second".utf8))
+        // bob.hasReceived == true → в E2EEManager это ветка stale_pk_ignored.
+        XCTAssertTrue(bob.hasReceived)
+    }
+
     func testSessionSerializationRoundtrip() throws {
         var (alice, bob) = try makeSessions()
         _ = try bob.decrypt(try alice.encrypt(Data("1".utf8)))

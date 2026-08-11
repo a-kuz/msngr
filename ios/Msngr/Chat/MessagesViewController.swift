@@ -50,41 +50,66 @@ final class MessagesViewController: UIViewController {
         collectionView.verticalScrollIndicatorInsets = collectionView.contentInset
     }
 
-    /// Обновление ленты: diff по id, вставка новых снизу без прыжков.
+    /// Обновление ленты: точечный diff по id. Инвертированный список — index 0 внизу
+    /// экрана. Вставки/удаления идут через performBatchUpdates, чтобы контент выше
+    /// не прыгал при новом сообщении, когда пользователь читает историю.
     func apply(_ newItems: [ChatFeedItem]) {
         let old = items
-        items = newItems
-        guard isViewLoaded else { return }
-        if old.isEmpty || abs(old.count - newItems.count) > 30 {
+        guard isViewLoaded else { items = newItems; return }
+        if old.isEmpty {
+            items = newItems
             collectionView.reloadData()
             return
         }
         let oldIds = old.map(\.id)
         let newIds = newItems.map(\.id)
+
         if oldIds == newIds {
-            // контент мог измениться (статусы, реакции, редактирование) — точечно
+            items = newItems
             var changed: [IndexPath] = []
             for (i, item) in newItems.enumerated() where !contentEqual(old[i], item) {
                 changed.append(IndexPath(item: i, section: 0))
             }
             if !changed.isEmpty {
-                UIView.performWithoutAnimation {
-                    collectionView.reloadItems(at: changed)
-                }
+                UIView.performWithoutAnimation { collectionView.reloadItems(at: changed) }
             }
             return
         }
-        collectionView.reloadData()
-        // новое сообщение при позиции у низа — плавный подскролл
-        if newIds.count > oldIds.count, collectionView.contentOffset.y < 60 {
+
+        // вычисляем удаления и вставки по позициям id
+        let oldIndex = Dictionary(uniqueKeysWithValues: oldIds.enumerated().map { ($1, $0) })
+        let newIndex = Dictionary(uniqueKeysWithValues: newIds.enumerated().map { ($1, $0) })
+        let deletes = oldIds.enumerated().filter { newIndex[$0.element] == nil }
+            .map { IndexPath(item: $0.offset, section: 0) }
+        let inserts = newIds.enumerated().filter { oldIndex[$0.element] == nil }
+            .map { IndexPath(item: $0.offset, section: 0) }
+        // если структура изменилась слишком сложно (перестановки) — безопасный reload
+        let onlyAppendOrRemove = deletes.count + inserts.count == abs(oldIds.count - newIds.count)
+            || (deletes.isEmpty || inserts.isEmpty)
+        guard onlyAppendOrRemove, deletes.count + inserts.count < 60 else {
+            items = newItems
+            collectionView.reloadData()
+            return
+        }
+
+        let nearBottom = collectionView.contentOffset.y < 60
+        items = newItems
+        UIView.performWithoutAnimation {
+            collectionView.performBatchUpdates {
+                if !deletes.isEmpty { collectionView.deleteItems(at: deletes) }
+                if !inserts.isEmpty { collectionView.insertItems(at: inserts) }
+            }
+        }
+        // новое сообщение и мы были у низа — плавно подскроллим к нему
+        if newIds.count > oldIds.count, inserts.contains(where: { $0.item == 0 }), nearBottom {
             collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.contentInset.top), animated: true)
         }
     }
 
     private func contentEqual(_ a: ChatFeedItem, _ b: ChatFeedItem) -> Bool {
         switch (a, b) {
-        case let (.message(m1, g1, _, _), .message(m2, g2, _, _)):
-            return m1 == m2 && g1 == g2
+        case let (.message(m1, t1, s1, _, _), .message(m2, t2, s2, _, _)):
+            return m1 == m2 && t1 == t2 && s1 == s2
         case let (.dateSeparator(d1), .dateSeparator(d2)):
             return d1 == d2
         default:
@@ -118,15 +143,15 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "date", for: indexPath) as! DateSeparatorCell
             cell.configure(label)
             return cell
-        case .message(let msg, let grouped, let showName, let authorName):
+        case .message(let msg, let tightGap, let showTail, let showName, let authorName):
             if msg.kind == .system {
                 let cell = cv.dequeueReusableCell(withReuseIdentifier: "system", for: indexPath) as! SystemCell
                 cell.configure(msg)
                 return cell
             }
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "msg", for: indexPath) as! MessageCell
-            let plan = BubbleLayout.plan(for: msg, width: cv.bounds.width, grouped: grouped,
-                                         showName: showName, authorName: authorName)
+            let plan = BubbleLayout.plan(for: msg, width: cv.bounds.width, tightGap: tightGap,
+                                         showTail: showTail, showName: showName, authorName: authorName)
             cell.configure(msg: msg, plan: plan)
             cell.onReply = { [weak self] in self?.onReply?(msg) }
             cell.onReact = { [weak self] emoji in self?.onReact?(msg, emoji) }
@@ -141,12 +166,12 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
         switch items[indexPath.item] {
         case .dateSeparator:
             return CGSize(width: cv.bounds.width, height: 32)
-        case .message(let msg, let grouped, let showName, let authorName):
+        case .message(let msg, let tightGap, let showTail, let showName, let authorName):
             if msg.kind == .system {
                 return CGSize(width: cv.bounds.width, height: 30)
             }
-            let plan = BubbleLayout.plan(for: msg, width: cv.bounds.width, grouped: grouped,
-                                         showName: showName, authorName: authorName)
+            let plan = BubbleLayout.plan(for: msg, width: cv.bounds.width, tightGap: tightGap,
+                                         showTail: showTail, showName: showName, authorName: authorName)
             return CGSize(width: cv.bounds.width, height: plan.cellHeight)
         }
     }

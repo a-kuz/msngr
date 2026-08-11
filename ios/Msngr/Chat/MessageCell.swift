@@ -21,6 +21,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private let voiceView = VoiceMessageView()
     private var msg: Message?
     private var plan: BubbleLayoutPlan?
+    private var configuredMsgId: String?
 
     // swipe-to-reply
     private var panStartX: CGFloat = 0
@@ -81,6 +82,10 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         reactionViews.forEach { $0.removeFromSuperview() }
         reactionViews = []
         contentView.transform = CGAffineTransform(scaleX: 1, y: -1)
+        // сброс незавершённого свайпа-reply
+        bubbleView.transform = .identity
+        replyIcon.alpha = 0
+        replyTriggered = false
     }
 
     func configure(msg: Message, plan: BubbleLayoutPlan) {
@@ -163,15 +168,23 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         }
         timeLabel.frame = timeFrame
 
-        // реакции
+        // реакции: анимируем появление только реально новой реакции при обновлении той же
+        // ячейки; при переиспользовании на скролле — без анимации
+        let sameCell = configuredMsgId == msg.id
+        let previousKeys = Set(reactionViews.map { $0.emojiKey })
+        reactionViews.forEach { $0.removeFromSuperview() }
+        reactionViews = []
         for r in plan.reactionsFrames {
             let capsule = ReactionCapsuleView()
-            capsule.configure(emoji: r.emoji, count: r.count, mine: r.mine, outgoing: plan.isOutgoing)
+            let animateIn = sameCell && !previousKeys.contains(r.emoji)
+            capsule.configure(emoji: r.emoji, count: r.count, mine: r.mine,
+                              outgoing: plan.isOutgoing, animateIn: animateIn)
             capsule.frame = r.frame
             capsule.onTap = { [weak self] in self?.onReact?(r.emoji) }
             bubbleView.addSubview(capsule)
             reactionViews.append(capsule)
         }
+        configuredMsgId = msg.id
     }
 
     private func configureMedia(msg: Message, plan: BubbleLayoutPlan) {
@@ -393,6 +406,7 @@ final class ReplyStripView: UIView {
 final class ReactionCapsuleView: UIControl {
     private let label = UILabel()
     var onTap: (() -> Void)?
+    private(set) var emojiKey = ""
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -401,22 +415,25 @@ final class ReactionCapsuleView: UIControl {
         label.textAlignment = .center
         addSubview(label)
         addTarget(self, action: #selector(tapped), for: .touchUpInside)
-        // spring-появление
-        transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
-        alpha = 0
-        UIView.animate(withDuration: 0.4, delay: 0, usingSpringWithDamping: 0.6, initialSpringVelocity: 0.4) {
-            self.transform = .identity
-            self.alpha = 1
-        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(emoji: String, count: Int, mine: Bool, outgoing: Bool) {
+    func configure(emoji: String, count: Int, mine: Bool, outgoing: Bool, animateIn: Bool) {
+        emojiKey = emoji
         label.text = count > 1 ? "\(emoji) \(count)" : emoji
         backgroundColor = mine ? UIColor(Theme.accent).withAlphaComponent(0.85)
             : UIColor.systemGray5.withAlphaComponent(0.9)
         label.textColor = mine ? .white : .label
+        // spring-появление только для реально новой реакции
+        if animateIn {
+            transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
+            alpha = 0
+            UIView.animate(withDuration: 0.4, delay: 0, usingSpringWithDamping: 0.6, initialSpringVelocity: 0.4) {
+                self.transform = .identity
+                self.alpha = 1
+            }
+        }
     }
 
     override func layoutSubviews() {

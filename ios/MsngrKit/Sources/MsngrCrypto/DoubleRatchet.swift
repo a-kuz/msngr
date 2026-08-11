@@ -29,6 +29,10 @@ public struct DoubleRatchetSession: Codable, Sendable {
     static let maxSkip: UInt32 = 1000
     static let maxSkippedStored = 2000
 
+    /// Сессия уже получала входящие (устоялась) — признак того, что повторный
+    /// prekey-конверт следует игнорировать (защита от replay/session-reset).
+    public var hasReceived: Bool { recvN > 0 || recvChainKey != nil }
+
     // MARK: - KDF
 
     private static func kdfRoot(_ rootKey: Data, dhOut: SharedSecret) -> (root: Data, chain: Data) {
@@ -144,9 +148,13 @@ public struct DoubleRatchetSession: Codable, Sendable {
             recvN += 1
         }
         recvChainKey = chainKey
-        // не дать skipped расти бесконечно
+        // не дать skipped расти бесконечно: вытесняем самые старые по номеру сообщения
         if skipped.count > Self.maxSkippedStored {
-            for key in skipped.keys.sorted().prefix(skipped.count - Self.maxSkippedStored) {
+            func msgIndex(_ key: String) -> UInt32 {
+                UInt32(key.split(separator: "/").last.map(String.init) ?? "") ?? 0
+            }
+            for key in skipped.keys.sorted(by: { msgIndex($0) < msgIndex($1) })
+                .prefix(skipped.count - Self.maxSkippedStored) {
                 skipped.removeValue(forKey: key)
             }
         }

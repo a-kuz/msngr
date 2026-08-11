@@ -4,13 +4,15 @@ import GRDB
 import MsngrCore
 
 /// Элемент ленты: сообщение с флагами группировки или дата-разделитель.
+/// tightGap — маленький зазор сверху (продолжение серии того же автора выше на экране);
+/// showTail — хвостик баббла (последний в серии, ниже нет своего сообщения).
 enum ChatFeedItem: Identifiable, Equatable {
-    case message(Message, grouped: Bool, showName: Bool, authorName: String?)
+    case message(Message, tightGap: Bool, showTail: Bool, showName: Bool, authorName: String?)
     case dateSeparator(String)
 
     var id: String {
         switch self {
-        case .message(let m, _, _, _): return m.id
+        case .message(let m, _, _, _, _): return m.id
         case .dateSeparator(let d): return "date:\(d)"
         }
     }
@@ -101,30 +103,29 @@ final class ChatViewModel: ObservableObject {
         let nameById = Dictionary(uniqueKeysWithValues: members.map { ($0.id, $0.displayName) })
         let isGroupChat = members.count > 2
 
+        func sameSeries(_ a: Message, _ b: Message) -> Bool {
+            a.fromUserId == b.fromUserId && abs(a.sentAt - b.sentAt) < 60
+                && cal.isDate(Date(timeIntervalSince1970: a.sentAt),
+                              inSameDayAs: Date(timeIntervalSince1970: b.sentAt))
+                && a.kind != .system && b.kind != .system
+        }
+
         for (i, msg) in msgs.enumerated() {
-            let next = i + 1 < msgs.count ? msgs[i + 1] : nil // хронологически предыдущее
-            let prev = i > 0 ? msgs[i - 1] : nil              // хронологически следующее
+            let newer = i > 0 ? msgs[i - 1] : nil              // ниже на экране
+            let older = i + 1 < msgs.count ? msgs[i + 1] : nil // выше на экране
 
-            // grouped: то же авторство и <60с с ХРОНОЛОГИЧЕСКИ СЛЕДУЮЩИМ (ниже на экране);
-            // хвостик у последнего в серии
-            let groupedWithNewer = prev.map {
-                $0.fromUserId == msg.fromUserId && abs($0.sentAt - msg.sentAt) < 60
-                    && cal.isDate(Date(timeIntervalSince1970: $0.sentAt),
-                                  inSameDayAs: Date(timeIntervalSince1970: msg.sentAt))
-                    && $0.kind != .system
-            } ?? false
-
-            let firstInSeries: Bool = {
-                guard let next else { return true }
-                return !(next.fromUserId == msg.fromUserId && abs(msg.sentAt - next.sentAt) < 60
-                    && cal.isDate(Date(timeIntervalSince1970: next.sentAt),
-                                  inSameDayAs: Date(timeIntervalSince1970: msg.sentAt)))
-            }()
+            // хвостик — если ниже нет своего сообщения той же серии (последний в серии снизу)
+            let showTail = !(newer.map { sameSeries($0, msg) } ?? false)
+            // первый в серии сверху — если выше нет своего сообщения той же серии
+            let firstInSeries = !(older.map { sameSeries($0, msg) } ?? false)
+            // тесный зазор сверху — когда это продолжение серии (сверху свой)
+            let tightGap = !firstInSeries
 
             let showName = isGroupChat && !msg.isOutgoing && firstInSeries && msg.kind != .system
-            out.append(.message(msg, grouped: groupedWithNewer,
+            out.append(.message(msg, tightGap: tightGap, showTail: showTail,
                                 showName: showName,
                                 authorName: nameById[msg.fromUserId] ?? "?"))
+            let next = older
 
             // разделитель дат: перед первым сообщением дня (в инвертированной ленте — после)
             let msgDay = Date(timeIntervalSince1970: msg.sentAt)
@@ -272,10 +273,14 @@ final class ChatViewModel: ObservableObject {
         Task { await app.engine.markRead(chatId: chatId, upToSeq: chat.lastSeq) }
     }
 
+    private var loadingOlder = false
+
     /// Пагинация вверх: догрузка старых сообщений с сервера (если локально меньше).
     func loadOlder() {
-        guard let chat else { return }
+        guard let chat, !loadingOlder else { return }
+        loadingOlder = true
         Task {
+            defer { loadingOlder = false }
             let minSeq = (try? await app.db.read { [chatId] dbc in
                 try Int.fetchOne(dbc, sql: "SELECT MIN(seq) FROM message WHERE chatId = ? AND seq IS NOT NULL",
                                  arguments: [chatId])

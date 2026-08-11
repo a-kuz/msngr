@@ -27,7 +27,7 @@ public final class MediaManager: @unchecked Sendable {
         let enc = try MediaCrypto.encrypt(plaintext)
         let res = try await api.uploadMedia(enc.ciphertext)
         let local = cacheDir.appendingPathComponent(res.mediaId)
-        try? plaintext.write(to: local)
+        try? plaintext.write(to: local, options: .atomic)
         return (res.mediaId, enc.key.base64EncodedString(), enc.sha256.base64EncodedString(), plaintext.count)
     }
 
@@ -52,7 +52,7 @@ public final class MediaManager: @unchecked Sendable {
             let ciphertext = try await self.api.downloadMedia(media.mediaId)
             let plaintext = try MediaCrypto.decrypt(ciphertext, key: key, expectedSHA256: hash)
             let url = self.cacheDir.appendingPathComponent(media.mediaId)
-            try plaintext.write(to: url)
+            try plaintext.write(to: url, options: .atomic)
             return url
         }
         inflight[media.mediaId] = task

@@ -198,6 +198,9 @@ export class ConversationDO implements DurableObject {
 
       case "/recv": {
         const b = (await req.json()) as { userId: string; seqs: number[] };
+        const members = await this.loadMembers();
+        // до accept получатель заявки невидим автору — delivered-квитанции не шлём
+        if (!members.get(b.userId)?.accepted) return json({ ok: true });
         const marks =
           (await this.state.storage.get<Record<string, number>>("deliveredMarks")) ?? {};
         const upTo = Math.max(marks[b.userId] ?? 0, ...b.seqs);
@@ -287,9 +290,13 @@ export class ConversationDO implements DurableObject {
         const actor = members.get(b.actor);
         if (!actor) return err("not_member", 403);
         if (meta.kind !== "group") return err("not_group", 400);
-        if (actor.role !== "admin" && (b.remove.length || b.add.length && false))
-          return err("not_admin", 403);
+        // удалять может только админ
         if (b.remove.length && actor.role !== "admin") return err("not_admin", 403);
+        // добавлять может админ; не-админ — только самого себя (join по invite-ссылке)
+        if (b.add.length && actor.role !== "admin") {
+          const onlySelf = b.add.length === 1 && b.add[0] === b.actor;
+          if (!onlySelf) return err("not_admin", 403);
+        }
         const now = Date.now();
         for (const uid of b.add) {
           if (members.has(uid)) continue;

@@ -196,18 +196,86 @@ public actor SyncEngine {
                                             fromUserId: from, fromDeviceId: fromDevice))
                     ?? .undecryptable(reason: "exception")
             }
-            await storeIncoming(result, chatId: chatId, msgId: msgId, seq: seq,
-                                from: from, sentAt: f.sentAt ?? 0, ts: f.ts ?? 0)
+            // сообщение раньше своего ключа → отложить и переиграть, когда ключ придёт
+            if case .undecryptable(let reason) = result, Self.retryableReasons.contains(reason) {
+                await savePending(chatId: chatId, msgId: msgId, seq: seq, from: from,
+                                  fromDevice: fromDevice, sentAt: f.sentAt ?? 0, ts: f.ts ?? 0, body: body)
+            } else {
+                await storeIncoming(result, chatId: chatId, msgId: msgId, seq: seq,
+                                    from: from, sentAt: f.sentAt ?? 0, ts: f.ts ?? 0)
+                // получили контент/ключ → пробуем переиграть отложенные этого чата
+                if case .undecryptable = result {} else {
+                    await retryPending(chatId: chatId)
+                }
+            }
         }
 
-        // курсор и подтверждение доставки
+        // курсор двигаем только по непрерывному префиксу (иначе потеряем историю в дыре);
+        // lastSeq — серверный максимум; своё сообщение поднимает myReadUpTo;
+        // непрочитанное = lastSeq - myReadUpTo (производное, не ручной инкремент)
+        let isOwn = from == ownUserId
         try? await db.write { dbc in
-            try dbc.execute(sql: "UPDATE chat SET syncedSeq = MAX(syncedSeq, ?), lastSeq = MAX(lastSeq, ?) WHERE id = ?",
-                            arguments: [seq, seq, chatId])
+            try dbc.execute(
+                sql: """
+                UPDATE chat SET
+                  lastSeq = MAX(lastSeq, ?),
+                  syncedSeq = CASE WHEN ? = syncedSeq + 1 THEN ? ELSE syncedSeq END,
+                  myReadUpTo = CASE WHEN ? THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END,
+                  unreadCount = MAX(0, MAX(lastSeq, ?) - CASE WHEN ? THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END)
+                WHERE id = ?
+                """,
+                arguments: [seq, seq, seq, isOwn, seq, seq, isOwn, seq, chatId])
         }
         if from != ownUserId {
             try? await ws.send(.recv(chatId: chatId, seqs: [seq]))
         }
+    }
+
+    /// Причины, при которых расшифровка может удаться позже (ключ ещё не пришёл):
+    /// групповое сообщение до sender-key, либо dr-сообщение раньше своего pk (reorder).
+    static let retryableReasons: Set<String> = ["no_sender_key", "no_session"]
+
+    private func savePending(chatId: String, msgId: String, seq: Int, from: String,
+                             fromDevice: String, sentAt: Double, ts: Double, body: JSONValue) async {
+        guard let data = try? JSONEncoder().encode(body) else { return }
+        try? await db.write { dbc in
+            try dbc.execute(
+                sql: """
+                INSERT OR IGNORE INTO pendingDecrypt (chatId, msgId, seq, fromUserId, fromDevice, sentAt, ts, body)
+                VALUES (?,?,?,?,?,?,?,?)
+                """,
+                arguments: [chatId, msgId, seq, from, fromDevice, sentAt, ts, data])
+        }
+    }
+
+    private func retryPending(chatId: String) async {
+        struct Pending { let msgId: String; let seq: Int; let from: String; let fromDevice: String
+                         let sentAt: Double; let ts: Double; let body: Data }
+        let items: [Pending] = (try? await db.read { dbc in
+            try Row.fetchAll(dbc, sql: "SELECT * FROM pendingDecrypt WHERE chatId = ? ORDER BY seq", arguments: [chatId])
+                .map { Pending(msgId: $0["msgId"], seq: $0["seq"], from: $0["fromUserId"],
+                               fromDevice: $0["fromDevice"], sentAt: $0["sentAt"], ts: $0["ts"], body: $0["body"]) }
+        }) ?? []
+        guard !items.isEmpty else { return }
+        var madeProgress = false
+        for item in items {
+            guard let body = try? JSONDecoder().decode(JSONValue.self, from: item.body) else { continue }
+            let result = (try? e2ee.decrypt(envelopeJSON: body, chatId: chatId,
+                                            fromUserId: item.from, fromDeviceId: item.fromDevice))
+                ?? .undecryptable(reason: "exception")
+            if case .undecryptable(let reason) = result, Self.retryableReasons.contains(reason) {
+                continue // ключа всё ещё нет
+            }
+            await storeIncoming(result, chatId: chatId, msgId: item.msgId, seq: item.seq,
+                                from: item.from, sentAt: item.sentAt, ts: item.ts)
+            try? await db.write { dbc in
+                try dbc.execute(sql: "DELETE FROM pendingDecrypt WHERE chatId = ? AND msgId = ?",
+                                arguments: [chatId, item.msgId])
+            }
+            madeProgress = true
+        }
+        // распространение sender-key могло разблокировать ещё сообщения
+        if madeProgress { await retryPending(chatId: chatId) }
     }
 
     private func storeIncoming(_ result: DecryptedIncoming, chatId: String, msgId: String,
@@ -268,12 +336,9 @@ public actor SyncEngine {
                 let ttl = try Int.fetchOne(dbc, sql: "SELECT ttlSeconds FROM chat WHERE id = ?", arguments: [chatId]) ?? 0
                 if ttl > 0 { msg.expiresAt = Date().timeIntervalSince1970 + Double(ttl) }
                 try msg.save(dbc)
-                try dbc.execute(
-                    sql: """
-                    UPDATE chat SET lastActivityAt = ?,
-                    unreadCount = unreadCount + CASE WHEN ? THEN 0 ELSE 1 END WHERE id = ?
-                    """,
-                    arguments: [max(ts, sentAt), from == ownUserId, chatId])
+                // unreadCount пересчитывается в applyIncomingMessage как lastSeq - myReadUpTo
+                try dbc.execute(sql: "UPDATE chat SET lastActivityAt = ? WHERE id = ?",
+                                arguments: [max(ts, sentAt), chatId])
             }
         }
     }
@@ -297,8 +362,15 @@ public actor SyncEngine {
                 """,
                 arguments: [msgId, seq, f.ts, clientMsgId])
             try dbc.execute(sql: "DELETE FROM outbox WHERE clientMsgId = ?", arguments: [clientMsgId])
-            try dbc.execute(sql: "UPDATE chat SET syncedSeq = MAX(syncedSeq, ?), lastSeq = MAX(lastSeq, ?), lastActivityAt = ? WHERE id = ?",
-                            arguments: [seq, seq, f.ts ?? Date().timeIntervalSince1970, chatId])
+            // своё отправленное считается прочитанным мной → myReadUpTo растёт, бейдж не копится
+            try dbc.execute(
+                sql: """
+                UPDATE chat SET
+                  syncedSeq = CASE WHEN ? = syncedSeq + 1 THEN ? ELSE syncedSeq END,
+                  lastSeq = MAX(lastSeq, ?), myReadUpTo = MAX(myReadUpTo, ?),
+                  lastActivityAt = ? WHERE id = ?
+                """,
+                arguments: [seq, seq, seq, seq, f.ts ?? Date().timeIntervalSince1970, chatId])
         }
     }
 
@@ -357,6 +429,10 @@ public actor SyncEngine {
                                              userId: self.ownUserId, emoji: content.emoji)
             }
         }
+        outboxWakeup.continuation.yield()
+    }
+
+    private func wakeOutbox() {
         outboxWakeup.continuation.yield()
     }
 
@@ -425,18 +501,21 @@ public actor SyncEngine {
             try await ws.send(.send(chatId: item.chatId, clientMsgId: item.clientMsgId,
                                     sentAt: item.createdAt, body: skm))
         }
-        // outbox-строка удалится по "sent" ack; здесь только помечаем "в полёте"
+        // outbox-строка удалится по "sent" ack; здесь только помечаем «в полёте».
+        // attempts НЕ трогаем: успешная отправка без ack — не ошибка (сервер дедуплицирует повтор)
         try await db.write { dbc in
-            try dbc.execute(sql: "UPDATE outbox SET state = 'inflight', attempts = attempts + 1 WHERE clientMsgId = ?",
+            try dbc.execute(sql: "UPDATE outbox SET state = 'inflight' WHERE clientMsgId = ?",
                             arguments: [item.clientMsgId])
         }
-        // страховка: если ack не пришёл за 15с — вернуть в ready (идемпотентно по clientMsgId)
-        Task { [db, clientMsgId = item.clientMsgId] in
+        // страховка: если ack не пришёл за 15с — вернуть в ready и разбудить отправку
+        Task { [weak self, db, clientMsgId = item.clientMsgId] in
             try? await Task.sleep(nanoseconds: 15_000_000_000)
-            try? await db.write { dbc in
+            let reverted = (try? await db.write { dbc -> Bool in
                 try dbc.execute(sql: "UPDATE outbox SET state = 'ready' WHERE clientMsgId = ? AND state = 'inflight'",
                                 arguments: [clientMsgId])
-            }
+                return dbc.changesCount > 0
+            }) ?? false
+            if reverted { await self?.wakeOutbox() }
         }
     }
 
@@ -506,7 +585,8 @@ public actor SyncEngine {
               myReadUpTo = MAX(chat.myReadUpTo, excluded.myReadUpTo),
               peerReadUpTo = MAX(chat.peerReadUpTo, excluded.peerReadUpTo),
               peerDeliveredUpTo = MAX(chat.peerDeliveredUpTo, excluded.peerDeliveredUpTo),
-              isRequest = excluded.isRequest, iAccepted = excluded.iAccepted
+              isRequest = excluded.isRequest, iAccepted = excluded.iAccepted,
+              unreadCount = MAX(0, MAX(chat.lastSeq, excluded.lastSeq) - MAX(chat.myReadUpTo, excluded.myReadUpTo))
             """,
             arguments: [s.chatId, s.kind, s.title, s.avatarId, s.description, s.createdBy,
                         s.createdAt, s.pinnedMsgId, s.lastSeq, myRead, peerRead, peerDelivered,

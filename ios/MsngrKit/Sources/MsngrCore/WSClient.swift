@@ -65,8 +65,12 @@ public actor WSClient {
     }
 
     private func reconnectNow() {
+        pingTimer?.cancel()
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
+        let wasConnected = isConnected
+        setDisconnected()
+        if wasConnected { continuation?.yield(.disconnected) }
         connect()
     }
 

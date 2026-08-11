@@ -58,23 +58,27 @@ enum BubbleLayout {
         init(_ p: BubbleLayoutPlan) { self.plan = p }
     }
 
-    static func cacheKey(_ msg: Message, width: CGFloat, grouped: Bool, showName: Bool) -> NSString {
-        let ver = "\(msg.text ?? "")|\(msg.status.rawValue)|\(msg.edited)|\(msg.reactions.map { "\($0.key)\($0.value.count)" }.sorted().joined())|\(msg.deletedForAll)"
-        return "\(msg.id)|\(Int(width))|\(grouped)|\(showName)|\(ver.hashValue)" as NSString
+    static func cacheKey(_ msg: Message, width: CGFloat, tightGap: Bool, showTail: Bool,
+                         showName: Bool, ownId: String) -> NSString {
+        let reactions = msg.reactions.map { "\($0.key)\($0.value.count)\($0.value.contains(ownId) ? "*" : "")" }.sorted().joined()
+        let ver = "\(msg.text ?? "")|\(msg.status.rawValue)|\(msg.edited)|\(reactions)|\(msg.deletedForAll)"
+        return "\(msg.id)|\(Int(width))|\(tightGap)|\(showTail)|\(showName)|\(ver.hashValue)" as NSString
     }
 
-    static func plan(for msg: Message, width: CGFloat, grouped: Bool,
+    static func plan(for msg: Message, width: CGFloat, tightGap: Bool, showTail: Bool,
                      showName: Bool, authorName: String?) -> BubbleLayoutPlan {
-        let key = cacheKey(msg, width: width, grouped: grouped, showName: showName)
+        let key = cacheKey(msg, width: width, tightGap: tightGap, showTail: showTail,
+                           showName: showName, ownId: OwnUser.id)
         if let boxed = cache.object(forKey: key) { return boxed.plan }
-        let p = compute(for: msg, width: width, grouped: grouped, showName: showName, authorName: authorName)
+        let p = compute(for: msg, width: width, tightGap: tightGap, showTail: showTail,
+                        showName: showName, authorName: authorName)
         cache.setObject(Box(p), forKey: key)
         return p
     }
 
     // MARK: - Вычисление
 
-    private static func compute(for msg: Message, width: CGFloat, grouped: Bool,
+    private static func compute(for msg: Message, width: CGFloat, tightGap: Bool, showTail: Bool,
                                 showName: Bool, authorName: String?) -> BubbleLayoutPlan {
         let maxBubbleWidth = floor(width * Theme.bubbleMaxWidthRatio)
         let timeString = Self.timeString(msg)
@@ -206,7 +210,8 @@ enum BubbleLayout {
         if !msg.reactions.isEmpty {
             let ownId = OwnUser.id
             var rx = hPadding
-            var ry = bubbleHeight - vPadding + 4
+            // под медиа-only бабблом капсулы садятся чуть ниже края фото, без наложения
+            var ry = statusOnMedia ? bubbleHeight + 4 : bubbleHeight - vPadding + 4
             let capsuleH: CGFloat = 26
             for (emoji, users) in msg.reactions.sorted(by: { $0.value.count > $1.value.count }) {
                 let label = users.count > 1 ? "\(emoji) \(users.count)" : emoji
@@ -231,15 +236,15 @@ enum BubbleLayout {
             nf.size.width = bubbleWidth - 2 * hPadding
             authorNameFrame = nf
         }
-        // статус на медиа прижимаем к реальному краю баббла
+        // статус прижимаем к правому краю баббла
         if statusOnMedia {
             statusFrame.origin.x = bubbleWidth - statusWidth - 18
-        } else if msg.isOutgoing || true {
+        } else {
             statusFrame.origin.x = bubbleWidth - statusWidth - hPadding
         }
 
         return BubbleLayoutPlan(
-            cellHeight: bubbleHeight + (grouped ? groupGap : normalGap),
+            cellHeight: bubbleHeight + (tightGap ? groupGap : normalGap),
             bubbleFrame: bubbleFrame,
             textFrame: textFrame, text: attrText,
             statusFrame: statusFrame, statusOnMedia: statusOnMedia,
@@ -253,7 +258,7 @@ enum BubbleLayout {
             reactionsFrames: reactionsFrames.map { ($0.0, $0.1, $0.2, $0.3) },
             reactionsHeight: reactionsHeight,
             isOutgoing: msg.isOutgoing,
-            showTail: !grouped,
+            showTail: showTail,
             timeString: timeString,
             edited: msg.edited,
             statusWidth: statusWidth)
@@ -283,10 +288,14 @@ enum BubbleLayout {
         return ceil(lineRect.width)
     }
 
+    private static let hmFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
     static func timeString(_ msg: Message) -> String {
-        let fmt = DateFormatter()
-        fmt.dateFormat = "HH:mm"
-        return fmt.string(from: Date(timeIntervalSince1970: msg.serverTs ?? msg.sentAt))
+        hmFormatter.string(from: Date(timeIntervalSince1970: msg.serverTs ?? msg.sentAt))
     }
 
     static func statusWidth(_ msg: Message, timeString: String) -> CGFloat {
