@@ -126,18 +126,26 @@ public actor SyncEngine {
             }
         case "chat":
             if let state = f.state {
+                // старый состав фиксируем ДО перезаписи member-таблицы
+                let previousMembers: [String] = (try? await db.read { dbc in
+                    try String.fetchAll(dbc, sql: "SELECT userId FROM member WHERE chatId = ?", arguments: [state.chatId])
+                }) ?? []
                 try? await db.write { [ownUserId] dbc in
                     try SyncEngine.upsertChatState(dbc, state, ownUserId: ownUserId, flags: nil)
                 }
                 // выгнали из чата → чат удаляется локально
-                if let state2 = f.state, !state2.members.contains(where: { $0.userId == ownUserId }) {
+                if !state.members.contains(where: { $0.userId == ownUserId }) {
                     try? await db.write { dbc in
-                        try dbc.execute(sql: "DELETE FROM chat WHERE id = ?", arguments: [state2.chatId])
+                        try dbc.execute(sql: "DELETE FROM chat WHERE id = ?", arguments: [state.chatId])
                     }
                 }
-                // состав группы изменился → ротация sender key при удалении участников
-                if f.event == "members", let chatId = f.chatId, state.kind == "group" {
-                    try? e2ee.rotateSenderKeyIfMembersShrunk(chatId: chatId, currentMembers: state.members.map(\.userId), db: db)
+                // кто-то покинул группу → ротация нашей sender-key цепочки,
+                // чтобы ушедший не мог расшифровывать новые сообщения (forward secrecy)
+                if f.event == "members", state.kind == "group" {
+                    let current = Set(state.members.map(\.userId))
+                    if !Set(previousMembers).subtracting(current).isEmpty {
+                        try? e2ee.rotateSenderKey(chatId: state.chatId)
+                    }
                 }
             }
         case "deleted":
@@ -533,18 +541,5 @@ public actor SyncEngine {
         let json = String(data: try JSONEncoder().encode(reactions), encoding: .utf8)!
         try dbc.execute(sql: "UPDATE message SET reactions = ? WHERE id = ?",
                         arguments: [json, row["id"] as String])
-    }
-}
-
-extension E2EEManager {
-    /// При уменьшении состава группы: наша исходящая цепочка ротируется,
-    /// чтобы ушедший не мог читать новые сообщения.
-    func rotateSenderKeyIfMembersShrunk(chatId: String, currentMembers: [String], db: DatabaseQueue) throws {
-        let known = try db.read { dbc in
-            try String.fetchAll(dbc, sql: "SELECT userId FROM member WHERE chatId = ?", arguments: [chatId])
-        }
-        if Set(known).subtracting(currentMembers).isEmpty == false {
-            try rotateSenderKey(chatId: chatId)
-        }
     }
 }

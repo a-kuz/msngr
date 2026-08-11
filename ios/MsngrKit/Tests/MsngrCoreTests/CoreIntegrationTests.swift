@@ -195,6 +195,33 @@ final class CoreIntegrationTests: XCTestCase {
         }
         XCTAssertTrue(reacted, "реакция не дошла до Алисы")
 
+        // forward secrecy: удаляем Кэрол, Алиса ротирует sender key и шлёт новое.
+        // Боб читает, Кэрол — уже нет.
+        try await alice.api.updateMembers(chatId, add: [], remove: [carol.userId])
+        _ = try await waitUntil {
+            try await alice.db.read { dbc in
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM member WHERE chatId = ? AND userId = ?",
+                                 arguments: [chatId, carol.userId]) == 0
+            }
+        }
+        var after = ContentPayload(kind: "text")
+        after.text = "после удаления Кэрол"
+        try await alice.engine.enqueue(content: after, chatId: chatId)
+        let bobGot = try await waitUntil {
+            try await bob.db.read { dbc in
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'после удаления Кэрол'",
+                                 arguments: [chatId]) == 1
+            }
+        }
+        XCTAssertTrue(bobGot, "Боб должен получить сообщение после ротации")
+        // дать времени на возможную (нежелательную) доставку Кэрол
+        try await Task.sleep(nanoseconds: 1_500_000_000)
+        let carolLeaked = try await carol.db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'после удаления Кэрол'",
+                             arguments: [chatId]) ?? 0
+        }
+        XCTAssertEqual(carolLeaked, 0, "удалённый участник не должен читать новые сообщения")
+
         await alice.engine.stop()
         await bob.engine.stop()
         await carol.engine.stop()

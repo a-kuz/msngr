@@ -45,6 +45,34 @@ targets:
         MARKETING_VERSION: 0.1.0
         GENERATE_INFOPLIST_FILE: false
 
+  MsngrMac:
+    type: application
+    platform: macOS
+    sources: [MsngrMac]
+    entitlements:
+      path: MsngrMac/MsngrMac.entitlements
+    dependencies:
+      - package: MsngrKit
+        product: MsngrCrypto
+      - package: MsngrKit
+        product: MsngrCore
+    info:
+      path: MsngrMac/Info.plist
+      properties:
+        CFBundleDisplayName: Msngr
+        LSMinimumSystemVersion: "14.0"
+        NSMicrophoneUsageDescription: "Запись голосовых сообщений"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.enface.MsngrMac
+        SWIFT_VERSION: "5.9"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 0.1.0
+        GENERATE_INFOPLIST_FILE: false
+
   NotificationService:
     type: app-extension
     platform: iOS
