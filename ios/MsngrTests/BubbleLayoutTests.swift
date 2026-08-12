@@ -72,6 +72,56 @@ final class BubbleLayoutTests: XCTestCase {
         XCTAssertGreaterThan(p.statusFrame.minX, mf.midX)
     }
 
+    private func withReactions(_ text: String, _ reactions: [String: [String]]) -> BubbleLayoutPlan {
+        var m = outgoing(text)
+        m.reactions = reactions
+        return BubbleLayout.plan(for: m, width: width, tightGap: false,
+                                 showTail: true, showName: false, authorName: nil)
+    }
+
+    /// Короткий текст: текст + реакция + время помещаются в одну строку.
+    func testShortTextReactionAndTimeOnSameLine() {
+        let p = withReactions("Ок", ["👍": ["u1"]])
+        let chip = try! XCTUnwrap(p.reactionsFrames.first)
+        let tf = try! XCTUnwrap(p.textFrame)
+        // капсула справа от текста, время справа от капсулы, всё на одной линии
+        XCTAssertGreaterThan(chip.frame.minX, tf.minX)
+        XCTAssertGreaterThan(p.statusFrame.minX, chip.frame.minX)
+        XCTAssertLessThan(abs(p.statusFrame.midY - chip.frame.midY), 6,
+                          "время и реакция должны быть на одной линии")
+    }
+
+    /// Многострочный текст с реакцией: время НЕ на линии последней строки текста,
+    /// а на линии реакций.
+    func testTimeMovesToReactionRowForMultilineText() {
+        let p = withReactions("Довольно длинное сообщение, которое точно занимает несколько строк подряд",
+                              ["😂": ["u1", "u2"], "🔥": ["u3"]])
+        let tf = try! XCTUnwrap(p.textFrame)
+        let chip = try! XCTUnwrap(p.reactionsFrames.first)
+        XCTAssertGreaterThanOrEqual(p.statusFrame.minY, tf.maxY - 2,
+            "время не должно оставаться в последней строке текста при наличии реакций")
+        XCTAssertLessThan(abs(p.statusFrame.midY - chip.frame.midY), 8,
+            "время должно стоять на линии реакций")
+        XCTAssertGreaterThan(p.statusFrame.minX, chip.frame.maxX,
+            "время правее капсул реакций")
+    }
+
+    /// Много реакций — переносятся на несколько рядов, все внутри баббла.
+    func testManyReactionsWrapToMultipleRows() {
+        let emojis = ["😂", "🔥", "❤️", "👍", "😮", "😢", "🎉", "🙏", "👏", "💯"]
+        var reactions: [String: [String]] = [:]
+        for (i, e) in emojis.enumerated() { reactions[e] = ["u\(i)"] }
+        let p = withReactions("Текст", reactions)
+        XCTAssertEqual(p.reactionsFrames.count, emojis.count)
+        let rows = Set(p.reactionsFrames.map { Int($0.frame.minY.rounded()) })
+        XCTAssertGreaterThan(rows.count, 1, "капсулы должны переноситься на новые ряды")
+        for r in p.reactionsFrames {
+            XCTAssertLessThanOrEqual(r.frame.maxX, p.bubbleFrame.width,
+                                     "капсула не должна вылезать за баббл")
+        }
+        XCTAssertLessThanOrEqual(p.statusFrame.maxX, p.bubbleFrame.width)
+    }
+
     /// Исходящее видимо шире статуса; ширина баббла не схлопывается уже времени.
     func testBubbleNotNarrowerThanStatus() {
         let p = plan("!")

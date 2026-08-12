@@ -174,22 +174,108 @@ enum BubbleLayout {
             y = f.maxY
         }
 
-        // --- Размещение статуса: три случая как в TG ---
-        var statusFrame: CGRect
+        // --- Реакции: считаем капсулы заранее, размещение статуса зависит от них ---
+        struct Chip { let emoji: String; let count: Int; let mine: Bool; let width: CGFloat }
+        let chipH: CGFloat = 26
+        let chipGap: CGFloat = 4
+        let ownId = OwnUser.id
+        let chips: [Chip] = msg.reactions
+            .sorted { $0.value.count > $1.value.count }
+            .map { emoji, users in
+                let label = users.count > 1 ? "\(emoji) \(users.count)" : emoji
+                let w = label.size(withAttributes: [.font: UIFont.systemFont(ofSize: 14)]).width + 18
+                return Chip(emoji: emoji, count: users.count, mine: users.contains(ownId), width: w)
+            }
+
+        let maxContent = maxBubbleWidth - 2 * hPadding
         let gap: CGFloat = 6
+        var statusFrame: CGRect
+        var reactionsFrames: [(String, Int, Bool, CGRect)] = []
+        var reactionsHeight: CGFloat = 0
+
         if statusOnMedia, let mf = mediaFrame {
+            // статус — капсулой поверх медиа; реакции лягут ниже отдельным блоком
             statusFrame = CGRect(x: mf.maxX - statusWidth - 16, y: mf.maxY - 26,
                                  width: statusWidth + 10, height: 20)
+            if !chips.isEmpty {
+                var rx = hPadding
+                var ry = mf.maxY + 4
+                for chip in chips {
+                    if rx > hPadding, rx + chip.width > maxBubbleWidth - hPadding {
+                        rx = hPadding
+                        ry += chipH + chipGap
+                    }
+                    reactionsFrames.append((chip.emoji, chip.count, chip.mine,
+                                            CGRect(x: rx, y: ry, width: chip.width, height: chipH)))
+                    rx += chip.width + chipGap
+                }
+                reactionsHeight = ry + chipH - mf.maxY
+                y = ry + chipH
+            }
+        } else if !chips.isEmpty {
+            // есть реакции → время привязано к ним, а не к последней строке текста
+            let lastLine = (textFrame != nil && attrText != nil)
+                ? Self.lastLineWidth(attrText!, maxWidth: maxContent) : 0
+            let singleLineText = textFrame.map { $0.height <= ceil(textFont.lineHeight) + 2 } ?? true
+            let chipsWidth = chips.reduce(0) { $0 + $1.width } + CGFloat(chips.count - 1) * chipGap
+            let inlineAll = singleLineText
+                && lastLine + gap + chipsWidth + gap + statusWidth <= maxContent
+
+            if inlineAll {
+                // короткий текст: текст + реакции + время в одну строку
+                let baseY = textFrame?.minY ?? y
+                let lineH = max(textFrame?.height ?? chipH, chipH)
+                var rx = hPadding + lastLine + (lastLine > 0 ? gap : 0)
+                for chip in chips {
+                    reactionsFrames.append((chip.emoji, chip.count, chip.mine,
+                                            CGRect(x: rx, y: baseY + (lineH - chipH) / 2,
+                                                   width: chip.width, height: chipH)))
+                    rx += chip.width + chipGap
+                }
+                contentWidth = max(contentWidth, rx - chipGap - hPadding + gap + statusWidth)
+                statusFrame = CGRect(x: hPadding + contentWidth - statusWidth,
+                                     y: baseY + (lineH - 16) / 2, width: statusWidth, height: 16)
+                y = baseY + lineH
+                reactionsHeight = 0
+            } else {
+                // реакции — своими рядами под текстом; время садится в конец последнего
+                // ряда, если помещается, иначе уходит на строку ниже
+                var rx = hPadding
+                var ry = y + 4
+                for chip in chips {
+                    if rx > hPadding, rx + chip.width > maxBubbleWidth - hPadding {
+                        rx = hPadding
+                        ry += chipH + chipGap
+                    }
+                    reactionsFrames.append((chip.emoji, chip.count, chip.mine,
+                                            CGRect(x: rx, y: ry, width: chip.width, height: chipH)))
+                    rx += chip.width + chipGap
+                    contentWidth = max(contentWidth, rx - chipGap - hPadding)
+                }
+                let usedInLastRow = rx - chipGap - hPadding
+                if usedInLastRow + gap + statusWidth <= maxContent {
+                    contentWidth = max(contentWidth, usedInLastRow + gap + statusWidth)
+                    statusFrame = CGRect(x: hPadding + contentWidth - statusWidth,
+                                         y: ry + (chipH - 16) / 2, width: statusWidth, height: 16)
+                    y = ry + chipH
+                } else {
+                    statusFrame = CGRect(x: hPadding + contentWidth - statusWidth,
+                                         y: ry + chipH + 2, width: statusWidth, height: 16)
+                    y = ry + chipH + 18
+                }
+                reactionsHeight = y - (textFrame?.maxY ?? y)
+            }
         } else if let tf = textFrame, let at = attrText {
-            let lastLineWidth = Self.lastLineWidth(at, maxWidth: maxBubbleWidth - 2 * hPadding)
-            if lastLineWidth + gap + statusWidth <= maxBubbleWidth - 2 * hPadding {
-                // случай 1/3: статус в последней строке
+            // без реакций — три случая размещения времени как в TG
+            let lastLineWidth = Self.lastLineWidth(at, maxWidth: maxContent)
+            if lastLineWidth + gap + statusWidth <= maxContent {
+                // случай 1/3: статус в последней строке текста
                 let bubbleContentW = max(contentWidth, lastLineWidth + gap + statusWidth)
                 contentWidth = bubbleContentW
                 statusFrame = CGRect(x: hPadding + bubbleContentW - statusWidth,
                                      y: tf.maxY - 16, width: statusWidth, height: 16)
             } else {
-                // случай 2: статус на своей строке
+                // случай 2: статус выталкивается на свою строку
                 statusFrame = CGRect(x: hPadding + contentWidth - statusWidth,
                                      y: y + 2, width: statusWidth, height: 16)
                 y += 18
@@ -205,32 +291,9 @@ enum BubbleLayout {
             ? mediaFrame!.width
             : contentWidth + 2 * hPadding
         bubbleWidth = max(bubbleWidth, statusWidth + 2 * hPadding)
+        for r in reactionsFrames { bubbleWidth = max(bubbleWidth, r.3.maxX + hPadding) }
         var bubbleHeight = max(y, mediaFrame?.maxY ?? 0)
-        if statusOnMedia { bubbleHeight = mediaFrame!.maxY }
-
-        // --- Реакции: капсулы флоу-лейаутом ПОД контентом внутри баббла ---
-        var reactionsFrames: [(String, Int, Bool, CGRect)] = []
-        var reactionsHeight: CGFloat = 0
-        if !msg.reactions.isEmpty {
-            let ownId = OwnUser.id
-            var rx = hPadding
-            // под медиа-only бабблом капсулы садятся чуть ниже края фото, без наложения
-            var ry = statusOnMedia ? bubbleHeight + 4 : bubbleHeight - vPadding + 4
-            let capsuleH: CGFloat = 26
-            for (emoji, users) in msg.reactions.sorted(by: { $0.value.count > $1.value.count }) {
-                let label = users.count > 1 ? "\(emoji) \(users.count)" : emoji
-                let w = label.size(withAttributes: [.font: UIFont.systemFont(ofSize: 14)]).width + 18
-                if rx + w > maxBubbleWidth - hPadding {
-                    rx = hPadding
-                    ry += capsuleH + 4
-                }
-                reactionsFrames.append((emoji, users.count, users.contains(ownId), CGRect(x: rx, y: ry, width: w, height: capsuleH)))
-                rx += w + 4
-                bubbleWidth = max(bubbleWidth, rx + hPadding)
-            }
-            reactionsHeight = ry + capsuleH + vPadding - bubbleHeight + vPadding
-            bubbleHeight = ry + capsuleH + vPadding
-        }
+        if statusOnMedia && chips.isEmpty { bubbleHeight = mediaFrame!.maxY }
 
         let bubbleX = msg.isOutgoing ? safeWidth - sideMargin - bubbleWidth : sideMargin
         let bubbleFrame = CGRect(x: bubbleX, y: 0, width: bubbleWidth, height: bubbleHeight)
