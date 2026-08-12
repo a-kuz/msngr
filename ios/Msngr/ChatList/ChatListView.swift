@@ -37,6 +37,7 @@ struct ChatListView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showNewChat = true } label: { Image(systemName: "square.and.pencil") }
+                        .accessibilityIdentifier("chatlist.new")
                 }
             }
             .navigationDestination(for: String.self) { chatId in

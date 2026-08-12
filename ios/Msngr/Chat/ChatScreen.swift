@@ -30,6 +30,9 @@ struct ChatScreen: View {
                 MessagesView(vc: messagesVC, model: model,
                              onTapMedia: { msg, idx, _ in viewerMedia = (msg, idx) },
                              showScrollDown: $showScrollDown)
+                if model.keyChangePending {
+                    keyChangeBanner
+                }
                 if model.chat?.isRequest == true {
                     requestBanner
                 } else {
@@ -49,6 +52,11 @@ struct ChatScreen: View {
             model.start()
             text = model.chat?.draft ?? ""
             NotificationCoordinator.shared.activeChatId = chatId
+        }
+        // chat грузится асинхронно: в onAppear он ещё nil — черновик заливаем,
+        // когда чат реально появился (и только в пустое поле)
+        .onChange(of: model.chat?.id) { _, _ in
+            if text.isEmpty, let draft = model.chat?.draft { text = draft }
         }
         .onDisappear {
             let draft = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -92,7 +100,7 @@ struct ChatScreen: View {
                 AvatarView(name: model.headerTitle,
                            avatarId: model.chat?.kind == .group ? model.chat?.avatarId : model.peer?.avatarId,
                            online: model.peer?.online ?? false)
-                    .frame(width: 34, height: 34)
+                    .frame(width: 40, height: 40)
                 VStack(alignment: .leading, spacing: 0) {
                     Text(model.headerTitle)
                         .font(.system(size: 16, weight: .semibold))
@@ -160,6 +168,31 @@ struct ChatScreen: View {
         }
         .padding()
         .frame(maxWidth: .infinity)
+        .background(.bar)
+    }
+
+    /// TOFU-баннер: ключ собеседника сменился, исходящие заблокированы.
+    private var keyChangeBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.shield.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Код безопасности изменился")
+                    .font(.footnote.weight(.semibold))
+                Text("Сообщения не отправляются, пока вы не примете новый ключ")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Принять") {
+                withAnimation(Theme.springFast) { model.acceptKeyChange() }
+            }
+            .font(.footnote.weight(.semibold))
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .background(.bar)
     }
 

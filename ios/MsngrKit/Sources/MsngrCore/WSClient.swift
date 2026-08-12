@@ -154,7 +154,8 @@ public actor WSClient {
         awaitingPong = false
         pingTimer = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 20_000_000_000)
+                // 12с: presence на сервере живёт по свежести пинга (TTL 35с)
+                try? await Task.sleep(nanoseconds: 12_000_000_000)
                 guard let self else { return }
                 await self.pingTick()
             }
@@ -170,6 +171,17 @@ public actor WSClient {
         }
         awaitingPong = true
         Task { try? await self.sendRaw(Data(#"{"t":"ping"}"#.utf8)) }
+    }
+
+    /// Пинок из форграунда: мёртвый после фона сокет переподключается сразу,
+    /// живой — подтверждает presence немедленным пингом.
+    public func nudge() {
+        if task == nil {
+            connectIfNeeded()
+        } else {
+            awaitingPong = false
+            Task { try? await self.sendRaw(Data(#"{"t":"ping"}"#.utf8)) }
+        }
     }
 
     public func send(_ frame: WSOutgoing) async throws {

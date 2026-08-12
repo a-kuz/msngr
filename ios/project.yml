@@ -58,6 +58,20 @@ targets:
         GENERATE_INFOPLIST_FILE: true
         PRODUCT_BUNDLE_IDENTIFIER: ai.enface.MsngrTests
 
+  MsngrUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [MsngrUITests]
+    dependencies:
+      - target: Msngr
+    settings:
+      base:
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: true
+        PRODUCT_BUNDLE_IDENTIFIER: ai.enface.MsngrUITests
+        TEST_TARGET_NAME: Msngr
+
   MsngrMac:
     type: application
     platform: macOS

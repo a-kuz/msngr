@@ -36,7 +36,13 @@ final class MessageContextOverlay: UIView {
 
     static func present(over bubble: UIView, in window: UIWindow, isOutgoing: Bool,
                         myReaction: String?, items: [Item], onReact: @escaping (String) -> Void) {
-        guard let snap = bubble.snapshotView(afterScreenUpdates: false) else { return }
+        // рендер в картинку: snapshotView возвращает nil/пустоту для бабблов
+        // выше экрана; рендерим только верх (больше экрана всё равно не показать)
+        let renderH = min(bubble.bounds.height, window.bounds.height * 1.2)
+        let renderer = UIGraphicsImageRenderer(bounds: CGRect(x: 0, y: 0, width: bubble.bounds.width, height: renderH))
+        let image = renderer.image { ctx in bubble.layer.render(in: ctx.cgContext) }
+        let snap = UIImageView(image: image)
+        snap.contentMode = .scaleToFill
         let frame = bubble.convert(bubble.bounds, to: window)
         let overlay = MessageContextOverlay(snapshot: snap, originFrame: frame, isOutgoing: isOutgoing,
                                             myReaction: myReaction, items: items, onReact: onReact)
@@ -57,7 +63,10 @@ final class MessageContextOverlay: UIView {
 
         blurView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         addSubview(blurView)
-        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(backgroundTap(_:))))
+        let tap = UITapGestureRecognizer(target: self, action: #selector(backgroundTap(_:)))
+        // иначе жест отменяет тачи кнопок меню и реакций — ни одна не нажимается
+        tap.cancelsTouchesInView = false
+        addGestureRecognizer(tap)
 
         snapshot.frame = originFrame
         addSubview(snapshot)
@@ -76,15 +85,24 @@ final class MessageContextOverlay: UIView {
     // MARK: - Геометрия
 
     /// Целевая позиция баббла: сдвигаем по вертикали так, чтобы реакции сверху
-    /// и меню снизу поместились в safe area. По горизонтали баббл не трогаем.
+    /// и меню снизу поместились в safe area. Баббл выше свободного места —
+    /// уменьшаем (как TG), сохраняя прижатие к своей стороне.
     private func targetBubbleFrame() -> CGRect {
         let safe = safeAreaInsets
         let menuH = menuHeight(for: items)
         let topNeeded = Self.barHeight + Self.gap
         let bottomNeeded = Self.gap + menuH
         let minY = safe.top + 8 + topNeeded
-        let maxY = bounds.height - safe.bottom - 8 - bottomNeeded - originFrame.height
+        let availH = bounds.height - safe.bottom - 8 - bottomNeeded - minY
         var f = originFrame
+        if f.height > availH {
+            // гигантский баббл: не масштабируем (получается «нитка»), а кропим —
+            // показываем верхнюю часть 1:1, contentMode .top ставит animateIn
+            f.size.height = availH
+            f.origin.y = minY
+            return f
+        }
+        let maxY = bounds.height - safe.bottom - 8 - bottomNeeded - f.height
         f.origin.y = min(max(f.origin.y, minY), max(maxY, minY))
         return f
     }
@@ -225,6 +243,11 @@ final class MessageContextOverlay: UIView {
     private func animateIn() {
         layoutIfNeeded()
         let target = targetBubbleFrame()
+        if target.height < originFrame.height - 0.5, let iv = snapshot as? UIImageView {
+            iv.contentMode = .top
+            iv.clipsToBounds = true
+            iv.layer.cornerRadius = Theme.bubbleCorner
+        }
         layoutReactionBar(bubble: target)
         layoutMenu(bubble: target)
 

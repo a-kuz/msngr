@@ -18,7 +18,9 @@ export type ClientFrame =
   | { t: "read"; chatId: string; upToSeq: number }
   | { t: "typing"; chatId: string; kind: string | null }
   | { t: "delete"; chatId: string; msgIds: string[]; forAll: boolean }
-  | { t: "ping" };
+  | { t: "ping" }
+  | { t: "bg" }   // приложение ушло в фон: presence offline немедленно
+  | { t: "fg" };  // вернулось: presence online
 
 // --- WS frames: server -> client ---
 export type ServerFrame =

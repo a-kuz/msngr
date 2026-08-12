@@ -31,14 +31,16 @@ struct InputBar: View {
                             Label("Файл", systemImage: "doc")
                         }
                     } label: {
-                        Image(systemName: "paperclip")
-                            .font(.system(size: 22))
+                        Image(systemName: "plus")
+                            .font(.system(size: 22, weight: .medium))
                             .foregroundStyle(.secondary)
                             .frame(width: 36, height: 36)
                     }
+                    .accessibilityIdentifier("chat.attach")
                     GrowingTextView(text: $text, height: $inputHeight) { model.textChanged($0) }
+                        .frame(maxWidth: .infinity)
                         .frame(height: inputHeight)
-                        .animation(Theme.springFast, value: inputHeight)
+                        .animation(.easeOut(duration: 0.16), value: inputHeight)
                 }
                 actionButton
             }
@@ -102,6 +104,7 @@ struct InputBar: View {
                     .font(.system(size: 32))
                     .foregroundStyle(Theme.accent)
             }
+            .accessibilityIdentifier("chat.send")
             .transition(.scale.combined(with: .opacity))
         } else if recordingLocked {
             Button {
@@ -234,7 +237,12 @@ struct GrowingTextView: UIViewRepresentable {
         tv.textContainer.lineFragmentPadding = 2
         tv.delegate = context.coordinator
         tv.isScrollEnabled = false
+        tv.accessibilityIdentifier = "chat.input"
         tv.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        // длинная строка без пробелов раздувает intrinsic width UITextView
+        // и поле выталкивает кнопки за экран
+        tv.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        tv.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         let placeholder = UILabel()
         placeholder.tag = 777

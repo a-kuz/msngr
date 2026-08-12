@@ -346,6 +346,16 @@ public final class IdentityStore: @unchecked Sendable {
         }
     }
 
+    /// Есть ли непринятая смена ключа у собеседника.
+    public func pendingKeyChange(userId: String) throws -> Bool {
+        try db.read { dbc in
+            let row = try Row.fetchOne(
+                dbc, sql: "SELECT changedPending FROM trustedIdentity WHERE userId = ?",
+                arguments: [userId])
+            return (row?["changedPending"] as String?) != nil
+        }
+    }
+
     /// Пользователь явно принял новый ключ после предупреждения.
     public func acceptChangedKey(userId: String) throws {
         try db.write { dbc in

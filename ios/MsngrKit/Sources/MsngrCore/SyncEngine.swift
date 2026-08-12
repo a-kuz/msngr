@@ -18,6 +18,8 @@ public actor SyncEngine {
 
     /// typing-события не пишутся в БД — транслируются подписчикам UI
     public private(set) var typingStream = AsyncStream<(chatId: String, userId: String, kind: String?)>.makeStream()
+    /// состояние соединения для UI (сабтайтл «подключение…» вместо стейл-презенса)
+    public private(set) var connectionStream = AsyncStream<Bool>.makeStream()
 
     public init(db: DatabaseQueue, api: APIClient, e2ee: E2EEManager,
                 wsURL: URL, ownUserId: String, ownDeviceId: String) {
@@ -57,14 +59,30 @@ public actor SyncEngine {
         connected = false
     }
 
+    public var isConnected: Bool { connected }
+
+    /// Приложение ушло в фон: presence offline немедленно, не дожидаясь TTL.
+    public func appEnteredBackground() async {
+        try? await ws.sendRaw(Data(#"{"t":"bg"}"#.utf8))
+    }
+
+    /// Вернулось на экран: presence online + пинок реконнекту и outbox.
+    public func appBecameActive() async {
+        await ws.nudge()
+        try? await ws.sendRaw(Data(#"{"t":"fg"}"#.utf8))
+        outboxWakeup.continuation.yield()
+    }
+
     private func handle(_ ev: WSEvent) async {
         switch ev {
         case .connected:
             connected = true
+            connectionStream.continuation.yield(true)
             await sendSyncCursors()
             outboxWakeup.continuation.yield()
         case .disconnected:
             connected = false
+            connectionStream.continuation.yield(false)
         case .frame(let data):
             guard let frame = try? JSONDecoder().decode(WSIncoming.self, from: data) else { return }
             await apply(frame)
@@ -451,6 +469,18 @@ public actor SyncEngine {
             do {
                 try await sendOutboxItem(item)
             } catch {
+                // TOFU: ключ получателя сменился — блокируем до явного принятия,
+                // сообщение показываем как failed (баннер в чате предложит принять ключ)
+                if let ee = error as? E2EEError, case .identityChanged(let uid) = ee {
+                    try? await db.write { dbc in
+                        try dbc.execute(sql: "UPDATE outbox SET state = 'blocked' WHERE clientMsgId = ?",
+                                        arguments: [item.clientMsgId])
+                        try dbc.execute(sql: "UPDATE message SET status = -1 WHERE clientMsgId = ?",
+                                        arguments: [item.clientMsgId])
+                    }
+                    await insertSystemMessage(chatId: item.chatId, text: "identity_changed:\(uid)")
+                    continue
+                }
                 // помечаем попытку; ошибка сети → выходим, реконнект разбудит снова
                 try? await db.write { dbc in
                     try dbc.execute(sql: "UPDATE outbox SET attempts = attempts + 1 WHERE clientMsgId = ?",
@@ -520,6 +550,20 @@ public actor SyncEngine {
     }
 
     // MARK: - Пользовательские действия
+
+    /// Принять новый identity-ключ собеседника и переотправить заблокированные сообщения.
+    public func acceptKeyChange(chatId: String, peerUserId: String) async {
+        try? e2ee.store.acceptChangedKey(userId: peerUserId)
+        try? await db.write { dbc in
+            try dbc.execute(sql: """
+                UPDATE message SET status = 0 WHERE clientMsgId IN
+                (SELECT clientMsgId FROM outbox WHERE chatId = ? AND state = 'blocked')
+                """, arguments: [chatId])
+            try dbc.execute(sql: "UPDATE outbox SET state = 'ready' WHERE chatId = ? AND state = 'blocked'",
+                            arguments: [chatId])
+        }
+        wakeOutbox()
+    }
 
     public func markRead(chatId: String, upToSeq: Int) async {
         try? await db.write { dbc in

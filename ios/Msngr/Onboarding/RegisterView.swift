@@ -30,8 +30,10 @@ struct RegisterView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier("reg.username")
                     TextField("Имя", text: $displayName)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier("reg.displayName")
                 }
                 .padding(.horizontal, 32)
 
@@ -51,6 +53,7 @@ struct RegisterView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(busy || !usernameValid)
+                .accessibilityIdentifier("reg.submit")
                 .padding(.horizontal, 32)
                 Spacer()
                 Spacer()

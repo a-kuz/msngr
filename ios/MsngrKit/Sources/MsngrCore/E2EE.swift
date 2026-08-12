@@ -29,6 +29,12 @@ public enum DecryptedIncoming {
 }
 
 /// E2EE-pipeline: шифрование исходящих (pw / sender keys) и расшифровка входящих.
+public enum E2EEError: Error {
+    /// Identity-ключ получателя сменился: отправка заблокирована, пока
+    /// пользователь явно не примет новый ключ (TOFU, как в Signal).
+    case identityChanged(userId: String)
+}
+
 public final class E2EEManager: @unchecked Sendable {
     let store: IdentityStore
     let api: APIClient
@@ -129,6 +135,10 @@ public final class E2EEManager: @unchecked Sendable {
 
         for uid in targets {
             let bundles = try await deviceBundles(userId: uid)
+            if uid != ownUserId, let first = bundles.first,
+               case .changed = try store.checkTrust(userId: uid, identitySigning: first.identitySignKey) {
+                throw E2EEError.identityChanged(userId: uid)
+            }
             for bundle in bundles {
                 if uid == ownUserId && bundle.deviceId == ownDeviceId { continue }
                 let a = addr(uid, bundle.deviceId)

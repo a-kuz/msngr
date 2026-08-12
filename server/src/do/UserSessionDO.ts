@@ -2,6 +2,9 @@ import type { Env, ClientFrame, ServerFrame } from "../types";
 import { json, err, nowSec } from "../util";
 import { sendPush } from "../push/apns";
 
+/// Presence-TTL: клиент пингует каждые ~12с; тишина дольше — офлайн.
+const PRESENCE_TTL_MS = 35_000;
+
 interface ChatFlags {
   pinned: boolean;
   muted: boolean;
@@ -79,6 +82,8 @@ export class UserSessionDO implements DurableObject {
       server.serializeAttachment({ deviceId } satisfies SocketAttachment);
       this.send(server, { t: "hello", serverTime: nowSec() });
 
+      await this.state.storage.put("lastPing", nowSec());
+      await this.state.storage.setAlarm(Date.now() + PRESENCE_TTL_MS);
       if (this.sockets().length === 1) {
         // первое устройство онлайн
         this.state.waitUntil(this.broadcastPresence(true));
@@ -155,7 +160,8 @@ export class UserSessionDO implements DurableObject {
 
       case "/presence-info": {
         const lastSeen = (await this.state.storage.get<number>("lastSeen")) ?? 0;
-        return json({ ok: true, online: this.sockets().length > 0, lastSeen });
+        const online = this.sockets().length > 0 && (await this.presenceFresh());
+        return json({ ok: true, online, lastSeen });
       }
 
       default:
@@ -187,9 +193,29 @@ export class UserSessionDO implements DurableObject {
     const att = ws.deserializeAttachment() as SocketAttachment;
 
     switch (frame.t) {
-      case "ping":
+      case "ping": {
         this.send(ws, { t: "pong" });
+        // presence по пинг-понгу: свежий ping = онлайн; тишина дольше TTL
+        // (alarm) или явный "bg" = офлайн. Сам факт живого сокета не значит
+        // ничего: iOS держит его минуты после сворачивания.
+        const wasFresh = await this.presenceFresh();
+        await this.state.storage.put("lastPing", nowSec());
+        await this.state.storage.setAlarm(Date.now() + PRESENCE_TTL_MS);
+        if (!wasFresh) this.state.waitUntil(this.broadcastPresence(true));
         return;
+      }
+
+      case "bg":
+        await this.state.storage.put("lastPing", 0);
+        this.state.waitUntil(this.broadcastPresence(false));
+        return;
+
+      case "fg": {
+        await this.state.storage.put("lastPing", nowSec());
+        await this.state.storage.setAlarm(Date.now() + PRESENCE_TTL_MS);
+        this.state.waitUntil(this.broadcastPresence(true));
+        return;
+      }
 
       case "send": {
         const res = await this.convStub(frame.chatId).fetch("https://do/send", {
@@ -271,6 +297,21 @@ export class UserSessionDO implements DurableObject {
         }
         return;
       }
+    }
+  }
+
+  /// Онлайн = ping был свежее TTL.
+  private async presenceFresh(): Promise<boolean> {
+    const last = (await this.state.storage.get<number>("lastPing")) ?? 0;
+    return nowSec() - last < PRESENCE_TTL_MS / 1000;
+  }
+
+  /// Тишина дольше TTL — объявляем офлайн, даже если сокет формально жив.
+  async alarm() {
+    if (!(await this.presenceFresh())) {
+      await this.broadcastPresence(false);
+    } else {
+      await this.state.storage.setAlarm(Date.now() + PRESENCE_TTL_MS);
     }
   }
 

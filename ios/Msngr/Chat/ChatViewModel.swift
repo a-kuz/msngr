@@ -30,9 +30,12 @@ final class ChatViewModel: ObservableObject {
     @Published var replyingTo: Message?
     @Published var editing: Message?
     @Published var pinnedMessage: Message?
+    @Published var keyChangePending = false
+    @Published var connected = true
 
     private var cancellable: AnyCancellable?
     private var typingTask: Task<Void, Never>?
+    private var connectionTask: Task<Void, Never>?
     private var typingClearTask: Task<Void, Never>?
     private let app = AppState.shared
     var ownUserId: String { app.session?.userId ?? "" }
@@ -73,7 +76,18 @@ final class ChatViewModel: ObservableObject {
                     self.pinnedMessage = nil
                 }
                 self.markVisibleRead()
+                self.refreshKeyChangePending()
             })
+
+        connectionTask = Task { [weak self] in
+            guard let engine = self?.app.engine else { return }
+            await MainActor.run { [isUp = await engine.isConnected] in self?.connected = isUp }
+            let stream = await engine.connectionStream.stream
+            for await up in stream {
+                guard let self else { return }
+                self.connected = up
+            }
+        }
 
         typingTask = Task { [weak self] in
             guard let engine = self?.app.engine else { return }
@@ -97,6 +111,24 @@ final class ChatViewModel: ObservableObject {
     func stop() {
         cancellable = nil
         typingTask?.cancel()
+        connectionTask?.cancel()
+    }
+
+    /// TOFU: смена identity-ключа собеседника блокирует исходящие до принятия.
+    private func refreshKeyChangePending() {
+        guard chat?.kind == .direct, let peerId = peer?.id, let store = app.store else {
+            keyChangePending = false
+            return
+        }
+        keyChangePending = (try? store.pendingKeyChange(userId: peerId)) ?? false
+    }
+
+    func acceptKeyChange() {
+        guard let peerId = peer?.id else { return }
+        Task {
+            await app.engine.acceptKeyChange(chatId: chatId, peerUserId: peerId)
+            await MainActor.run { self.keyChangePending = false }
+        }
     }
 
     /// Группировка бабблов + дата-разделители (лента инвертирована).
@@ -161,6 +193,8 @@ final class ChatViewModel: ObservableObject {
     }
 
     var headerSubtitle: String {
+        // без соединения любой presence — стейл, не врём «в сети»
+        if !connected { return "подключение…" }
         if !typingUsers.isEmpty {
             if chat?.kind == .group, let name = members.first(where: { $0.id == typingUsers[0] })?.displayName {
                 return "\(name) печатает…"

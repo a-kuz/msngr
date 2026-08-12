@@ -107,10 +107,12 @@ final class AppState: ObservableObject {
         case .background:
             obscured = true
             backgroundedAt = Date()
+            if let engine { Task { await engine.appEnteredBackground() } }
         case .inactive:
             obscured = true
         case .active:
             obscured = false
+            if let engine { Task { await engine.appBecameActive() } }
             // авто-лок: пин есть и в фоне были дольше грейс-периода
             if PinStore.hasPin(), let t = backgroundedAt,
                Date().timeIntervalSince(t) > PinStore.autolockInterval {
