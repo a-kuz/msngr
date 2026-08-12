@@ -101,6 +101,38 @@ app.get("/api/users/:id", async (c) => {
   return json({ ok: true, user: u, presence });
 });
 
+// Устройства и identity-ключи списка пользователей (?ids=uid1,uid2).
+// Ничего не потребляет — в отличие от /prekeys, который выдаёт one-time prekey.
+app.get("/api/devices", async (c) => {
+  const ids = [...new Set((c.req.query("ids") ?? "").split(",").filter(Boolean))].slice(0, 100);
+  if (!ids.length) return json({ ok: true, devices: [] });
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = await c.env.DB.prepare(
+    `SELECT user_id, device_id, identity_key, identity_sign_key
+     FROM identity_keys WHERE user_id IN (${placeholders})`
+  ).bind(...ids).all<{
+    user_id: string; device_id: string; identity_key: string; identity_sign_key: string;
+  }>();
+  return json({
+    ok: true,
+    devices: rows.results.map((r) => ({
+      userId: r.user_id,
+      deviceId: r.device_id,
+      identityKey: r.identity_key,
+      identitySignKey: r.identity_sign_key,
+    })),
+  });
+});
+
+// Остаток собственных one-time prekeys (клиент пополняет при < 20)
+app.get("/api/prekeys/count", async (c) => {
+  const { deviceId } = c.get("auth");
+  const row = await c.env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM one_time_prekeys WHERE device_id = ?"
+  ).bind(deviceId).first<{ n: number }>();
+  return json({ ok: true, count: row?.n ?? 0 });
+});
+
 // X3DH prekey-бандлы всех устройств пользователя (one-time prekey выдаётся и удаляется)
 app.get("/api/users/:id/prekeys", async (c) => {
   const targetId = c.req.param("id");
