@@ -34,6 +34,8 @@ final class MessagesViewController: UIViewController {
         collectionView.register(DateSeparatorCell.self, forCellWithReuseIdentifier: "date")
         collectionView.register(SystemCell.self, forCellWithReuseIdentifier: "system")
         view.addSubview(collectionView)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardChanged(_:)),
+                                               name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
     }
 
     override func viewDidLayoutSubviews() {
@@ -45,12 +47,44 @@ final class MessagesViewController: UIViewController {
             BubbleLayout.clearCache()
             collectionView.collectionViewLayout.invalidateLayout()
         }
+        updateInsets()
+    }
+
+    // MARK: - Инсеты (навбар сверху, инпут-бар/клавиатура снизу)
+
+    /// Фрейм клавиатуры в координатах экрана; .null — клавиатура скрыта.
+    private var keyboardScreenFrame: CGRect = .null
+
+    @objc private func keyboardChanged(_ note: Notification) {
+        guard let end = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+        // клавиатура скрыта = уехала за нижний край экрана
+        keyboardScreenFrame = end.minY >= UIScreen.main.bounds.maxY ? .null : end
+        updateInsets()
+    }
+
+    /// Считает инсеты сам: safe area даёт перекрытие навбаром/индикатором,
+    /// перекрытие клавиатурой считается от её фрейма в координатах view —
+    /// часть, которую уже отработал внешний layout (SwiftUI), не учитывается повторно.
+    private func updateInsets() {
+        var bottomOverlap = view.safeAreaInsets.bottom
+        if !keyboardScreenFrame.isNull {
+            let kbInView = view.convert(keyboardScreenFrame, from: nil)
+            bottomOverlap = max(bottomOverlap, view.bounds.maxY - kbInView.minY)
+        }
+        setInsets(top: view.safeAreaInsets.top + 6, bottom: max(0, bottomOverlap) + 6)
     }
 
     func setInsets(top: CGFloat, bottom: CGFloat) {
         // список перевёрнут: top-инсет экрана = bottom контента
-        collectionView.contentInset = UIEdgeInsets(top: bottom, left: 0, bottom: top, right: 0)
-        collectionView.verticalScrollIndicatorInsets = collectionView.contentInset
+        let insets = UIEdgeInsets(top: bottom, left: 0, bottom: top, right: 0)
+        guard insets != collectionView.contentInset else { return }
+        let wasAtBottom = collectionView.contentOffset.y <= -collectionView.contentInset.top + 1
+        collectionView.contentInset = insets
+        collectionView.verticalScrollIndicatorInsets = insets
+        // лента была у низа — держим её у низа и с новым инсетом
+        if wasAtBottom {
+            collectionView.contentOffset = CGPoint(x: 0, y: -insets.top)
+        }
     }
 
     /// Обновление ленты: точечный diff по id. Инвертированный список — index 0 внизу
@@ -79,9 +113,10 @@ final class MessagesViewController: UIViewController {
             return
         }
 
-        // вычисляем удаления и вставки по позициям id
-        let oldIndex = Dictionary(uniqueKeysWithValues: oldIds.enumerated().map { ($1, $0) })
-        let newIndex = Dictionary(uniqueKeysWithValues: newIds.enumerated().map { ($1, $0) })
+        // вычисляем удаления и вставки по позициям id; при дубликате id берём
+        // первую позицию, а не трапаемся (id обязаны быть уникальны, но краш хуже)
+        let oldIndex = Dictionary(oldIds.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+        let newIndex = Dictionary(newIds.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
         let deletes = oldIds.enumerated().filter { newIndex[$0.element] == nil }
             .map { IndexPath(item: $0.offset, section: 0) }
         let inserts = newIds.enumerated().filter { oldIndex[$0.element] == nil }
@@ -133,8 +168,8 @@ final class MessagesViewController: UIViewController {
         switch (a, b) {
         case let (.message(m1, t1, s1, _, _), .message(m2, t2, s2, _, _)):
             return m1 == m2 && t1 == t2 && s1 == s2
-        case let (.dateSeparator(d1), .dateSeparator(d2)):
-            return d1 == d2
+        case let (.dateSeparator(_, l1), .dateSeparator(_, l2)):
+            return l1 == l2
         default:
             return false
         }
@@ -162,7 +197,7 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
 
     func collectionView(_ cv: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         switch items[indexPath.item] {
-        case .dateSeparator(let label):
+        case .dateSeparator(_, let label):
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "date", for: indexPath) as! DateSeparatorCell
             cell.configure(label)
             return cell

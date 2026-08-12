@@ -47,14 +47,26 @@ struct ChatScreen: View {
         }
         .onAppear {
             model.start()
-            text = model.chat?.draft ?? ""
+            // черновик восстанавливаем только в пустое поле: при возврате из ChatInfo
+            // набранный текст остаётся в @State и не должен затираться
+            if text.isEmpty { text = model.chat?.draft ?? "" }
             NotificationCoordinator.shared.activeChatId = chatId
         }
         .onDisappear {
             let draft = text.trimmingCharacters(in: .whitespacesAndNewlines)
             model.saveDraft(draft.isEmpty ? nil : draft)
+            // push вглубь (ChatInfo) — не рвём подписку и не сбрасываем активный чат,
+            // иначе при возврате лента мертва, а пуши этого чата показываются баннером
+            guard !showChatInfo else { return }
             model.stop()
             NotificationCoordinator.shared.activeChatId = nil
+        }
+        .navigationDestination(isPresented: $showChatInfo) {
+            ChatInfoView(model: model)
+        }
+        .onChange(of: model.editing?.id) { _, _ in
+            // смена редактируемого сообщения (в т.ч. edit A → edit B) — поле показывает его текст
+            if let e = model.editing { text = e.text ?? "" }
         }
         .photosPicker(isPresented: $photoPickerPresented, selection: $photoItems,
                       maxSelectionCount: 10, matching: .any(of: [.images, .videos]))
@@ -83,10 +95,11 @@ struct ChatScreen: View {
     }
 
     @State private var photoPickerPresented = false
+    @State private var showChatInfo = false
 
     private var header: some View {
-        NavigationLink {
-            ChatInfoView(model: model)
+        Button {
+            showChatInfo = true
         } label: {
             HStack(spacing: 8) {
                 AvatarView(name: model.headerTitle,

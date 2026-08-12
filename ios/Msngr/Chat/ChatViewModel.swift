@@ -8,12 +8,13 @@ import MsngrCore
 /// showTail — хвостик баббла (последний в серии, ниже нет своего сообщения).
 enum ChatFeedItem: Identifiable, Equatable {
     case message(Message, tightGap: Bool, showTail: Bool, showName: Bool, authorName: String?)
-    case dateSeparator(String)
+    /// id уникален в пределах ленты (label может повторяться при немонотонном sentAt)
+    case dateSeparator(id: String, label: String)
 
     var id: String {
         switch self {
         case .message(let m, _, _, _, _): return m.id
-        case .dateSeparator(let d): return "date:\(d)"
+        case .dateSeparator(let id, _): return id
         }
     }
 }
@@ -41,11 +42,9 @@ final class ChatViewModel: ObservableObject {
         self.chatId = chatId
     }
 
-    private var started = false
-
+    /// Переподписывается после stop(): подписка пересоздаётся, если её нет.
     func start() {
-        guard !started, let db = app.db else { return }
-        started = true
+        guard cancellable == nil, let db = app.db else { return }
         let chatId = self.chatId
         let ownId = ownUserId
         cancellable = ValueObservation
@@ -75,6 +74,7 @@ final class ChatViewModel: ObservableObject {
                 self.markVisibleRead()
             })
 
+        typingTask?.cancel()
         typingTask = Task { [weak self] in
             guard let engine = self?.app.engine else { return }
             let stream = await engine.typingStream.stream
@@ -97,6 +97,7 @@ final class ChatViewModel: ObservableObject {
     func stop() {
         cancellable = nil
         typingTask?.cancel()
+        typingTask = nil
     }
 
     /// Группировка бабблов + дата-разделители (лента инвертирована).
@@ -130,14 +131,12 @@ final class ChatViewModel: ObservableObject {
                                 authorName: nameById[msg.fromUserId] ?? "?"))
             let next = older
 
-            // разделитель дат: перед первым сообщением дня (в инвертированной ленте — после)
+            // разделитель дат: перед первым сообщением дня (в инвертированной ленте — после).
+            // id привязан к сообщению, а не к label: label может повторяться,
+            // если sentAt немонотонен и один день встречается в ленте дважды
             let msgDay = Date(timeIntervalSince1970: msg.sentAt)
-            if let next {
-                if !cal.isDate(Date(timeIntervalSince1970: next.sentAt), inSameDayAs: msgDay) {
-                    out.append(.dateSeparator(Self.dayLabel(msgDay)))
-                }
-            } else {
-                out.append(.dateSeparator(Self.dayLabel(msgDay)))
+            if next == nil || !cal.isDate(Date(timeIntervalSince1970: next!.sentAt), inSameDayAs: msgDay) {
+                out.append(.dateSeparator(id: "date:\(msg.id)", label: Self.dayLabel(msgDay)))
             }
         }
         return out
@@ -257,6 +256,12 @@ final class ChatViewModel: ObservableObject {
     func textChanged(_ text: String) {
         saveDraft(text.isEmpty ? nil : text)
         guard chat?.iAccepted != false else { return }
+        if text.isEmpty {
+            // поле опустело — снимаем «печатает…» у собеседника сразу
+            lastTypingSent = .distantPast
+            Task { await app.engine.sendTyping(chatId: chatId, kind: nil) }
+            return
+        }
         if Date().timeIntervalSince(lastTypingSent) > 3 {
             lastTypingSent = Date()
             Task { await app.engine.sendTyping(chatId: chatId, kind: "text") }
@@ -275,7 +280,8 @@ final class ChatViewModel: ObservableObject {
     var isViewingBottom = true
 
     func markVisibleRead() {
-        guard isViewingBottom, let chat, chat.lastSeq > chat.myReadUpTo else { return }
+        // не отмечаем прочтение, когда сцена не активна (фон/шторка): экран не виден
+        guard !app.obscured, isViewingBottom, let chat, chat.lastSeq > chat.myReadUpTo else { return }
         Task { await app.engine.markRead(chatId: chatId, upToSeq: chat.lastSeq) }
     }
 
