@@ -69,8 +69,9 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         doubleTap.numberOfTapsRequired = 2
         bubbleView.addGestureRecognizer(doubleTap)
 
-        let interaction = UIContextMenuInteraction(delegate: self)
-        bubbleView.addInteraction(interaction)
+        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
+        longPress.minimumPressDuration = 0.35
+        bubbleView.addGestureRecognizer(longPress)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -497,50 +498,45 @@ final class ReactionCapsuleView: UIControl {
 
 // MARK: - Контекстное меню
 
-extension MessageCell: UIContextMenuInteractionDelegate {
-    func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
-                                configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
-        guard let msg, !msg.deletedForAll else { return nil }
+extension MessageCell {
+    @objc private func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began, let msg, !msg.deletedForAll,
+              let window = window else { return }
         Haptics.medium()
-        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
-            var actions: [UIMenuElement] = []
-            // строка быстрых реакций
-            let reactions = ["❤️", "👍", "🔥", "😂", "😮", "😢"]
-            let reactionActions = reactions.map { emoji in
-                UIAction(title: emoji) { _ in self?.onReact?(emoji) }
-            }
-            actions.append(UIMenu(title: "Реакция", options: .displayInline, children: reactionActions))
-            actions.append(UIAction(title: "Ответить", image: UIImage(systemName: "arrowshape.turn.up.left")) { _ in
-                self?.onContextAction?(.reply)
+
+        var items: [MessageContextOverlay.Item] = []
+        items.append(.init(title: "Ответить", icon: "arrowshape.turn.up.left") { [weak self] in
+            self?.onContextAction?(.reply)
+        })
+        if msg.kind == .text {
+            items.append(.init(title: "Копировать", icon: "doc.on.doc") { [weak self] in
+                self?.onContextAction?(.copy)
             })
-            if msg.kind == .text {
-                actions.append(UIAction(title: "Копировать", image: UIImage(systemName: "doc.on.doc")) { _ in
-                    self?.onContextAction?(.copy)
-                })
-            }
-            actions.append(UIAction(title: "Переслать", image: UIImage(systemName: "arrowshape.turn.up.right")) { _ in
-                self?.onContextAction?(.forward)
-            })
-            actions.append(UIAction(title: "Закрепить", image: UIImage(systemName: "pin")) { _ in
-                self?.onContextAction?(.pin)
-            })
-            if msg.isOutgoing && msg.kind == .text {
-                actions.append(UIAction(title: "Изменить", image: UIImage(systemName: "pencil")) { _ in
-                    self?.onContextAction?(.edit)
-                })
-            }
-            let deleteMenu = UIMenu(title: "Удалить", image: UIImage(systemName: "trash"),
-                                    options: .destructive, children: [
-                UIAction(title: "Удалить у меня", attributes: .destructive) { _ in
-                    self?.onContextAction?(.deleteForMe)
-                },
-                UIAction(title: "Удалить у всех", attributes: .destructive) { _ in
-                    self?.onContextAction?(.deleteForAll)
-                },
-            ])
-            actions.append(deleteMenu)
-            return UIMenu(children: actions)
         }
+        items.append(.init(title: "Переслать", icon: "arrowshape.turn.up.right") { [weak self] in
+            self?.onContextAction?(.forward)
+        })
+        items.append(.init(title: "Закрепить", icon: "pin") { [weak self] in
+            self?.onContextAction?(.pin)
+        })
+        if msg.isOutgoing && msg.kind == .text {
+            items.append(.init(title: "Изменить", icon: "pencil") { [weak self] in
+                self?.onContextAction?(.edit)
+            })
+        }
+        items.append(.init(title: "Удалить", icon: "trash", destructive: true, submenu: [
+            .init(title: "Удалить у меня", icon: "trash", destructive: true) { [weak self] in
+                self?.onContextAction?(.deleteForMe)
+            },
+            .init(title: "Удалить у всех", icon: "trash.fill", destructive: true) { [weak self] in
+                self?.onContextAction?(.deleteForAll)
+            },
+        ]))
+
+        let mine = msg.reactions.first(where: { $0.value.contains(OwnUser.id) })?.key
+        MessageContextOverlay.present(over: bubbleView, in: window, isOutgoing: msg.isOutgoing,
+                                      myReaction: mine, items: items,
+                                      onReact: { [weak self] emoji in self?.onReact?(emoji) })
     }
 }
 

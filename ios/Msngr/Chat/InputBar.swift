@@ -227,11 +227,20 @@ struct GrowingTextView: UIViewRepresentable {
         tv.delegate = context.coordinator
         tv.isScrollEnabled = false
         tv.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+
+        let placeholder = UILabel()
+        placeholder.tag = 777
+        placeholder.text = "Сообщение"
+        placeholder.font = .systemFont(ofSize: 17)
+        placeholder.textColor = .placeholderText
+        placeholder.frame = CGRect(x: 14, y: 8, width: 200, height: 21)
+        tv.addSubview(placeholder)
         return tv
     }
 
     func updateUIView(_ tv: UITextView, context: Context) {
         if tv.text != text { tv.text = text }
+        tv.viewWithTag(777)?.isHidden = !text.isEmpty
         recalcHeight(tv)
     }
 
@@ -253,6 +262,7 @@ struct GrowingTextView: UIViewRepresentable {
         func textViewDidChange(_ tv: UITextView) {
             parent.text = tv.text
             parent.onChange(tv.text)
+            tv.viewWithTag(777)?.isHidden = !tv.text.isEmpty
             parent.recalcHeight(tv)
         }
     }
