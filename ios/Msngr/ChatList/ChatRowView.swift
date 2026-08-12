@@ -180,8 +180,7 @@ struct AvatarView: View {
             [.red, .orange], [.blue, .cyan], [.purple, .pink],
             [.green, .mint], [.orange, .yellow], [.indigo, .blue], [.pink, .red],
         ]
-        let idx = abs(name.hashValue) % palettes.count
-        return palettes[idx]
+        return palettes[StableHash.index(name, modulo: palettes.count)]
     }
 
     private var initialsView: some View {

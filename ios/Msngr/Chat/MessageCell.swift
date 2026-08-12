@@ -400,7 +400,7 @@ enum NameColor {
         .systemCyan, .systemBlue, .systemPink,
     ]
     static func color(for userId: String) -> UIColor {
-        palette[abs(userId.hashValue) % palette.count]
+        palette[StableHash.index(userId, modulo: palette.count)]
     }
 }
 
@@ -456,9 +456,18 @@ final class ReactionCapsuleView: UIControl {
     func configure(emoji: String, count: Int, mine: Bool, outgoing: Bool, animateIn: Bool) {
         emojiKey = emoji
         label.text = count > 1 ? "\(emoji) \(count)" : emoji
-        backgroundColor = mine ? UIColor(Theme.accent).withAlphaComponent(0.85)
-            : UIColor.systemGray5.withAlphaComponent(0.9)
-        label.textColor = mine ? .white : .label
+        // капсула держится палитры баббла: на исходящем — оттенки зелёного,
+        // на входящем — серые; своя реакция выделена насыщенной заливкой
+        if outgoing {
+            backgroundColor = mine
+                ? UIColor(Theme.readTick).withAlphaComponent(0.28)
+                : UIColor.black.withAlphaComponent(0.06)
+        } else {
+            backgroundColor = mine
+                ? UIColor(Theme.accent).withAlphaComponent(0.18)
+                : UIColor.systemGray5.withAlphaComponent(0.9)
+        }
+        label.textColor = .label
         // spring-появление только для реально новой реакции
         if animateIn {
             transform = CGAffineTransform(scaleX: 0.5, y: 0.5)

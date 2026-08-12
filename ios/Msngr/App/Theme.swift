@@ -28,6 +28,20 @@ extension Color {
     }
 }
 
+/// Детерминированный хэш для выбора цвета аватара/имени.
+/// Swift рандомизирует hashValue между запусками, из-за чего цвета «прыгали»
+/// после каждого перезапуска приложения.
+enum StableHash {
+    static func index(_ string: String, modulo: Int) -> Int {
+        var hash: UInt64 = 0xcbf29ce484222325 // FNV-1a
+        for byte in string.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x100000001b3
+        }
+        return Int(hash % UInt64(max(modulo, 1)))
+    }
+}
+
 enum Haptics {
     static func light() { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
     static func medium() { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }

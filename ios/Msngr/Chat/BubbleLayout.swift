@@ -179,8 +179,10 @@ enum BubbleLayout {
         let chipH: CGFloat = 26
         let chipGap: CGFloat = 4
         let ownId = OwnUser.id
+        // порядок стабильный: по количеству, при равенстве — по эмодзи,
+        // иначе капсулы прыгают местами при каждой перерисовке
         let chips: [Chip] = msg.reactions
-            .sorted { $0.value.count > $1.value.count }
+            .sorted { ($0.value.count, $1.key) > ($1.value.count, $0.key) }
             .map { emoji, users in
                 let label = users.count > 1 ? "\(emoji) \(users.count)" : emoji
                 let w = label.size(withAttributes: [.font: UIFont.systemFont(ofSize: 14)]).width + 18
