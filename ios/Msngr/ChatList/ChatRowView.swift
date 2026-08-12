@@ -62,7 +62,8 @@ struct ChatRowView: View {
     private var previewText: some View {
         if let typing = item.typingText {
             Text(typing).foregroundStyle(Theme.accent).italic()
-        } else if let draft = item.chat.draft, !draft.isEmpty {
+        } else if let draft = item.chat.draft,
+                  !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             (Text("Черновик: ").foregroundStyle(.red) + Text(draft))
         } else if let last = item.lastMessage {
             if last.deletedForAll {

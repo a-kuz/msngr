@@ -8,7 +8,6 @@ struct ChatScreen: View {
     @StateObject private var model: ChatViewModel
     @State private var text = ""
     @State private var showScrollDown = false
-    @State private var showAttach = false
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showFilePicker = false
     @State private var forwardMessage: Message?
@@ -35,7 +34,8 @@ struct ChatScreen: View {
                     requestBanner
                 } else {
                     InputBar(model: model, text: $text,
-                             onAttach: { showAttach = true },
+                             onAttachPhoto: { photoPickerPresented = true },
+                             onAttachFile: { showFilePicker = true },
                              onSendVoice: sendVoice)
                 }
             }
@@ -51,13 +51,10 @@ struct ChatScreen: View {
             NotificationCoordinator.shared.activeChatId = chatId
         }
         .onDisappear {
-            model.saveDraft(text.isEmpty ? nil : text)
+            let draft = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            model.saveDraft(draft.isEmpty ? nil : draft)
             model.stop()
             NotificationCoordinator.shared.activeChatId = nil
-        }
-        .confirmationDialog("Вложение", isPresented: $showAttach) {
-            Button("Фото или видео") { showAttach = false; photoPickerPresented = true }
-            Button("Файл") { showFilePicker = true }
         }
         .photosPicker(isPresented: $photoPickerPresented, selection: $photoItems,
                       maxSelectionCount: 10, matching: .any(of: [.images, .videos]))

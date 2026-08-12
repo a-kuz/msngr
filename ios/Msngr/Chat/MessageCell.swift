@@ -203,6 +203,10 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             tickView.isHidden = true
         }
         timeLabel.frame = timeFrame
+        // медиа-вью добавляются позже статуса — капсула времени должна остаться сверху
+        bubbleView.bringSubviewToFront(statusBackdrop)
+        bubbleView.bringSubviewToFront(timeLabel)
+        bubbleView.bringSubviewToFront(tickView)
 
         // реакции: анимируем появление только реально новой реакции при обновлении той же
         // ячейки; при переиспользовании на скролле — без анимации
@@ -239,7 +243,19 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             iv.clipsToBounds = true
             iv.backgroundColor = .tertiarySystemFill
             iv.isUserInteractionEnabled = true
-            iv.layer.cornerRadius = plan.albumRects.isEmpty ? Theme.bubbleCorner : 4
+            if plan.albumRects.isEmpty {
+                iv.layer.cornerRadius = Theme.bubbleCorner
+            } else if let mf = plan.mediaFrame {
+                // мозаика: большой радиус только на внешних углах сетки
+                var corners: CACornerMask = []
+                let eps: CGFloat = 1.5
+                if abs(rect.minX - mf.minX) < eps, abs(rect.minY - mf.minY) < eps { corners.insert(.layerMinXMinYCorner) }
+                if abs(rect.maxX - mf.maxX) < eps, abs(rect.minY - mf.minY) < eps { corners.insert(.layerMaxXMinYCorner) }
+                if abs(rect.minX - mf.minX) < eps, abs(rect.maxY - mf.maxY) < eps { corners.insert(.layerMinXMaxYCorner) }
+                if abs(rect.maxX - mf.maxX) < eps, abs(rect.maxY - mf.maxY) < eps { corners.insert(.layerMaxXMaxYCorner) }
+                iv.layer.cornerRadius = corners.isEmpty ? 0 : Theme.bubbleCorner
+                iv.layer.maskedCorners = corners
+            }
             iv.layer.cornerCurve = .continuous
             iv.tag = index
             let tap = UITapGestureRecognizer(target: self, action: #selector(mediaTapped(_:)))

@@ -6,7 +6,8 @@ import MsngrCore
 struct InputBar: View {
     @ObservedObject var model: ChatViewModel
     @Binding var text: String
-    var onAttach: () -> Void
+    var onAttachPhoto: () -> Void
+    var onAttachFile: () -> Void
     var onSendVoice: (URL, TimeInterval, [Int]) -> Void
 
     @StateObject private var recorder = VoiceRecorder()
@@ -22,7 +23,14 @@ struct InputBar: View {
                 if recorder.isRecording {
                     recordingView
                 } else {
-                    Button(action: onAttach) {
+                    Menu {
+                        Button { onAttachPhoto() } label: {
+                            Label("Фото или видео", systemImage: "photo.on.rectangle")
+                        }
+                        Button { onAttachFile() } label: {
+                            Label("Файл", systemImage: "doc")
+                        }
+                    } label: {
                         Image(systemName: "paperclip")
                             .font(.system(size: 22))
                             .foregroundStyle(.secondary)
