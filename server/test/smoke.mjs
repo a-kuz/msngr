@@ -1,7 +1,8 @@
 // Интеграционный смоук: 2 пользователя, direct-чат, WS-обмен, receipts, sync, группа.
 import WebSocket from "ws";
 
-const BASE = "http://localhost:8787";
+const BASE = process.env.BASE_URL ?? "http://localhost:8787";
+const WS_BASE = BASE.replace(/^http/, "ws");
 let failures = 0;
 
 function check(name, cond, extra = "") {
@@ -38,7 +39,7 @@ class Client {
   }
   connect() {
     return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(`ws://localhost:8787/ws?token=${this.token}`);
+      this.ws = new WebSocket(`${WS_BASE}/ws?token=${this.token}`);
       this.ws.on("message", (d) => this.frames.push(JSON.parse(d.toString())));
       this.ws.on("open", resolve);
       this.ws.on("error", reject);
@@ -215,10 +216,75 @@ const disc = await api("/api/contacts/discover", { token: alice.token,
 check("contact discovery", ph.ok && disc.ok && disc.matches.length === 1
   && disc.matches[0].id === bob.userId);
 
-// 16. Invite link
+// 16. Invite link: создать может только участник, join по коду работает
+const dave = await api("/api/register", { body: {
+  username: "dave_" + suffix, displayName: "Dave", ...fakeKeys("d") } });
+check("register dave", dave.ok);
+
+const invByStranger = await api(`/api/chats/${grp.chatId}/invite`, { token: dave.token, body: {} });
+check("invite by non-member rejected", !invByStranger.ok && invByStranger.error === "not_member");
+
 const inv = await api(`/api/chats/${grp.chatId}/invite`, { token: alice.token, body: {} });
 check("invite created", inv.ok && inv.code);
 
-ca.ws.close(); cb2.ws.close();
+const badJoin = await api("/api/join/nonexistent-code", { token: dave.token, body: {} });
+check("invalid invite rejected", !badJoin.ok && badJoin.error === "invalid_invite");
+
+const join = await api(`/api/join/${inv.code}`, { token: dave.token, body: {} });
+check("join via invite", join.ok && join.chatId === grp.chatId, JSON.stringify(join));
+const joinAgain = await api(`/api/join/${inv.code}`, { token: dave.token, body: {} });
+check("join idempotent", joinAgain.ok);
+
+const daveChats = await api("/api/chats", { token: dave.token });
+const daveGrp = daveChats.chats?.find((c2) => c2.state.chatId === grp.chatId);
+check("dave is member after join", !!daveGrp
+  && daveGrp.state.members.some((m) => m.userId === dave.userId));
+
+// direct-чат по инвайту не джойнится
+const dinv = await api(`/api/chats/${chat.chatId}/invite`, { token: alice.token, body: {} });
+const djoin = await api(`/api/join/${dinv.code}`, { token: dave.token, body: {} });
+check("join into direct rejected", !djoin.ok && djoin.error === "not_group");
+
+// 17. Service-фрейм: флаг доходит получателю, дедуп по clientMsgId работает
+ca.send({ t: "send", chatId: chat.chatId, clientMsgId: "cm-skd-1", sentAt: Date.now(),
+  service: true, body: { v: 1, mode: "skd", c: "c2tk" } });
+const svc = await cb2.waitFor((f) => f.t === "msg" && f.chatId === chat.chatId && f.service === true);
+check("service flag delivered", !!svc);
+const svcAck1 = await ca.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-skd-1");
+ca.send({ t: "send", chatId: chat.chatId, clientMsgId: "cm-skd-1", sentAt: Date.now(),
+  service: true, body: { v: 1, mode: "skd", c: "c2tk" } });
+const svcAck2 = await ca.waitFor((f) =>
+  f.t === "sent" && f.clientMsgId === "cm-skd-1" && f !== svcAck1);
+check("service dedupe by clientMsgId", !!svcAck2 && svcAck2.seq === svcAck1.seq
+  && svcAck2.msgId === svcAck1.msgId);
+
+// 18. Sync доигрывает тумбстоуны и read-марки
+ca.send({ t: "read", chatId: chat.chatId, upToSeq: 2 });
+await new Promise((r) => setTimeout(r, 300));
+const cb3 = new Client("bob3", bob.token);
+await cb3.connect();
+cb3.send({ t: "sync", cursors: { [chat.chatId]: svc.seq } });
+const syncTomb = await cb3.waitFor((f) => f.t === "deleted" && f.msgIds.includes(sent.msgId));
+check("sync replays tombstone", !!syncTomb);
+const syncRead = await cb3.waitFor((f) =>
+  f.t === "receipt" && f.kind === "read" && f.by === alice.userId && f.upToSeq === 2);
+check("sync replays read mark", !!syncRead);
+
+// 19. Sync не обрезается на 200: догоняет батчами до исчерпания
+const N = 210;
+for (let i = 0; i < N; i++) {
+  ca.send({ t: "send", chatId: grp.chatId, clientMsgId: `cm-bulk-${i}`, sentAt: Date.now(),
+    body: { v: 1, mode: "skm", c: "Zg" } });
+}
+const lastBulk = await ca.waitFor((f) => f.t === "sent" && f.clientMsgId === `cm-bulk-${N - 1}`, 30000);
+check("bulk send acked", !!lastBulk);
+const cb4 = new Client("bob4", bob.token);
+await cb4.connect();
+cb4.send({ t: "sync", cursors: { [grp.chatId]: 1 } });
+await cb4.waitFor((f) => f.t === "msg" && f.chatId === grp.chatId && f.seq === lastBulk.seq, 30000);
+const bulkGot = cb4.frames.filter((f) => f.t === "msg" && f.chatId === grp.chatId && f.seq > 1);
+check("sync backfill beyond 200", bulkGot.length === N, `got ${bulkGot.length}`);
+
+ca.ws.close(); cb2.ws.close(); cb3.ws.close(); cb4.ws.close();
 console.log(failures ? `\n${failures} FAILURES` : "\nALL PASS");
 process.exit(failures ? 1 : 0);
