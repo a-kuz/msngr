@@ -622,7 +622,7 @@ public actor SyncEngine {
         var info = info
         var obsolete: [String] = []
         if info.thumbMediaId == nil, let thumbName = info.thumbLocalPath {
-            let up = try await media.uploadPending(localName: thumbName)
+            let up = try await media.uploadPending(localName: thumbName, mime: "image/jpeg")
             info.thumbMediaId = up.mediaId
             info.thumbKey = up.key
             info.thumbHash = up.hash
@@ -630,7 +630,7 @@ public actor SyncEngine {
             obsolete.append(thumbName)
         }
         if let name = info.localPath {
-            let up = try await media.uploadPending(localName: name)
+            let up = try await media.uploadPending(localName: name, mime: info.mime)
             info.mediaId = up.mediaId
             info.key = up.key
             info.hash = up.hash

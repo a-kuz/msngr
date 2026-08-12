@@ -82,7 +82,7 @@ struct MediaViewerView: View {
 
     private var cachedURL: URL? {
         guard index < medias.count else { return nil }
-        return AppState.shared.media?.cachedURL(for: medias[index].mediaId)
+        return AppState.shared.media?.cachedURL(for: medias[index].mediaId, mime: medias[index].mime)
     }
 }
 

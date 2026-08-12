@@ -24,16 +24,35 @@ public final class MediaManager: @unchecked Sendable {
         try? FileManager.default.createDirectory(at: self.pendingDir, withIntermediateDirectories: true)
     }
 
-    public func cachedURL(for mediaId: String) -> URL? {
-        let url = cacheDir.appendingPathComponent(mediaId)
+    /// AVPlayer определяет контейнер по расширению файла: без него видео/аудио
+    /// не открываются (картинки декодируются по содержимому и не страдают).
+    public static func fileExtension(forMime mime: String?) -> String {
+        switch mime?.lowercased() {
+        case "video/mp4": return "mp4"
+        case "video/quicktime": return "mov"
+        case "audio/m4a", "audio/mp4", "audio/aac", "audio/x-m4a": return "m4a"
+        case "image/jpeg": return "jpg"
+        case "image/png": return "png"
+        case "image/heic": return "heic"
+        case "image/gif": return "gif"
+        default: return "bin"
+        }
+    }
+
+    private func cacheFileName(_ mediaId: String, mime: String?) -> String {
+        mediaId + "." + Self.fileExtension(forMime: mime)
+    }
+
+    public func cachedURL(for mediaId: String, mime: String? = nil) -> URL? {
+        let url = cacheDir.appendingPathComponent(cacheFileName(mediaId, mime: mime))
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
     // MARK: - Локальные исходники (ещё не выгруженные медиа)
 
     /// Кладёт plaintext в pendingDir; возвращает имя файла для MediaInfo.localPath.
-    public func stash(_ plaintext: Data) throws -> String {
-        let name = UUID().uuidString
+    public func stash(_ plaintext: Data, mime: String? = nil) throws -> String {
+        let name = UUID().uuidString + "." + Self.fileExtension(forMime: mime)
         try plaintext.write(to: pendingDir.appendingPathComponent(name), options: .atomic)
         return name
     }
@@ -44,9 +63,9 @@ public final class MediaManager: @unchecked Sendable {
     }
 
     /// Выгружает локальный исходник; вызывается outbox-воркером перед шифрованием конверта.
-    public func uploadPending(localName: String) async throws -> (mediaId: String, key: String, hash: String, size: Int) {
+    public func uploadPending(localName: String, mime: String? = nil) async throws -> (mediaId: String, key: String, hash: String, size: Int) {
         guard let url = pendingURL(for: localName) else { throw MediaError.pendingFileMissing }
-        return try await upload(try Data(contentsOf: url))
+        return try await upload(try Data(contentsOf: url), mime: mime)
     }
 
     public func removePending(localName: String) {
@@ -55,10 +74,10 @@ public final class MediaManager: @unchecked Sendable {
 
     /// Шифрует и выгружает; возвращает поля для MediaInfo. Plaintext кладётся в кэш сразу
     /// (отправитель видит своё медиа мгновенно).
-    public func upload(_ plaintext: Data) async throws -> (mediaId: String, key: String, hash: String, size: Int) {
+    public func upload(_ plaintext: Data, mime: String? = nil) async throws -> (mediaId: String, key: String, hash: String, size: Int) {
         let enc = try MediaCrypto.encrypt(plaintext)
         let res = try await api.uploadMedia(enc.ciphertext)
-        let local = cacheDir.appendingPathComponent(res.mediaId)
+        let local = cacheDir.appendingPathComponent(cacheFileName(res.mediaId, mime: mime))
         try? plaintext.write(to: local, options: .atomic)
         return (res.mediaId, enc.key.base64EncodedString(), enc.sha256.base64EncodedString(), plaintext.count)
     }
@@ -72,7 +91,7 @@ public final class MediaManager: @unchecked Sendable {
             }
             return url
         }
-        if let cached = cachedURL(for: media.mediaId) { return cached }
+        if let cached = cachedURL(for: media.mediaId, mime: media.mime) { return cached }
         lock.lock()
         if let existing = inflight[media.mediaId] {
             lock.unlock()
@@ -90,7 +109,7 @@ public final class MediaManager: @unchecked Sendable {
             }
             let ciphertext = try await self.api.downloadMedia(media.mediaId)
             let plaintext = try MediaCrypto.decrypt(ciphertext, key: key, expectedSHA256: hash)
-            let url = self.cacheDir.appendingPathComponent(media.mediaId)
+            let url = self.cacheDir.appendingPathComponent(self.cacheFileName(media.mediaId, mime: media.mime))
             try plaintext.write(to: url, options: .atomic)
             return url
         }

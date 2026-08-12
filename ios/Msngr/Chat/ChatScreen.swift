@@ -264,7 +264,7 @@ struct ChatScreen: View {
         // без сети не теряется: файл в постоянную папку, аплоад делает outbox-воркер
         var infos: [MediaInfo] = []
         for (jpeg, size, bh) in photos {
-            guard let localName = try? app.media.stash(jpeg) else { continue }
+            guard let localName = try? app.media.stash(jpeg, mime: "image/jpeg") else { continue }
             var info = MediaInfo(type: "photo", mediaId: "", key: "",
                                  hash: "", size: jpeg.count, mime: "image/jpeg")
             info.localPath = localName
@@ -295,7 +295,7 @@ struct ChatScreen: View {
         export.shouldOptimizeForNetworkUse = true // faststart
         await export.export()
         guard export.status == .completed, let data = try? Data(contentsOf: out),
-              let localName = try? app.media.stash(data) else { return }
+              let localName = try? app.media.stash(data, mime: "video/mp4") else { return }
 
         // превью-кадр
         let gen = AVAssetImageGenerator(asset: asset)
@@ -307,7 +307,7 @@ struct ChatScreen: View {
             dims = CGSize(width: cg.width, height: cg.height)
             let ui = UIImage(cgImage: cg)
             if let jpeg = ui.jpegData(compressionQuality: 0.7) {
-                thumbLocal = try? app.media.stash(jpeg)
+                thumbLocal = try? app.media.stash(jpeg, mime: "image/jpeg")
                 if let px = ImageProcessor.rgbaPixels(jpeg) {
                     blurhash = BlurHash.encode(pixels: px.pixels, width: px.width, height: px.height) ?? ""
                 }
@@ -331,7 +331,7 @@ struct ChatScreen: View {
         let secured = url.startAccessingSecurityScopedResource()
         defer { if secured { url.stopAccessingSecurityScopedResource() } }
         guard let data = try? Data(contentsOf: url), data.count < 100_000_000 else { return }
-        guard let localName = try? app.media.stash(data) else { return }
+        guard let localName = try? app.media.stash(data) else { return }  // файл: расширение не критично
         var info = MediaInfo(type: "file", mediaId: "", key: "",
                              hash: "", size: data.count,
                              mime: "application/octet-stream")
@@ -345,7 +345,7 @@ struct ChatScreen: View {
     private func sendVoice(_ url: URL, duration: TimeInterval, waveform: [Int]) {
         Task {
             guard let data = try? Data(contentsOf: url),
-                  let localName = try? app.media.stash(data) else { return }
+                  let localName = try? app.media.stash(data, mime: "audio/mp4") else { return }
             var info = MediaInfo(type: "voice", mediaId: "", key: "",
                                  hash: "", size: data.count, mime: "audio/mp4")
             info.localPath = localName
