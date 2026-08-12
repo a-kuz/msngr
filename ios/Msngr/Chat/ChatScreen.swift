@@ -91,15 +91,23 @@ struct ChatScreen: View {
         NavigationLink {
             ChatInfoView(model: model)
         } label: {
-            VStack(spacing: 1) {
-                Text(model.headerTitle)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                Text(model.headerSubtitle)
-                    .font(.caption)
-                    .foregroundStyle(model.headerSubtitle.contains("печатает") || model.headerSubtitle == "в сети"
-                                     ? Theme.accent : .secondary)
-                    .animation(.easeInOut(duration: 0.15), value: model.headerSubtitle)
+            HStack(spacing: 8) {
+                AvatarView(name: model.headerTitle,
+                           avatarId: model.chat?.kind == .group ? model.chat?.avatarId : model.peer?.avatarId,
+                           online: model.peer?.online ?? false)
+                    .frame(width: 34, height: 34)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(model.headerTitle)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Text(model.headerSubtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(model.headerSubtitle.contains("печатает") || model.headerSubtitle == "в сети"
+                                         ? Theme.accent : .secondary)
+                        .lineLimit(1)
+                        .animation(.easeInOut(duration: 0.15), value: model.headerSubtitle)
+                }
             }
         }
         .buttonStyle(.plain)

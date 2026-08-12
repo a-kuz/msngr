@@ -88,7 +88,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         replyTriggered = false
     }
 
-    /// Анимация появления только что отправленного баббла: подъём + лёгкий scale.
+    /// Появление входящего/восстановленного баббла: короткий подъём.
     func animateAppearance() {
         bubbleView.transform = CGAffineTransform(translationX: 0, y: 14).scaledBy(x: 0.96, y: 0.96)
         bubbleView.alpha = 0.4
@@ -96,6 +96,29 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
                        initialSpringVelocity: 0.5, options: [.allowUserInteraction]) {
             self.bubbleView.transform = .identity
             self.bubbleView.alpha = 1
+        }
+    }
+
+    /// Своё сообщение «вылетает» из кнопки отправки: баббл стартует маленьким
+    /// в точке кнопки и пружиной летит на своё место (как в TG/WhatsApp).
+    func animateSendFlight(fromScreenPoint point: CGPoint, in source: UIView) {
+        layoutIfNeeded()
+        // convert учитывает переворот ячейки по Y, считать знаки вручную не нужно
+        let start = contentView.convert(point, from: source)
+        let target = CGPoint(x: bubbleView.frame.midX, y: bubbleView.frame.midY)
+        let dx = start.x - target.x
+        let dy = start.y - target.y
+        bubbleView.transform = CGAffineTransform(translationX: dx, y: dy)
+            .scaledBy(x: 0.3, y: 0.3)
+        bubbleView.alpha = 0.6
+        for sub in [textLabel, timeLabel, tickView] { sub.alpha = 0 }
+        UIView.animate(withDuration: 0.5, delay: 0, usingSpringWithDamping: 0.78,
+                       initialSpringVelocity: 0.9, options: [.allowUserInteraction]) {
+            self.bubbleView.transform = .identity
+            self.bubbleView.alpha = 1
+        }
+        UIView.animate(withDuration: 0.22, delay: 0.12, options: [.allowUserInteraction]) {
+            for sub in [self.textLabel, self.timeLabel, self.tickView] { sub.alpha = 1 }
         }
     }
 

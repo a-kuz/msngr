@@ -178,11 +178,6 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             cell.onReact = { [weak self] emoji in self?.onReact?(msg, emoji) }
             cell.onContextAction = { [weak self] action in self?.onContextAction?(msg, action) }
             cell.onTapMedia = { [weak self] index, view in self?.onTapMedia?(msg, index, view) }
-            // анимируем только что появившееся сообщение (самое нижнее)
-            if let pending = pendingAppearanceId, pending == msg.id {
-                pendingAppearanceId = nil
-                cell.animateAppearance()
-            }
             return cell
         }
     }
@@ -199,6 +194,24 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             let plan = BubbleLayout.plan(for: msg, width: cv.bounds.width, tightGap: tightGap,
                                          showTail: showTail, showName: showName, authorName: authorName)
             return CGSize(width: cv.bounds.width, height: plan.cellHeight)
+        }
+    }
+
+    /// Анимацию запускаем в willDisplay: здесь ячейка уже спозиционирована,
+    /// поэтому пересчёт координат кнопки отправки корректен.
+    func collectionView(_ cv: UICollectionView, willDisplay cell: UICollectionViewCell,
+                        forItemAt indexPath: IndexPath) {
+        guard let pending = pendingAppearanceId,
+              case .message(let msg, _, _, _, _) = items[indexPath.item],
+              msg.id == pending, let cell = cell as? MessageCell else { return }
+        pendingAppearanceId = nil
+        if msg.isOutgoing {
+            // точка кнопки отправки: правый нижний угол под коллекцией (инпут-бар)
+            let point = CGPoint(x: view.bounds.width - 28,
+                                y: view.bounds.height - collectionView.contentInset.top + 22)
+            cell.animateSendFlight(fromScreenPoint: point, in: view)
+        } else {
+            cell.animateAppearance()
         }
     }
 

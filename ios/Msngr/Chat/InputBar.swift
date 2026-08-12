@@ -10,6 +10,7 @@ struct InputBar: View {
     var onSendVoice: (URL, TimeInterval, [Int]) -> Void
 
     @StateObject private var recorder = VoiceRecorder()
+    @State private var inputHeight: CGFloat = GrowingTextView.minHeight
     @State private var recordingLocked = false
     @State private var dragOffset: CGFloat = 0
     @GestureState private var pressing = false
@@ -27,8 +28,9 @@ struct InputBar: View {
                             .foregroundStyle(.secondary)
                             .frame(width: 36, height: 36)
                     }
-                    GrowingTextView(text: $text) { model.textChanged($0) }
-                        .frame(minHeight: 36)
+                    GrowingTextView(text: $text, height: $inputHeight) { model.textChanged($0) }
+                        .frame(height: inputHeight)
+                        .animation(Theme.springFast, value: inputHeight)
                 }
                 actionButton
             }
@@ -205,9 +207,15 @@ struct LiveWaveView: View {
 }
 
 /// Растущее текстовое поле (до 6 строк), как в TG.
+/// Высота считается по контенту и отдаётся наружу: без этого SwiftUI растягивает
+/// UITextView на всё свободное место и поле занимает пол-экрана.
 struct GrowingTextView: UIViewRepresentable {
     @Binding var text: String
+    @Binding var height: CGFloat
     var onChange: (String) -> Void
+
+    static let minHeight: CGFloat = 36
+    static let maxHeight: CGFloat = 6 * 21 + 16
 
     func makeUIView(context: Context) -> UITextView {
         let tv = UITextView()
@@ -215,17 +223,26 @@ struct GrowingTextView: UIViewRepresentable {
         tv.backgroundColor = UIColor.systemGray6
         tv.layer.cornerRadius = 18
         tv.textContainerInset = UIEdgeInsets(top: 8, left: 10, bottom: 8, right: 10)
+        tv.textContainer.lineFragmentPadding = 2
         tv.delegate = context.coordinator
         tv.isScrollEnabled = false
-        tv.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        tv.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         return tv
     }
 
     func updateUIView(_ tv: UITextView, context: Context) {
         if tv.text != text { tv.text = text }
-        let maxHeight: CGFloat = 6 * 22 + 16
-        let fit = tv.sizeThatFits(CGSize(width: tv.bounds.width, height: .infinity)).height
-        tv.isScrollEnabled = fit > maxHeight
+        recalcHeight(tv)
+    }
+
+    private func recalcHeight(_ tv: UITextView) {
+        let width = tv.bounds.width > 0 ? tv.bounds.width : UIScreen.main.bounds.width - 100
+        let fit = tv.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+        let clamped = min(max(fit, Self.minHeight), Self.maxHeight)
+        tv.isScrollEnabled = fit > Self.maxHeight
+        if abs(height - clamped) > 0.5 {
+            DispatchQueue.main.async { height = clamped }
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -236,7 +253,7 @@ struct GrowingTextView: UIViewRepresentable {
         func textViewDidChange(_ tv: UITextView) {
             parent.text = tv.text
             parent.onChange(tv.text)
-            tv.invalidateIntrinsicContentSize()
+            parent.recalcHeight(tv)
         }
     }
 }

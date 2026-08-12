@@ -60,9 +60,14 @@ struct ChatListView: View {
 
     private var chatsSection: some View {
         ForEach(model.items) { item in
-            NavigationLink(value: item.chat.id) {
+            // Button вместо NavigationLink: List рисует у ссылки шеврон,
+            // которого в чат-листе мессенджеров нет
+            Button {
+                path.append(item.chat.id)
+            } label: {
                 ChatRowView(item: item, ownUserId: app.session?.userId ?? "")
             }
+            .buttonStyle(.plain)
             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                 Button { model.toggleArchive(item) } label: {
                     Label("Архив", systemImage: "archivebox.fill")
@@ -85,9 +90,12 @@ struct ChatListView: View {
     private var requestsSection: some View {
         Section {
             ForEach(model.requests) { item in
-                NavigationLink(value: item.chat.id) {
+                Button {
+                    path.append(item.chat.id)
+                } label: {
                     ChatRowView(item: item, ownUserId: app.session?.userId ?? "")
                 }
+                .buttonStyle(.plain)
                 .swipeActions(edge: .trailing) {
                     Button { model.blockRequest(item) } label: {
                         Label("Заблокировать", systemImage: "hand.raised.fill")
@@ -119,9 +127,12 @@ struct ChatListView: View {
 
     private var searchSection: some View {
         ForEach(model.searchResults) { item in
-            NavigationLink(value: item.chat.id) {
+            Button {
+                path.append(item.chat.id)
+            } label: {
                 ChatRowView(item: item, ownUserId: app.session?.userId ?? "")
             }
+            .buttonStyle(.plain)
         }
     }
 }
