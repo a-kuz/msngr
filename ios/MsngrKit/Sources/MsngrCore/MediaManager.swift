@@ -4,21 +4,53 @@ import MsngrCrypto
 
 /// Шифрованные медиа: upload (encrypt → R2), download (R2 → verify → decrypt → кэш).
 /// Кэш плоский на диске: ключ = mediaId, значение = plaintext.
+/// pendingDir — постоянная (не Caches) папка исходников медиа, приложенных офлайн:
+/// файл живёт там до успешной выгрузки outbox-воркером.
 public final class MediaManager: @unchecked Sendable {
+    public enum MediaError: Error { case pendingFileMissing }
+
     private let api: APIClient
     private let cacheDir: URL
+    private let pendingDir: URL
     private var inflight: [String: Task<URL, Error>] = [:]
     private let lock = NSLock()
 
-    public init(api: APIClient, cacheDir: URL) {
+    public init(api: APIClient, cacheDir: URL, pendingDir: URL? = nil) {
         self.api = api
         self.cacheDir = cacheDir
+        self.pendingDir = pendingDir
+            ?? cacheDir.deletingLastPathComponent().appendingPathComponent("media-outgoing")
         try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: self.pendingDir, withIntermediateDirectories: true)
     }
 
     public func cachedURL(for mediaId: String) -> URL? {
         let url = cacheDir.appendingPathComponent(mediaId)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    // MARK: - Локальные исходники (ещё не выгруженные медиа)
+
+    /// Кладёт plaintext в pendingDir; возвращает имя файла для MediaInfo.localPath.
+    public func stash(_ plaintext: Data) throws -> String {
+        let name = UUID().uuidString
+        try plaintext.write(to: pendingDir.appendingPathComponent(name), options: .atomic)
+        return name
+    }
+
+    public func pendingURL(for localName: String) -> URL? {
+        let url = pendingDir.appendingPathComponent(localName)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// Выгружает локальный исходник; вызывается outbox-воркером перед шифрованием конверта.
+    public func uploadPending(localName: String) async throws -> (mediaId: String, key: String, hash: String, size: Int) {
+        guard let url = pendingURL(for: localName) else { throw MediaError.pendingFileMissing }
+        return try await upload(try Data(contentsOf: url))
+    }
+
+    public func removePending(localName: String) {
+        try? FileManager.default.removeItem(at: pendingDir.appendingPathComponent(localName))
     }
 
     /// Шифрует и выгружает; возвращает поля для MediaInfo. Plaintext кладётся в кэш сразу
@@ -32,7 +64,14 @@ public final class MediaManager: @unchecked Sendable {
     }
 
     /// Скачивает, проверяет хэш, расшифровывает, кэширует. Дедуп одновременных запросов.
+    /// Ещё не выгруженное своё медиа (mediaId пустой) отдаётся из pendingDir.
     public func fetch(_ media: MediaInfo) async throws -> URL {
+        if media.mediaId.isEmpty {
+            guard let name = media.localPath, let url = pendingURL(for: name) else {
+                throw MediaError.pendingFileMissing
+            }
+            return url
+        }
         if let cached = cachedURL(for: media.mediaId) { return cached }
         lock.lock()
         if let existing = inflight[media.mediaId] {

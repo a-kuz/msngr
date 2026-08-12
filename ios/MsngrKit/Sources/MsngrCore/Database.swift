@@ -158,6 +158,18 @@ public enum AppDatabase {
                 t.primaryKey(["chatId", "msgId"])
             }
         }
+        m.registerMigration("v4-pendingAction") { db in
+            // сервисные действия (read receipt, delete-for-all, accept заявки),
+            // ждущие сети: дренятся воркером при connected
+            try db.create(table: "pendingAction") { t in
+                t.column("id", .text).primaryKey()
+                t.column("type", .text).notNull()
+                t.column("chatId", .text).notNull()
+                t.column("payload", .text).notNull()
+                t.column("createdAt", .double).notNull()
+                t.column("attempts", .integer).notNull().defaults(to: 0)
+            }
+        }
         return m
     }
 }

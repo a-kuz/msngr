@@ -114,6 +114,10 @@ public struct MediaInfo: Codable, Equatable {
     public var thumbMediaId: String?  // превью-кадр видео (отдельный блоб)
     public var thumbKey: String?
     public var thumbHash: String?
+    /// имя локального файла в MediaManager.pendingDir, пока медиа не выгружено
+    /// (mediaId пустой); outbox-воркер выгружает и заполняет mediaId/key/hash
+    public var localPath: String?
+    public var thumbLocalPath: String?
 
     public init(type: String, mediaId: String, key: String, hash: String, size: Int, mime: String) {
         self.type = type
@@ -201,7 +205,7 @@ public struct OutboxItem: Codable, FetchableRecord, PersistableRecord {
     public var attempts: Int = 0
     /// plaintext-контент (JSON ContentPayload) — шифруется при отправке
     public var payload: Data
-    /// pending | uploading | ready (медиа выгружено, можно шифровать и слать)
+    /// ready (ждёт отправки) | inflight (отправлено, ждёт ack)
     public var state: String = "ready"
 
     public init(clientMsgId: String, chatId: String, createdAt: Double, payload: Data, state: String = "ready") {
@@ -226,6 +230,26 @@ public struct ContentPayload: Codable {
     public var ttlSeconds: Int?       // disappearing setting
 
     public init(kind: String) { self.kind = kind }
+}
+
+/// Сервисное действие, ждущее сети: read receipt, delete-for-all, accept заявки.
+/// Дренится воркером SyncEngine при connected; все действия идемпотентны.
+public struct PendingAction: Codable, FetchableRecord, PersistableRecord {
+    public static let databaseTableName = "pendingAction"
+    public var id: String
+    public var type: String     // read | delete | accept
+    public var chatId: String
+    public var payload: String  // JSON, формат зависит от type
+    public var createdAt: Double
+    public var attempts: Int = 0
+
+    public init(id: String, type: String, chatId: String, payload: String, createdAt: Double) {
+        self.id = id
+        self.type = type
+        self.chatId = chatId
+        self.payload = payload
+        self.createdAt = createdAt
+    }
 }
 
 public struct KVRow: Codable, FetchableRecord, PersistableRecord {
