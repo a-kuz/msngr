@@ -114,11 +114,10 @@ public final class E2EEManager: @unchecked Sendable {
         cacheLock.withLock { bundleCache[userId] = CachedBundles(bundles: bundles, at: Date()) }
     }
 
+    /// Список устройств собеседника. Бандлы НЕ кэшируются: one-time prekey одноразовый,
+    /// повторное использование выданного ключа ломает X3DH у получателя (он его уже удалил).
     private func deviceBundles(userId: String) async throws -> [APIClient.PrekeyBundleDTO] {
-        if let cached = cachedBundles(userId) { return cached }
-        let res = try await api.prekeys(userId: userId)
-        storeBundles(userId, res.bundles)
-        return res.bundles
+        try await api.prekeys(userId: userId).bundles
     }
 
     private func encryptPairwise(inner: InnerMessage, recipients: [String],
@@ -228,33 +227,27 @@ public final class E2EEManager: @unchecked Sendable {
         var trustIssue: String?
         var session: DoubleRatchetSession
 
-        if box.type == "pk" {
-            let existingSession = try store.loadSession(peerUserId: fromUserId, peerDeviceId: fromDeviceId)
-            // повторное pk в рамках живой сессии — сначала пробуем её
-            if var existing = existingSession, let plain = try? existing.decrypt(ratchetMsg) {
-                try store.saveSession(existing, peerUserId: fromUserId, peerDeviceId: fromDeviceId,
-                                      theirIdentityDH: box.ik ?? "")
+        // сначала всегда пробуем известные сессии: активную, затем архивные.
+        // Сообщение не должно теряться из-за рассинхрона состояний.
+        if var existing = try store.loadSession(peerUserId: fromUserId, peerDeviceId: fromDeviceId),
+           let plain = try? existing.decrypt(ratchetMsg) {
+            try store.saveSession(existing, peerUserId: fromUserId, peerDeviceId: fromDeviceId,
+                                  theirIdentityDH: box.ik ?? "")
+            return try handleInner(plain, fromUserId: fromUserId, trustIssue: nil)
+        }
+        var archive = try store.archivedSessions(peerUserId: fromUserId, peerDeviceId: fromDeviceId)
+        for i in archive.indices {
+            if let plain = try? archive[i].decrypt(ratchetMsg) {
+                try store.saveArchivedSessions(archive, peerUserId: fromUserId, peerDeviceId: fromDeviceId)
                 return try handleInner(plain, fromUserId: fromUserId, trustIssue: nil)
             }
-            // сессия существует, но pk ею не расшифровался
-            if let existing = existingSession {
-                // устоявшаяся сессия → это replay/подмена начального конверта: игнорируем,
-                // не сбрасывая ratchet (защита от session-reset)
-                if existing.hasReceived {
-                    return .undecryptable(reason: "stale_pk_ignored")
-                }
-                // свежая наша initiator-сессия + встречный pk = glare (обе стороны
-                // инициировали). Детерминированный тай-брейкер по identity-ключу:
-                // сторона с меньшим ключом оставляет свою сессию, другая принимает pk.
-                if let theirIk = box.ik.flatMap({ Data(base64urlEncoded: $0) }) {
-                    let ourIk = try store.identity().dh.publicKey.rawRepresentation
-                    if ourIk.lexicographicallyPrecedes(theirIk) {
-                        // мы «Alice» — оставляем свою сессию, встречный pk отбрасываем
-                        return .undecryptable(reason: "glare_kept_ours")
-                    }
-                    // мы «Bob» — принимаем pk собеседника (перезаписываем свою ниже)
-                }
-            }
+        }
+
+        if box.type == "pk" {
+            // pk не подошёл ни к одной известной сессии → поднимаем новую responder-сессию,
+            // а текущую убираем в архив (её ещё могут использовать «догоняющие» сообщения).
+            // Так корректно разрешается и одновременная инициация (glare), и рассинхрон.
+            try store.archiveCurrentSession(peerUserId: fromUserId, peerDeviceId: fromDeviceId)
             guard let ikB64 = box.ik, let ik = Data(base64urlEncoded: ikB64),
                   let ekB64 = box.ek, let ek = Data(base64urlEncoded: ekB64),
                   let spkId = box.spkId,
@@ -268,26 +261,35 @@ public final class E2EEManager: @unchecked Sendable {
             var otpPriv: Curve25519.KeyAgreement.PrivateKey?
             if let otpId = box.otpId {
                 otpPriv = try store.oneTimePrekey(id: otpId)
-                try store.consumeOneTimePrekey(id: otpId)
             }
-            let x3dh = try X3DH.respond(our: try store.identity(), ourSignedPreKey: spkPriv,
-                                        ourOneTimePreKey: otpPriv,
-                                        theirIdentityDH: ik, theirEphemeral: ek)
-            session = DoubleRatchetSession.initBob(sharedSecret: x3dh.sharedSecret,
-                                                   ourRatchetKey: spkPriv, ad: x3dh.associatedData)
-        } else {
-            guard let existing = try store.loadSession(peerUserId: fromUserId, peerDeviceId: fromDeviceId) else {
-                return .undecryptable(reason: "no_session")
+            // кандидаты: с one-time prekey и без него. Второй вариант спасает, если ключ
+            // уже был израсходован (повторная выдача бандла, дубль конверта).
+            var candidates: [DoubleRatchetSession] = []
+            let identity = try store.identity()
+            for otp in [otpPriv, nil] as [Curve25519.KeyAgreement.PrivateKey?] {
+                if otpPriv == nil && otp != nil { continue }
+                if let x3dh = try? X3DH.respond(our: identity, ourSignedPreKey: spkPriv,
+                                                ourOneTimePreKey: otp,
+                                                theirIdentityDH: ik, theirEphemeral: ek) {
+                    candidates.append(DoubleRatchetSession.initBob(
+                        sharedSecret: x3dh.sharedSecret, ourRatchetKey: spkPriv, ad: x3dh.associatedData))
+                }
+                if otpPriv == nil { break }
             }
-            session = existing
+            for var candidate in candidates {
+                if let plain = try? candidate.decrypt(ratchetMsg) {
+                    if let otpId = box.otpId { try store.consumeOneTimePrekey(id: otpId) }
+                    try store.saveSession(candidate, peerUserId: fromUserId, peerDeviceId: fromDeviceId,
+                                          theirIdentityDH: box.ik ?? "")
+                    return try handleInner(plain, fromUserId: fromUserId, trustIssue: trustIssue)
+                }
+            }
+            return .undecryptable(reason: "pk_decrypt_failed")
         }
 
-        let plaintext: Data
-        do { plaintext = try session.decrypt(ratchetMsg) }
-        catch { return .undecryptable(reason: "decrypt_failed") }
-        try store.saveSession(session, peerUserId: fromUserId, peerDeviceId: fromDeviceId,
-                              theirIdentityDH: box.ik ?? "")
-        return try handleInner(plaintext, fromUserId: fromUserId, trustIssue: trustIssue)
+        // dr-сообщение, к которому не подошла ни активная, ни архивные сессии:
+        // ключ может приехать позже (сообщение обогнало свой pk) — вернём retryable-причину
+        return .undecryptable(reason: "no_session")
     }
 
     private func handleInner(_ plaintext: Data, fromUserId: String, trustIssue: String?) throws -> DecryptedIncoming {

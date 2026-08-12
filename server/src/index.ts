@@ -76,12 +76,18 @@ app.get("/api/me", async (c) => {
 });
 
 app.get("/api/users", async (c) => {
-  const q = c.req.query("q") ?? "";
+  // юзернейм могут ввести с @ и лишними пробелами
+  const q = (c.req.query("q") ?? "").trim().replace(/^@+/, "");
   if (q.length < 2) return json({ ok: true, users: [] });
+  // LOWER() для регистронезависимости и по не-ASCII именам тоже
+  const like = `%${q.toLowerCase()}%`;
   const rows = await c.env.DB.prepare(
     `SELECT u.id, u.username, u.display_name, u.avatar_id
-     FROM users u WHERE u.username LIKE ? OR u.display_name LIKE ? LIMIT 20`
-  ).bind(`%${q}%`, `%${q}%`).all();
+     FROM users u
+     WHERE LOWER(u.username) LIKE ? OR LOWER(u.display_name) LIKE ?
+     ORDER BY CASE WHEN LOWER(u.username) = ? THEN 0 ELSE 1 END, u.username
+     LIMIT 20`
+  ).bind(like, like, q.toLowerCase()).all();
   return json({ ok: true, users: rows.results });
 });
 

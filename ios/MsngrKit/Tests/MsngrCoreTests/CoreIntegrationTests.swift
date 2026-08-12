@@ -134,6 +134,63 @@ final class CoreIntegrationTests: XCTestCase {
         await bob.engine.stop()
     }
 
+    /// Оба пишут друг другу первыми (одновременная инициация сессии).
+    /// Ни одно сообщение не должно потеряться ни у одной стороны.
+    func testSimultaneousFirstMessagesBothDecrypt() async throws {
+        guard await Self.serverUp() else { throw XCTSkip("wrangler dev не запущен") }
+        let suffix = String(UUID().uuidString.prefix(6)).lowercased().replacingOccurrences(of: "-", with: "x")
+        let a = try await Self.makeClient(username: "ga_\(suffix)")
+        let b = try await Self.makeClient(username: "gb_\(suffix)")
+
+        // A создаёт чат и пишет; B независимо пишет в тот же чат
+        let chatId = try await a.api.createChat(kind: "direct", memberIds: [b.userId], title: nil)
+        try await a.engine.refreshSnapshot()
+        try await b.engine.refreshSnapshot()
+
+        var m1 = ContentPayload(kind: "text"); m1.text = "от A"
+        var m2 = ContentPayload(kind: "text"); m2.text = "от B"
+        async let s1: Void = a.engine.enqueue(content: m1, chatId: chatId)
+        async let s2: Void = b.engine.enqueue(content: m2, chatId: chatId)
+        _ = try await (s1, s2)
+
+        let bGotA = try await waitUntil(12) {
+            try await b.db.read { dbc in
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'от A'",
+                                 arguments: [chatId]) == 1
+            }
+        }
+        let aGotB = try await waitUntil(12) {
+            try await a.db.read { dbc in
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'от B'",
+                                 arguments: [chatId]) == 1
+            }
+        }
+        XCTAssertTrue(bGotA, "B не расшифровал сообщение A")
+        XCTAssertTrue(aGotB, "A не расшифровал сообщение B")
+
+        // и дальше переписка продолжается в обе стороны
+        var m3 = ContentPayload(kind: "text"); m3.text = "ответ A"
+        try await a.engine.enqueue(content: m3, chatId: chatId)
+        let bGotReply = try await waitUntil(12) {
+            try await b.db.read { dbc in
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'ответ A'",
+                                 arguments: [chatId]) == 1
+            }
+        }
+        XCTAssertTrue(bGotReply, "переписка развалилась после встречной инициации")
+
+        // ни одного «нерасшифруемого» на обеих сторонах
+        for (name, c) in [("A", a), ("B", b)] {
+            let bad = try await c.db.read { dbc in
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE kind = 'system' AND text LIKE 'undecryptable%'") ?? 0
+            }
+            XCTAssertEqual(bad, 0, "у \(name) есть нерасшифрованные сообщения")
+        }
+
+        await a.engine.stop()
+        await b.engine.stop()
+    }
+
     func testGroupChatSenderKeys() async throws {
         guard await Self.serverUp() else {
             throw XCTSkip("wrangler dev не запущен")

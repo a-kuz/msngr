@@ -136,6 +136,13 @@ public enum AppDatabase {
                 t.column("text")
             }
         }
+        m.registerMigration("v3-sessionArchive") { db in
+            // при одновременной инициации (glare) сессий может быть несколько:
+            // активная для отправки + архивные, которыми ещё расшифровываются входящие
+            try db.alter(table: "ratchetSession") { t in
+                t.add(column: "archived", .blob)
+            }
+        }
         m.registerMigration("v2-pendingDecrypt") { db in
             // сообщения, пришедшие раньше своего ключа (напр. групповое до sender-key):
             // хранятся сырыми и переобрабатываются, когда ключ приходит

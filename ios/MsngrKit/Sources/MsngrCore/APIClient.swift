@@ -17,10 +17,23 @@ public final class APIClient: @unchecked Sendable {
         self.session = session
     }
 
+    /// Строит URL из пути с возможной query-строкой. appendingPathComponent экранирует
+    /// "?" в %3F, из-за чего query превращается в часть пути и запрос уходит в 404.
+    private func url(for path: String) -> URL {
+        let parts = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+        var url = baseURL.appendingPathComponent(String(parts[0]))
+        if parts.count > 1, !parts[1].isEmpty,
+           var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            comps.percentEncodedQuery = String(parts[1])
+            url = comps.url ?? url
+        }
+        return url
+    }
+
     private func request(_ path: String, method: String = "GET",
                          jsonBody: Encodable? = nil, rawBody: Data? = nil,
                          contentType: String? = nil) async throws -> Data {
-        var req = URLRequest(url: baseURL.appendingPathComponent(path))
+        var req = URLRequest(url: url(for: path))
         req.httpMethod = method
         if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         if let jsonBody {

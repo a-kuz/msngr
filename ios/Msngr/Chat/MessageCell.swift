@@ -88,6 +88,17 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         replyTriggered = false
     }
 
+    /// Анимация появления только что отправленного баббла: подъём + лёгкий scale.
+    func animateAppearance() {
+        bubbleView.transform = CGAffineTransform(translationX: 0, y: 14).scaledBy(x: 0.96, y: 0.96)
+        bubbleView.alpha = 0.4
+        UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.82,
+                       initialSpringVelocity: 0.5, options: [.allowUserInteraction]) {
+            self.bubbleView.transform = .identity
+            self.bubbleView.alpha = 1
+        }
+    }
+
     func configure(msg: Message, plan: BubbleLayoutPlan) {
         self.msg = msg
         self.plan = plan

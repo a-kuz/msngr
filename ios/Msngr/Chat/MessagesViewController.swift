@@ -16,6 +16,8 @@ final class MessagesViewController: UIViewController {
     private(set) var collectionView: UICollectionView!
     private var items: [ChatFeedItem] = []
     private var width: CGFloat = 0
+    /// id сообщения, чью ячейку нужно показать с анимацией появления
+    private var pendingAppearanceId: String?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -97,10 +99,26 @@ final class MessagesViewController: UIViewController {
 
         let nearBottom = collectionView.contentOffset.y < 60
         items = newItems
-        UIView.performWithoutAnimation {
-            collectionView.performBatchUpdates {
-                if !deletes.isEmpty { collectionView.deleteItems(at: deletes) }
-                if !inserts.isEmpty { collectionView.insertItems(at: inserts) }
+        // новое сообщение внизу — анимируем появление (spring); вставки истории
+        // сверху идут без анимации, чтобы не дёргать контент под пальцем
+        let animateInsert = inserts.contains { $0.item == 0 }
+        if animateInsert, case .message(let m, _, _, _, _) = newItems[0] {
+            pendingAppearanceId = m.id
+        }
+        if animateInsert {
+            UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.84,
+                           initialSpringVelocity: 0.3, options: [.allowUserInteraction]) {
+                self.collectionView.performBatchUpdates {
+                    if !deletes.isEmpty { self.collectionView.deleteItems(at: deletes) }
+                    if !inserts.isEmpty { self.collectionView.insertItems(at: inserts) }
+                }
+            }
+        } else {
+            UIView.performWithoutAnimation {
+                collectionView.performBatchUpdates {
+                    if !deletes.isEmpty { collectionView.deleteItems(at: deletes) }
+                    if !inserts.isEmpty { collectionView.insertItems(at: inserts) }
+                }
             }
         }
         // новое сообщение и мы были у низа — плавно подскроллим к нему
@@ -160,6 +178,11 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             cell.onReact = { [weak self] emoji in self?.onReact?(msg, emoji) }
             cell.onContextAction = { [weak self] action in self?.onContextAction?(msg, action) }
             cell.onTapMedia = { [weak self] index, view in self?.onTapMedia?(msg, index, view) }
+            // анимируем только что появившееся сообщение (самое нижнее)
+            if let pending = pendingAppearanceId, pending == msg.id {
+                pendingAppearanceId = nil
+                cell.animateAppearance()
+            }
             return cell
         }
     }

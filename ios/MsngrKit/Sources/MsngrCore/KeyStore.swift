@@ -222,6 +222,40 @@ public final class IdentityStore: @unchecked Sendable {
         }
     }
 
+    /// Архивные сессии: ими больше не шифруем, но ещё расшифровываем «догоняющие»
+    /// сообщения, отправленные в старую сессию (рассинхрон, glare, переустановка).
+    private static let maxArchived = 5
+
+    public func archivedSessions(peerUserId: String, peerDeviceId: String) throws -> [DoubleRatchetSession] {
+        try db.read { dbc in
+            guard let row = try Row.fetchOne(
+                dbc, sql: "SELECT archived FROM ratchetSession WHERE peerUserId = ? AND peerDeviceId = ?",
+                arguments: [peerUserId, peerDeviceId]),
+                let blob = row["archived"] as Data? else { return [] }
+            let plain = try StateCrypto.open(blob, with: master)
+            return (try? JSONDecoder().decode([DoubleRatchetSession].self, from: plain)) ?? []
+        }
+    }
+
+    public func saveArchivedSessions(_ sessions: [DoubleRatchetSession],
+                                     peerUserId: String, peerDeviceId: String) throws {
+        let trimmed = Array(sessions.suffix(Self.maxArchived))
+        let sealed = try StateCrypto.seal(try JSONEncoder().encode(trimmed), with: master)
+        try db.write { dbc in
+            try dbc.execute(
+                sql: "UPDATE ratchetSession SET archived = ? WHERE peerUserId = ? AND peerDeviceId = ?",
+                arguments: [sealed, peerUserId, peerDeviceId])
+        }
+    }
+
+    /// Текущую активную сессию — в архив (перед заменой на новую).
+    public func archiveCurrentSession(peerUserId: String, peerDeviceId: String) throws {
+        guard let current = try loadSession(peerUserId: peerUserId, peerDeviceId: peerDeviceId) else { return }
+        var archive = try archivedSessions(peerUserId: peerUserId, peerDeviceId: peerDeviceId)
+        archive.append(current)
+        try saveArchivedSessions(archive, peerUserId: peerUserId, peerDeviceId: peerDeviceId)
+    }
+
     // MARK: - Sender keys
 
     public func loadSenderKeyOut(chatId: String) throws -> (SenderKeyState, Set<String>)? {
