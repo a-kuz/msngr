@@ -70,8 +70,7 @@ struct SettingsView: View {
                         HStack {
                             Label("Очистить кэш медиа", systemImage: "trash")
                             Spacer()
-                            Text(ByteCountFormatter.string(fromByteCount: app.media?.totalCacheSize() ?? 0,
-                                                           countStyle: .file))
+                            Text(Self.sizeLabel(app.media?.totalCacheSize() ?? 0))
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -116,6 +115,17 @@ struct SettingsView: View {
                     showPinSetup = false
                 }
             }
+        }
+    }
+
+    /// Размер кэша по-русски: ByteCountFormatter пишет «Zero KB» на системной локали.
+    static func sizeLabel(_ bytes: Int64) -> String {
+        let kb = Double(bytes) / 1024
+        switch kb {
+        case ..<1: return "0 КБ"
+        case ..<1024: return String(format: "%.0f КБ", kb)
+        case ..<(1024 * 1024): return String(format: "%.1f МБ", kb / 1024)
+        default: return String(format: "%.2f ГБ", kb / 1024 / 1024)
         }
     }
 }

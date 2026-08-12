@@ -53,6 +53,19 @@ struct NewChatView: View {
                     }
                 }
             }
+            .overlay {
+                if !groupMode && results.isEmpty && contacts.isEmpty {
+                    if query.count >= 2 {
+                        ContentUnavailableView.search(text: query)
+                    } else {
+                        ContentUnavailableView {
+                            Label("Найдите собеседника", systemImage: "person.crop.circle.badge.plus")
+                        } description: {
+                            Text("Введите юзернейм или имя. Знакомые из адресной книги, у которых есть Msngr, появятся здесь сами.")
+                        }
+                    }
+                }
+            }
             .searchable(text: $query, prompt: "Юзернейм или имя")
             .onChange(of: query) { _, q in
                 Task {
@@ -108,6 +121,7 @@ struct NewChatView: View {
                 }
             }
         }
+        .buttonStyle(.plain)
     }
 
     private func openDirect(_ userId: String) async {
@@ -189,6 +203,7 @@ struct ForwardPickerView: View {
                         Text(item.title).foregroundStyle(.primary)
                     }
                 }
+                .buttonStyle(.plain)
             }
             .navigationTitle("Переслать в…")
             .navigationBarTitleDisplayMode(.inline)
