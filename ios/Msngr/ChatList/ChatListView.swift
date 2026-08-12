@@ -60,14 +60,9 @@ struct ChatListView: View {
 
     private var chatsSection: some View {
         ForEach(model.items) { item in
-            // Button вместо NavigationLink: List рисует у ссылки шеврон,
-            // которого в чат-листе мессенджеров нет
-            Button {
-                path.append(item.chat.id)
-            } label: {
+            ChatRow(chatId: item.chat.id) {
                 ChatRowView(item: item, ownUserId: app.session?.userId ?? "")
             }
-            .buttonStyle(.plain)
             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                 Button { model.toggleArchive(item) } label: {
                     Label("Архив", systemImage: "archivebox.fill")
@@ -90,12 +85,9 @@ struct ChatListView: View {
     private var requestsSection: some View {
         Section {
             ForEach(model.requests) { item in
-                Button {
-                    path.append(item.chat.id)
-                } label: {
+                ChatRow(chatId: item.chat.id) {
                     ChatRowView(item: item, ownUserId: app.session?.userId ?? "")
                 }
-                .buttonStyle(.plain)
                 .swipeActions(edge: .trailing) {
                     Button { model.blockRequest(item) } label: {
                         Label("Заблокировать", systemImage: "hand.raised.fill")
@@ -127,13 +119,25 @@ struct ChatListView: View {
 
     private var searchSection: some View {
         ForEach(model.searchResults) { item in
-            Button {
-                path.append(item.chat.id)
-            } label: {
+            ChatRow(chatId: item.chat.id) {
                 ChatRowView(item: item, ownUserId: app.session?.userId ?? "")
             }
-            .buttonStyle(.plain)
         }
+    }
+}
+
+/// Строка чат-листа: навигация через NavigationLink (надёжно открывает чат),
+/// но скрытая под контентом — так List не рисует свой шеврон-индикатор.
+struct ChatRow<Content: View>: View {
+    let chatId: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        ZStack {
+            NavigationLink(value: chatId) { EmptyView() }.opacity(0)
+            content()
+        }
+        .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
     }
 }
 
