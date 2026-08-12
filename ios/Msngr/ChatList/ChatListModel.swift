@@ -28,6 +28,9 @@ final class ChatListModel: ObservableObject {
     private var cancellable: AnyCancellable?
     private var typing: [String: (userId: String, until: Date)] = [:]
     private var typingTask: Task<Void, Never>?
+    /// Таймеры снятия «печатает…» по чатам: без них индикатор гаснет только
+    /// при следующем событии (ленивое истечение) и может залипнуть.
+    private var typingClearTasks: [String: Task<Void, Never>] = [:]
     private let app = AppState.shared
 
     private var started = false
@@ -84,8 +87,18 @@ final class ChatListModel: ObservableObject {
                 guard let self else { return }
                 if ev.kind != nil {
                     self.typing[ev.chatId] = (ev.userId, Date().addingTimeInterval(5))
+                    self.typingClearTasks[ev.chatId]?.cancel()
+                    self.typingClearTasks[ev.chatId] = Task { [weak self, chatId = ev.chatId] in
+                        try? await Task.sleep(nanoseconds: 5_000_000_000)
+                        guard let self, !Task.isCancelled else { return }
+                        self.typing.removeValue(forKey: chatId)
+                        self.typingClearTasks[chatId] = nil
+                        self.refreshTyping()
+                    }
                 } else {
                     self.typing.removeValue(forKey: ev.chatId)
+                    self.typingClearTasks[ev.chatId]?.cancel()
+                    self.typingClearTasks[ev.chatId] = nil
                 }
                 self.refreshTyping()
             }
