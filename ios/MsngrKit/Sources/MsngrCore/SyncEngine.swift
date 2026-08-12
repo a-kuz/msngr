@@ -7,13 +7,16 @@ public actor SyncEngine {
     public let db: DatabaseQueue
     public let api: APIClient
     public let e2ee: E2EEManager
+    private let media: MediaManager?
     private let ws: WSClient
     public let ownUserId: String
     public let ownDeviceId: String
 
     private var eventTask: Task<Void, Never>?
     private var outboxTask: Task<Void, Never>?
+    private var actionTask: Task<Void, Never>?
     private var outboxWakeup = AsyncStream<Void>.makeStream()
+    private var actionWakeup = AsyncStream<Void>.makeStream()
     private var connected = false
 
     /// typing-события не пишутся в БД — транслируются подписчикам UI
@@ -21,11 +24,12 @@ public actor SyncEngine {
     /// состояние соединения для UI (сабтайтл «подключение…» вместо стейл-презенса)
     public private(set) var connectionStream = AsyncStream<Bool>.makeStream()
 
-    public init(db: DatabaseQueue, api: APIClient, e2ee: E2EEManager,
+    public init(db: DatabaseQueue, api: APIClient, e2ee: E2EEManager, media: MediaManager? = nil,
                 wsURL: URL, ownUserId: String, ownDeviceId: String) {
         self.db = db
         self.api = api
         self.e2ee = e2ee
+        self.media = media
         self.ws = WSClient(url: wsURL)
         self.ownUserId = ownUserId
         self.ownDeviceId = ownDeviceId
@@ -34,6 +38,11 @@ public actor SyncEngine {
     // MARK: - Lifecycle
 
     public func start() async {
+        // отправки, убитые до ack (state='inflight'), возвращаются в очередь;
+        // сервер дедуплицирует возможный повтор по clientMsgId
+        try? await db.write { dbc in
+            try dbc.execute(sql: "UPDATE outbox SET state = 'ready' WHERE state = 'inflight'")
+        }
         let events = await ws.events()
         await ws.start()
         eventTask = Task { [weak self] in
@@ -48,6 +57,12 @@ public actor SyncEngine {
                 await self.drainOutbox()
             }
         }
+        actionTask = Task { [weak self] in
+            guard let self else { return }
+            for await _ in await self.actionWakeup.stream {
+                await self.drainActions()
+            }
+        }
         // начальный снапшот — не блокирует UI, БД уже показывает старое
         Task { try? await self.refreshSnapshot() }
     }
@@ -55,6 +70,7 @@ public actor SyncEngine {
     public func stop() async {
         eventTask?.cancel()
         outboxTask?.cancel()
+        actionTask?.cancel()
         await ws.stop()
         connected = false
     }
@@ -80,6 +96,7 @@ public actor SyncEngine {
             connectionStream.continuation.yield(true)
             await sendSyncCursors()
             outboxWakeup.continuation.yield()
+            actionWakeup.continuation.yield()
         case .disconnected:
             connected = false
             connectionStream.continuation.yield(false)
@@ -502,7 +519,10 @@ public actor SyncEngine {
     }
 
     private func sendOutboxItem(_ item: OutboxItem) async throws {
-        let content = try JSONDecoder().decode(ContentPayload.self, from: item.payload)
+        var content = try JSONDecoder().decode(ContentPayload.self, from: item.payload)
+        // медиа, приложенные офлайн, выгружаются перед шифрованием конверта;
+        // ошибка сети здесь — обычный ретрай outbox
+        content = try await uploadPendingMedia(content, item: item)
         let info = try await db.read { dbc -> (kind: String, members: [String])? in
             guard let chat = try Chat.fetchOne(dbc, key: item.chatId) else { return nil }
             let members = try String.fetchAll(dbc, sql: "SELECT userId FROM member WHERE chatId = ?",
@@ -549,6 +569,138 @@ public actor SyncEngine {
         }
     }
 
+    // MARK: - Аплоад локальных медиа перед отправкой
+
+    struct MediaManagerMissing: Error {}
+
+    /// Выгружает медиа с локальными исходниками (mediaId пустой, файл в pendingDir).
+    /// После каждого выгруженного элемента обновлённый payload сохраняется в outbox
+    /// и в строке сообщения — kill не приводит к повторной выгрузке готовых элементов.
+    private func uploadPendingMedia(_ content: ContentPayload, item: OutboxItem) async throws -> ContentPayload {
+        func needsUpload(_ i: MediaInfo) -> Bool { i.mediaId.isEmpty && i.localPath != nil }
+        var content = content
+        if let m = content.media, needsUpload(m) {
+            let (uploaded, obsolete) = try await uploadOne(m)
+            content.media = uploaded
+            try await persistUploadedPayload(content, clientMsgId: item.clientMsgId)
+            obsolete.forEach { media?.removePending(localName: $0) }
+        }
+        if var album = content.album, album.contains(where: needsUpload) {
+            for idx in album.indices where needsUpload(album[idx]) {
+                let (uploaded, obsolete) = try await uploadOne(album[idx])
+                album[idx] = uploaded
+                content.album = album
+                try await persistUploadedPayload(content, clientMsgId: item.clientMsgId)
+                obsolete.forEach { media?.removePending(localName: $0) }
+            }
+        }
+        return content
+    }
+
+    private func uploadOne(_ info: MediaInfo) async throws -> (MediaInfo, obsoleteLocal: [String]) {
+        guard let media else { throw MediaManagerMissing() }
+        var info = info
+        var obsolete: [String] = []
+        if info.thumbMediaId == nil, let thumbName = info.thumbLocalPath {
+            let up = try await media.uploadPending(localName: thumbName)
+            info.thumbMediaId = up.mediaId
+            info.thumbKey = up.key
+            info.thumbHash = up.hash
+            info.thumbLocalPath = nil
+            obsolete.append(thumbName)
+        }
+        if let name = info.localPath {
+            let up = try await media.uploadPending(localName: name)
+            info.mediaId = up.mediaId
+            info.key = up.key
+            info.hash = up.hash
+            info.size = up.size
+            info.localPath = nil
+            obsolete.append(name)
+        }
+        return (info, obsolete)
+    }
+
+    private func persistUploadedPayload(_ content: ContentPayload, clientMsgId: String) async throws {
+        let enc = JSONEncoder()
+        let payload = try enc.encode(content)
+        let mediaJSON = content.media.flatMap { try? enc.encode($0) }.flatMap { String(data: $0, encoding: .utf8) }
+        let albumJSON = content.album.flatMap { try? enc.encode($0) }.flatMap { String(data: $0, encoding: .utf8) }
+        try await db.write { dbc in
+            try dbc.execute(sql: "UPDATE outbox SET payload = ? WHERE clientMsgId = ?",
+                            arguments: [payload, clientMsgId])
+            try dbc.execute(sql: "UPDATE message SET media = ?, album = ? WHERE clientMsgId = ?",
+                            arguments: [mediaJSON, albumJSON, clientMsgId])
+        }
+    }
+
+    // MARK: - Очередь сервисных действий (read / delete-for-all / accept)
+
+    struct ReadActionPayload: Codable { var upToSeq: Int }
+    struct DeleteActionPayload: Codable { var msgIds: [String]; var forAll: Bool }
+
+    /// read-акции схлопываются по чату: одна строка на chatId, побеждает больший upToSeq.
+    static func upsertReadAction(_ dbc: GRDB.Database, chatId: String, upToSeq: Int) throws {
+        let id = "read:\(chatId)"
+        let prev = try Row.fetchOne(dbc, sql: "SELECT payload FROM pendingAction WHERE id = ?", arguments: [id])
+            .flatMap { row -> ReadActionPayload? in
+                try? JSONDecoder().decode(ReadActionPayload.self, from: Data((row["payload"] as String).utf8))
+            }?.upToSeq ?? 0
+        let payload = String(data: try JSONEncoder().encode(ReadActionPayload(upToSeq: max(prev, upToSeq))),
+                             encoding: .utf8)!
+        try dbc.execute(
+            sql: """
+            INSERT INTO pendingAction (id, type, chatId, payload, createdAt) VALUES (?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, attempts = 0
+            """,
+            arguments: [id, "read", chatId, payload, Date().timeIntervalSince1970])
+    }
+
+    private var drainingActions = false
+
+    /// Дренаж очереди действий: FIFO, ошибка сети → выход, реконнект разбудит снова.
+    private func drainActions() async {
+        guard connected, !drainingActions else { return }
+        drainingActions = true
+        defer { drainingActions = false }
+        while connected {
+            guard let a = (try? await db.read { dbc in
+                try PendingAction.fetchOne(dbc, sql: "SELECT * FROM pendingAction ORDER BY createdAt LIMIT 1")
+            }) ?? nil else { break }
+            do {
+                switch a.type {
+                case "read":
+                    let p = try JSONDecoder().decode(ReadActionPayload.self, from: Data(a.payload.utf8))
+                    try await ws.send(.read(chatId: a.chatId, upToSeq: p.upToSeq))
+                case "delete":
+                    let p = try JSONDecoder().decode(DeleteActionPayload.self, from: Data(a.payload.utf8))
+                    try await ws.send(.delete(chatId: a.chatId, msgIds: p.msgIds, forAll: p.forAll))
+                case "accept":
+                    try await api.acceptChat(a.chatId)
+                default:
+                    break // неизвестный тип удаляется ниже
+                }
+                try? await db.write { [a] dbc in
+                    // read мог схлопнуться с бо́льшим upToSeq, пока шла отправка, —
+                    // тогда payload изменился и строка остаётся на повторную отправку
+                    try dbc.execute(sql: "DELETE FROM pendingAction WHERE id = ? AND payload = ?",
+                                    arguments: [a.id, a.payload])
+                }
+            } catch {
+                let attempts = a.attempts + 1
+                try? await db.write { [a] dbc in
+                    if attempts > 20 {
+                        try dbc.execute(sql: "DELETE FROM pendingAction WHERE id = ?", arguments: [a.id])
+                    } else {
+                        try dbc.execute(sql: "UPDATE pendingAction SET attempts = ? WHERE id = ?",
+                                        arguments: [attempts, a.id])
+                    }
+                }
+                break
+            }
+        }
+    }
+
     // MARK: - Пользовательские действия
 
     /// Принять новый identity-ключ собеседника и переотправить заблокированные сообщения.
@@ -569,8 +721,24 @@ public actor SyncEngine {
         try? await db.write { dbc in
             try dbc.execute(sql: "UPDATE chat SET myReadUpTo = MAX(myReadUpTo, ?), unreadCount = 0 WHERE id = ?",
                             arguments: [upToSeq, chatId])
+            try SyncEngine.upsertReadAction(dbc, chatId: chatId, upToSeq: upToSeq)
         }
-        try? await ws.send(.read(chatId: chatId, upToSeq: upToSeq))
+        actionWakeup.continuation.yield()
+    }
+
+    /// Принятие заявки: локально сразу, серверный accept — через очередь действий.
+    public func acceptChatRequest(chatId: String) async {
+        try? await db.write { dbc in
+            try dbc.execute(sql: "UPDATE chat SET isRequest = 0, iAccepted = 1 WHERE id = ?",
+                            arguments: [chatId])
+            try dbc.execute(
+                sql: """
+                INSERT INTO pendingAction (id, type, chatId, payload, createdAt) VALUES (?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET attempts = 0
+                """,
+                arguments: ["accept:\(chatId)", "accept", chatId, "{}", Date().timeIntervalSince1970])
+        }
+        actionWakeup.continuation.yield()
     }
 
     public func sendTyping(chatId: String, kind: String?) async {
@@ -591,7 +759,14 @@ public actor SyncEngine {
             }
         }
         if forAll {
-            try? await ws.send(.delete(chatId: chatId, msgIds: msgIds, forAll: true))
+            try? await db.write { dbc in
+                let payload = String(data: try JSONEncoder().encode(DeleteActionPayload(msgIds: msgIds, forAll: true)),
+                                     encoding: .utf8)!
+                try dbc.execute(
+                    sql: "INSERT INTO pendingAction (id, type, chatId, payload, createdAt) VALUES (?,?,?,?,?)",
+                    arguments: [UUID().uuidString, "delete", chatId, payload, Date().timeIntervalSince1970])
+            }
+            actionWakeup.continuation.yield()
         }
     }
 
