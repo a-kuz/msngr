@@ -109,15 +109,16 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         let dx = start.x - target.x
         let dy = start.y - target.y
         bubbleView.transform = CGAffineTransform(translationX: dx, y: dy)
-            .scaledBy(x: 0.3, y: 0.3)
-        bubbleView.alpha = 0.6
+            .scaledBy(x: 0.15, y: 0.15)
+        bubbleView.alpha = 0.5
+        bubbleView.layer.cornerRadius = 18
         for sub in [textLabel, timeLabel, tickView] { sub.alpha = 0 }
-        UIView.animate(withDuration: 0.5, delay: 0, usingSpringWithDamping: 0.78,
-                       initialSpringVelocity: 0.9, options: [.allowUserInteraction]) {
+        UIView.animate(withDuration: 0.6, delay: 0, usingSpringWithDamping: 0.72,
+                       initialSpringVelocity: 1.1, options: [.allowUserInteraction]) {
             self.bubbleView.transform = .identity
             self.bubbleView.alpha = 1
         }
-        UIView.animate(withDuration: 0.22, delay: 0.12, options: [.allowUserInteraction]) {
+        UIView.animate(withDuration: 0.25, delay: 0.18, options: [.allowUserInteraction]) {
             for sub in [self.textLabel, self.timeLabel, self.tickView] { sub.alpha = 1 }
         }
     }

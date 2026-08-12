@@ -16,8 +16,6 @@ final class MessagesViewController: UIViewController {
     private(set) var collectionView: UICollectionView!
     private var items: [ChatFeedItem] = []
     private var width: CGFloat = 0
-    /// id сообщения, чью ячейку нужно показать с анимацией появления
-    private var pendingAppearanceId: String?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -101,23 +99,27 @@ final class MessagesViewController: UIViewController {
         items = newItems
         // новое сообщение внизу — анимируем появление (spring); вставки истории
         // сверху идут без анимации, чтобы не дёргать контент под пальцем
-        let animateInsert = inserts.contains { $0.item == 0 }
-        if animateInsert, case .message(let m, _, _, _, _) = newItems[0] {
-            pendingAppearanceId = m.id
-        }
-        if animateInsert {
-            UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.84,
-                           initialSpringVelocity: 0.3, options: [.allowUserInteraction]) {
-                self.collectionView.performBatchUpdates {
-                    if !deletes.isEmpty { self.collectionView.deleteItems(at: deletes) }
-                    if !inserts.isEmpty { self.collectionView.insertItems(at: inserts) }
-                }
-            }
-        } else {
-            UIView.performWithoutAnimation {
-                collectionView.performBatchUpdates {
-                    if !deletes.isEmpty { collectionView.deleteItems(at: deletes) }
-                    if !inserts.isEmpty { collectionView.insertItems(at: inserts) }
+        // новое сообщение приходит в item 0 (низ инвертированного списка)
+        let newBottom: (id: String, outgoing: Bool)? = {
+            guard inserts.contains(where: { $0.item == 0 }),
+                  case .message(let m, _, _, _, _) = newItems[0] else { return nil }
+            return (m.id, m.isOutgoing)
+        }()
+
+        UIView.performWithoutAnimation {
+            collectionView.performBatchUpdates {
+                if !deletes.isEmpty { collectionView.deleteItems(at: deletes) }
+                if !inserts.isEmpty { collectionView.insertItems(at: inserts) }
+            } completion: { [weak self] _ in
+                guard let self, let nb = newBottom,
+                      let cell = self.collectionView.cellForItem(at: IndexPath(item: 0, section: 0)) as? MessageCell
+                else { return }
+                if nb.outgoing {
+                    let point = CGPoint(x: self.view.bounds.width - 28,
+                                        y: self.view.bounds.height - self.collectionView.contentInset.top + 22)
+                    cell.animateSendFlight(fromScreenPoint: point, in: self.view)
+                } else {
+                    cell.animateAppearance()
                 }
             }
         }
@@ -194,24 +196,6 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             let plan = BubbleLayout.plan(for: msg, width: cv.bounds.width, tightGap: tightGap,
                                          showTail: showTail, showName: showName, authorName: authorName)
             return CGSize(width: cv.bounds.width, height: plan.cellHeight)
-        }
-    }
-
-    /// Анимацию запускаем в willDisplay: здесь ячейка уже спозиционирована,
-    /// поэтому пересчёт координат кнопки отправки корректен.
-    func collectionView(_ cv: UICollectionView, willDisplay cell: UICollectionViewCell,
-                        forItemAt indexPath: IndexPath) {
-        guard let pending = pendingAppearanceId,
-              case .message(let msg, _, _, _, _) = items[indexPath.item],
-              msg.id == pending, let cell = cell as? MessageCell else { return }
-        pendingAppearanceId = nil
-        if msg.isOutgoing {
-            // точка кнопки отправки: правый нижний угол под коллекцией (инпут-бар)
-            let point = CGPoint(x: view.bounds.width - 28,
-                                y: view.bounds.height - collectionView.contentInset.top + 22)
-            cell.animateSendFlight(fromScreenPoint: point, in: view)
-        } else {
-            cell.animateAppearance()
         }
     }
 
