@@ -20,6 +20,12 @@ public struct InnerMessage: Codable {
     }
 }
 
+/// Ошибки шифрования исходящих.
+public enum E2EEError: Error, Equatable {
+    case identityChanged(userId: String) // TOFU: identity-ключ собеседника сменился
+    case noDevices(userId: String)       // у получателя нет ни одного устройства
+}
+
 /// Итог расшифровки входящего.
 public enum DecryptedIncoming {
     case content(ContentPayload)
@@ -29,12 +35,6 @@ public enum DecryptedIncoming {
 }
 
 /// E2EE-pipeline: шифрование исходящих (pw / sender keys) и расшифровка входящих.
-public enum E2EEError: Error {
-    /// Identity-ключ получателя сменился: отправка заблокирована, пока
-    /// пользователь явно не примет новый ключ (TOFU, как в Signal).
-    case identityChanged(userId: String)
-}
-
 public final class E2EEManager: @unchecked Sendable {
     let store: IdentityStore
     let api: APIClient
@@ -66,11 +66,11 @@ public final class E2EEManager: @unchecked Sendable {
             ?? (SenderKeyState(), Set<String>())
 
         // выяснить все адреса устройств участников (кроме своего устройства)
+        let byUser = try await deviceMap(userIds: Set(memberIds))
         var allAddrs: [(userId: String, deviceId: String)] = []
         for uid in memberIds {
-            let bundles = try await deviceBundles(userId: uid)
-            for b in bundles where !(uid == ownUserId && b.deviceId == ownDeviceId) {
-                allAddrs.append((uid, b.deviceId))
+            for d in byUser[uid] ?? [] where !(uid == ownUserId && d.deviceId == ownDeviceId) {
+                allAddrs.append((uid, d.deviceId))
             }
         }
         let missing = allAddrs.filter { !distributed.contains(addr($0.userId, $0.deviceId)) }
@@ -102,48 +102,58 @@ public final class E2EEManager: @unchecked Sendable {
         try store.deleteSenderKeyOut(chatId: chatId)
     }
 
-    private struct CachedBundles {
-        var bundles: [APIClient.PrekeyBundleDTO]
-        var at: Date
-    }
-    private var bundleCache: [String: CachedBundles] = [:]
-    private let cacheLock = NSLock()
-
-    private func cachedBundles(_ userId: String) -> [APIClient.PrekeyBundleDTO]? {
-        cacheLock.withLock {
-            guard let c = bundleCache[userId], Date().timeIntervalSince(c.at) < 300 else { return nil }
-            return c.bundles
-        }
-    }
-
-    private func storeBundles(_ userId: String, _ bundles: [APIClient.PrekeyBundleDTO]) {
-        cacheLock.withLock { bundleCache[userId] = CachedBundles(bundles: bundles, at: Date()) }
-    }
-
-    /// Список устройств собеседника. Бандлы НЕ кэшируются: one-time prekey одноразовый,
-    /// повторное использование выданного ключа ломает X3DH у получателя (он его уже удалил).
-    private func deviceBundles(userId: String) async throws -> [APIClient.PrekeyBundleDTO] {
-        try await api.prekeys(userId: userId).bundles
+    /// Устройства всех пользователей одним запросом /devices, сгруппированные по userId.
+    /// Prekey-бандлы не запрашиваются и one-time prekeys не расходуются.
+    private func deviceMap(userIds: Set<String>) async throws -> [String: [APIClient.DeviceDTO]] {
+        let all = try await api.devices(userIds: [String](userIds))
+        return Dictionary(grouping: all, by: \.userId)
     }
 
     private func encryptPairwise(inner: InnerMessage, recipients: [String],
                                  onlyDevices: Set<String>? = nil) async throws -> Envelope {
         let plaintext = try JSONEncoder().encode(inner)
-        var boxes: [String: PairwiseBox] = [:]
         var targets = Set(recipients)
         targets.insert(ownUserId) // эхо на свои другие устройства
+        let byUser = try await deviceMap(userIds: targets)
+
+        // получатель без единого устройства — некому шифровать
+        for uid in recipients where uid != ownUserId && (byUser[uid] ?? []).isEmpty {
+            throw E2EEError.noDevices(userId: uid)
+        }
+        // TOFU по identity-ключам всех устройств получателя (не только первого)
+        for uid in targets where uid != ownUserId {
+            for d in byUser[uid] ?? [] {
+                if case .changed = try store.checkTrust(userId: uid, identitySigning: d.identitySignKey) {
+                    throw E2EEError.identityChanged(userId: uid)
+                }
+            }
+        }
+
+        var boxes: [String: PairwiseBox] = [:]
+        // полный prekey-бандл (расходует one-time prekey) — только для юзеров,
+        // у которых нашлось устройство без установленной сессии
+        var bundlesByUser: [String: [APIClient.PrekeyBundleDTO]] = [:]
 
         for uid in targets {
-            let bundles = try await deviceBundles(userId: uid)
-            if uid != ownUserId, let first = bundles.first,
-               case .changed = try store.checkTrust(userId: uid, identitySigning: first.identitySignKey) {
-                throw E2EEError.identityChanged(userId: uid)
-            }
-            for bundle in bundles {
-                if uid == ownUserId && bundle.deviceId == ownDeviceId { continue }
-                let a = addr(uid, bundle.deviceId)
+            for device in byUser[uid] ?? [] {
+                if uid == ownUserId && device.deviceId == ownDeviceId { continue }
+                let a = addr(uid, device.deviceId)
                 if let onlyDevices, !onlyDevices.contains(a), uid != ownUserId { continue }
-                if let box = try await encryptToDevice(plaintext: plaintext, userId: uid, bundle: bundle) {
+                // существующая сессия → dr, бандл не нужен
+                if var session = try store.loadSession(peerUserId: uid, peerDeviceId: device.deviceId) {
+                    let msg = try session.encrypt(plaintext)
+                    try store.saveSession(session, peerUserId: uid, peerDeviceId: device.deviceId,
+                                          theirIdentityDH: device.identityKey)
+                    boxes[a] = PairwiseBox(type: "dr", c: try JSONEncoder().encode(msg).base64EncodedString())
+                    continue
+                }
+                // новой сессии нужен X3DH
+                if bundlesByUser[uid] == nil {
+                    bundlesByUser[uid] = try await api.prekeys(userId: uid).bundles
+                }
+                guard let bundle = bundlesByUser[uid]?.first(where: { $0.deviceId == device.deviceId })
+                else { continue }
+                if let box = try newSessionBox(plaintext: plaintext, userId: uid, bundle: bundle) {
                     boxes[a] = box
                 }
             }
@@ -153,16 +163,9 @@ public final class E2EEManager: @unchecked Sendable {
         return env
     }
 
-    private func encryptToDevice(plaintext: Data, userId: String,
-                                 bundle: APIClient.PrekeyBundleDTO) async throws -> PairwiseBox? {
-        // существующая сессия → dr
-        if var session = try store.loadSession(peerUserId: userId, peerDeviceId: bundle.deviceId) {
-            let msg = try session.encrypt(plaintext)
-            try store.saveSession(session, peerUserId: userId, peerDeviceId: bundle.deviceId,
-                                  theirIdentityDH: bundle.identityKey)
-            return PairwiseBox(type: "dr", c: try JSONEncoder().encode(msg).base64EncodedString())
-        }
-        // новой сессии нужен X3DH
+    /// X3DH-инициация новой сессии по полному prekey-бандлу устройства.
+    private func newSessionBox(plaintext: Data, userId: String,
+                               bundle: APIClient.PrekeyBundleDTO) throws -> PairwiseBox? {
         guard let ikDH = Data(base64urlEncoded: bundle.identityKey),
               let ikSign = Data(base64urlEncoded: bundle.identitySignKey),
               let spk = Data(base64urlEncoded: bundle.signedPrekey.key),

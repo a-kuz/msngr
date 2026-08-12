@@ -65,6 +65,26 @@ public actor SyncEngine {
         }
         // начальный снапшот — не блокирует UI, БД уже показывает старое
         Task { try? await self.refreshSnapshot() }
+        Task { await self.replenishPrekeysIfNeeded() }
+    }
+
+    private var prekeysChecked = false
+
+    /// Раз в сессию: если на сервере осталось < 20 своих one-time prekeys —
+    /// догенерировать до 100 и дозалить.
+    private func replenishPrekeysIfNeeded() async {
+        guard !prekeysChecked else { return }
+        prekeysChecked = true
+        do {
+            let remaining = try await api.prekeyCount()
+            guard remaining < 20 else { return }
+            let fresh = try e2ee.store.generateMoreOneTime(count: 100 - remaining)
+            try await api.uploadPrekeys(fresh.map {
+                .init(id: $0.id, key: $0.key.publicKey.rawRepresentation.base64urlEncodedString())
+            })
+        } catch {
+            prekeysChecked = false // сети не было — проверим при следующем start()
+        }
     }
 
     public func stop() async {

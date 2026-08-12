@@ -6,7 +6,9 @@ import MsngrCrypto
 /// E2E-тест ядра против локального сервера (wrangler dev на :8787).
 /// Пропускается, если сервер не поднят.
 final class CoreIntegrationTests: XCTestCase {
-    static let base = URL(string: "http://localhost:8787")!
+    /// Адрес dev-сервера; переопределяется переменной окружения MSNGR_TEST_BASE.
+    static let base = URL(string: ProcessInfo.processInfo.environment["MSNGR_TEST_BASE"]
+                          ?? "http://localhost:8787")!
 
     struct TestClient {
         let db: DatabaseQueue

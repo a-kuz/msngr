@@ -139,6 +139,21 @@ public final class APIClient: @unchecked Sendable {
         try await get("api/users/\(id)", as: UserResponse.self)
     }
 
+    /// Устройство пользователя с identity-ключами (без prekey-бандла).
+    public struct DeviceDTO: Decodable {
+        public let userId: String
+        public let deviceId: String
+        public let identityKey: String
+        public let identitySignKey: String
+    }
+    public struct DevicesResponse: Decodable { public let devices: [DeviceDTO] }
+    /// Устройства сразу нескольких пользователей одним запросом; ничего не потребляет.
+    public func devices(userIds: [String]) async throws -> [DeviceDTO] {
+        guard !userIds.isEmpty else { return [] }
+        return try await get("api/devices?ids=\(userIds.joined(separator: ","))",
+                             as: DevicesResponse.self).devices
+    }
+
     public struct PrekeyBundleDTO: Decodable {
         public let deviceId: String
         public let identityKey: String
@@ -166,6 +181,12 @@ public final class APIClient: @unchecked Sendable {
     public func uploadPrekeys(_ keys: [RegisterRequest.OneTimePrekeyDTO]) async throws {
         struct Body: Encodable { let oneTimePrekeys: [RegisterRequest.OneTimePrekeyDTO] }
         _ = try await request("api/prekeys", method: "POST", jsonBody: Body(oneTimePrekeys: keys))
+    }
+
+    private struct PrekeyCountResponse: Decodable { let count: Int }
+    /// Остаток собственных one-time prekeys на сервере.
+    public func prekeyCount() async throws -> Int {
+        try await get("api/prekeys/count", as: PrekeyCountResponse.self).count
     }
 
     // MARK: - Chats
