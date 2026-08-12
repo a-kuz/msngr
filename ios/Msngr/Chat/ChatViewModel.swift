@@ -41,8 +41,11 @@ final class ChatViewModel: ObservableObject {
         self.chatId = chatId
     }
 
+    private var started = false
+
     func start() {
-        guard let db = app.db else { return }
+        guard !started, let db = app.db else { return }
+        started = true
         let chatId = self.chatId
         let ownId = ownUserId
         cancellable = ValueObservation

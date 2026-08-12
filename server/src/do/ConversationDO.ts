@@ -1,5 +1,5 @@
 import type { Env, ChatState, ChatMember, StoredMsg, ServerFrame } from "../types";
-import { ulid, json, err, seqKey } from "../util";
+import { ulid, json, err, seqKey, nowSec } from "../util";
 
 interface Meta {
   chatId: string;
@@ -105,7 +105,7 @@ export class ConversationDO implements DurableObject {
       };
       const existing = await this.loadMeta();
       if (existing) return json({ ok: true, chatId: existing.chatId, existed: true });
-      const now = Date.now();
+      const now = nowSec();
       this.meta = {
         chatId: b.chatId, kind: b.kind, title: b.title ?? null,
         avatarId: null, description: null, createdBy: b.createdBy,
@@ -166,7 +166,7 @@ export class ConversationDO implements DurableObject {
         const seq = meta.lastSeq + 1;
         const msg: StoredMsg = {
           msgId: ulid(), seq, from: b.from, fromDevice: b.fromDevice,
-          clientMsgId: b.clientMsgId, sentAt: b.sentAt, ts: Date.now(), body: b.body,
+          clientMsgId: b.clientMsgId, sentAt: b.sentAt, ts: nowSec(), body: b.body,
         };
         meta.lastSeq = seq;
         this.meta = meta;
@@ -297,7 +297,7 @@ export class ConversationDO implements DurableObject {
           const onlySelf = b.add.length === 1 && b.add[0] === b.actor;
           if (!onlySelf) return err("not_admin", 403);
         }
-        const now = Date.now();
+        const now = nowSec();
         for (const uid of b.add) {
           if (members.has(uid)) continue;
           const m: ChatMember = { userId: uid, role: "member", joinedAt: now, accepted: true };

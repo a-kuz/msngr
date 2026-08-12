@@ -30,8 +30,13 @@ final class ChatListModel: ObservableObject {
     private var typingTask: Task<Void, Never>?
     private let app = AppState.shared
 
+    private var started = false
+
     func start() {
-        guard let db = app.db else { return }
+        // db создаётся асинхронно в bootstrap; при холодном старте он может быть
+        // ещё не готов — тогда ждём готовности, иначе список останется пустым
+        guard !started, let db = app.db else { return }
+        started = true
         let ownId = app.session?.userId ?? ""
         cancellable = ValueObservation
             .tracking { dbc -> ([Chat], [String: User], [String: Message]) in

@@ -20,6 +20,8 @@ final class AppState: ObservableObject {
     @Published var session: Session?
     @Published var isLocked = false
     @Published var obscured = false
+    /// true, когда db/engine инициализированы (bootstrap завершён)
+    @Published var ready = false
 
     private(set) var db: DatabaseQueue!
     private(set) var api: APIClient!
@@ -79,6 +81,7 @@ final class AppState: ObservableObject {
             engine = SyncEngine(db: db, api: api, e2ee: e2ee, wsURL: comps.url!,
                                 ownUserId: s.userId, ownDeviceId: s.deviceId)
             await engine.start()
+            ready = true
             objectWillChange.send()
             UIApplication.shared.registerForRemoteNotifications()
         } catch {

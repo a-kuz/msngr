@@ -45,6 +45,19 @@ targets:
         MARKETING_VERSION: 0.1.0
         GENERATE_INFOPLIST_FILE: false
 
+  MsngrTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [MsngrTests]
+    dependencies:
+      - target: Msngr
+    settings:
+      base:
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: true
+        PRODUCT_BUNDLE_IDENTIFIER: ai.enface.MsngrTests
+
   MsngrMac:
     type: application
     platform: macOS

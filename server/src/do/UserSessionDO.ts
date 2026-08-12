@@ -1,5 +1,5 @@
 import type { Env, ClientFrame, ServerFrame } from "../types";
-import { json, err } from "../util";
+import { json, err, nowSec } from "../util";
 import { sendPush } from "../push/apns";
 
 interface ChatFlags {
@@ -48,7 +48,7 @@ export class UserSessionDO implements DurableObject {
   private async broadcastPresence(online: boolean) {
     const userId = await this.getUserId();
     if (!userId) return;
-    const lastSeen = Date.now();
+    const lastSeen = nowSec();
     await this.state.storage.put("lastSeen", lastSeen);
     const ids = await this.chatIds();
     await Promise.all(
@@ -77,7 +77,7 @@ export class UserSessionDO implements DurableObject {
       const [client, server] = Object.values(pair);
       this.state.acceptWebSocket(server);
       server.serializeAttachment({ deviceId } satisfies SocketAttachment);
-      this.send(server, { t: "hello", serverTime: Date.now() });
+      this.send(server, { t: "hello", serverTime: nowSec() });
 
       if (this.sockets().length === 1) {
         // первое устройство онлайн
@@ -111,7 +111,7 @@ export class UserSessionDO implements DurableObject {
         const existing = await this.state.storage.get<ChatFlags>("chat:" + b.chatId);
         if (!existing) {
           await this.state.storage.put("chat:" + b.chatId, {
-            pinned: false, muted: false, archived: false, joinedAt: Date.now(),
+            pinned: false, muted: false, archived: false, joinedAt: nowSec(),
           } satisfies ChatFlags);
         }
         return json({ ok: true });

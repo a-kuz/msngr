@@ -40,6 +40,9 @@ final class MessagesViewController: UIViewController {
         super.viewDidLayoutSubviews()
         if width != view.bounds.width {
             width = view.bounds.width
+            // кэш планов раскладки зависит от ширины — сбрасываем при её изменении,
+            // иначе бабблы, посчитанные под другую ширину, вылезают за экран
+            BubbleLayout.clearCache()
             collectionView.collectionViewLayout.invalidateLayout()
         }
     }

@@ -78,9 +78,13 @@ enum BubbleLayout {
 
     // MARK: - Вычисление
 
+    static func clearCache() { cache.removeAllObjects() }
+
     private static func compute(for msg: Message, width: CGFloat, tightGap: Bool, showTail: Bool,
                                 showName: Bool, authorName: String?) -> BubbleLayoutPlan {
-        let maxBubbleWidth = floor(width * Theme.bubbleMaxWidthRatio)
+        // защита от заниженной/завышенной ширины коллекции: баббл не шире экрана
+        let safeWidth = min(width, UIScreen.main.bounds.width)
+        let maxBubbleWidth = floor(safeWidth * Theme.bubbleMaxWidthRatio)
         let timeString = Self.timeString(msg)
         let statusWidth = Self.statusWidth(msg, timeString: timeString)
 
@@ -228,7 +232,7 @@ enum BubbleLayout {
             bubbleHeight = ry + capsuleH + vPadding
         }
 
-        let bubbleX = msg.isOutgoing ? width - sideMargin - bubbleWidth : sideMargin
+        let bubbleX = msg.isOutgoing ? safeWidth - sideMargin - bubbleWidth : sideMargin
         let bubbleFrame = CGRect(x: bubbleX, y: 0, width: bubbleWidth, height: bubbleHeight)
 
         // фикс ширины имени

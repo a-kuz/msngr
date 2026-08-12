@@ -52,6 +52,9 @@ struct ChatListView: View {
                 SettingsView()
             }
             .onAppear { model.start() }
+            .onChange(of: app.ready) { _, ready in
+                if ready { model.start() }
+            }
         }
     }
 

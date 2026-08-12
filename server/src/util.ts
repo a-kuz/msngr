@@ -36,6 +36,12 @@ export function newToken(): string {
   return b64url(crypto.getRandomValues(new Uint8Array(32)));
 }
 
+// Все клиент-видимые метки времени — в СЕКУНДАХ (как Date.timeIntervalSince1970 на клиенте).
+// ulid хранит миллисекунды внутри себя отдельно.
+export function nowSec(): number {
+  return Date.now() / 1000;
+}
+
 export function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
