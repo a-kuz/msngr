@@ -273,10 +273,12 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             Task { [weak iv] in
                 guard let mm = AppState.shared.media else { return }
                 let effective: MediaInfo = {
-                    if isVideo, media.thumbMediaId != nil {
-                        var t = MediaInfo(type: "photo", mediaId: media.thumbMediaId!,
+                    // превью видео: выгруженный thumb-блоб либо локальный кадр (до аплоада)
+                    if isVideo, media.thumbMediaId != nil || media.thumbLocalPath != nil {
+                        var t = MediaInfo(type: "photo", mediaId: media.thumbMediaId ?? "",
                                           key: media.thumbKey ?? "", hash: media.thumbHash ?? "",
                                           size: 0, mime: "image/jpeg")
+                        t.localPath = media.thumbLocalPath
                         return t
                     }
                     return media

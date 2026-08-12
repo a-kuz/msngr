@@ -72,13 +72,16 @@ final class AppState: ObservableObject {
             api = APIClient(baseURL: Self.httpBase, token: s.token)
             store = try IdentityStore(db: db, masterKeyProvider: SharedFileMasterKey(containerURL: support))
             e2ee = E2EEManager(store: store, api: api, ownUserId: s.userId, ownDeviceId: s.deviceId)
+            // pendingDir — в постоянном контейнере: исходники офлайн-вложений
+            // должны пережить чистку Caches до выгрузки
             media = MediaManager(api: api,
                                  cacheDir: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-                                     .appendingPathComponent("media"))
+                                     .appendingPathComponent("media"),
+                                 pendingDir: support.appendingPathComponent("media-outgoing"))
             var comps = URLComponents(url: Self.httpBase.appendingPathComponent("ws"), resolvingAgainstBaseURL: false)!
             comps.scheme = Self.httpBase.scheme == "https" ? "wss" : "ws"
             comps.queryItems = [URLQueryItem(name: "token", value: s.token)]
-            engine = SyncEngine(db: db, api: api, e2ee: e2ee, wsURL: comps.url!,
+            engine = SyncEngine(db: db, api: api, e2ee: e2ee, media: media, wsURL: comps.url!,
                                 ownUserId: s.userId, ownDeviceId: s.deviceId)
             await engine.start()
             ready = true

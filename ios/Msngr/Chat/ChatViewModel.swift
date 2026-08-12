@@ -244,12 +244,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     func acceptRequest() {
-        Task {
-            try? await app.api.acceptChat(chatId)
-            try? await app.db.write { [chatId] dbc in
-                try dbc.execute(sql: "UPDATE chat SET isRequest = 0, iAccepted = 1 WHERE id = ?", arguments: [chatId])
-            }
-        }
+        Task { await app.engine.acceptChatRequest(chatId: chatId) }
     }
 
     private var lastTypingSent = Date.distantPast

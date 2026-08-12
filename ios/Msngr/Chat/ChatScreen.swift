@@ -215,11 +215,13 @@ struct ChatScreen: View {
         }
         guard !photos.isEmpty else { return }
 
+        // без сети не теряется: файл в постоянную папку, аплоад делает outbox-воркер
         var infos: [MediaInfo] = []
         for (jpeg, size, bh) in photos {
-            guard let up = try? await app.media.upload(jpeg) else { continue }
-            var info = MediaInfo(type: "photo", mediaId: up.mediaId, key: up.key,
-                                 hash: up.hash, size: up.size, mime: "image/jpeg")
+            guard let localName = try? app.media.stash(jpeg) else { continue }
+            var info = MediaInfo(type: "photo", mediaId: "", key: "",
+                                 hash: "", size: jpeg.count, mime: "image/jpeg")
+            info.localPath = localName
             info.w = Int(size.width)
             info.h = Int(size.height)
             info.blurhash = bh
@@ -246,38 +248,33 @@ struct ChatScreen: View {
         export.outputFileType = .mp4
         export.shouldOptimizeForNetworkUse = true // faststart
         await export.export()
-        guard export.status == .completed, let data = try? Data(contentsOf: out) else { return }
+        guard export.status == .completed, let data = try? Data(contentsOf: out),
+              let localName = try? app.media.stash(data) else { return }
 
         // превью-кадр
         let gen = AVAssetImageGenerator(asset: asset)
         gen.appliesPreferredTrackTransform = true
-        var thumbInfo: (String, String, String)?
+        var thumbLocal: String?
         var blurhash = ""
         var dims = CGSize(width: 16, height: 9)
         if let cg = try? gen.copyCGImage(at: .init(seconds: 0.1, preferredTimescale: 600), actualTime: nil) {
             dims = CGSize(width: cg.width, height: cg.height)
             let ui = UIImage(cgImage: cg)
             if let jpeg = ui.jpegData(compressionQuality: 0.7) {
-                if let up = try? await app.media.upload(jpeg) {
-                    thumbInfo = (up.mediaId, up.key, up.hash)
-                }
+                thumbLocal = try? app.media.stash(jpeg)
                 if let px = ImageProcessor.rgbaPixels(jpeg) {
                     blurhash = BlurHash.encode(pixels: px.pixels, width: px.width, height: px.height) ?? ""
                 }
             }
         }
-        guard let up = try? await app.media.upload(data) else { return }
-        var info = MediaInfo(type: "video", mediaId: up.mediaId, key: up.key,
-                             hash: up.hash, size: up.size, mime: "video/mp4")
+        var info = MediaInfo(type: "video", mediaId: "", key: "",
+                             hash: "", size: data.count, mime: "video/mp4")
+        info.localPath = localName
+        info.thumbLocalPath = thumbLocal
         info.w = Int(dims.width)
         info.h = Int(dims.height)
         if let d = try? await asset.load(.duration) { info.dur = d.seconds }
         info.blurhash = blurhash
-        if let t = thumbInfo {
-            info.thumbMediaId = t.0
-            info.thumbKey = t.1
-            info.thumbHash = t.2
-        }
         var c = ContentPayload(kind: "video")
         c.media = info
         try? await app.engine.enqueue(content: c, chatId: chatId)
@@ -288,10 +285,11 @@ struct ChatScreen: View {
         let secured = url.startAccessingSecurityScopedResource()
         defer { if secured { url.stopAccessingSecurityScopedResource() } }
         guard let data = try? Data(contentsOf: url), data.count < 100_000_000 else { return }
-        guard let up = try? await app.media.upload(data) else { return }
-        var info = MediaInfo(type: "file", mediaId: up.mediaId, key: up.key,
-                             hash: up.hash, size: up.size,
+        guard let localName = try? app.media.stash(data) else { return }
+        var info = MediaInfo(type: "file", mediaId: "", key: "",
+                             hash: "", size: data.count,
                              mime: "application/octet-stream")
+        info.localPath = localName
         info.name = url.lastPathComponent
         var c = ContentPayload(kind: "file")
         c.media = info
@@ -301,9 +299,10 @@ struct ChatScreen: View {
     private func sendVoice(_ url: URL, duration: TimeInterval, waveform: [Int]) {
         Task {
             guard let data = try? Data(contentsOf: url),
-                  let up = try? await app.media.upload(data) else { return }
-            var info = MediaInfo(type: "voice", mediaId: up.mediaId, key: up.key,
-                                 hash: up.hash, size: up.size, mime: "audio/mp4")
+                  let localName = try? app.media.stash(data) else { return }
+            var info = MediaInfo(type: "voice", mediaId: "", key: "",
+                                 hash: "", size: data.count, mime: "audio/mp4")
+            info.localPath = localName
             info.dur = duration
             info.waveform = waveform
             var c = ContentPayload(kind: "voice")
