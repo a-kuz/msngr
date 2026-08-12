@@ -150,10 +150,24 @@ export class ConversationDO implements DurableObject {
         return json({ ok: true, msgs: [...listed.values()] });
       }
 
+      case "/events": {
+        // тумбстоуны удалённых сообщений и текущие read/delivered-марки —
+        // для доигрывания при sync после офлайна
+        const deleted: Array<{ msgId: string; by: string }> = [];
+        for (const [, m] of await this.state.storage.list<StoredMsg>({ prefix: "msg:" })) {
+          if (m.deleted) deleted.push({ msgId: m.msgId, by: m.deletedBy ?? m.from });
+        }
+        const readMarks =
+          (await this.state.storage.get<Record<string, number>>("readMarks")) ?? {};
+        const deliveredMarks =
+          (await this.state.storage.get<Record<string, number>>("deliveredMarks")) ?? {};
+        return json({ ok: true, deleted, readMarks, deliveredMarks });
+      }
+
       case "/send": {
         const b = (await req.json()) as {
           from: string; fromDevice: string; clientMsgId: string;
-          sentAt: number; body: unknown;
+          sentAt: number; body: unknown; service?: boolean;
         };
         const members = await this.loadMembers();
         if (!members.has(b.from)) return err("not_member", 403);
@@ -167,6 +181,7 @@ export class ConversationDO implements DurableObject {
         const msg: StoredMsg = {
           msgId: ulid(), seq, from: b.from, fromDevice: b.fromDevice,
           clientMsgId: b.clientMsgId, sentAt: b.sentAt, ts: nowSec(), body: b.body,
+          ...(b.service ? { service: true } : {}),
         };
         meta.lastSeq = seq;
         this.meta = meta;
@@ -176,23 +191,15 @@ export class ConversationDO implements DurableObject {
           [dupeKey]: { msgId: msg.msgId, seq, ts: msg.ts },
         });
 
-        await this.fanout(
-          {
-            t: "msg", chatId: meta.chatId, seq, msgId: msg.msgId,
-            from: msg.from, fromDevice: msg.fromDevice,
-            sentAt: msg.sentAt, ts: msg.ts, body: msg.body,
-          },
-          { except: b.from }
-        );
+        const frame: ServerFrame = {
+          t: "msg", chatId: meta.chatId, seq, msgId: msg.msgId,
+          from: msg.from, fromDevice: msg.fromDevice,
+          sentAt: msg.sentAt, ts: msg.ts, body: msg.body,
+          ...(msg.service ? { service: true } : {}),
+        };
+        await this.fanout(frame, { except: b.from });
         // эхо на другие устройства автора идёт через его же UserDO
-        await this.fanout(
-          {
-            t: "msg", chatId: meta.chatId, seq, msgId: msg.msgId,
-            from: msg.from, fromDevice: msg.fromDevice,
-            sentAt: msg.sentAt, ts: msg.ts, body: msg.body,
-          },
-          { only: [b.from] }
-        );
+        await this.fanout(frame, { only: [b.from] });
         return json({ ok: true, msgId: msg.msgId, seq, ts: msg.ts });
       }
 
@@ -272,7 +279,7 @@ export class ConversationDO implements DurableObject {
           for (const [key, m] of await this.state.storage.list<StoredMsg>({ prefix: "msg:" })) {
             if (b.msgIds.includes(m.msgId)) {
               if (m.from !== b.userId && actor.role !== "admin") continue;
-              updates[key] = { ...m, body: null, deleted: true };
+              updates[key] = { ...m, body: null, deleted: true, deletedBy: b.userId };
             }
           }
           void idx;
@@ -285,17 +292,25 @@ export class ConversationDO implements DurableObject {
       }
 
       case "/members": {
-        const b = (await req.json()) as { actor: string; add: string[]; remove: string[] };
+        const b = (await req.json()) as {
+          actor: string; add: string[]; remove: string[]; viaInvite?: boolean;
+        };
         const members = await this.loadMembers();
         const actor = members.get(b.actor);
-        if (!actor) return err("not_member", 403);
+        // viaInvite: не-участник вступает сам по invite-ссылке (только add самого себя)
+        const selfJoin =
+          b.viaInvite === true && !actor &&
+          b.add.length === 1 && b.add[0] === b.actor && b.remove.length === 0;
+        if (!actor && !selfJoin) return err("not_member", 403);
         if (meta.kind !== "group") return err("not_group", 400);
-        // удалять может только админ
-        if (b.remove.length && actor.role !== "admin") return err("not_admin", 403);
-        // добавлять может админ; не-админ — только самого себя (join по invite-ссылке)
-        if (b.add.length && actor.role !== "admin") {
-          const onlySelf = b.add.length === 1 && b.add[0] === b.actor;
-          if (!onlySelf) return err("not_admin", 403);
+        if (actor) {
+          // удалять может только админ
+          if (b.remove.length && actor.role !== "admin") return err("not_admin", 403);
+          // добавлять может админ; не-админ — только самого себя
+          if (b.add.length && actor.role !== "admin") {
+            const onlySelf = b.add.length === 1 && b.add[0] === b.actor;
+            if (!onlySelf) return err("not_admin", 403);
+          }
         }
         const now = nowSec();
         for (const uid of b.add) {

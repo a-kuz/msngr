@@ -287,6 +287,11 @@ app.post("/api/chats/:id/flags", async (c) => {
 app.post("/api/chats/:id/invite", async (c) => {
   const { userId } = c.get("auth");
   const chatId = c.req.param("id");
+  // инвайт может создать только участник чата
+  const sr = await convStub(c.env, chatId).fetch("https://do/state");
+  const sj = (await sr.json()) as { ok: boolean; state?: ChatState };
+  if (!sj.ok || !sj.state?.members.some((m) => m.userId === userId))
+    return err("not_member", 403);
   const code = b64url(crypto.getRandomValues(new Uint8Array(9)));
   await c.env.DB.prepare(
     "INSERT INTO invites (code, chat_id, created_by, created_at) VALUES (?,?,?,?)"
@@ -304,7 +309,8 @@ app.post("/api/join/:code", async (c) => {
     method: "POST",
     body: JSON.stringify({ actor: userId, add: [userId], remove: [], viaInvite: true }),
   });
-  void r;
+  const rj = (await r.json()) as { ok: boolean; error?: string };
+  if (!rj.ok) return err(rj.error ?? "join_failed", r.status);
   return json({ ok: true, chatId: inv.chat_id });
 });
 

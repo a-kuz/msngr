@@ -13,7 +13,8 @@ export interface Env {
 // --- WS frames: client -> server ---
 export type ClientFrame =
   | { t: "sync"; cursors: Record<string, number> }
-  | { t: "send"; chatId: string; clientMsgId: string; sentAt: number; body: unknown }
+  // service: служебный фрейм (skd/reaction/edit и т.п.) — не должен растить unread/бейдж
+  | { t: "send"; chatId: string; clientMsgId: string; sentAt: number; body: unknown; service?: boolean }
   | { t: "recv"; chatId: string; seqs: number[] }
   | { t: "read"; chatId: string; upToSeq: number }
   | { t: "typing"; chatId: string; kind: string | null }
@@ -26,7 +27,7 @@ export type ClientFrame =
 export type ServerFrame =
   | { t: "hello"; serverTime: number }
   | { t: "sent"; chatId: string; clientMsgId: string; msgId: string; seq: number; ts: number }
-  | { t: "msg"; chatId: string; seq: number; msgId: string; from: string; fromDevice: string; sentAt: number; ts: number; body: unknown }
+  | { t: "msg"; chatId: string; seq: number; msgId: string; from: string; fromDevice: string; sentAt: number; ts: number; body: unknown; service?: boolean }
   | { t: "receipt"; chatId: string; kind: "delivered" | "read"; upToSeq?: number; seqs?: number[]; by: string }
   | { t: "typing"; chatId: string; from: string; kind: string | null }
   | { t: "presence"; userId: string; online: boolean; lastSeen: number }
@@ -66,7 +67,9 @@ export interface StoredMsg {
   sentAt: number; // client clock
   ts: number;     // server clock
   body: unknown;  // E2E envelope; null if tombstoned
+  service?: boolean;
   deleted?: boolean;
+  deletedBy?: string;
 }
 
 export interface AuthCtx {

@@ -4,6 +4,7 @@ import { sendPush } from "../push/apns";
 
 /// Presence-TTL: клиент пингует каждые ~12с; тишина дольше — офлайн.
 const PRESENCE_TTL_MS = 35_000;
+const PRESENCE_TTL = PRESENCE_TTL_MS / 1000;
 
 interface ChatFlags {
   pinned: boolean;
@@ -14,6 +15,8 @@ interface ChatFlags {
 
 interface SocketAttachment {
   deviceId: string;
+  // время последнего ping (сек); сокет без свежего ping считается подвешенным
+  lastPing: number;
 }
 
 // Один DO на пользователя: все WS его устройств, чат-лист, presence, пуши.
@@ -41,6 +44,16 @@ export class UserSessionDO implements DurableObject {
 
   private broadcast(frame: ServerFrame) {
     for (const ws of this.sockets()) this.send(ws, frame);
+  }
+
+  // есть ли сокет с живым клиентом (ping в пределах TTL);
+  // формально открытый, но подвешенный сокет свежим не считается
+  private presenceFresh(): boolean {
+    const cutoff = nowSec() - PRESENCE_TTL;
+    return this.sockets().some((ws) => {
+      const att = ws.deserializeAttachment() as SocketAttachment | null;
+      return (att?.lastPing ?? 0) > cutoff;
+    });
   }
 
   private async chatIds(): Promise<string[]> {
@@ -79,10 +92,9 @@ export class UserSessionDO implements DurableObject {
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair);
       this.state.acceptWebSocket(server);
-      server.serializeAttachment({ deviceId } satisfies SocketAttachment);
+      server.serializeAttachment({ deviceId, lastPing: nowSec() } satisfies SocketAttachment);
       this.send(server, { t: "hello", serverTime: nowSec() });
 
-      await this.state.storage.put("lastPing", nowSec());
       await this.state.storage.setAlarm(Date.now() + PRESENCE_TTL_MS);
       if (this.sockets().length === 1) {
         // первое устройство онлайн
@@ -98,13 +110,14 @@ export class UserSessionDO implements DurableObject {
         if (live.length > 0) {
           for (const ws of live) this.send(ws, frame);
         }
-        if (frame.t === "msg") {
-          // непрочитанное/оффлайн → APNs (клиенты в fg сами погасят по chatId)
+        if (frame.t === "msg" && !frame.service) {
+          // непрочитанное → APNs, если нет клиента со свежим ping:
+          // подвешенный (формально открытый) сокет доставку не гарантирует
           const flags = await this.state.storage.get<ChatFlags>("chat:" + frame.chatId);
           const muted = flags?.muted ?? false;
           const userId = await this.getUserId();
           const isOwnEcho = userId !== null && frame.from === userId;
-          if (live.length === 0 && !muted && !isOwnEcho) {
+          if (!this.presenceFresh() && !muted && !isOwnEcho) {
             this.state.waitUntil(this.pushToDevices(frame.chatId, frame.msgId));
           }
         }
@@ -160,7 +173,7 @@ export class UserSessionDO implements DurableObject {
 
       case "/presence-info": {
         const lastSeen = (await this.state.storage.get<number>("lastSeen")) ?? 0;
-        const online = this.sockets().length > 0 && (await this.presenceFresh());
+        const online = this.presenceFresh();
         return json({ ok: true, online, lastSeen });
       }
 
@@ -194,24 +207,24 @@ export class UserSessionDO implements DurableObject {
 
     switch (frame.t) {
       case "ping": {
-        this.send(ws, { t: "pong" });
         // presence по пинг-понгу: свежий ping = онлайн; тишина дольше TTL
         // (alarm) или явный "bg" = офлайн. Сам факт живого сокета не значит
         // ничего: iOS держит его минуты после сворачивания.
-        const wasFresh = await this.presenceFresh();
-        await this.state.storage.put("lastPing", nowSec());
+        const wasFresh = this.presenceFresh();
+        ws.serializeAttachment({ ...att, lastPing: nowSec() } satisfies SocketAttachment);
+        this.send(ws, { t: "pong" });
         await this.state.storage.setAlarm(Date.now() + PRESENCE_TTL_MS);
         if (!wasFresh) this.state.waitUntil(this.broadcastPresence(true));
         return;
       }
 
       case "bg":
-        await this.state.storage.put("lastPing", 0);
+        ws.serializeAttachment({ ...att, lastPing: 0 } satisfies SocketAttachment);
         this.state.waitUntil(this.broadcastPresence(false));
         return;
 
       case "fg": {
-        await this.state.storage.put("lastPing", nowSec());
+        ws.serializeAttachment({ ...att, lastPing: nowSec() } satisfies SocketAttachment);
         await this.state.storage.setAlarm(Date.now() + PRESENCE_TTL_MS);
         this.state.waitUntil(this.broadcastPresence(true));
         return;
@@ -223,6 +236,7 @@ export class UserSessionDO implements DurableObject {
           body: JSON.stringify({
             from: userId, fromDevice: att.deviceId,
             clientMsgId: frame.clientMsgId, sentAt: frame.sentAt, body: frame.body,
+            service: frame.service ?? false,
           }),
         });
         const r = (await res.json()) as { ok: boolean; msgId?: string; seq?: number; ts?: number; error?: string };
@@ -278,20 +292,47 @@ export class UserSessionDO implements DurableObject {
             frame.cursors[chatId] = 0; // и доиграть историю ниже
           }
         }
-        // доигрывание пропущенных сообщений по курсорам клиента
+        // доигрывание пропущенных сообщений по курсорам клиента — батчами до исчерпания
+        const BATCH = 200;
         for (const [chatId, lastSeq] of Object.entries(frame.cursors)) {
-          const res = await this.convStub(chatId).fetch(
-            `https://do/history?fromSeq=${lastSeq}&limit=200`
-          );
-          const r = (await res.json()) as { ok: boolean; msgs?: Array<Record<string, unknown>> };
-          if (r.ok && r.msgs) {
+          let cursor = lastSeq;
+          for (;;) {
+            const res = await this.convStub(chatId).fetch(
+              `https://do/history?fromSeq=${cursor}&limit=${BATCH}`
+            );
+            const r = (await res.json()) as { ok: boolean; msgs?: Array<Record<string, unknown>> };
+            if (!r.ok || !r.msgs?.length) break;
             for (const m of r.msgs) {
+              cursor = m.seq as number;
+              // тумбстоуны уходят deleted-фреймами ниже
+              if (m.deleted) continue;
               this.send(ws, {
                 t: "msg", chatId,
                 seq: m.seq as number, msgId: m.msgId as string,
                 from: m.from as string, fromDevice: m.fromDevice as string,
                 sentAt: m.sentAt as number, ts: m.ts as number, body: m.body,
+                ...(m.service ? { service: true } : {}),
               });
+            }
+            if (r.msgs.length < BATCH) break;
+          }
+          // тумбстоуны и read/delivered-марки, которые случились пока клиент был офлайн
+          const er = await this.convStub(chatId).fetch("https://do/events");
+          const e = (await er.json()) as {
+            ok: boolean;
+            deleted?: Array<{ msgId: string; by: string }>;
+            readMarks?: Record<string, number>;
+            deliveredMarks?: Record<string, number>;
+          };
+          if (e.ok) {
+            for (const d of e.deleted ?? []) {
+              this.send(ws, { t: "deleted", chatId, msgIds: [d.msgId], forAll: true, by: d.by });
+            }
+            for (const [by, upToSeq] of Object.entries(e.deliveredMarks ?? {})) {
+              if (by !== userId) this.send(ws, { t: "receipt", chatId, kind: "delivered", upToSeq, by });
+            }
+            for (const [by, upToSeq] of Object.entries(e.readMarks ?? {})) {
+              if (by !== userId) this.send(ws, { t: "receipt", chatId, kind: "read", upToSeq, by });
             }
           }
         }
@@ -300,15 +341,9 @@ export class UserSessionDO implements DurableObject {
     }
   }
 
-  /// Онлайн = ping был свежее TTL.
-  private async presenceFresh(): Promise<boolean> {
-    const last = (await this.state.storage.get<number>("lastPing")) ?? 0;
-    return nowSec() - last < PRESENCE_TTL_MS / 1000;
-  }
-
   /// Тишина дольше TTL — объявляем офлайн, даже если сокет формально жив.
   async alarm() {
-    if (!(await this.presenceFresh())) {
+    if (!this.presenceFresh()) {
       await this.broadcastPresence(false);
     } else {
       await this.state.storage.setAlarm(Date.now() + PRESENCE_TTL_MS);
