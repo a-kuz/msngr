@@ -81,9 +81,8 @@ final class ChatViewModel: ObservableObject {
         connectionTask?.cancel()
         connectionTask = Task { [weak self] in
             guard let engine = self?.app.engine else { return }
-            await MainActor.run { [isUp = await engine.isConnected] in self?.connected = isUp }
-            let stream = await engine.connectionStream.stream
-            for await up in stream {
+            // broadcast первым элементом отдаёт текущее состояние соединения
+            for await up in engine.connectionStream.subscribe() {
                 guard let self else { return }
                 self.connected = up
             }
@@ -92,8 +91,7 @@ final class ChatViewModel: ObservableObject {
         typingTask?.cancel()
         typingTask = Task { [weak self] in
             guard let engine = self?.app.engine else { return }
-            let stream = await engine.typingStream.stream
-            for await ev in stream {
+            for await ev in engine.typingStream.subscribe() {
                 guard let self, ev.chatId == self.chatId else { continue }
                 if ev.kind != nil {
                     if !self.typingUsers.contains(ev.userId) { self.typingUsers.append(ev.userId) }
@@ -337,26 +335,12 @@ final class ChatViewModel: ObservableObject {
                 let result = (try? app.e2ee.decrypt(envelopeJSON: m.body!, chatId: chatId,
                                                     fromUserId: m.from, fromDeviceId: m.fromDevice))
                 if case .content(let content) = result {
-                    await storeHistoric(content: content, dto: m)
+                    // применение (включая edit/reaction поверх оригиналов) — в движке
+                    await app.engine.storeHistoric(content: content, chatId: chatId,
+                                                   msgId: m.msgId, seq: m.seq, from: m.from,
+                                                   sentAt: m.sentAt, ts: m.ts)
                 }
             }
-        }
-    }
-
-    private func storeHistoric(content: ContentPayload, dto: APIClient.HistoryResponse.MsgDTO) async {
-        guard !["edit", "reaction", "disappearing"].contains(content.kind) else { return }
-        var msg = Message(id: dto.msgId, chatId: chatId, fromUserId: dto.from, sentAt: dto.sentAt,
-                          kind: MessageKind(rawValue: content.kind) ?? .text,
-                          text: content.text, status: .sent, isOutgoing: dto.from == ownUserId)
-        msg.msgId = dto.msgId
-        msg.seq = dto.seq
-        msg.serverTs = dto.ts
-        msg.media = content.media
-        msg.album = content.album
-        msg.replyTo = content.replyTo
-        msg.forward = content.fwd
-        try? await app.db.write { [msg] dbc in
-            try msg.upsert(dbc)
         }
     }
 }
