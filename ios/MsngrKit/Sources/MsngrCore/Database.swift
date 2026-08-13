@@ -170,6 +170,20 @@ public enum AppDatabase {
                 t.column("attempts", .integer).notNull().defaults(to: 0)
             }
         }
+        m.registerMigration("v5-pendingApply") { db in
+            // edit/reaction/deleted, чьё целевое сообщение ещё не в БД
+            // (например, оригинал ждёт ключа в pendingDecrypt):
+            // применяются, когда строка сообщения появляется
+            try db.create(table: "pendingApply") { t in
+                t.column("chatId", .text).notNull()
+                t.column("targetMsgId", .text).notNull()
+                t.column("kind", .text).notNull()    // edit | reaction | deleted
+                t.column("fromUserId", .text).notNull()
+                t.column("payload", .text).notNull() // JSON ContentPayload; для deleted — "{}"
+                t.column("seq", .integer)
+                t.primaryKey(["chatId", "targetMsgId", "kind", "fromUserId"])
+            }
+        }
         return m
     }
 }

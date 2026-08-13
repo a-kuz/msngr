@@ -3,7 +3,8 @@ import Foundation
 /// Зеркало серверного протокола (docs/protocol.md).
 public enum WSOutgoing {
     case sync(cursors: [String: Int])
-    case send(chatId: String, clientMsgId: String, sentAt: Double, body: Envelope)
+    // service: служебный фрейм (skd/reaction/edit/disappearing) — сервер не растит им unread/бейдж
+    case send(chatId: String, clientMsgId: String, sentAt: Double, body: Envelope, service: Bool)
     case recv(chatId: String, seqs: [Int])
     case read(chatId: String, upToSeq: Int)
     case typing(chatId: String, kind: String?)
@@ -15,9 +16,10 @@ public enum WSOutgoing {
         switch self {
         case .sync(let cursors):
             obj = ["t": "sync", "cursors": cursors]
-        case .send(let chatId, let clientMsgId, let sentAt, let body):
+        case .send(let chatId, let clientMsgId, let sentAt, let body, let service):
             obj = ["t": "send", "chatId": chatId, "clientMsgId": clientMsgId,
                    "sentAt": sentAt, "body": try body.jsonObject()]
+            if service { obj["service"] = true }
         case .recv(let chatId, let seqs):
             obj = ["t": "recv", "chatId": chatId, "seqs": seqs]
         case .read(let chatId, let upToSeq):
@@ -92,6 +94,8 @@ public struct WSIncoming: Decodable {
     public let msgIds: [String]?
     public let forAll: Bool?
     public let serverTime: Double?
+    /// msg: служебный фрейм (skd/reaction/edit) — не растит unread
+    public let service: Bool?
 }
 
 public struct ChatStateDTO: Decodable {
