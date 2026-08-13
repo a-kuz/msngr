@@ -94,7 +94,7 @@ enum Palette {
 /// Единая точка стиля: цвета, шрифты, кривые анимаций. Ничего линейного по умолчанию.
 enum Theme {
     /// Текущая палитра — переключается заменой этой строки.
-    static let palette: Palette = .imessage
+    static let palette: Palette = .graphite
 
     // Роли цветов
     static var chatBackground: Color { palette.chatBackground }
