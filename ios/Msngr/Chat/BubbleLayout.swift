@@ -216,11 +216,14 @@ enum BubbleLayout {
             }
         } else if !chips.isEmpty {
             // есть реакции → время привязано к ним, а не к последней строке текста
+            let contentBottom = y
             let lastLine = (textFrame != nil && attrText != nil)
                 ? Self.lastLineWidth(attrText!, maxWidth: maxContent) : 0
             let singleLineText = textFrame.map { $0.height <= ceil(textFont.lineHeight) + 2 } ?? true
             let chipsWidth = chips.reduce(0) { $0 + $1.width } + CGFloat(chips.count - 1) * chipGap
-            let inlineAll = singleLineText
+            // voice/file: капсулы всегда своими рядами под волной/плашкой файла,
+            // inline-строка «текст + реакции + время» есть только у текстовых
+            let inlineAll = voiceFrame == nil && singleLineText
                 && lastLine + gap + chipsWidth + gap + statusWidth <= maxContent
 
             if inlineAll {
@@ -265,7 +268,7 @@ enum BubbleLayout {
                                          y: ry + chipH + 2, width: statusWidth, height: 16)
                     y = ry + chipH + 18
                 }
-                reactionsHeight = y - (textFrame?.maxY ?? y)
+                reactionsHeight = y - contentBottom
             }
         } else if let tf = textFrame, let at = attrText {
             // без реакций — три случая размещения времени как в TG
@@ -296,6 +299,8 @@ enum BubbleLayout {
         for r in reactionsFrames { bubbleWidth = max(bubbleWidth, r.3.maxX + hPadding) }
         var bubbleHeight = max(y, mediaFrame?.maxY ?? 0)
         if statusOnMedia && chips.isEmpty { bubbleHeight = mediaFrame!.maxY }
+        // капсулы реакций всегда внутри баббла: низ баббла не выше низа капсул
+        for r in reactionsFrames { bubbleHeight = max(bubbleHeight, r.3.maxY + vPadding) }
 
         let bubbleX = msg.isOutgoing ? safeWidth - sideMargin - bubbleWidth : sideMargin
         let bubbleFrame = CGRect(x: bubbleX, y: 0, width: bubbleWidth, height: bubbleHeight)

@@ -2,17 +2,55 @@ import SwiftUI
 import AVKit
 import MsngrCore
 
+/// Показ просмотрщика в отдельном UIWindow поверх всего UI приложения:
+/// окно перекрывает и навбар чата, и статусбар.
+@MainActor
+enum MediaViewerPresenter {
+    private static var window: UIWindow?
+    private static weak var previousKeyWindow: UIWindow?
+
+    static func present(message: Message, startIndex: Int) {
+        guard window == nil,
+              let scene = UIApplication.shared.connectedScenes
+                  .compactMap({ $0 as? UIWindowScene })
+                  .first(where: { $0.activationState == .foregroundActive }) else { return }
+        previousKeyWindow = scene.windows.first { $0.isKeyWindow }
+        let host = UIHostingController(
+            rootView: MediaViewerView(message: message, startIndex: startIndex) { dismiss() })
+        host.view.backgroundColor = .clear
+        let w = UIWindow(windowScene: scene)
+        w.windowLevel = UIWindow.Level(rawValue: UIWindow.Level.statusBar.rawValue + 1)
+        w.rootViewController = host
+        w.alpha = 0
+        w.makeKeyAndVisible()
+        UIView.animate(withDuration: 0.2) { w.alpha = 1 }
+        window = w
+    }
+
+    static func dismiss() {
+        guard let w = window else { return }
+        window = nil
+        UIView.animate(withDuration: 0.2) {
+            w.alpha = 0
+        } completion: { _ in
+            w.isHidden = true
+        }
+        previousKeyWindow?.makeKey()
+    }
+}
+
 /// Фуллскрин-просмотрщик фото/видео: зум, свайп-вниз для закрытия, пейджинг альбома.
 struct MediaViewerView: View {
     let message: Message
     let startIndex: Int
-    @Environment(\.dismiss) private var dismiss
+    let onDismiss: () -> Void
     @State private var index: Int
     @State private var dragOffset: CGSize = .zero
 
-    init(message: Message, startIndex: Int) {
+    init(message: Message, startIndex: Int, onDismiss: @escaping () -> Void) {
         self.message = message
         self.startIndex = startIndex
+        self.onDismiss = onDismiss
         _index = State(initialValue: startIndex)
     }
 
@@ -43,7 +81,7 @@ struct MediaViewerView: View {
                     }
                     .onEnded { v in
                         if abs(v.translation.height) > 120 {
-                            dismiss()
+                            onDismiss()
                         } else {
                             withAnimation(Theme.springFast) { dragOffset = .zero }
                         }
@@ -53,7 +91,7 @@ struct MediaViewerView: View {
             VStack {
                 HStack {
                     Button {
-                        dismiss()
+                        onDismiss()
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 17, weight: .semibold))
