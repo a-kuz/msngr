@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import GRDB
 import MsngrCrypto
@@ -160,7 +161,7 @@ public actor SyncEngine {
 
     // MARK: - Применение входящих фреймов
 
-    private func apply(_ f: WSIncoming) async {
+    func apply(_ f: WSIncoming) async {
         switch f.t {
         case "msg":
             await applyIncomingMessage(f)
@@ -213,6 +214,13 @@ public actor SyncEngine {
                             album = NULL, kind = 'text' WHERE chatId = ? AND msgId = ?
                             """,
                             arguments: [chatId, id])
+                        // строки ещё нет (оригинал ждёт ключа в pendingDecrypt или не пришёл) —
+                        // тумбстоун буферизуется и применится при появлении сообщения
+                        if dbc.changesCount == 0 {
+                            try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetMsgId: id,
+                                                              kind: "deleted", fromUserId: f.by ?? "",
+                                                              payload: "{}", seq: nil)
+                        }
                     }
                 }
             }
@@ -269,26 +277,43 @@ public actor SyncEngine {
         // lastSeq — серверный максимум; своё сообщение поднимает myReadUpTo;
         // непрочитанное = lastSeq - myReadUpTo (производное, не ручной инкремент)
         let isOwn = from == ownUserId
+        let isService = f.service == true
         try? await db.write { dbc in
-            try dbc.execute(
-                sql: """
-                UPDATE chat SET
-                  lastSeq = MAX(lastSeq, ?),
-                  syncedSeq = CASE WHEN ? = syncedSeq + 1 THEN ? ELSE syncedSeq END,
-                  myReadUpTo = CASE WHEN ? THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END,
-                  unreadCount = MAX(0, MAX(lastSeq, ?) - CASE WHEN ? THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END)
-                WHERE id = ?
-                """,
-                arguments: [seq, seq, seq, isOwn, seq, seq, isOwn, seq, chatId])
+            if isService {
+                // служебный фрейм (skd/reaction/edit): занимает seq, но unread не растит;
+                // в полностью прочитанном чате myReadUpTo поглощает seq, чтобы производный
+                // unread следующих сообщений не считал служебный фрейм непрочитанным
+                try dbc.execute(
+                    sql: """
+                    UPDATE chat SET
+                      lastSeq = MAX(lastSeq, ?),
+                      syncedSeq = CASE WHEN ? = syncedSeq + 1 THEN ? ELSE syncedSeq END,
+                      myReadUpTo = CASE WHEN ? OR myReadUpTo >= ? - 1 THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END
+                    WHERE id = ?
+                    """,
+                    arguments: [seq, seq, seq, isOwn, seq, seq, chatId])
+            } else {
+                try dbc.execute(
+                    sql: """
+                    UPDATE chat SET
+                      lastSeq = MAX(lastSeq, ?),
+                      syncedSeq = CASE WHEN ? = syncedSeq + 1 THEN ? ELSE syncedSeq END,
+                      myReadUpTo = CASE WHEN ? THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END,
+                      unreadCount = MAX(0, MAX(lastSeq, ?) - CASE WHEN ? THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END)
+                    WHERE id = ?
+                    """,
+                    arguments: [seq, seq, seq, isOwn, seq, seq, isOwn, seq, chatId])
+            }
         }
         if from != ownUserId {
             try? await ws.send(.recv(chatId: chatId, seqs: [seq]))
         }
     }
 
-    /// Причины, при которых расшифровка может удаться позже (ключ ещё не пришёл):
-    /// групповое сообщение до sender-key, либо dr-сообщение раньше своего pk (reorder).
-    static let retryableReasons: Set<String> = ["no_sender_key", "no_session"]
+    /// Причины, при которых расшифровка может удаться позже: групповое сообщение
+    /// до sender-key, dr-сообщение раньше своего pk (reorder), либо брошенное
+    /// исключение ("exception" — транзиентный сбой, например гонка состояния сессии).
+    static let retryableReasons: Set<String> = ["no_sender_key", "no_session", "exception"]
 
     private func savePending(chatId: String, msgId: String, seq: Int, from: String,
                              fromDevice: String, sentAt: Double, ts: Double, body: JSONValue) async {
@@ -359,8 +384,8 @@ public actor SyncEngine {
         }
     }
 
-    private func applyContent(_ content: ContentPayload, chatId: String, msgId: String,
-                              seq: Int, from: String, sentAt: Double, ts: Double) async {
+    func applyContent(_ content: ContentPayload, chatId: String, msgId: String,
+                      seq: Int, from: String, sentAt: Double, ts: Double) async {
         try? await db.write { [ownUserId] dbc in
             switch content.kind {
             case "edit":
@@ -368,11 +393,23 @@ public actor SyncEngine {
                     try dbc.execute(
                         sql: "UPDATE message SET text = ?, edited = 1 WHERE chatId = ? AND (msgId = ? OR id = ?)",
                         arguments: [content.text, chatId, target, target])
+                    // оригинала ещё нет (ждёт ключа в pendingDecrypt) —
+                    // правка применится при появлении строки
+                    if dbc.changesCount == 0 {
+                        try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetMsgId: target,
+                                                          kind: "edit", fromUserId: from,
+                                                          payload: SyncEngine.payloadJSON(content), seq: seq)
+                    }
                 }
             case "reaction":
                 if let target = content.targetMsgId {
-                    try SyncEngine.applyReaction(dbc, chatId: chatId, targetMsgId: target,
-                                                 userId: from, emoji: content.emoji)
+                    let found = try SyncEngine.applyReaction(dbc, chatId: chatId, targetMsgId: target,
+                                                             userId: from, emoji: content.emoji)
+                    if !found {
+                        try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetMsgId: target,
+                                                          kind: "reaction", fromUserId: from,
+                                                          payload: SyncEngine.payloadJSON(content), seq: seq)
+                    }
                 }
             case "disappearing":
                 try dbc.execute(sql: "UPDATE chat SET ttlSeconds = ? WHERE id = ?",
@@ -391,6 +428,8 @@ public actor SyncEngine {
                 let ttl = try Int.fetchOne(dbc, sql: "SELECT ttlSeconds FROM chat WHERE id = ?", arguments: [chatId]) ?? 0
                 if ttl > 0 { msg.expiresAt = Date().timeIntervalSince1970 + Double(ttl) }
                 try msg.save(dbc)
+                // edit/reaction/deleted, пришедшие раньше этого сообщения, лежат в буфере
+                try SyncEngine.applyBuffered(dbc, chatId: chatId, msgId: msgId)
                 // unreadCount пересчитывается в applyIncomingMessage как lastSeq - myReadUpTo
                 try dbc.execute(sql: "UPDATE chat SET lastActivityAt = ? WHERE id = ?",
                                 arguments: [max(ts, sentAt), chatId])
@@ -453,6 +492,18 @@ public actor SyncEngine {
 
     // MARK: - Отправка
 
+    /// Виды контента без собственной строки в ленте; шлются с service-флагом.
+    static let serviceKinds: Set<String> = ["edit", "reaction", "disappearing"]
+
+    /// Стабильный clientMsgId skd-конверта: одинаков при ретрае той же раздачи
+    /// (дедуп сервера гасит повтор), различен для новой цепочки или новых адресатов.
+    static func skdClientMsgId(chatId: String, keyId: String?, skd: Envelope) -> String {
+        let recipients = skd.msgs?.keys.sorted().joined(separator: ",") ?? ""
+        let digest = SHA256.hash(data: Data(recipients.utf8))
+            .prefix(8).map { String(format: "%02x", $0) }.joined()
+        return "skd:\(chatId):\(keyId ?? ""):\(digest)"
+    }
+
     /// Единственная точка отправки: пишет в БД + outbox, будит воркер. Работает офлайн.
     public func enqueue(content: ContentPayload, chatId: String) async throws {
         let clientMsgId = UUID().uuidString
@@ -468,7 +519,7 @@ public actor SyncEngine {
         let payload = try JSONEncoder().encode(content)
         try await db.write { [msg] dbc in
             // edit/reaction/disappearing не создают своей строки в ленте
-            let visible = !["edit", "reaction", "disappearing"].contains(content.kind)
+            let visible = !SyncEngine.serviceKinds.contains(content.kind)
             if visible { try msg.save(dbc) }
             try OutboxItem(clientMsgId: clientMsgId, chatId: chatId, createdAt: now, payload: payload).save(dbc)
             if visible {
@@ -556,20 +607,26 @@ public actor SyncEngine {
             return
         }
 
+        // edit/reaction/disappearing — служебные: сервер не растит ими unread получателей
+        let service = Self.serviceKinds.contains(content.kind)
         if info.kind == "direct" {
             let peer = info.members.first { $0 != ownUserId } ?? ownUserId
             let env = try await e2ee.encryptDirect(content: content, toUserId: peer)
             try await ws.send(.send(chatId: item.chatId, clientMsgId: item.clientMsgId,
-                                    sentAt: item.createdAt, body: env))
+                                    sentAt: item.createdAt, body: env, service: service))
         } else {
             let (skd, skm) = try await e2ee.encryptGroup(content: content, chatId: item.chatId,
                                                          memberIds: info.members)
             if let skd {
-                try await ws.send(.send(chatId: item.chatId, clientMsgId: UUID().uuidString,
-                                        sentAt: item.createdAt, body: skd))
+                // clientMsgId детерминирован по (chatId, keyId, адресаты): ретрай той же
+                // раздачи гасится серверным дедупом, раздача новым устройствам проходит
+                try await ws.send(.send(chatId: item.chatId,
+                                        clientMsgId: Self.skdClientMsgId(chatId: item.chatId,
+                                                                         keyId: skm.keyId, skd: skd),
+                                        sentAt: item.createdAt, body: skd, service: true))
             }
             try await ws.send(.send(chatId: item.chatId, clientMsgId: item.clientMsgId,
-                                    sentAt: item.createdAt, body: skm))
+                                    sentAt: item.createdAt, body: skm, service: service))
         }
         // outbox-строка удалится по "sent" ack; здесь только помечаем «в полёте».
         // attempts НЕ трогаем: успешная отправка без ack — не ошибка (сервер дедуплицирует повтор)
@@ -842,11 +899,13 @@ public actor SyncEngine {
         }
     }
 
+    /// Возвращает false, если целевого сообщения нет в БД (реакция не применена).
+    @discardableResult
     static func applyReaction(_ dbc: GRDB.Database, chatId: String, targetMsgId: String,
-                              userId: String, emoji: String?) throws {
+                              userId: String, emoji: String?) throws -> Bool {
         guard let row = try Row.fetchOne(
             dbc, sql: "SELECT id, reactions FROM message WHERE chatId = ? AND (msgId = ? OR id = ?)",
-            arguments: [chatId, targetMsgId, targetMsgId]) else { return }
+            arguments: [chatId, targetMsgId, targetMsgId]) else { return false }
         var reactions = (try? JSONDecoder().decode([String: [String]].self,
                                                    from: Data((row["reactions"] as String).utf8))) ?? [:]
         // одна реакция на пользователя: убрать из всех, добавить в новую
@@ -860,5 +919,60 @@ public actor SyncEngine {
         let json = String(data: try JSONEncoder().encode(reactions), encoding: .utf8)!
         try dbc.execute(sql: "UPDATE message SET reactions = ? WHERE id = ?",
                         arguments: [json, row["id"] as String])
+        return true
+    }
+
+    // MARK: - Буфер edit/reaction/deleted без оригинала
+
+    static func payloadJSON(_ content: ContentPayload) -> String {
+        (try? JSONEncoder().encode(content)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+    }
+
+    /// Откладывает edit/reaction/deleted, чьё целевое сообщение ещё не в БД.
+    /// Повтор от того же автора замещает строку (последняя правка/реакция побеждает).
+    static func bufferPendingApply(_ dbc: GRDB.Database, chatId: String, targetMsgId: String,
+                                   kind: String, fromUserId: String, payload: String, seq: Int?) throws {
+        try dbc.execute(
+            sql: """
+            INSERT OR REPLACE INTO pendingApply (chatId, targetMsgId, kind, fromUserId, payload, seq)
+            VALUES (?,?,?,?,?,?)
+            """,
+            arguments: [chatId, targetMsgId, kind, fromUserId, payload, seq])
+    }
+
+    /// Применяет отложенные edit/reaction/deleted к только что вставленному сообщению.
+    static func applyBuffered(_ dbc: GRDB.Database, chatId: String, msgId: String) throws {
+        let rows = try Row.fetchAll(
+            dbc, sql: "SELECT kind, fromUserId, payload FROM pendingApply WHERE chatId = ? AND targetMsgId = ? ORDER BY seq",
+            arguments: [chatId, msgId])
+        guard !rows.isEmpty else { return }
+        let dec = JSONDecoder()
+        for row in rows {
+            let content = try? dec.decode(ContentPayload.self, from: Data((row["payload"] as String).utf8))
+            switch row["kind"] as String {
+            case "edit":
+                if let content {
+                    try dbc.execute(
+                        sql: "UPDATE message SET text = ?, edited = 1 WHERE chatId = ? AND msgId = ?",
+                        arguments: [content.text, chatId, msgId])
+                }
+            case "reaction":
+                if let content {
+                    try applyReaction(dbc, chatId: chatId, targetMsgId: msgId,
+                                      userId: row["fromUserId"], emoji: content.emoji)
+                }
+            case "deleted":
+                try dbc.execute(
+                    sql: """
+                    UPDATE message SET deletedForAll = 1, text = NULL, media = NULL,
+                    album = NULL, kind = 'text' WHERE chatId = ? AND msgId = ?
+                    """,
+                    arguments: [chatId, msgId])
+            default:
+                break
+            }
+        }
+        try dbc.execute(sql: "DELETE FROM pendingApply WHERE chatId = ? AND targetMsgId = ?",
+                        arguments: [chatId, msgId])
     }
 }
