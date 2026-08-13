@@ -13,6 +13,7 @@ struct ChatScreen: View {
     @State private var forwardMessage: Message?
     @State private var messagesVC = MessagesViewController()
     @EnvironmentObject var app: AppState
+    @ObservedObject private var theme = ThemeStore.shared
 
     init(chatId: String) {
         self.chatId = chatId
@@ -27,6 +28,11 @@ struct ChatScreen: View {
                     pinnedBar(pinned)
                 }
                 messagesList
+                    .overlay {
+                        if model.chat != nil, model.feed.isEmpty {
+                            emptyChatHint
+                        }
+                    }
                 if model.keyChangePending {
                     keyChangeBanner
                 }
@@ -85,6 +91,11 @@ struct ChatScreen: View {
                 Task { await sendFile(url) }
             }
         }
+        // смена палитры: цвета бабблов читаются в configure ячеек — форсируем reload
+        .onReceive(NotificationCenter.default.publisher(for: .paletteChanged)) { _ in
+            guard messagesVC.isViewLoaded else { return }
+            messagesVC.collectionView.reloadData()
+        }
         .sheet(item: $forwardMessage) { msg in
             ForwardPickerView { targetChatId in
                 model.forward(msg, to: targetChatId)
@@ -102,6 +113,25 @@ struct ChatScreen: View {
                          MediaViewerPresenter.present(message: msg, startIndex: idx)
                      },
                      showScrollDown: $showScrollDown)
+    }
+
+    /// Пустой чат: центрированная подсказка вместо голого фона.
+    private var emptyChatHint: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "bubble.left.and.bubble.right")
+                .font(.system(size: 34))
+                .foregroundStyle(.secondary)
+            Text("Напишите первое сообщение")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Label("Сквозное шифрование", systemImage: "lock.fill")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 18)
+        .padding(.horizontal, 24)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .allowsHitTesting(false)
     }
 
     private var header: some View {

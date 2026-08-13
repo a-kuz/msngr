@@ -7,11 +7,13 @@ import MsngrCore
 struct NewChatView: View {
     var onOpen: (String) -> Void
     @EnvironmentObject var app: AppState
+    @ObservedObject private var theme = ThemeStore.shared
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
     @State private var results: [APIClient.UserDTO] = []
     @State private var contacts: [ContactMatch] = []
     @State private var contactsDenied = false
+    @State private var contactsStatus = CNContactStore.authorizationStatus(for: .contacts)
     @State private var groupMode = false
     @State private var groupTitle = ""
     @State private var selected: Set<String> = []
@@ -61,12 +63,24 @@ struct NewChatView: View {
                         ContentUnavailableView {
                             Label("Найдите собеседника", systemImage: "person.crop.circle.badge.plus")
                         } description: {
-                            Text("Введите юзернейм или имя. Знакомые из адресной книги, у которых есть Msngr, появятся здесь сами.")
+                            Text("Введите юзернейм или имя собеседника.")
+                        } actions: {
+                            if contactsStatus == .notDetermined {
+                                Button {
+                                    Task { await requestContactsAndSync() }
+                                } label: {
+                                    Label("Найти по контактам", systemImage: "person.2")
+                                }
+                                .buttonStyle(.bordered)
+                            }
                         }
                     }
                 }
             }
             .searchable(text: $query, prompt: "Юзернейм или имя")
+            // поле ищет юзернеймы: автокапитализация и автокоррекция мешают
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
             .onChange(of: query) { _, q in
                 Task {
                     guard q.count >= 2 else { results = []; return }
@@ -94,7 +108,11 @@ struct NewChatView: View {
                     }
                 }
             }
-            .task { await syncContacts() }
+            // системный диалог доступа к контактам — только по явному тапу
+            // «Найти по контактам»; при уже выданном доступе синк идёт сразу
+            .task {
+                if contactsStatus == .authorized { await syncContacts() }
+            }
         }
     }
 
@@ -138,13 +156,20 @@ struct NewChatView: View {
         onOpen(chatId)
     }
 
-    /// Синк адресной книги: E.164 → SHA-256 → discovery.
+    /// Запрос доступа к контактам по явному действию пользователя, затем синк.
+    private func requestContactsAndSync() async {
+        _ = try? await CNContactStore().requestAccess(for: .contacts)
+        contactsStatus = CNContactStore.authorizationStatus(for: .contacts)
+        if contactsStatus == .authorized {
+            await syncContacts()
+        } else {
+            contactsDenied = true
+        }
+    }
+
+    /// Синк адресной книги: E.164 → SHA-256 → discovery. Доступ уже должен быть выдан.
     private func syncContacts() async {
         let store = CNContactStore()
-        let status = CNContactStore.authorizationStatus(for: .contacts)
-        if status == .notDetermined {
-            _ = try? await store.requestAccess(for: .contacts)
-        }
         guard CNContactStore.authorizationStatus(for: .contacts) == .authorized else {
             contactsDenied = true
             return

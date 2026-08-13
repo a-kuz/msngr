@@ -4,6 +4,7 @@ import MsngrCore
 struct ChatRowView: View {
     let item: ChatListItem
     let ownUserId: String
+    @ObservedObject private var theme = ThemeStore.shared
 
     var body: some View {
         HStack(spacing: 10) {

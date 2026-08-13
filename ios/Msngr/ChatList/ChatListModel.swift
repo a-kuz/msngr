@@ -24,6 +24,8 @@ final class ChatListModel: ObservableObject {
     @Published var archived: [ChatListItem] = []
     @Published var searchText = ""
     @Published var searchResults: [ChatListItem] = []
+    /// true после первой выдачи наблюдения БД — до этого список не «пустой», а грузится
+    @Published var loaded = false
 
     private var cancellable: AnyCancellable?
     private var typing: [String: (userId: String, until: Date)] = [:]
@@ -75,6 +77,7 @@ final class ChatListModel: ObservableObject {
                 self.requests = all.filter { $0.chat.isRequest }
                 self.archived = all.filter { $0.chat.archived && !$0.chat.isRequest }
                 self.items = all.filter { !$0.chat.archived && !$0.chat.isRequest }
+                self.loaded = true
                 self.updateSearch()
             })
 
