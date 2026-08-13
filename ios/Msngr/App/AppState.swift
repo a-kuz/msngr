@@ -86,7 +86,15 @@ final class AppState: ObservableObject {
             await engine.start()
             ready = true
             objectWillChange.send()
+            NotificationCoordinator.shared.attach(db: db, engine: engine, ownUserId: s.userId)
+            #if targetEnvironment(simulator)
+            // симулятору APNs недоступен: дев-стенд шлёт пуши через `simctl push`
+            // по UDID, он же регистрируется на сервере вместо APNs-токена
+            let udid = ProcessInfo.processInfo.environment["SIMULATOR_UDID"] ?? "unknown-simulator"
+            try? await api.registerPushToken(udid, env: "dev-sim")
+            #else
             UIApplication.shared.registerForRemoteNotifications()
+            #endif
         } catch {
             assertionFailure("bootstrap failed: \(error)")
         }

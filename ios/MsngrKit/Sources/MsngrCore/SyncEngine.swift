@@ -25,6 +25,18 @@ public actor SyncEngine {
     /// состояние соединения для UI (сабтайтл «подключение…» вместо стейл-презенса)
     public private(set) var connectionStream = AsyncStream<Bool>.makeStream()
 
+    /// Новое сообщение, принятое по WS (msg-фрейм, не повтор): для in-app уведомлений.
+    public struct IncomingMessage: Sendable {
+        public let chatId: String
+        public let msgId: String
+        public let fromUserId: String
+        /// служебный фрейм (skd/edit/reaction/disappearing) — не растит unread
+        public let isService: Bool
+        /// собственное эхо с другого устройства
+        public let isOwn: Bool
+    }
+    public private(set) var incomingMessageStream = AsyncStream<IncomingMessage>.makeStream()
+
     public init(db: DatabaseQueue, api: APIClient, e2ee: E2EEManager, media: MediaManager? = nil,
                 wsURL: URL, ownUserId: String, ownDeviceId: String) {
         self.db = db
@@ -305,8 +317,15 @@ public actor SyncEngine {
                     arguments: [seq, seq, seq, isOwn, seq, seq, isOwn, seq, chatId])
             }
         }
+        // recv-ack немедленно, по каждому фрейму (delivered-галочки автору)
         if from != ownUserId {
             try? await ws.send(.recv(chatId: chatId, seqs: [seq]))
+        }
+        // событие для in-app уведомления — после записи в БД (превью уже читается)
+        if !exists, f.body != nil {
+            incomingMessageStream.continuation.yield(IncomingMessage(
+                chatId: chatId, msgId: msgId, fromUserId: from,
+                isService: isService, isOwn: isOwn))
         }
     }
 
