@@ -190,7 +190,11 @@ struct InputBar: View {
 
     private func finishRecording() {
         recordingLocked = false
-        guard let result = recorder.stop() else { return }
+        guard let result = recorder.stop() else {
+            // запись короче 1с отменена — короткий жёсткий хаптик вместо сообщения
+            Haptics.rigid()
+            return
+        }
         Haptics.light()
         onSendVoice(result.url, result.duration, result.waveform)
     }

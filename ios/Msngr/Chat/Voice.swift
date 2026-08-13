@@ -42,6 +42,7 @@ final class VoiceRecorder: NSObject, ObservableObject {
     }
 
     /// Возвращает (файл, длительность, waveform из 100 бакетов 0..31).
+    /// Запись короче 1с отменяется (nil): случайное касание микрофона не шлёт сообщение.
     func stop() -> (url: URL, duration: TimeInterval, waveform: [Int])? {
         timer?.invalidate()
         guard let r = recorder, let url = fileURL else { return nil }
@@ -49,7 +50,7 @@ final class VoiceRecorder: NSObject, ObservableObject {
         r.stop()
         recorder = nil
         isRecording = false
-        guard dur >= 0.5 else {
+        guard dur >= 1.0 else {
             try? FileManager.default.removeItem(at: url)
             return nil
         }
@@ -215,7 +216,7 @@ final class VoiceMessageView: UIView {
         playButton.setImage(UIImage(systemName: "play.circle.fill"), for: .normal)
         playButton.tintColor = UIColor(Theme.accent)
         playButton.addTarget(self, action: #selector(togglePlay), for: .touchUpInside)
-        durationLabel.font = .systemFont(ofSize: 12)
+        durationLabel.font = .systemFont(ofSize: 11)
         durationLabel.textColor = .secondaryLabel
         fileName.font = .systemFont(ofSize: 15, weight: .medium)
         fileIcon.tintColor = UIColor(Theme.accent)
@@ -249,8 +250,9 @@ final class VoiceMessageView: UIView {
         fileName.isHidden = isVoice
         if isVoice {
             waveform.amplitudes = msg.media?.waveform ?? []
-            let dur = msg.media?.dur ?? 0
-            durationLabel.text = String(format: "%d:%02d", Int(dur) / 60, Int(dur) % 60)
+            // округление к ближайшей секунде: 2.7с — «0:03», а не «0:02»
+            let dur = Int((msg.media?.dur ?? 0).rounded())
+            durationLabel.text = String(format: "%d:%02d", dur / 60, dur % 60)
             syncPlayingState()
             displayTimer?.invalidate()
             displayTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
@@ -287,12 +289,14 @@ final class VoiceMessageView: UIView {
         }
     }
 
+    // одна строка: play-кнопка слева, волна справа, длительность мелко под волной;
+    // время сообщения кладёт BubbleLayout в правый нижний угол на линии длительности
     override func layoutSubviews() {
         super.layoutSubviews()
-        playButton.frame = CGRect(x: 0, y: 2, width: 40, height: 40)
-        waveform.frame = CGRect(x: 48, y: 4, width: bounds.width - 56, height: 26)
-        durationLabel.frame = CGRect(x: 48, y: 30, width: 100, height: 14)
-        fileIcon.frame = CGRect(x: 4, y: 6, width: 32, height: 32)
-        fileName.frame = CGRect(x: 48, y: 4, width: bounds.width - 56, height: 22)
+        playButton.frame = CGRect(x: 0, y: 1, width: 40, height: 40)
+        waveform.frame = CGRect(x: 48, y: 3, width: bounds.width - 48, height: 22)
+        durationLabel.frame = CGRect(x: 48, y: 27, width: 100, height: 14)
+        fileIcon.frame = CGRect(x: 4, y: 5, width: 32, height: 32)
+        fileName.frame = CGRect(x: 48, y: 3, width: bounds.width - 48, height: 22)
     }
 }

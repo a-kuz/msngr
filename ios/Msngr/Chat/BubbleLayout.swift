@@ -157,14 +157,14 @@ enum BubbleLayout {
             statusOnMedia = true
         case .voice:
             let w: CGFloat = 220
-            voiceFrame = CGRect(x: hPadding, y: y, width: w, height: 44)
+            voiceFrame = CGRect(x: hPadding, y: y, width: w, height: 42)
             contentWidth = max(contentWidth, w)
-            y += 48
+            y += 42
         case .file:
             let w: CGFloat = min(240, maxBubbleWidth - 2 * hPadding)
-            voiceFrame = CGRect(x: hPadding, y: y, width: w, height: 44) // файл использует voiceFrame-слот
+            voiceFrame = CGRect(x: hPadding, y: y, width: w, height: 42) // файл использует voiceFrame-слот
             contentWidth = max(contentWidth, w)
-            y += 48
+            y += 42
         default:
             let display = msg.deletedForAll ? "Сообщение удалено" : (msg.text ?? "")
             let (f, a) = measureText(display, maxWidth: maxBubbleWidth - 2 * hPadding, startY: y)
@@ -285,8 +285,13 @@ enum BubbleLayout {
                                      y: y + 2, width: statusWidth, height: 16)
                 y += 18
             }
+        } else if voiceFrame != nil {
+            // voice/file без реакций: время в правом нижнем углу той же строки,
+            // где мелкая длительность/размер — баббл остаётся одноэтажным
+            statusFrame = CGRect(x: hPadding + contentWidth - statusWidth,
+                                 y: y - 16, width: statusWidth, height: 16)
         } else {
-            // voice/file: статус под контентом справа
+            // прочий контент без текста: статус под контентом справа
             statusFrame = CGRect(x: hPadding + contentWidth - statusWidth, y: y, width: statusWidth, height: 16)
             y += 18
         }
