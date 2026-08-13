@@ -4,6 +4,11 @@ export interface Env {
   USER_DO: DurableObjectNamespace;
   CONV_DO: DurableObjectNamespace;
   APNS_ENV: string;
+  /// Переопределение APNs-эндпоинта (dev-мок, например http://localhost:9871);
+  /// не задан — прод/sandbox Apple по apns-env устройства.
+  APNS_HOST?: string;
+  /// Искусственная задержка (мс) перед fanout в ConversationDO /send (dev).
+  DEV_WS_LATENCY_MS?: string;
   APNS_KEY_P8?: string;
   APNS_KEY_ID?: string;
   APNS_TEAM_ID?: string;

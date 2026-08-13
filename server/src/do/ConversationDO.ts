@@ -164,6 +164,14 @@ export class ConversationDO implements DurableObject {
         return json({ ok: true, deleted, readMarks, deliveredMarks });
       }
 
+      case "/unread-count": {
+        // компактный счётчик для бейджа: lastSeq минус read-марка юзера
+        const userId = url.searchParams.get("userId") ?? "";
+        const marks =
+          (await this.state.storage.get<Record<string, number>>("readMarks")) ?? {};
+        return json({ ok: true, unread: Math.max(0, meta.lastSeq - (marks[userId] ?? 0)) });
+      }
+
       case "/send": {
         const b = (await req.json()) as {
           from: string; fromDevice: string; clientMsgId: string;
@@ -190,6 +198,10 @@ export class ConversationDO implements DurableObject {
           [seqKey(seq)]: msg,
           [dupeKey]: { msgId: msg.msgId, seq, ts: msg.ts },
         });
+
+        // dev: искусственная сетевая задержка перед fanout (DEV_WS_LATENCY_MS)
+        const latency = Number(this.env.DEV_WS_LATENCY_MS ?? 0);
+        if (latency > 0) await new Promise((r) => setTimeout(r, latency));
 
         const frame: ServerFrame = {
           t: "msg", chatId: meta.chatId, seq, msgId: msg.msgId,
