@@ -128,6 +128,21 @@ final class BubbleLayoutTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(p.bubbleFrame.width, p.statusWidth)
     }
 
+    /// Обычное текстовое сообщение без реакций даёт видимый баббл:
+    /// высота положительная и не меньше строки текста с вертикальными паддингами.
+    func testPlainTextWithoutReactionsHasVisibleBubble() {
+        let p = plan("Test message 1")
+        XCTAssertGreaterThan(p.bubbleFrame.height, 0)
+        XCTAssertGreaterThanOrEqual(
+            p.bubbleFrame.height,
+            ceil(BubbleLayout.textFont.lineHeight) + 2 * BubbleLayout.vPadding,
+            "баббл не ниже строки текста с паддингами")
+        XCTAssertGreaterThan(p.cellHeight, p.bubbleFrame.height - 1)
+        let tf = try! XCTUnwrap(p.textFrame)
+        XCTAssertGreaterThan(tf.width, 0)
+        XCTAssertGreaterThan(tf.height, 0)
+    }
+
     /// Короткий текст: зазор между текстом и временем фиксированный,
     /// время прижато к правому краю баббла.
     func testShortTextStatusPinnedToBubbleRightEdge() {

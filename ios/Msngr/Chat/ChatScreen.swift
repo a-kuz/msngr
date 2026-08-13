@@ -26,11 +26,7 @@ struct ChatScreen: View {
                 if let pinned = model.pinnedMessage {
                     pinnedBar(pinned)
                 }
-                MessagesView(vc: messagesVC, model: model,
-                             onTapMedia: { msg, idx, _ in
-                                 MediaViewerPresenter.present(message: msg, startIndex: idx)
-                             },
-                             showScrollDown: $showScrollDown)
+                messagesList
                 if model.keyChangePending {
                     keyChangeBanner
                 }
@@ -99,6 +95,14 @@ struct ChatScreen: View {
 
     @State private var photoPickerPresented = false
     @State private var showChatInfo = false
+
+    private var messagesList: MessagesView {
+        MessagesView(vc: messagesVC, model: model, items: model.feed,
+                     onTapMedia: { (msg: Message, idx: Int, _: UIView) in
+                         MediaViewerPresenter.present(message: msg, startIndex: idx)
+                     },
+                     showScrollDown: $showScrollDown)
+    }
 
     private var header: some View {
         Button {
@@ -389,7 +393,13 @@ struct VideoTransferable: Transferable {
 /// Обёртка UIKit-списка сообщений.
 struct MessagesView: UIViewControllerRepresentable {
     let vc: MessagesViewController
-    let model: ChatViewModel
+    /// @ObservedObject обязателен: updateUIViewController вызывается по инвалидации
+    /// самого MessagesView, а все его stored-поля — стабильные ссылки, SwiftUI без
+    /// подписки на model считает view неизменным и не прокидывает новый feed в apply()
+    @ObservedObject var model: ChatViewModel
+    /// feed передаётся и значением: изменение массива меняет value представляемого
+    /// view — SwiftUI гарантированно зовёт updateUIViewController
+    let items: [ChatFeedItem]
     var onTapMedia: (Message, Int, UIView) -> Void
     @Binding var showScrollDown: Bool
 
@@ -422,7 +432,7 @@ struct MessagesView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ vc: MessagesViewController, context: Context) {
-        vc.apply(model.feed)
+        vc.apply(items)
     }
 }
 
