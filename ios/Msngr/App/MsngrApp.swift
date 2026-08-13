@@ -29,6 +29,7 @@ struct MsngrApp: App {
                     PrivacyShieldView().zIndex(9)
                 }
             }
+            .tint(Theme.accent)
             .animation(.easeOut(duration: 0.2), value: app.isLocked)
             .onChange(of: scenePhase) { _, phase in
                 app.scenePhaseChanged(phase)
