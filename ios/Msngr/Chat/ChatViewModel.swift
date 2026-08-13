@@ -81,9 +81,8 @@ final class ChatViewModel: ObservableObject {
         connectionTask?.cancel()
         connectionTask = Task { [weak self] in
             guard let engine = self?.app.engine else { return }
-            await MainActor.run { [isUp = await engine.isConnected] in self?.connected = isUp }
-            let stream = await engine.connectionStream.stream
-            for await up in stream {
+            // broadcast первым элементом отдаёт текущее состояние соединения
+            for await up in engine.connectionStream.subscribe() {
                 guard let self else { return }
                 self.connected = up
             }
@@ -92,8 +91,7 @@ final class ChatViewModel: ObservableObject {
         typingTask?.cancel()
         typingTask = Task { [weak self] in
             guard let engine = self?.app.engine else { return }
-            let stream = await engine.typingStream.stream
-            for await ev in stream {
+            for await ev in engine.typingStream.subscribe() {
                 guard let self, ev.chatId == self.chatId else { continue }
                 if ev.kind != nil {
                     if !self.typingUsers.contains(ev.userId) { self.typingUsers.append(ev.userId) }

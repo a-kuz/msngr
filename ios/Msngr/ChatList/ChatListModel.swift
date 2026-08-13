@@ -82,8 +82,7 @@ final class ChatListModel: ObservableObject {
         typingTask?.cancel()
         typingTask = Task { [weak self] in
             guard let engine = self?.app.engine else { return }
-            let stream = await engine.typingStream.stream
-            for await ev in stream {
+            for await ev in engine.typingStream.subscribe() {
                 guard let self else { return }
                 if ev.kind != nil {
                     self.typing[ev.chatId] = (ev.userId, Date().addingTimeInterval(5))

@@ -34,8 +34,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         observeUnread(db: db)
         incomingTask?.cancel()
         incomingTask = Task { [weak self] in
-            let stream = await engine.incomingMessageStream.stream
-            for await ev in stream {
+            for await ev in engine.incomingMessageStream.subscribe() {
                 guard let self else { return }
                 await self.handleIncomingWS(ev)
             }

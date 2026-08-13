@@ -21,9 +21,10 @@ public actor SyncEngine {
     private var connected = false
 
     /// typing-события не пишутся в БД — транслируются подписчикам UI
-    public private(set) var typingStream = AsyncStream<(chatId: String, userId: String, kind: String?)>.makeStream()
-    /// состояние соединения для UI (сабтайтл «подключение…» вместо стейл-презенса)
-    public private(set) var connectionStream = AsyncStream<Bool>.makeStream()
+    public nonisolated let typingStream = Broadcast<(chatId: String, userId: String, kind: String?)>()
+    /// состояние соединения для UI (сабтайтл «подключение…» вместо стейл-презенса);
+    /// подписчик сразу получает текущее состояние
+    public nonisolated let connectionStream = Broadcast<Bool>(initial: false)
 
     /// Новое сообщение, принятое по WS (msg-фрейм, не повтор): для in-app уведомлений.
     public struct IncomingMessage: Sendable {
@@ -35,7 +36,7 @@ public actor SyncEngine {
         /// собственное эхо с другого устройства
         public let isOwn: Bool
     }
-    public private(set) var incomingMessageStream = AsyncStream<IncomingMessage>.makeStream()
+    public nonisolated let incomingMessageStream = Broadcast<IncomingMessage>()
 
     public init(db: DatabaseQueue, api: APIClient, e2ee: E2EEManager, media: MediaManager? = nil,
                 wsURL: URL, ownUserId: String, ownDeviceId: String) {
@@ -126,13 +127,13 @@ public actor SyncEngine {
         switch ev {
         case .connected:
             connected = true
-            connectionStream.continuation.yield(true)
+            connectionStream.send(true)
             await sendSyncCursors()
             outboxWakeup.continuation.yield()
             actionWakeup.continuation.yield()
         case .disconnected:
             connected = false
-            connectionStream.continuation.yield(false)
+            connectionStream.send(false)
         case .frame(let data):
             guard let frame = try? JSONDecoder().decode(WSIncoming.self, from: data) else { return }
             await apply(frame)
@@ -183,7 +184,7 @@ public actor SyncEngine {
             await applyReceipt(f)
         case "typing":
             if let chatId = f.chatId, let from = f.from {
-                typingStream.continuation.yield((chatId, from, f.kind))
+                typingStream.send((chatId, from, f.kind))
             }
         case "presence":
             if let userId = f.userId, let online = f.online {
@@ -323,7 +324,7 @@ public actor SyncEngine {
         }
         // событие для in-app уведомления — после записи в БД (превью уже читается)
         if !exists, f.body != nil {
-            incomingMessageStream.continuation.yield(IncomingMessage(
+            incomingMessageStream.send(IncomingMessage(
                 chatId: chatId, msgId: msgId, fromUserId: from,
                 isService: isService, isOwn: isOwn))
         }
