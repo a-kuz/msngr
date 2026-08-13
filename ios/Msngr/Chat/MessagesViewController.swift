@@ -103,12 +103,22 @@ final class MessagesViewController: UIViewController {
 
         if oldIds == newIds {
             items = newItems
-            var changed: [IndexPath] = []
             for (i, item) in newItems.enumerated() where !contentEqual(old[i], item) {
-                changed.append(IndexPath(item: i, section: 0))
-            }
-            if !changed.isEmpty {
-                UIView.performWithoutAnimation { collectionView.reloadItems(at: changed) }
+                let indexPath = IndexPath(item: i, section: 0)
+                // reload пересоздаёт ячейку и мгновенно обрывает идущую анимацию
+                // появления (ack pending→sent приходит в первые миллисекунды полёта) —
+                // видимую ячейку той же высоты обновляем на месте
+                if case .message(let msg, let tightGap, let showTail, let showName, let authorName) = item,
+                   msg.kind != .system,
+                   let cell = collectionView.cellForItem(at: indexPath) as? MessageCell {
+                    let plan = BubbleLayout.plan(for: msg, width: collectionView.bounds.width, tightGap: tightGap,
+                                                 showTail: showTail, showName: showName, authorName: authorName)
+                    if abs(cell.bounds.height - plan.cellHeight) < 0.5 {
+                        configureMessageCell(cell, msg: msg, plan: plan)
+                        continue
+                    }
+                }
+                UIView.performWithoutAnimation { collectionView.reloadItems(at: [indexPath]) }
             }
             return
         }
@@ -145,23 +155,36 @@ final class MessagesViewController: UIViewController {
             collectionView.performBatchUpdates {
                 if !deletes.isEmpty { collectionView.deleteItems(at: deletes) }
                 if !inserts.isEmpty { collectionView.insertItems(at: inserts) }
-            } completion: { [weak self] _ in
-                guard let self, let nb = newBottom,
-                      let cell = self.collectionView.cellForItem(at: IndexPath(item: 0, section: 0)) as? MessageCell
-                else { return }
-                if nb.outgoing {
-                    let point = CGPoint(x: self.view.bounds.width - 28,
-                                        y: self.view.bounds.height - self.collectionView.contentInset.top + 22)
-                    cell.animateSendFlight(fromScreenPoint: point, in: self.view)
-                } else {
-                    cell.animateAppearance()
-                }
+            }
+            // completion у batch-апдейта без анимации вызывается до создания
+            // вставленной ячейки (cellForItem там nil) — материализуем её сразу
+            // и запускаем анимацию появления синхронно, до первого кадра
+            collectionView.layoutIfNeeded()
+        }
+        if let nb = newBottom,
+           let cell = collectionView.cellForItem(at: IndexPath(item: 0, section: 0)) as? MessageCell {
+            if nb.outgoing {
+                let point = CGPoint(x: view.bounds.width - 28,
+                                    y: view.bounds.height - collectionView.contentInset.top + 22)
+                cell.animateSendFlight(fromScreenPoint: point, in: view)
+            } else {
+                cell.animateAppearance()
             }
         }
         // новое сообщение и мы были у низа — плавно подскроллим к нему
         if newIds.count > oldIds.count, inserts.contains(where: { $0.item == 0 }), nearBottom {
             collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.contentInset.top), animated: true)
         }
+    }
+
+    /// Полная настройка ячейки сообщения: контент + колбэки (замыкания захватывают msg,
+    /// при обновлении контента их нужно переустановить вместе с ним).
+    private func configureMessageCell(_ cell: MessageCell, msg: Message, plan: BubbleLayoutPlan) {
+        cell.configure(msg: msg, plan: plan)
+        cell.onReply = { [weak self] in self?.onReply?(msg) }
+        cell.onReact = { [weak self] emoji in self?.onReact?(msg, emoji) }
+        cell.onContextAction = { [weak self] action in self?.onContextAction?(msg, action) }
+        cell.onTapMedia = { [weak self] index, view in self?.onTapMedia?(msg, index, view) }
     }
 
     private func contentEqual(_ a: ChatFeedItem, _ b: ChatFeedItem) -> Bool {
@@ -210,11 +233,7 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "msg", for: indexPath) as! MessageCell
             let plan = BubbleLayout.plan(for: msg, width: cv.bounds.width, tightGap: tightGap,
                                          showTail: showTail, showName: showName, authorName: authorName)
-            cell.configure(msg: msg, plan: plan)
-            cell.onReply = { [weak self] in self?.onReply?(msg) }
-            cell.onReact = { [weak self] emoji in self?.onReact?(msg, emoji) }
-            cell.onContextAction = { [weak self] action in self?.onContextAction?(msg, action) }
-            cell.onTapMedia = { [weak self] index, view in self?.onTapMedia?(msg, index, view) }
+            configureMessageCell(cell, msg: msg, plan: plan)
             return cell
         }
     }

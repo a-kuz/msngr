@@ -81,8 +81,6 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        mediaViews.forEach { $0.removeFromSuperview() }
-        mediaViews = []
         reactionViews.forEach { $0.removeFromSuperview() }
         reactionViews = []
         contentView.transform = CGAffineTransform(scaleX: 1, y: -1)
@@ -234,6 +232,10 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     }
 
     private func configureMedia(msg: Message, plan: BubbleLayoutPlan) {
+        // configure вызывается и на живой ячейке (обновление контента на месте) —
+        // старые медиа-вью убираем здесь, а не только в prepareForReuse
+        mediaViews.forEach { $0.removeFromSuperview() }
+        mediaViews = []
         guard let mediaFrame = plan.mediaFrame else { return }
         let rects: [(Int, CGRect)] = plan.albumRects.isEmpty
             ? [(0, mediaFrame)]
