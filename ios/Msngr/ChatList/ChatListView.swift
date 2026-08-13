@@ -56,6 +56,12 @@ struct ChatListView: View {
             .onChange(of: app.ready) { _, ready in
                 if ready { model.start() }
             }
+            // тап по пушу или in-app баннеру → переход в чат
+            .onReceive(NotificationCenter.default.publisher(for: .openChatRequested)) { note in
+                guard let chatId = note.object as? String,
+                      NotificationCoordinator.shared.activeChatId != chatId else { return }
+                path.append(chatId)
+            }
         }
     }
 
