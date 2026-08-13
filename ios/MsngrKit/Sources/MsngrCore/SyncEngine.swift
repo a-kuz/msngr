@@ -493,6 +493,55 @@ public actor SyncEngine {
         }
     }
 
+    /// Применяет сообщение из серверной истории (пагинация вверх).
+    /// Обычный контент апсертится строкой ленты; edit/reaction применяются
+    /// к оригиналу, а если его ещё нет — буферизуются в pendingApply
+    /// (в истории событие может идти раньше своей цели по порядку реплея).
+    /// lastActivityAt не трогается: история старше текущей активности чата.
+    public func storeHistoric(content: ContentPayload, chatId: String, msgId: String,
+                              seq: Int, from: String, sentAt: Double, ts: Double) async {
+        try? await db.write { [ownUserId] dbc in
+            switch content.kind {
+            case "edit":
+                if let target = content.targetMsgId {
+                    try dbc.execute(
+                        sql: "UPDATE message SET text = ?, edited = 1 WHERE chatId = ? AND (msgId = ? OR id = ?)",
+                        arguments: [content.text, chatId, target, target])
+                    if dbc.changesCount == 0 {
+                        try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetMsgId: target,
+                                                          kind: "edit", fromUserId: from,
+                                                          payload: SyncEngine.payloadJSON(content), seq: seq)
+                    }
+                }
+            case "reaction":
+                if let target = content.targetMsgId {
+                    let found = try SyncEngine.applyReaction(dbc, chatId: chatId, targetMsgId: target,
+                                                             userId: from, emoji: content.emoji)
+                    if !found {
+                        try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetMsgId: target,
+                                                          kind: "reaction", fromUserId: from,
+                                                          payload: SyncEngine.payloadJSON(content), seq: seq)
+                    }
+                }
+            case "disappearing":
+                break // текущий TTL чата уже в chat-state, историческая смена не переигрывается
+            default:
+                var msg = Message(id: msgId, chatId: chatId, fromUserId: from, sentAt: sentAt,
+                                  kind: MessageKind(rawValue: content.kind) ?? .text,
+                                  text: content.text, status: .sent, isOutgoing: from == ownUserId)
+                msg.msgId = msgId
+                msg.seq = seq
+                msg.serverTs = ts
+                msg.media = content.media
+                msg.album = content.album
+                msg.replyTo = content.replyTo
+                msg.forward = content.fwd
+                try msg.upsert(dbc)
+                try SyncEngine.applyBuffered(dbc, chatId: chatId, msgId: msgId)
+            }
+        }
+    }
+
     private func insertSystemMessage(chatId: String, text: String) async {
         var msg = Message(id: UUID().uuidString, chatId: chatId, fromUserId: "system",
                           sentAt: Date().timeIntervalSince1970, kind: .system,
