@@ -216,6 +216,9 @@ public actor SyncEngine {
                         try? e2ee.rotateSenderKey(chatId: state.chatId)
                     }
                 }
+                // chat-фрейм несёт только userId участников — профили новых
+                // пользователей дотягиваются, иначе UI показывает «…» до рестарта
+                await fetchMissingUsers(state.members.map(\.userId))
             }
         case "deleted":
             if let chatId = f.chatId, let msgIds = f.msgIds {
@@ -243,6 +246,36 @@ public actor SyncEngine {
     }
 
     private var snapshotRefreshInFlight = false
+    /// userId, по которым запрос профиля уже в полёте (защита от шторма
+    /// одинаковых запросов при пачке фреймов от одного нового пользователя)
+    private var userFetchesInFlight: Set<String> = []
+
+    /// Дотягивает с сервера профили пользователей, которых нет в таблице user.
+    private func fetchMissingUsers(_ ids: [String]) async {
+        let missing: [String] = (try? await db.read { dbc in
+            try ids.filter { id in
+                try !Bool.fetchOne(dbc, sql: "SELECT EXISTS(SELECT 1 FROM user WHERE id = ?)",
+                                   arguments: [id])!
+            }
+        }) ?? []
+        for id in missing where !userFetchesInFlight.contains(id) {
+            userFetchesInFlight.insert(id)
+            // сеть — вне пути применения фрейма: сообщение не ждёт профиль
+            Task { await self.fetchAndStoreUser(id) }
+        }
+    }
+
+    private func fetchAndStoreUser(_ id: String) async {
+        defer { userFetchesInFlight.remove(id) }
+        guard let resp = try? await api.user(id) else { return }
+        try? await db.write { dbc in
+            try SyncEngine.upsertUser(dbc, resp.user)
+            if let p = resp.presence {
+                try dbc.execute(sql: "UPDATE user SET online = ?, lastSeen = ? WHERE id = ?",
+                                arguments: [p.online, p.lastSeen, id])
+            }
+        }
+    }
 
     private func applyIncomingMessage(_ f: WSIncoming) async {
         guard let chatId = f.chatId, let msgId = f.msgId, let seq = f.seq,
@@ -257,6 +290,9 @@ public actor SyncEngine {
             try? await refreshSnapshot()
             snapshotRefreshInFlight = false
         }
+        // сообщение от пользователя без профиля в БД (свежий участник) —
+        // дотянуть, чтобы имя отправителя отобразилось сразу
+        await fetchMissingUsers([from])
 
         // моё собственное эхо с другого устройства или ack-путь — дедуп по msgId
         let exists = (try? await db.read { dbc in
