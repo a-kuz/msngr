@@ -127,4 +127,95 @@ final class BubbleLayoutTests: XCTestCase {
         let p = plan("!")
         XCTAssertGreaterThanOrEqual(p.bubbleFrame.width, p.statusWidth)
     }
+
+    /// Короткий текст: зазор между текстом и временем фиксированный,
+    /// время прижато к правому краю баббла.
+    func testShortTextStatusPinnedToBubbleRightEdge() {
+        let p = plan("Высев")
+        let tf = try! XCTUnwrap(p.textFrame)
+        XCTAssertEqual(p.statusFrame.maxX, p.bubbleFrame.width - BubbleLayout.hPadding,
+                       accuracy: 0.5, "время прижато к правому краю баббла")
+        XCTAssertEqual(p.statusFrame.minX - tf.maxX, 6, accuracy: 1.5,
+                       "зазор между текстом и временем фиксированный")
+    }
+
+    // MARK: - Реакции на voice/file
+
+    private func mediaMessage(_ kind: MessageKind, reactions: [String: [String]]) -> Message {
+        var m = outgoing("")
+        m.text = nil
+        m.kind = kind
+        var media = MediaInfo(type: kind == .voice ? "voice" : "file", mediaId: "x",
+                              key: "k", hash: "h", size: 1,
+                              mime: kind == .voice ? "audio/mp4" : "application/octet-stream")
+        media.dur = 3
+        m.media = media
+        m.reactions = reactions
+        return m
+    }
+
+    private func mediaPlan(_ kind: MessageKind, _ reactions: [String: [String]]) -> BubbleLayoutPlan {
+        BubbleLayout.plan(for: mediaMessage(kind, reactions: reactions), width: width,
+                          tightGap: false, showTail: true, showName: false, authorName: nil)
+    }
+
+    /// Внутри баббла: ни одна капсула и статус не выходят за его край.
+    private func assertReactionsInsideBubble(_ p: BubbleLayoutPlan,
+                                             file: StaticString = #filePath, line: UInt = #line) {
+        for r in p.reactionsFrames {
+            XCTAssertLessThanOrEqual(r.frame.maxY, p.bubbleFrame.height,
+                                     "капсула не должна вылезать за низ баббла", file: file, line: line)
+            XCTAssertLessThanOrEqual(r.frame.maxX, p.bubbleFrame.width,
+                                     "капсула не должна вылезать за правый край", file: file, line: line)
+        }
+        XCTAssertLessThanOrEqual(p.statusFrame.maxY, p.bubbleFrame.height, file: file, line: line)
+    }
+
+    /// Голосовое с одной реакцией: баббл выше, чем без реакций, капсула — рядом
+    /// под волной, время на линии ряда, всё внутри баббла.
+    func testVoiceBubbleGrowsForOneReaction() {
+        let base = mediaPlan(.voice, [:])
+        let p = mediaPlan(.voice, ["👍": ["u1", "u2"]])
+        XCTAssertGreaterThan(p.bubbleFrame.height, base.bubbleFrame.height,
+                             "баббл с реакцией обязан быть выше")
+        let chip = try! XCTUnwrap(p.reactionsFrames.first)
+        let vf = try! XCTUnwrap(p.voiceFrame)
+        XCTAssertGreaterThanOrEqual(chip.frame.minY, vf.maxY, "капсула под волной")
+        XCTAssertLessThan(abs(p.statusFrame.midY - chip.frame.midY), 8,
+                          "время на линии ряда реакций")
+        assertReactionsInsideBubble(p)
+    }
+
+    /// Голосовое с пятью реакциями: баббл выше минимум на ряд капсул, все внутри.
+    func testVoiceBubbleGrowsForFiveReactions() {
+        let base = mediaPlan(.voice, [:])
+        let reactions = ["😂": ["u1", "u2"], "🔥": ["u3", "u4"], "❤️": ["u5", "u6"],
+                         "👍": ["u7", "u8"], "💯": ["u9", "u10"]]
+        let p = mediaPlan(.voice, reactions)
+        XCTAssertEqual(p.reactionsFrames.count, 5)
+        XCTAssertGreaterThanOrEqual(p.bubbleFrame.height - base.bubbleFrame.height, 26,
+                                    "рост баббла не меньше высоты ряда капсул")
+        let vf = try! XCTUnwrap(p.voiceFrame)
+        for r in p.reactionsFrames {
+            XCTAssertGreaterThanOrEqual(r.frame.minY, vf.maxY, "капсулы под волной")
+        }
+        assertReactionsInsideBubble(p)
+    }
+
+    /// Файл с реакциями: те же гарантии, что и для голосового.
+    func testFileBubbleGrowsForReactions() {
+        let base = mediaPlan(.file, [:])
+        let one = mediaPlan(.file, ["👍": ["u1", "u2"]])
+        let five = mediaPlan(.file, ["😂": ["u1", "u2"], "🔥": ["u3", "u4"], "❤️": ["u5", "u6"],
+                                     "👍": ["u7", "u8"], "💯": ["u9", "u10"]])
+        XCTAssertGreaterThan(one.bubbleFrame.height, base.bubbleFrame.height)
+        XCTAssertGreaterThanOrEqual(five.bubbleFrame.height - base.bubbleFrame.height, 26)
+        for p in [one, five] {
+            let vf = try! XCTUnwrap(p.voiceFrame)
+            for r in p.reactionsFrames {
+                XCTAssertGreaterThanOrEqual(r.frame.minY, vf.maxY, "капсулы под плашкой файла")
+            }
+            assertReactionsInsideBubble(p)
+        }
+    }
 }

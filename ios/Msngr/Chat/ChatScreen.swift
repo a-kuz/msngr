@@ -11,7 +11,6 @@ struct ChatScreen: View {
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showFilePicker = false
     @State private var forwardMessage: Message?
-    @State private var viewerMedia: (Message, Int)?
     @State private var messagesVC = MessagesViewController()
     @EnvironmentObject var app: AppState
 
@@ -28,7 +27,9 @@ struct ChatScreen: View {
                     pinnedBar(pinned)
                 }
                 MessagesView(vc: messagesVC, model: model,
-                             onTapMedia: { msg, idx, _ in viewerMedia = (msg, idx) },
+                             onTapMedia: { msg, idx, _ in
+                                 MediaViewerPresenter.present(message: msg, startIndex: idx)
+                             },
                              showScrollDown: $showScrollDown)
                 if model.keyChangePending {
                     keyChangeBanner
@@ -94,12 +95,6 @@ struct ChatScreen: View {
                 forwardMessage = nil
             }
         }
-        .fullScreenCover(isPresented: Binding(get: { viewerMedia != nil },
-                                              set: { if !$0 { viewerMedia = nil } })) {
-            if let (msg, idx) = viewerMedia {
-                MediaViewerView(message: msg, startIndex: idx)
-            }
-        }
     }
 
     @State private var photoPickerPresented = false
@@ -115,20 +110,39 @@ struct ChatScreen: View {
                            online: model.peer?.online ?? false)
                     .frame(width: 40, height: 40)
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(model.headerTitle)
+                    // тулбар может предложить principal-вью ширину меньше идеальной —
+                    // короткое имя обрезается («4455…»). Текст держит идеальную ширину
+                    // (fixedSize), а реально длинные строки заранее укорачиваются
+                    // с многоточием под доступную ширину навбара
+                    Text(Self.fitted(model.headerTitle,
+                                     font: .systemFont(ofSize: 16, weight: .semibold)))
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
-                    Text(model.headerSubtitle)
+                        .fixedSize(horizontal: true, vertical: false)
+                    Text(Self.fitted(model.headerSubtitle, font: .systemFont(ofSize: 12)))
                         .font(.system(size: 12))
                         .foregroundStyle(model.headerSubtitle.contains("печатает") || model.headerSubtitle == "в сети"
                                          ? Theme.accent : .secondary)
                         .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                         .animation(.easeInOut(duration: 0.15), value: model.headerSubtitle)
                 }
             }
         }
         .buttonStyle(.plain)
+    }
+
+    /// Укорачивает строку шапки с многоточием под ширину, доступную principal-вью
+    /// (экран минус кнопка «назад», аватар и отступы).
+    private static func fitted(_ s: String, font: UIFont) -> String {
+        let maxWidth = UIScreen.main.bounds.width - 190
+        guard s.size(withAttributes: [.font: font]).width > maxWidth else { return s }
+        var t = s
+        while !t.isEmpty, (t + "…").size(withAttributes: [.font: font]).width > maxWidth {
+            t.removeLast()
+        }
+        return t + "…"
     }
 
     private func pinnedBar(_ msg: Message) -> some View {

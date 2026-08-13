@@ -49,6 +49,9 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         bubbleView.addSubview(replyBar)
 
         timeLabel.font = BubbleLayout.timeFont
+        // время прижато к правому краю своего фрейма: запас ширины из замера
+        // не оставляет рваного зазора справа
+        timeLabel.textAlignment = .right
         statusBackdrop.backgroundColor = UIColor.black.withAlphaComponent(0.35)
         statusBackdrop.layer.cornerRadius = 10
         bubbleView.addSubview(statusBackdrop)
@@ -481,12 +484,16 @@ final class ReactionCapsuleView: UIControl {
         if outgoing {
             backgroundColor = mine
                 ? UIColor(Theme.readTick).withAlphaComponent(0.28)
-                : UIColor.black.withAlphaComponent(0.06)
+                : UIColor.black.withAlphaComponent(0.12)
         } else {
             backgroundColor = mine
                 ? UIColor(Theme.accent).withAlphaComponent(0.18)
-                : UIColor.systemGray5.withAlphaComponent(0.9)
+                : UIColor.tertiarySystemFill
         }
+        // тонкая обводка отделяет капсулу и от белого входящего, и от зелёного
+        // исходящего баббла
+        layer.borderWidth = 0.5
+        layer.borderColor = UIColor.separator.resolvedColor(with: traitCollection).cgColor
         label.textColor = .label
         // spring-появление только для реально новой реакции
         if animateIn {
