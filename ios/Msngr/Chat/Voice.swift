@@ -231,8 +231,17 @@ final class VoiceMessageView: UIView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(msg: Message) {
+    func configure(msg: Message, outgoing: Bool) {
         self.msg = msg
+        // на тёмном исходящем баббле акцентные цвета нечитаемы
+        let tint = outgoing ? UIColor(Theme.outgoingText) : UIColor(Theme.accent)
+        playButton.tintColor = tint
+        fileIcon.tintColor = tint
+        fileName.textColor = outgoing ? UIColor(Theme.outgoingText) : .label
+        durationLabel.textColor = outgoing ? UIColor(Theme.outgoingMeta) : .secondaryLabel
+        waveform.playedColor = tint
+        waveform.unplayedColor = outgoing
+            ? UIColor(Theme.outgoingMeta).withAlphaComponent(0.5) : .systemGray3
         let isVoice = msg.kind == .voice
         playButton.isHidden = !isVoice
         waveform.isHidden = !isVoice

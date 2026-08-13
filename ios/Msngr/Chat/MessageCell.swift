@@ -136,7 +136,9 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         if let tf = plan.textFrame, let text = plan.text {
             textLabel.isHidden = false
             textLabel.attributedText = text
-            textLabel.textColor = msg.deletedForAll ? .secondaryLabel : .label
+            textLabel.textColor = msg.deletedForAll
+                ? (plan.isOutgoing ? UIColor(Theme.outgoingMeta) : .secondaryLabel)
+                : (plan.isOutgoing ? UIColor(Theme.outgoingText) : .label)
             textLabel.frame = tf
         } else {
             textLabel.isHidden = true
@@ -164,7 +166,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         // reply
         if let rf = plan.replyFrame {
             replyBar.isHidden = false
-            replyBar.configure(author: plan.replyAuthor ?? "", text: plan.replyText ?? "")
+            replyBar.configure(author: plan.replyAuthor ?? "", text: plan.replyText ?? "",
+                               outgoing: plan.isOutgoing)
             replyBar.frame = rf
         } else {
             replyBar.isHidden = true
@@ -177,7 +180,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         if let vf = plan.voiceFrame {
             voiceView.isHidden = false
             voiceView.frame = vf
-            voiceView.configure(msg: msg)
+            voiceView.configure(msg: msg, outgoing: plan.isOutgoing)
         } else {
             voiceView.isHidden = true
         }
@@ -185,7 +188,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         // статус: время + галочки
         timeLabel.text = (plan.edited ? "изм. " : "") + plan.timeString
         timeLabel.textColor = plan.statusOnMedia ? .white
-            : (plan.isOutgoing ? UIColor(Theme.readTick).withAlphaComponent(0.9) : .secondaryLabel)
+            : (plan.isOutgoing ? UIColor(Theme.outgoingMeta) : .secondaryLabel)
         statusBackdrop.isHidden = !plan.statusOnMedia
         if plan.statusOnMedia {
             statusBackdrop.frame = plan.statusFrame.insetBy(dx: -6, dy: -1)
@@ -198,7 +201,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
                                     width: 18, height: 13)
             tickView.image = Self.tickImage(msg.status)
             tickView.tintColor = plan.statusOnMedia ? .white
-                : (msg.status == .read ? UIColor(Theme.readTick) : .secondaryLabel)
+                : (msg.status == .read ? UIColor(Theme.outgoingTickRead) : UIColor(Theme.outgoingMeta))
         } else {
             tickView.isHidden = true
         }
@@ -444,9 +447,13 @@ final class ReplyStripView: UIView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(author: String, text: String) {
+    func configure(author: String, text: String, outgoing: Bool) {
         authorLabel.text = author
         textLabel.text = text
+        // на тёмном исходящем баббле акцентные цвета нечитаемы
+        bar.backgroundColor = outgoing ? UIColor(Theme.outgoingText) : UIColor(Theme.accent)
+        authorLabel.textColor = outgoing ? UIColor(Theme.outgoingText) : UIColor(Theme.accent)
+        textLabel.textColor = outgoing ? UIColor(Theme.outgoingMeta) : .secondaryLabel
     }
 
     override func layoutSubviews() {
@@ -476,18 +483,18 @@ final class ReactionCapsuleView: UIControl {
     func configure(emoji: String, count: Int, mine: Bool, outgoing: Bool, animateIn: Bool) {
         emojiKey = emoji
         label.text = count > 1 ? "\(emoji) \(count)" : emoji
-        // капсула держится палитры баббла: на исходящем — оттенки зелёного,
-        // на входящем — серые; своя реакция выделена насыщенной заливкой
+        // капсула держится палитры баббла; своя реакция выделена насыщенной заливкой
         if outgoing {
             backgroundColor = mine
-                ? UIColor(Theme.readTick).withAlphaComponent(0.28)
-                : UIColor.black.withAlphaComponent(0.06)
+                ? UIColor(Theme.outgoingTickRead).withAlphaComponent(0.30)
+                : UIColor(Theme.outgoingText).withAlphaComponent(0.16)
+            label.textColor = UIColor(Theme.outgoingText)
         } else {
             backgroundColor = mine
                 ? UIColor(Theme.accent).withAlphaComponent(0.18)
                 : UIColor.systemGray5.withAlphaComponent(0.9)
+            label.textColor = .label
         }
-        label.textColor = .label
         // spring-появление только для реально новой реакции
         if animateIn {
             transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
