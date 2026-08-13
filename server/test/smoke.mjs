@@ -1,4 +1,6 @@
-// Интеграционный смоук: 2 пользователя, direct-чат, WS-обмен, receipts, sync, группа.
+// Интеграционный смоук: 2 пользователя, direct-чат, WS-обмен, receipts, sync, группа, пуши.
+// Пуш-проверки требуют, чтобы wrangler dev видел APNS_HOST=http://localhost:9871 (.dev.vars).
+import http from "node:http";
 import WebSocket from "ws";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:8787";
@@ -285,6 +287,104 @@ await cb4.waitFor((f) => f.t === "msg" && f.chatId === grp.chatId && f.seq === l
 const bulkGot = cb4.frames.filter((f) => f.t === "msg" && f.chatId === grp.chatId && f.seq > 1);
 check("sync backfill beyond 200", bulkGot.length === N, `got ${bulkGot.length}`);
 
-ca.ws.close(); cb2.ws.close(); cb3.ws.close(); cb4.ws.close();
+// 20. Пуш-путь: мини-приёмник вместо APNs на :9871 (куда указывает APNS_HOST в .dev.vars)
+const pushes = [];
+const pushSrv = http.createServer((req, res) => {
+  let data = "";
+  req.on("data", (c) => (data += c));
+  req.on("end", () => {
+    pushes.push({ url: req.url, headers: req.headers, body: JSON.parse(data) });
+    res.writeHead(200, { "apns-id": "mock" });
+    res.end();
+  });
+});
+await new Promise((r) => pushSrv.listen(9871, r));
+
+async function waitPush(pred, ms = 4000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    const p = pushes.find(pred);
+    if (p) return p;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return null;
+}
+const pushFor = (token, msgId) => (p) =>
+  p.url === `/3/device/${token}` && p.body.msgId === msgId;
+
+const eve = await api("/api/register", { body: {
+  username: "eve_" + suffix, displayName: "Eve", ...fakeKeys("e") } });
+await api("/api/push-token", { token: eve.token,
+  body: { apnsToken: "eve-sim-udid", env: "development" } });
+await api("/api/push-token", { token: alice.token,
+  body: { apnsToken: "alice-sim-udid", env: "development" } });
+
+const echat = await api("/api/chats", { token: alice.token,
+  body: { kind: "direct", memberIds: [eve.userId] } });
+check("create push chat", echat.ok);
+
+// Alice снова онлайн для отправки
+const ca2 = new Client("alice2", alice.token);
+await ca2.connect();
+
+// (а) получатель без сокета: пуш уходит сразу, APNs-контракт соблюдён
+ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p1", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const p1 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p1");
+const push1 = await waitPush(pushFor("eve-sim-udid", p1.msgId));
+check("push delivered offline", !!push1, JSON.stringify(pushes));
+if (push1) {
+  check("push chatId", push1.body.chatId === echat.chatId);
+  check("push thread-id", push1.body.aps["thread-id"] === echat.chatId);
+  check("push badge=1", push1.body.aps.badge === 1, `badge=${push1.body.aps.badge}`);
+  check("push alert w/o plaintext", push1.body.aps.alert.body === "Новое сообщение"
+    && push1.body.aps["mutable-content"] === 1 && push1.body.aps.sound === "default");
+  check("push collapse-id=msgId", push1.headers["apns-collapse-id"] === p1.msgId);
+  check("push topic", push1.headers["apns-topic"] === "ai.enface.Msngr"
+    && push1.headers["apns-push-type"] === "alert");
+  check("dev push unsigned", push1.headers.authorization === undefined);
+}
+
+// (б) получатель с живым сокетом: WS-фрейм и пуш приходят оба (дедуп на клиенте)
+const ce = new Client("eve", eve.token);
+await ce.connect();
+ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p2", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const p2 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p2");
+check("eve got ws msg", !!(await ce.waitFor((f) => f.t === "msg" && f.msgId === p2.msgId)));
+const push2 = await waitPush(pushFor("eve-sim-udid", p2.msgId));
+check("push delivered despite live ws", !!push2);
+check("push badge=2", push2 && push2.body.aps.badge === 2, `badge=${push2?.body.aps.badge}`);
+
+// read сдвигает бейдж: eve принимает чат (message request), читает всё,
+// следующий пуш приходит с badge=1
+await api(`/api/chats/${echat.chatId}/accept`, { token: eve.token, body: {} });
+ce.send({ t: "read", chatId: echat.chatId, upToSeq: p2.seq });
+await ca2.waitFor((f) => f.t === "receipt" && f.kind === "read" && f.by === eve.userId);
+ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p3", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const p3 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p3");
+const push3 = await waitPush(pushFor("eve-sim-udid", p3.msgId));
+check("push badge after read", push3 && push3.body.aps.badge === 1,
+  `badge=${push3?.body.aps.badge}`);
+
+// (в) service-фрейм пуш не порождает
+ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p4", sentAt: Date.now(),
+  service: true, body: { v: 1, mode: "skd", c: "c2tk" } });
+const p4 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p4");
+check("no push for service", !(await waitPush(pushFor("eve-sim-udid", p4.msgId), 1200)));
+
+// (г) muted-чат пуш не порождает
+await api(`/api/chats/${echat.chatId}/flags`, { token: eve.token, body: { muted: true } });
+ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p5", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const p5 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p5");
+check("no push for muted chat", !(await waitPush(pushFor("eve-sim-udid", p5.msgId), 1200)));
+
+// (д) own echo: у alice токен зарегистрирован, но её собственные отправки пуш не создают
+check("no push for own echo", !pushes.some((p) => p.url === "/3/device/alice-sim-udid"));
+
+pushSrv.close();
+ca.ws.close(); cb2.ws.close(); cb3.ws.close(); cb4.ws.close(); ca2.ws.close(); ce.ws.close();
 console.log(failures ? `\n${failures} FAILURES` : "\nALL PASS");
 process.exit(failures ? 1 : 0);

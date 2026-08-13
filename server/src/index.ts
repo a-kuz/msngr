@@ -411,7 +411,7 @@ app.post("/api/push-token", async (c) => {
   ).bind(b.apnsToken, b.env, deviceId).run();
   await userStub(c.env, userId).fetch("https://do/push-token", {
     method: "POST",
-    body: JSON.stringify({ deviceId, apnsToken: b.apnsToken, env: b.env }),
+    body: JSON.stringify({ deviceId, apnsToken: b.apnsToken, env: b.env, userId }),
   });
   return json({ ok: true });
 });

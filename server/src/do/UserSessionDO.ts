@@ -106,18 +106,18 @@ export class UserSessionDO implements DurableObject {
     switch (path) {
       case "/event": {
         const frame = (await req.json()) as ServerFrame;
-        const live = this.sockets();
-        if (live.length > 0) {
-          for (const ws of live) this.send(ws, frame);
-        }
+        for (const ws of this.sockets()) this.send(ws, frame);
         if (frame.t === "msg" && !frame.service) {
-          // непрочитанное → APNs, если нет клиента со свежим ping:
-          // подвешенный (формально открытый) сокет доставку не гарантирует
+          // контентное сообщение меняет unread чата → кэш бейджа устарел
+          await this.invalidateUnread(frame.chatId);
           const flags = await this.state.storage.get<ChatFlags>("chat:" + frame.chatId);
           const muted = flags?.muted ?? false;
           const userId = await this.getUserId();
           const isOwnEcho = userId !== null && frame.from === userId;
-          if (!this.presenceFresh() && !muted && !isOwnEcho) {
+          // APNs уходит всегда и сразу, независимо от live-сокетов:
+          // доставка по WS не гарантирована, дубль гасит клиент
+          // (willPresent по chatId/msgId)
+          if (!muted && !isOwnEcho) {
             this.state.waitUntil(this.pushToDevices(frame.chatId, frame.msgId));
           }
         }
@@ -163,7 +163,14 @@ export class UserSessionDO implements DurableObject {
       }
 
       case "/push-token": {
-        const b = (await req.json()) as { deviceId: string; apnsToken: string; env: string };
+        const b = (await req.json()) as {
+          deviceId: string; apnsToken: string; env: string; userId?: string;
+        };
+        // userId нужен для /unread-count даже до первого WS-коннекта
+        if (b.userId) {
+          await this.state.storage.put("userId", b.userId);
+          this.userId = b.userId;
+        }
         const tokens =
           (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
         tokens[b.deviceId] = { token: b.apnsToken, env: b.env };
@@ -182,12 +189,56 @@ export class UserSessionDO implements DurableObject {
     }
   }
 
+  // --- бейдж: суммарный unread по чатам ---
+  // Кэш unread в storage ("unreadCache"), инвалидация по входящим msg и
+  // собственным read; ленивый пересчёт через ConversationDO /unread-count
+  // в момент отправки пуша — N запросов только по инвалидированным чатам.
+
+  private async invalidateUnread(chatId: string) {
+    const cache =
+      (await this.state.storage.get<Record<string, number>>("unreadCache")) ?? {};
+    if (chatId in cache) {
+      delete cache[chatId];
+      await this.state.storage.put("unreadCache", cache);
+    }
+  }
+
+  private async totalUnread(): Promise<number> {
+    const userId = await this.getUserId();
+    const cache =
+      (await this.state.storage.get<Record<string, number>>("unreadCache")) ?? {};
+    let changed = false;
+    let total = 0;
+    for (const chatId of await this.chatIds()) {
+      let n = cache[chatId];
+      if (n === undefined) {
+        try {
+          const r = await this.convStub(chatId).fetch(
+            `https://do/unread-count?userId=${userId ?? ""}`
+          );
+          const j = (await r.json()) as { ok: boolean; unread?: number };
+          n = j.ok ? j.unread ?? 0 : 0;
+        } catch {
+          n = 0;
+        }
+        cache[chatId] = n;
+        changed = true;
+      }
+      total += n;
+    }
+    if (changed) await this.state.storage.put("unreadCache", cache);
+    return total;
+  }
+
   private async pushToDevices(chatId: string, msgId?: string) {
     const tokens =
       (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
+    const devices = Object.values(tokens);
+    if (!devices.length) return;
+    const badge = await this.totalUnread();
     await Promise.all(
-      Object.values(tokens).map((t) =>
-        sendPush(this.env, t.token, t.env, { chatId, msgId, kind: "msg" }).catch(() => {})
+      devices.map((t) =>
+        sendPush(this.env, t.token, t.env, { chatId, msgId, badge }).catch(() => {})
       )
     );
   }
@@ -261,6 +312,8 @@ export class UserSessionDO implements DurableObject {
           method: "POST",
           body: JSON.stringify({ userId, upToSeq: frame.upToSeq }),
         });
+        // собственный read двигает unread чата → кэш бейджа устарел
+        await this.invalidateUnread(frame.chatId);
         return;
 
       case "typing":

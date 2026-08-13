@@ -87,3 +87,40 @@ Plaintext внутри ciphertext (после расшифровки) — еди
 
 Доставка: at-least-once; клиент дедуплицирует по (chatId,msgId). Порядок — по seq.
 Read receipts в группах агрегируются (у сообщения: прочитано кем/сколько).
+
+## Пуши
+
+APNs-пуш уходит немедленно для каждого контентного `msg` — независимо от
+presence и живых WS-сокетов. Исключения: `service:true`, собственное эхо
+автора, muted-чат. Дедуп на клиенте: `willPresent` гасит баннер, если
+сообщение уже показано по WS (матч по chatId/msgId).
+
+Payload (текста сообщения нет — E2EE; превью строит NSE после расшифровки):
+
+```
+POST {APNS_HOST}/3/device/{apnsToken}
+заголовки: apns-topic, apns-push-type: alert, apns-priority: 10,
+           apns-collapse-id: msgId   // повторная доставка не плодит баннеры
+{
+  "aps": {
+    "alert": {"title": "Msngr", "body": "Новое сообщение"},
+    "badge": <суммарный unread юзера по всем чатам>,
+    "sound": "default",
+    "mutable-content": 1,
+    "thread-id": "<chatId>"
+  },
+  "chatId": "...", "msgId": "..."
+}
+```
+
+Badge: UserSessionDO держит в storage кэш unread по чатам (`unreadCache`);
+инвалидация — по входящему `msg` и собственному `read`, ленивый пересчёт в
+момент пуша запросом `GET /unread-count?userId=` к ConversationDO
+(unread = lastSeq − read-марка юзера). Приближение: service-сообщения и
+muted-чаты входят в число до прочтения.
+
+Dev без Apple-аккаунта: `APNS_HOST` (в `.dev.vars` — `http://localhost:9871`)
+направляет пуши в мок `server/tools/apns-mock.mjs`, который доставляет их в
+симулятор через `xcrun simctl push` (apnsToken = UDID симулятора). На
+не-яблочном хосте запрос уходит без JWT-подписи (p8-ключ не нужен),
+формат запроса остаётся APNs-совместимым.
