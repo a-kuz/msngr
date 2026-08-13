@@ -7,6 +7,13 @@ options:
 packages:
   MsngrKit:
     path: MsngrKit
+schemes:
+  Msngr:
+    build:
+      targets:
+        Msngr: all
+    test:
+      targets: [MsngrTests]
 targets:
   Msngr:
     type: application

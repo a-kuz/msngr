@@ -42,7 +42,8 @@ final class VoiceRecorder: NSObject, ObservableObject {
     }
 
     /// Возвращает (файл, длительность, waveform из 100 бакетов 0..31).
-    /// Запись короче 1с отменяется (nil): случайное касание микрофона не шлёт сообщение.
+    /// Отменяется (nil) только случайное касание микрофона (<0.3с);
+    /// короткие голосовые вроде «ок» (0.3–1с) — полноценные сообщения.
     func stop() -> (url: URL, duration: TimeInterval, waveform: [Int])? {
         timer?.invalidate()
         guard let r = recorder, let url = fileURL else { return nil }
@@ -50,7 +51,7 @@ final class VoiceRecorder: NSObject, ObservableObject {
         r.stop()
         recorder = nil
         isRecording = false
-        guard dur >= 1.0 else {
+        guard dur >= 0.3 else {
             try? FileManager.default.removeItem(at: url)
             return nil
         }
@@ -250,9 +251,15 @@ final class VoiceMessageView: UIView {
         fileName.isHidden = isVoice
         if isVoice {
             waveform.amplitudes = msg.media?.waveform ?? []
-            // округление к ближайшей секунде: 2.7с — «0:03», а не «0:02»
-            let dur = Int((msg.media?.dur ?? 0).rounded())
-            durationLabel.text = String(format: "%d:%02d", dur / 60, dur % 60)
+            let raw = msg.media?.dur ?? 0
+            if raw < 1 {
+                // сабсекундные голосовые («ок») показывают десятые: «0:00,5»
+                durationLabel.text = String(format: "0:00,%01d", Int(raw * 10))
+            } else {
+                // округление к ближайшей секунде: 2.7с — «0:03», а не «0:02»
+                let dur = Int(raw.rounded())
+                durationLabel.text = String(format: "%d:%02d", dur / 60, dur % 60)
+            }
             syncPlayingState()
             displayTimer?.invalidate()
             displayTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
