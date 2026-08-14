@@ -14,6 +14,7 @@ struct SettingsView: View {
     @State private var pinEnabled = PinStore.hasPin()
     @State private var biometrics = PinStore.biometricsEnabled()
     @State private var showsMessageText = NotificationPreferences.showsMessageText(in: .standard)
+    @State private var showLogoutConfirm = false
 
     var body: some View {
         NavigationStack {
@@ -89,6 +90,11 @@ struct SettingsView: View {
                     } label: {
                         Label("Заблокированные", systemImage: "hand.raised")
                     }
+                    NavigationLink {
+                        SessionsView()
+                    } label: {
+                        Label("Активные устройства", systemImage: "laptopcomputer.and.iphone")
+                    }
                 }
 
                 Section("Данные") {
@@ -102,6 +108,17 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                }
+
+                Section {
+                    Button(role: .destructive) {
+                        showLogoutConfirm = true
+                    } label: {
+                        Label("Выйти", systemImage: "rectangle.portrait.and.arrow.right")
+                    }
+                    .accessibilityIdentifier("settings.logout")
+                } footer: {
+                    Text("Доступ этого устройства к аккаунту отзывается, переписка и ключи удаляются.")
                 }
             }
             .navigationTitle("Настройки")
@@ -133,6 +150,16 @@ struct SettingsView: View {
                         _ = try? await app.api.uploadAvatar(prepared.data)
                     }
                 }
+            }
+            .confirmationDialog("Выйти из аккаунта?", isPresented: $showLogoutConfirm,
+                                titleVisibility: .visible) {
+                Button("Выйти", role: .destructive) {
+                    dismiss()
+                    Task { await app.logout() }
+                }
+                Button("Отмена", role: .cancel) {}
+            } message: {
+                Text("Переписка и ключи с этого устройства будут удалены. Восстановить их нельзя.")
             }
             .sheet(isPresented: $showPinSetup) {
                 PinSetupView { pin in

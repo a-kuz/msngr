@@ -111,6 +111,41 @@ public final class APIClient: @unchecked Sendable {
         try await post("api/register", body: body, as: RegisterResponse.self)
     }
 
+    // MARK: - Сессии устройств
+
+    /// Активная сессия — устройство пользователя с неотозванным токеном.
+    public struct SessionDTO: Decodable, Identifiable, Sendable {
+        public let deviceId: String
+        public let name: String?
+        /// миллисекунды: `devices.created_at` на сервере пишется `Date.now()`,
+        /// в отличие от остальных клиент-видимых меток времени в секундах
+        public let createdAt: Double
+        public let lastSeen: Double?
+        public let hasPushToken: Bool
+        /// устройство, с которого сделан запрос
+        public let current: Bool
+
+        public var id: String { deviceId }
+        public var createdAtSeconds: Double { createdAt / 1000 }
+        public var lastSeenSeconds: Double? { lastSeen.map { $0 / 1000 } }
+    }
+    private struct SessionsResponse: Decodable { let sessions: [SessionDTO] }
+
+    public func sessions() async throws -> [SessionDTO] {
+        try await get("api/sessions", as: SessionsResponse.self).sessions
+    }
+
+    /// Отзывает токен текущего устройства: следующий же запрос получит 401.
+    public func logout() async throws {
+        _ = try await request("api/logout", method: "POST", jsonBody: [String: String]())
+    }
+
+    /// Отзывает токен другого своего устройства; его сокет сервер закрывает кодом 4401.
+    public func revokeSession(deviceId: String) async throws {
+        _ = try await request("api/sessions/\(deviceId)/revoke", method: "POST",
+                              jsonBody: [String: String]())
+    }
+
     // MARK: - Users / prekeys
 
     public struct UserDTO: Decodable {
