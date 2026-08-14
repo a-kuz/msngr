@@ -18,6 +18,9 @@ public actor WSClient {
     public private(set) var isConnected = false
 
     private var reconnectAttempt = 0
+    /// отложенная попытка реконнекта: отменяется пинком из форграунда
+    /// и возвратом сети, чтобы не досиживать паузу
+    private var reconnectTask: Task<Void, Never>?
     private var shouldRun = false
     private var pingTimer: Task<Void, Never>?
     private var awaitingPong = false
@@ -48,6 +51,7 @@ public actor WSClient {
 
     public func stop() {
         shouldRun = false
+        reconnectTask?.cancel()
         pingTimer?.cancel()
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
@@ -65,6 +69,7 @@ public actor WSClient {
     }
 
     private func reconnectNow() {
+        reconnectTask?.cancel()
         pingTimer?.cancel()
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
@@ -134,12 +139,21 @@ public actor WSClient {
         awaitingPong = false
     }
 
+    /// Пауза перед попыткой номер attempt: экспонента с потолком.
+    /// Потолок низкий: после возврата сети клиент обязан догнать сервер
+    /// за секунды, а не за минуты.
+    static func reconnectDelay(attempt: Int) -> Double {
+        min(pow(1.6, Double(attempt)), 12.0)
+    }
+
     private func scheduleReconnect() {
         guard shouldRun else { return }
-        let delay = min(pow(1.6, Double(reconnectAttempt)), 30.0)
+        let delay = Self.reconnectDelay(attempt: reconnectAttempt)
         reconnectAttempt += 1
-        Task {
+        reconnectTask?.cancel()
+        reconnectTask = Task {
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
             await self.connectIfNeeded()
         }
     }
@@ -177,6 +191,9 @@ public actor WSClient {
     /// живой — подтверждает presence немедленным пингом.
     public func nudge() {
         if task == nil {
+            // отложенная попытка досиживала бы паузу до 12с — отменяем и пробуем сразу
+            reconnectTask?.cancel()
+            reconnectAttempt = 0
             connectIfNeeded()
         } else {
             awaitingPong = false
