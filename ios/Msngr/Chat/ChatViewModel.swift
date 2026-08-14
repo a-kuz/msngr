@@ -83,8 +83,9 @@ final class ChatViewModel: ObservableObject {
                 self.peer = users.first { $0.id != ownId }
                 self.updateUnreadMarker(chat: chat, msgs: msgs)
                 self.lastMsgs = msgs
-                self.feed = Self.buildFeed(msgs, members: users, unreadMarker: self.markerFeedParam)
-                if let pinId = chat?.pinnedMsgId {
+                self.feed = Self.buildFeed(msgs, members: users, unreadMarker: self.markerFeedParam,
+                                           contentHidden: self.contentHidden)
+                if let pinId = chat?.pinnedMsgId, !self.contentHidden {
                     self.pinnedMessage = msgs.first { $0.msgId == pinId }
                 } else {
                     self.pinnedMessage = nil
@@ -184,8 +185,12 @@ final class ChatViewModel: ObservableObject {
 
     /// Перестройка ленты из последнего снапшота при изменении состояния плашки.
     private func rebuildFeed() {
-        feed = Self.buildFeed(lastMsgs, members: members, unreadMarker: markerFeedParam)
+        feed = Self.buildFeed(lastMsgs, members: members, unreadMarker: markerFeedParam,
+                              contentHidden: contentHidden)
     }
+
+    /// Заявка до принятия: содержимое не показываем и не отмечаем прочитанным.
+    var contentHidden: Bool { ChatPrivacy.hidesContent(chat) }
 
     /// Своя отправка или реакция убирает плашку.
     private func dismissUnreadMarker() {
@@ -212,9 +217,12 @@ final class ChatViewModel: ObservableObject {
     }
 
     /// Группировка бабблов + дата-разделители + плашка непрочитанных
-    /// (лента инвертирована).
+    /// (лента инвертирована). У чата со скрытым содержимым (заявка до принятия)
+    /// лента пустая: вместо неё экран показывает карточку заявки.
     static func buildFeed(_ msgs: [Message], members: [User],
-                          unreadMarker: (anchorSeq: Int, count: Int)? = nil) -> [ChatFeedItem] {
+                          unreadMarker: (anchorSeq: Int, count: Int)? = nil,
+                          contentHidden: Bool = false) -> [ChatFeedItem] {
+        guard !contentHidden else { return [] }
         var out: [ChatFeedItem] = []
         let cal = Calendar.current
         let nameById = Dictionary(uniqueKeysWithValues: members.map { ($0.id, $0.displayName) })
@@ -370,6 +378,19 @@ final class ChatViewModel: ObservableObject {
         Task { await app.engine.acceptChatRequest(chatId: chatId) }
     }
 
+    /// Отклонение заявки: отправитель в блок, чат и его сообщения удаляются локально.
+    func blockRequest() {
+        guard let peerId = peer?.id else { return }
+        stop()
+        Task { [chatId] in
+            try? await app.api.setBlocked(peerId, blocked: true)
+            try? await app.db.write { dbc in
+                try dbc.execute(sql: "DELETE FROM chat WHERE id = ?", arguments: [chatId])
+                try dbc.execute(sql: "DELETE FROM message WHERE chatId = ?", arguments: [chatId])
+            }
+        }
+    }
+
     private var lastTypingSent = Date.distantPast
 
     func textChanged(_ text: String) {
@@ -400,7 +421,8 @@ final class ChatViewModel: ObservableObject {
 
     func markVisibleRead() {
         // не отмечаем прочтение, когда сцена не активна (фон/шторка): экран не виден
-        guard !app.obscured, isViewingBottom, let chat, chat.lastSeq > chat.myReadUpTo else { return }
+        guard !app.obscured, isViewingBottom, !contentHidden,
+              let chat, chat.lastSeq > chat.myReadUpTo else { return }
         Task { await app.engine.markRead(chatId: chatId, upToSeq: chat.lastSeq) }
     }
 

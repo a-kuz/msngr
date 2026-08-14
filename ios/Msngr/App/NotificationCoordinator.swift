@@ -118,6 +118,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         let ownUserId = AppState.shared.session?.userId ?? ""
         return try? await db.read { dbc -> BannerInfo in
             let chat = try Chat.fetchOne(dbc, key: chatId)
+            let hidden = ChatPrivacy.hidesContent(chat)
             let isGroup = chat?.kind == .group
             let sender = try User.fetchOne(dbc, key: from)
             let senderInfo = NotificationContentBuilder.SenderInfo(
@@ -137,8 +138,12 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
                     .map { NotificationContentBuilder.SenderInfo(userId: $0["id"],
                                                                  displayName: $0["name"] ?? "") }
             }
-            if let m = try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE msgId = ?",
-                                            arguments: [msgId]) {
+            // заявка до принятия: имя отправителя показываем, содержимое — нет
+            if hidden {
+                info.content = NotificationContentBuilder.requestContent(
+                    chat: chatInfo, sender: senderInfo)
+            } else if let m = try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE msgId = ?",
+                                                   arguments: [msgId]) {
                 info.content = NotificationContentBuilder.build(
                     message: m, chat: chatInfo, sender: senderInfo, showsMessageText: showsText)
             }
@@ -148,12 +153,18 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
 
     // MARK: - Бейдж и шторка ↔ unreadCount в БД
 
-    /// Единый источник истины — chat.unreadCount: бейдж — сумма по чатам;
-    /// прочитанные сообщения снимаются из шторки.
+    /// Единый источник истины — chat.unreadCount: бейдж — сумма по чатам
+    /// (заявка до принятия в него не входит: счётчик выдал бы, сколько написали);
+    /// прочитанные сообщения снимаются из шторки по msgId.
     private func observeUnread(db: DatabaseQueue) {
         badgeCancellable = ValueObservation
             .tracking { dbc in
-                try Int.fetchOne(dbc, sql: "SELECT COALESCE(SUM(unreadCount), 0) FROM chat") ?? 0
+                try Row.fetchAll(dbc, sql: "SELECT unreadCount, isRequest, iAccepted FROM chat")
+                    .reduce(0) { sum, row in
+                        sum + ChatPrivacy.visibleUnread(isRequest: row["isRequest"],
+                                                        iAccepted: row["iAccepted"],
+                                                        unreadCount: row["unreadCount"])
+                    }
             }
             .publisher(in: db, scheduling: .async(onQueue: .main))
             .sink(receiveCompletion: { _ in }, receiveValue: { [weak self] total in
