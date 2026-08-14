@@ -9,4 +9,6 @@ public enum MsngrLog {
     public static let storage = Logger(subsystem: subsystem, category: "storage")
     /// Сессия: сохранение и чтение session.json.
     public static let session = Logger(subsystem: subsystem, category: "session")
+    /// Очередь отправки: постановка сообщения и исходники вложений.
+    public static let outbox = Logger(subsystem: subsystem, category: "outbox")
 }

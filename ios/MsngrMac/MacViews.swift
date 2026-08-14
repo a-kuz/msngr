@@ -257,7 +257,20 @@ final class MacChatModel: ObservableObject {
                                      text: String((r.text ?? "").prefix(60)), kind: r.kind.rawValue)
         }
         replyingTo = nil
-        Task { try? await MacAppStateHolder.shared?.engine.enqueue(content: c, chatId: chatId) }
+        enqueue(c)
+    }
+
+    /// Отказ постановки в очередь означает, что сообщение не записалось на диск
+    /// и потеряно; отдельного места показать это в macOS-клиенте нет, поэтому
+    /// пишем в лог, а не молчим.
+    private func enqueue(_ content: ContentPayload) {
+        Task { [chatId] in
+            do {
+                try await MacAppStateHolder.shared?.engine.enqueue(content: content, chatId: chatId)
+            } catch {
+                MsngrLog.outbox.error("не удалось поставить \(content.kind) в очередь: \(error)")
+            }
+        }
     }
 
     func react(_ m: Message, _ emoji: String) {
@@ -265,7 +278,7 @@ final class MacChatModel: ObservableObject {
         c.targetMsgId = m.msgId ?? m.id
         let mine = m.reactions.first { $0.value.contains(OwnUser.id) }?.key
         c.emoji = (mine == emoji) ? nil : emoji
-        Task { try? await MacAppStateHolder.shared?.engine.enqueue(content: c, chatId: chatId) }
+        enqueue(c)
     }
 
     func delete(_ m: Message) {

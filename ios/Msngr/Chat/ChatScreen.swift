@@ -143,6 +143,11 @@ struct ChatScreen: View {
         .onReceive(NotificationCenter.default.publisher(for: .forwardRequested)) { note in
             forwardMessage = note.object as? Message
         }
+        .alert("Не отправлено", isPresented: sendFailureBinding) {
+            Button("Понятно", role: .cancel) { model.sendFailure = nil }
+        } message: {
+            Text(model.sendFailure ?? "")
+        }
         // удаление одного сообщения из контекстного меню
         .confirmationDialog("Удалить сообщение?", isPresented: deleteCandidateBinding,
                             titleVisibility: .visible) {
@@ -171,6 +176,11 @@ struct ChatScreen: View {
             }
             Button("Отмена", role: .cancel) {}
         }
+    }
+
+    private var sendFailureBinding: Binding<Bool> {
+        Binding(get: { model.sendFailure != nil },
+                set: { if !$0 { model.sendFailure = nil } })
     }
 
     private var deleteCandidateBinding: Binding<Bool> {
@@ -443,7 +453,7 @@ struct ChatScreen: View {
         // без сети не теряется: файл в постоянную папку, аплоад делает outbox-воркер
         var infos: [MediaInfo] = []
         for (jpeg, size, bh) in photos {
-            guard let localName = try? app.media.stash(jpeg, mime: "image/jpeg") else { continue }
+            guard let localName = stash(jpeg, mime: "image/jpeg") else { return }
             var info = MediaInfo(type: "photo", mediaId: "", key: "",
                                  hash: "", size: jpeg.count, mime: "image/jpeg")
             info.localPath = localName
@@ -457,12 +467,25 @@ struct ChatScreen: View {
             var c = ContentPayload(kind: "photo")
             c.media = infos[0]
             c.text = caption
-            try? await app.engine.enqueue(content: c, chatId: chatId)
+            model.enqueue(c)
         } else {
             var c = ContentPayload(kind: "album")
             c.album = infos
             c.text = caption
-            try? await app.engine.enqueue(content: c, chatId: chatId)
+            model.enqueue(c)
+        }
+    }
+
+    /// Кладёт исходник вложения в постоянную папку. nil — отказ записи, о котором
+    /// пользователь узнаёт из алерта: молча пропущенное вложение выглядело бы как
+    /// «ничего не произошло».
+    private func stash(_ data: Data, mime: String? = nil) -> String? {
+        do {
+            return try app.media.stash(data, mime: mime)
+        } catch {
+            MsngrLog.outbox.error("не удалось сохранить вложение: \(error)")
+            model.sendFailure = "Вложение не отправлено: не удалось сохранить его на устройстве"
+            return nil
         }
     }
 
@@ -476,7 +499,7 @@ struct ChatScreen: View {
         export.shouldOptimizeForNetworkUse = true // faststart
         await export.export()
         guard export.status == .completed, let data = try? Data(contentsOf: out),
-              let localName = try? app.media.stash(data, mime: "video/mp4") else { return }
+              let localName = stash(data, mime: "video/mp4") else { return }
 
         // превью-кадр
         let gen = AVAssetImageGenerator(asset: asset)
@@ -488,6 +511,7 @@ struct ChatScreen: View {
             dims = CGSize(width: cg.width, height: cg.height)
             let ui = UIImage(cgImage: cg)
             if let jpeg = ui.jpegData(compressionQuality: 0.7) {
+                // превью не критично: без него видео уходит с одним blurhash
                 thumbLocal = try? app.media.stash(jpeg, mime: "image/jpeg")
                 if let px = ImageProcessor.rgbaPixels(jpeg) {
                     blurhash = BlurHash.encode(pixels: px.pixels, width: px.width, height: px.height) ?? ""
@@ -504,7 +528,7 @@ struct ChatScreen: View {
         info.blurhash = blurhash
         var c = ContentPayload(kind: "video")
         c.media = info
-        try? await app.engine.enqueue(content: c, chatId: chatId)
+        model.enqueue(c)
         try? FileManager.default.removeItem(at: out)
     }
 
@@ -512,7 +536,7 @@ struct ChatScreen: View {
         let secured = url.startAccessingSecurityScopedResource()
         defer { if secured { url.stopAccessingSecurityScopedResource() } }
         guard let data = try? Data(contentsOf: url), data.count < 100_000_000 else { return }
-        guard let localName = try? app.media.stash(data) else { return }  // файл: расширение не критично
+        guard let localName = stash(data) else { return }  // файл: расширение не критично
         var info = MediaInfo(type: "file", mediaId: "", key: "",
                              hash: "", size: data.count,
                              mime: "application/octet-stream")
@@ -520,13 +544,13 @@ struct ChatScreen: View {
         info.name = url.lastPathComponent
         var c = ContentPayload(kind: "file")
         c.media = info
-        try? await app.engine.enqueue(content: c, chatId: chatId)
+        model.enqueue(c)
     }
 
     private func sendVoice(_ url: URL, duration: TimeInterval, waveform: [Int]) {
         Task {
             guard let data = try? Data(contentsOf: url),
-                  let localName = try? app.media.stash(data, mime: "audio/mp4") else { return }
+                  let localName = stash(data, mime: "audio/mp4") else { return }
             var info = MediaInfo(type: "voice", mediaId: "", key: "",
                                  hash: "", size: data.count, mime: "audio/mp4")
             info.localPath = localName
@@ -534,7 +558,7 @@ struct ChatScreen: View {
             info.waveform = waveform
             var c = ContentPayload(kind: "voice")
             c.media = info
-            try? await app.engine.enqueue(content: c, chatId: chatId)
+            model.enqueue(c)
             try? FileManager.default.removeItem(at: url)
         }
     }

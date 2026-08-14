@@ -79,7 +79,8 @@ final class MacAppState: ObservableObject {
             },
             phoneHash: nil))
         let s = Session(userId: reg.userId, deviceId: reg.deviceId, token: reg.token, username: username)
-        try? JSONEncoder().encode(s).write(to: sessionURL)
+        // отказ записи означает потерю сессии после перезапуска — не глотаем
+        try JSONEncoder().encode(s).write(to: sessionURL, options: .atomic)
         session = s
         await bootstrap(s)
     }
