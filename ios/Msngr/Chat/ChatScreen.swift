@@ -202,7 +202,7 @@ struct ChatScreen: View {
         .background(.bar)
         .onTapGesture {
             if let id = msg.msgId ?? msg.clientMsgId {
-                messagesVC.scrollTo(msgId: id)
+                messagesVC.scrollTo(msgId: id, highlight: true)
             }
         }
         .transition(.move(edge: .top).combined(with: .opacity))
@@ -446,6 +446,20 @@ struct MessagesView: UIViewControllerRepresentable {
         }
         vc.onReact = { [weak model] msg, emoji in model?.react(msg, emoji: emoji) }
         vc.onTapMedia = onTapMedia
+        // тап по цитате — переход к оригиналу; если он глубже загруженной
+        // страницы, сначала догружаем историю
+        vc.onTapReplyQuote = { [weak model, weak vc] msg in
+            guard let vc, let targetId = msg.replyTo?.msgId else { return }
+            if vc.scrollTo(msgId: targetId, highlight: true) { return }
+            guard let model else { return }
+            Task {
+                guard await model.ensureLoaded(msgId: targetId) else {
+                    Haptics.rigid()   // оригинал недоступен
+                    return
+                }
+                Self.scrollWhenReady(vc: vc, msgId: targetId)
+            }
+        }
         vc.onContextAction = { [weak model] msg, action in
             guard let model else { return }
             switch action {
@@ -463,6 +477,16 @@ struct MessagesView: UIViewControllerRepresentable {
 
     func updateUIViewController(_ vc: MessagesViewController, context: Context) {
         vc.apply(items)
+    }
+
+    /// Догруженная история попадает в список через updateUIViewController —
+    /// скроллим, как только сообщение появилось в ленте.
+    private static func scrollWhenReady(vc: MessagesViewController, msgId: String, attempts: Int = 10) {
+        if vc.scrollTo(msgId: msgId, highlight: true) { return }
+        guard attempts > 0 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            scrollWhenReady(vc: vc, msgId: msgId, attempts: attempts - 1)
+        }
     }
 }
 
