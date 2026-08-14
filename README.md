@@ -1,66 +1,80 @@
 # Msngr
 
-Мессенджер с E2E-шифрованием: iOS + macOS клиенты, бэкенд на Cloudflare Workers.
+Мессенджер со сквозным шифрованием: клиенты для iOS и macOS, бэкенд на
+Cloudflare Workers. Прода нет, это разработческий стенд.
 
 ## Что внутри
 
-- **server/** — Cloudflare Worker: HTTP API + WebSocket, Durable Objects
-  (`UserSessionDO` — соединения/inbox/пуши, `ConversationDO` — журнал чата/членство/fan-out),
-  D1 (пользователи, устройства, prekeys), R2 (зашифрованные медиа), APNs.
-- **ios/MsngrKit/** — переносимое ядро (Swift Package):
-  - `MsngrCrypto` — X3DH, Double Ratchet, Sender Keys, шифрование медиа, safety numbers.
-  - `MsngrCore` — GRDB-хранилище (offline-first), WS-клиент, SyncEngine, E2EE-pipeline,
-    медиа, BlurHash, мозаика альбомов, image-pipeline.
-- **ios/Msngr/** — iOS-приложение (SwiftUI + UIKit для списка сообщений).
-- **ios/MsngrMac/** — macOS-приложение (то же ядро, SwiftUI split-view).
-- **ios/NotificationService/** — расшифровка превью пушей.
+- **server/** — Cloudflare Worker: HTTP API (hono) и WebSocket, два Durable
+  Object'а (`UserSessionDO` — сокеты устройств пользователя, чат-лист,
+  presence, пуши; `ConversationDO` — журнал чата, членство, `seq`, fan-out),
+  D1 (пользователи, устройства, prekeys, блокировки, инвайты), R2 (медиа), APNs.
+- **ios/MsngrKit/** — переносимое ядро, Swift Package:
+  - `MsngrCrypto` — X3DH, Double Ratchet, sender keys, шифрование медиа, safety numbers;
+  - `MsngrCore` — GRDB-хранилище, WS-клиент, SyncEngine, E2EE-пайплайн, медиа,
+    BlurHash, мозаика альбомов, image pipeline.
+- **ios/Msngr/** — iOS-приложение: SwiftUI, лента сообщений на UICollectionView.
+- **ios/MsngrMac/** — macOS-клиент на том же ядре (удобно как второй собеседник).
+- **ios/NotificationService/** — NSE: превью пуша из общей БД.
 
-Функции: чаты 1:1 и группы (роли, инвайты), текст/фото/видео/файлы/голосовые/альбомы,
-реплаи, форварды, реакции, редактирование, удаление у себя/у всех, typing,
-онлайн/last seen, галочки доставки/прочтения, message requests (как в Signal),
-закреплённые чаты и сообщения, архив, mute, черновики, поиск, disappearing messages,
-блокировки, контакт-дискавери по хэшам телефонов, TOFU + safety numbers,
-пин-код + Face ID, офлайн-очередь. Без звонков.
+Что умеет: чаты 1:1 и группы (роли и инвайт-ссылки), текст, фото, видео, файлы,
+голосовые, альбомы, реплаи, форварды, реакции, правка, удаление у себя и у всех,
+typing, онлайн и last seen, галочки доставки и прочтения, message requests,
+закреплённые чаты и сообщения, архив, mute, черновики, поиск по списку чатов,
+блокировки, контакт-дискавери по хэшам номеров, TOFU и safety numbers, пин-код
+с Face ID, офлайн-очередь отправки. Звонков нет.
 
 ## Запуск
 
-### Бэкенд (локально)
+### Бэкенд
 
 ```bash
 cd server
 npm install
-npx wrangler d1 execute msngr --local --file=schema.sql
+npx wrangler d1 execute msngr --local --file=schema.sql   # один раз
 npx wrangler dev --port 8787
 ```
 
-Смоук-тест API/WS (нужен запущенный `wrangler dev`):
+Серверный смоук (нужен запущенный `wrangler dev`, 63 проверки API/WS/DO/пушей):
 
 ```bash
 cd server && node test/smoke.mjs
 ```
 
-### Тесты ядра
-
-```bash
-cd ios/MsngrKit
-swift test                       # крипто + утилиты (без сервера)
-# интеграционные тесты SyncEngine требуют запущенный wrangler dev на :8787
-```
+Смоук поднимает собственный приёмник пушей на :9871, поэтому дев-мок APNs на
+это время надо остановить.
 
 ### iOS
 
 ```bash
 cd ios
-brew install xcodegen            # если ещё нет
-xcodegen generate
+brew install xcodegen                  # если ещё нет
+xcodegen generate                      # .xcodeproj не в git, генерируется отсюда
 xcodebuild -project Msngr.xcodeproj -scheme Msngr \
-  -destination 'platform=iOS Simulator,name=iPhone 17 dev' build
+  -destination 'id=<UDID симулятора>' build
 ```
 
-Сервер по умолчанию `http://localhost:8787` (переопределяется переменной окружения
-схемы `MSNGR_SERVER`). Симулятор ходит на localhost хоста напрямую.
+Сервер по умолчанию `http://localhost:8787`, переопределяется переменной
+окружения схемы `MSNGR_SERVER`. Симулятор ходит на localhost хоста напрямую.
 
-### macOS (удобно для тестирования переписки вторым клиентом)
+### Тесты ядра
+
+```bash
+cd ios/MsngrKit && swift test          # крипто, синк, офлайн, миграции, BlurHash, мозаика
+```
+
+Тесты приложения (раскладка бабблов, лента, плашка непрочитанных, решения по
+уведомлениям, валидация регистрации) и UI-смоук — через xcodebuild:
+
+```bash
+cd ios
+xcodebuild -project Msngr.xcodeproj -scheme Msngr -destination 'id=<UDID>' \
+  test -only-testing:MsngrTests
+```
+
+Полный гейт качества — `make check` в корне (см. `docs/PROCESS.md`).
+
+### macOS
 
 ```bash
 cd ios
@@ -68,24 +82,38 @@ xcodebuild -project Msngr.xcodeproj -scheme MsngrMac -destination 'platform=macO
 open ~/Library/Developer/Xcode/DerivedData/Msngr-*/Build/Products/Debug/MsngrMac.app
 ```
 
-## Деплой бэкенда
+### Пуши на дев-стенде
 
-Создать D1/R2, прописать `database_id` в `wrangler.jsonc`, задать секреты APNs:
+Apple-аккаунт не нужен: `APNS_HOST` в `server/.dev.vars` уводит пуши в мок,
+который доставляет их в симулятор через `simctl`.
 
 ```bash
-npx wrangler d1 create msngr
+cd server && node tools/apns-mock.mjs --log        # слушает :9871
+```
+
+APNs-токеном на симуляторе регистрируется UDID (`SIMULATOR_UDID`). Ограничение
+канала: `simctl push` не запускает Notification Service Extension —
+`docs/research/nse-simulator-experiment.md`.
+
+## Деплой бэкенда
+
+```bash
+npx wrangler d1 create msngr           # database_id → wrangler.jsonc
 npx wrangler r2 bucket create msngr-media
 npx wrangler d1 execute msngr --remote --file=server/schema.sql
-npx wrangler secret put APNS_KEY_P8     # содержимое .p8
+npx wrangler secret put APNS_KEY_P8    # содержимое .p8
 npx wrangler secret put APNS_KEY_ID
 npx wrangler secret put APNS_TEAM_ID
-npx wrangler secret put APNS_TOPIC       # bundle id приложения
+npx wrangler secret put APNS_TOPIC     # bundle id приложения
 npx wrangler deploy
 ```
 
 ## Документация
 
+- `CLAUDE.md` — правила работы в репозитории для агентов.
 - `ARCHITECTURE.md` — компоненты и принципы.
-- `docs/protocol.md` — HTTP/WS протокол, E2E-конверт.
-- `docs/crypto-flows.md` — первый контакт, TOFU, контакт-дискавери.
-- `docs/ui-spec.md` — детали UI (размещение времени, реакции, голосовые, мозаика, анимации).
+- `docs/protocol.md` — HTTP/WS-протокол, E2E-конверт, пуши.
+- `docs/crypto-flows.md` — первый контакт, TOFU, группы, контакт-дискавери.
+- `docs/ui-spec.md` — поведение клиента: лента, баббл, анимации, палитры.
+- `docs/PROCESS.md` — гейт качества, матрица состояний, стенды.
+- `docs/audits/`, `docs/qa/`, `docs/research/` — аудиты, прогоны, исследования.

@@ -1,110 +1,208 @@
 # Протокол
 
+Источник истины — код: `server/src/index.ts` (роутер), `server/src/types.ts`
+(фреймы), `server/src/do/*.ts` (логика DO), `ios/MsngrKit/Sources/MsngrCore/Protocol.swift`
+(клиентское зеркало).
+
 ## Транспорт
 
-- HTTP `/api/*` — auth, prekeys, профили, чаты (создание/членство), медиа (R2), контакты.
-- WS `/ws?token=…&device=…` — один на устройство. JSON-фреймы `{t, ...}`.
-- Auth: Bearer-токен устройства (выдаётся при регистрации/логине, хранится хэшом в D1).
+- HTTP `/api/*` — регистрация, ключи, профили, чаты, медиа, контакты, блокировки.
+- WS `/ws?token=…` — один сокет на устройство, JSON-фреймы `{t, ...}`.
+  Апгрейд авторизуется в Worker, сам сокет держит `UserSessionDO`.
+- Auth: токен устройства (`Authorization: Bearer <token>` или `?token=`),
+  в D1 хранится SHA-256 токена. Логина как отдельной операции нет: восстановление
+  доступа — новая регистрация.
+- Все клиент-видимые метки времени — в секундах (`nowSec()` на сервере,
+  `timeIntervalSince1970` на клиенте).
 
 ## Идентификаторы
 
-- `userId` — ULID. `deviceId` — ULID (per-устройство). `chatId` — ULID.
-- `msgId` — ULID, присваивает ConversationDO. `seq` — монотонный номер в чате (1..N).
-- `clientMsgId` — UUID клиента, ключ идемпотентности отправки.
+- `userId`, `deviceId`, `msgId` — ULID (собственная реализация в `server/src/util.ts`).
+- `chatId`: группа — ULID; direct — детерминированное имя `direct:<userIdA>:<userIdB>`
+  с отсортированными id, за счёт этого direct-чат дедуплицируется без индекса.
+- `seq` — монотонный номер сообщения в чате (1..N), присваивает `ConversationDO`.
+- `clientMsgId` — UUID клиента, ключ идемпотентности отправки. Дедуп-ключ на
+  сервере — `cmid:<from>/<clientMsgId>`, повтор возвращает исходные `msgId`/`seq`.
 
-## HTTP API (все ответы `{ok:true,...}` либо `{ok:false,error}`)
+## HTTP API
+
+Ответы: `{ok:true, ...}` либо `{ok:false, error}` с ненулевым HTTP-статусом.
 
 ```
-POST /api/register        {username, displayName, device:{name}, identityKey, signedPrekey{key,sig,id}, oneTimePrekeys[]}
-                          → {userId, deviceId, token}
-POST /api/login           {username, proof}  // подпись челленджа identity-ключом существующего устройства — v2; v1: восстановление = новая регистрация
-GET  /api/users?q=        поиск по username/имени → [{userId, username, displayName, avatarUrl, identityKey}]
-GET  /api/users/:id/prekeys?device=all → бандлы X3DH по устройствам (one-time prekey выдаётся и удаляется)
-POST /api/prekeys         пополнение one-time prekeys
-POST /api/profile         {displayName?, bio?, avatarId?}
-POST /api/avatar          multipart → R2, {avatarId,url} (аватары не E2E)
-POST /api/chats           {kind:"direct"|"group", memberIds[], title?} → {chatId}  (direct дедуплицируется)
-GET  /api/chats           снапшот: чаты + члены + последние N сообщений + курсоры
-POST /api/chats/:id/members       {add[], remove[]} (админ)
+POST /api/register    {username, displayName, device:{name}, identityKey, identitySignKey,
+                       signedPrekey:{id,key,sig}, oneTimePrekeys:[{id,key}], phoneHash?}
+                      → {userId, deviceId, token}    (без auth; username [a-zA-Z0-9_]{3,32})
+GET  /api/me                      → {user, deviceId}
+GET  /api/users?q=                поиск по username/displayName (LOWER LIKE, лимит 20)
+GET  /api/users/:id               → {user, presence:{online,lastSeen}}
+GET  /api/devices?ids=a,b,c       устройства и identity-ключи; ничего не расходует
+GET  /api/users/:id/prekeys       X3DH-бандлы всех устройств; one-time prekey выдаётся и удаляется
+GET  /api/prekeys/count           остаток собственных one-time prekeys
+POST /api/prekeys                 {oneTimePrekeys:[{id,key}]} — пополнение (до 200 за раз)
+POST /api/profile                 {displayName?, bio?, avatarId?}
+POST /api/avatar                  raw body (image/jpeg) → {avatarId};  GET /api/avatar/:id
+POST /api/chats                   {kind:"direct"|"group", memberIds[], title?} → {chatId}
+GET  /api/chats                   снапшот: [{flags, state}] + профили всех участников
+GET  /api/chats/:id/history       ?fromSeq=&toSeq=&limit=&dir=back → {msgs:[StoredMsg]}
+POST /api/chats/:id/accept        принять message request
+POST /api/chats/:id/members       {add[], remove[]}
 POST /api/chats/:id/leave
 POST /api/chats/:id/settings      {title?, avatarId?, description?}
 POST /api/chats/:id/admins        {userId, admin:bool}
-POST /api/chats/:id/invite        → {link}; POST /api/join/:code
 POST /api/chats/:id/pin-message   {msgId|null}
-POST /api/media/upload    → {mediaId, putUrl}  затем PUT блоба; GET /api/media/:id → stream
-POST /api/push-token      {apnsToken, env}
-POST /api/block           {userId, blocked:bool}
-GET  /api/blocked
+POST /api/chats/:id/flags         {pinned?, muted?, archived?} — локальные для пользователя
+POST /api/chats/:id/invite        → {code, link:"msngr://join/<code>"}
+POST /api/join/:code              → {chatId}
+POST /api/media                   raw body (ciphertext) → {mediaId, size}
+GET  /api/media/:id               стрим блоба, поддерживает Range (206)
+POST /api/push-token              {apnsToken, env}
+POST /api/phone                   {phoneHash|null}
+POST /api/contacts/discover       {hashes[]} → {matches[]}  (до 5000 хэшей, чанками по 100)
+POST /api/block                   {userId, blocked}
+GET  /api/blocked                 → {blocked:[userId]}
 ```
+
+Права: удалять участников и менять настройки группы может только админ; добавить
+может админ, а не-админ — только самого себя; вступление по инвайт-ссылке
+разрешено не-участнику (`viaInvite`); создать инвайт может любой участник чата.
+Создать direct с тем, кто заблокировал (или кого заблокировали), нельзя.
 
 ## WS: клиент → сервер
 
 ```
-{t:"sync",  cursors:{chatId:lastSeq,...}}          // после connect: доигрывание пропущенного
-{t:"send",  chatId, clientMsgId, sentAt, body}      // body — E2E-конверт (см. ниже)
-{t:"recv",  chatId, seqs:[...]}                     // подтверждение доставки → delivery receipts автору
+{t:"sync",  cursors:{chatId: lastSeq, ...}}
+{t:"send",  chatId, clientMsgId, sentAt, body, service?}   // body — E2E-конверт
+{t:"recv",  chatId, seqs:[...]}                            // → delivered-квитанции автору
 {t:"read",  chatId, upToSeq}
-{t:"typing",chatId, kind:"text"|"voice"|"photo"|null}
-{t:"delete",chatId, msgIds:[...], forAll:bool}      // forAll: сервер тумбстоунит ciphertext
+{t:"typing",chatId, kind}                                  // kind: строка или null (стоп)
+{t:"delete",chatId, msgIds:[...], forAll}
 {t:"ping"}
+{t:"bg"}    // приложение свернулось: presence offline немедленно
+{t:"fg"}    // вернулось: presence online
 ```
+
+`service: true` — служебный фрейм (раздача sender key, реакция, правка,
+переключение TTL). Он занимает `seq` и хранится в журнале, но не растит unread
+и не порождает пуш. Клиент помечает так `edit`, `reaction`, `disappearing`
+(`SyncEngine.serviceKinds`) и все skd-конверты.
 
 ## WS: сервер → клиент
 
 ```
-{t:"hello", serverTime}
-{t:"sent",    chatId, clientMsgId, msgId, seq, ts}          // ack отправки
-{t:"msg",     chatId, seq, msgId, from, fromDevice, sentAt, ts, body}
-{t:"receipt", chatId, kind:"delivered"|"read", upToSeq|seqs, by}
+{t:"hello",   serverTime}
+{t:"sent",    chatId, clientMsgId, msgId, seq, ts}
+{t:"msg",     chatId, seq, msgId, from, fromDevice, sentAt, ts, body, service?}
+{t:"receipt", chatId, kind:"delivered"|"read", upToSeq, by}
 {t:"typing",  chatId, from, kind}
 {t:"presence",userId, online, lastSeen}
-{t:"chat",    chatId, event:"created"|"members"|"settings"|"pinned", state}  // снапшот чата
+{t:"chat",    chatId, event:"created"|"members"|"settings"|"pinned"|"sync", state}
 {t:"deleted", chatId, msgIds, forAll, by}
 {t:"pong"}
 ```
 
+`state` в `chat`-фрейме — полный снапшот чата: `members` (userId, role, joinedAt,
+accepted), `title`, `avatarId`, `description`, `pinnedMsgId`, `lastSeq`,
+`readMarks`, `deliveredMarks`. Профили участников фрейм не несёт: клиент
+дотягивает недостающих через `GET /api/users/:id`.
+
+## Presence
+
+`UserSessionDO` считает пользователя онлайн, пока хотя бы один сокет присылал
+`ping` не позже 35 секунд назад (`PRESENCE_TTL_MS`); клиент пингует каждые 12 с.
+Открытый, но замолчавший сокет онлайном не считается — iOS держит соединение
+минутами после сворачивания. Смену статуса рассылает alarm DO, `bg`/`fg`
+переключают его сразу.
+
+## Sync после переподключения
+
+Клиент шлёт `sync` с курсорами `chatId → syncedSeq` (последний непрерывно
+применённый seq). Сервер:
+
+1. по чатам, которых нет в курсорах, шлёт `chat`-фрейм с `event:"sync"` и
+   доигрывает историю с нуля;
+2. по каждому чату тянет `/history` батчами по 200 и шлёт `msg`-фреймы, пока
+   батчи не кончатся (ограничения на одну пачку нет);
+3. затем шлёт `deleted`-фреймы по тумбстоунам и `receipt`-фреймы по текущим
+   `readMarks`/`deliveredMarks` — то, что случилось, пока клиент был офлайн.
+
+Тумбстоуны в истории пропускаются как `msg` и приходят отдельными `deleted`.
+Курсор клиента двигается только по непрерывному префиксу, поэтому дыра в
+доставке не приводит к потере истории.
+
+## Message requests
+
+В direct-чате получатель помечен `accepted: false`, пока не вызвал `/accept`.
+До этого автору заявки не уходят ни `receipt`, ни `typing`, ни `presence`
+получателя. В группах все участники считаются принявшими.
+
 ## E2E-конверт (`body`)
 
-Сервер не заглядывает внутрь. Клиентские варианты:
+Сервер не заглядывает внутрь. Два режима:
 
 ```
-{v:1, mode:"pw",  msgs:{ "<userId>/<deviceId>": {type:"pk"|"dr", c:b64, ...ratchet header}, ...}}
-{v:1, mode:"skm", chatId, c:b64, senderKeyId, iv, sig}      // группа: sender-key message
-{v:1, mode:"skd", msgs:{...}}                               // раздача sender key (pairwise)
+{v:1, mode:"pw",  msgs:{ "<userId>/<deviceId>": PairwiseBox, ... }}
+{v:1, mode:"skm", c, keyId, iteration, sig}
 ```
 
-Plaintext внутри ciphertext (после расшифровки) — единый формат контента:
+`PairwiseBox`:
 
 ```
-{kind:"text", text, replyTo?, fwd?{...}, entities?}
-{kind:"media", media:{type:"photo"|"video"|"file"|"voice", mediaId, key, hash, size,
-                      w?,h?,dur?,waveform?,name?,mime}, caption?, replyTo?}
-{kind:"edit", targetMsgId, newContent{...}}
-{kind:"reaction", targetMsgId, emoji|null}
-{kind:"disappearing", ttlSeconds}    // включение таймера в чате
-{kind:"contact"|"location"|...}
+{type:"pk"|"dr", c,        // base64 JSON RatchetMessage {header:{dhPub,pn,n}, ciphertext}
+ ik?, isk?, ek?, spkId?, otpId?}   // только для pk: наши identity DH/Ed25519 pub,
+                                   // ephemeral и id использованных prekey
 ```
 
-Доставка: at-least-once; клиент дедуплицирует по (chatId,msgId). Порядок — по seq.
-Read receipts в группах агрегируются (у сообщения: прочитано кем/сколько).
+Раздача sender key (`skd`) отдельным режимом конверта не является: это обычное
+pairwise-сообщение, внутри которого лежит `InnerMessage` с `type:"skd"`.
+
+Внутри pairwise-ciphertext:
+
+```
+{type:"content", content: ContentPayload}
+{type:"skd", skd:{keyId, iteration, chainKey, signingPub}, chatId}
+```
+
+`ContentPayload` (он же plaintext в `skm`):
+
+```
+{kind, text?, media?, album?, replyTo?, fwd?, targetMsgId?, emoji?, ttlSeconds?}
+```
+
+- `kind`: `text` | `photo` | `video` | `file` | `voice` | `album` | `contact` |
+  `edit` | `reaction` | `disappearing`;
+- `media` / `album` — `MediaInfo`: `type, mediaId, key, hash, size, mime, name?,
+  w?, h?, dur?, waveform?, blurhash?, thumbMediaId?, thumbKey?, thumbHash?`;
+- `replyTo` — `{msgId, authorId, text, kind}`, `fwd` — `{fromUserId, fromName}`;
+- `edit` и `reaction` адресуются `targetMsgId`, `emoji: null` снимает реакцию;
+- `disappearing` несёт `ttlSeconds` — новый TTL чата.
+
+Поля `localPath`/`thumbLocalPath` в `MediaInfo` существуют только локально
+(исходник вложения, ещё не выгруженный на сервер) и в конверт не попадают.
+
+## Доставка и порядок
+
+At-least-once. Порядок — по `seq` внутри чата. Клиент дедуплицирует входящие по
+`msgId`, свои отправки — по `clientMsgId`. Сообщение, пришедшее раньше своего
+ключа (групповое до sender key, `dr` раньше своего `pk`), складывается в
+`pendingDecrypt` и переигрывается, когда ключ приходит. `edit`/`reaction`/
+`deleted`, чья цель ещё не в БД, складываются в `pendingApply` и применяются
+при появлении оригинала.
 
 ## Пуши
 
-APNs-пуш уходит немедленно для каждого контентного `msg` — независимо от
-presence и живых WS-сокетов. Исключения: `service:true`, собственное эхо
-автора, muted-чат. Дедуп на клиенте: `willPresent` гасит баннер, если
-сообщение уже показано по WS (матч по chatId/msgId).
-
-Payload (текста сообщения нет — E2EE; превью строит NSE после расшифровки):
+APNs уходит немедленно для каждого контентного `msg` — независимо от presence и
+живых сокетов. Исключения: `service:true`, собственное эхо автора, muted-чат.
+Дедуп на клиенте: `willPresent` гасит баннер, если сообщение уже показано по WS
+(матч по chatId/msgId, см. `NotificationDecision`).
 
 ```
 POST {APNS_HOST}/3/device/{apnsToken}
 заголовки: apns-topic, apns-push-type: alert, apns-priority: 10,
-           apns-collapse-id: msgId   // повторная доставка не плодит баннеры
+           apns-collapse-id: <msgId>     // повторная доставка не плодит баннеры
 {
   "aps": {
     "alert": {"title": "Msngr", "body": "Новое сообщение"},
-    "badge": <суммарный unread юзера по всем чатам>,
+    "badge": <суммарный unread пользователя>,
     "sound": "default",
     "mutable-content": 1,
     "thread-id": "<chatId>"
@@ -113,14 +211,21 @@ POST {APNS_HOST}/3/device/{apnsToken}
 }
 ```
 
-Badge: UserSessionDO держит в storage кэш unread по чатам (`unreadCache`);
-инвалидация — по входящему `msg` и собственному `read`, ленивый пересчёт в
-момент пуша запросом `GET /unread-count?userId=` к ConversationDO
-(unread = lastSeq − read-марка юзера). Приближение: service-сообщения и
-muted-чаты входят в число до прочтения.
+Текста сообщения в пуше нет. Бейдж: `UserSessionDO` держит в storage кэш unread
+по чатам (`unreadCache`), инвалидирует его по входящему `msg` и собственному
+`read`, а в момент отправки пуша лениво пересчитывает инвалидированные чаты
+запросом `GET /unread-count?userId=` к `ConversationDO` (`lastSeq` минус
+read-марка). Приближение: muted-чаты входят в бейдж до прочтения.
 
-Dev без Apple-аккаунта: `APNS_HOST` (в `.dev.vars` — `http://localhost:9871`)
-направляет пуши в мок `server/tools/apns-mock.mjs`, который доставляет их в
-симулятор через `xcrun simctl push` (apnsToken = UDID симулятора). На
-не-яблочном хосте запрос уходит без JWT-подписи (p8-ключ не нужен),
-формат запроса остаётся APNs-совместимым.
+Dev без Apple-аккаунта: `APNS_HOST` (в `server/.dev.vars` — `http://localhost:9871`)
+уводит пуши в мок `server/tools/apns-mock.mjs`, который доставляет их в симулятор
+через `xcrun simctl push` (apnsToken = UDID симулятора). На не-яблочном хосте
+запрос уходит без JWT-подписи, p8-ключ не нужен, `apns-topic` по умолчанию
+`ai.enface.Msngr`. Ограничение канала: `simctl push` не запускает Notification
+Service Extension — см. `docs/research/nse-simulator-experiment.md`.
+
+## Версии
+
+Обратной совместимости нет (см. `docs/PROCESS.md`), но точки для неё заложены:
+`v` в E2E-конверте, версия схемы БД в миграторе GRDB, `migrations` в
+`wrangler.jsonc`. Версия протокола в рукопожатии (`hello`) пока не передаётся.

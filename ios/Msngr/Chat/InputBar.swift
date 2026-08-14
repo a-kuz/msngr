@@ -9,17 +9,22 @@ struct InputBar: View {
     var onAttachPhoto: () -> Void
     var onAttachFile: () -> Void
     var onSendVoice: (URL, TimeInterval, [Int]) -> Void
+    var onSendImages: ([UIImage], String) -> Void
 
     @StateObject private var recorder = VoiceRecorder()
     @ObservedObject private var theme = ThemeStore.shared
     @State private var inputHeight: CGFloat = GrowingTextView.minHeight
     @State private var recordingLocked = false
     @State private var dragOffset: CGFloat = 0
+    /// картинки из буфера, ждущие отправки
+    @State private var pendingImages: [UIImage] = []
+    @State private var pasteboardHasImage = MessageClipboard.hasImages
     @GestureState private var pressing = false
 
     var body: some View {
         VStack(spacing: 0) {
             replyEditBanner
+            pendingImagesBar
             HStack(alignment: .bottom, spacing: 8) {
                 if recorder.isRecording {
                     recordingView
@@ -31,6 +36,11 @@ struct InputBar: View {
                         Button { onAttachFile() } label: {
                             Label("Файл", systemImage: "doc")
                         }
+                        if pasteboardHasImage && text.isEmpty {
+                            Button { pasteImages() } label: {
+                                Label("Вставить", systemImage: "doc.on.clipboard")
+                            }
+                        }
                     } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 22, weight: .medium))
@@ -38,7 +48,9 @@ struct InputBar: View {
                             .frame(width: 36, height: 36)
                     }
                     .accessibilityIdentifier("chat.attach")
-                    GrowingTextView(text: $text, height: $inputHeight) { model.textChanged($0) }
+                    GrowingTextView(text: $text, height: $inputHeight,
+                                    onChange: { model.textChanged($0) },
+                                    onPasteImages: { addPending($0) })
                         .frame(maxWidth: .infinity)
                         .frame(height: inputHeight)
                         .animation(.easeOut(duration: 0.16), value: inputHeight)
@@ -49,6 +61,14 @@ struct InputBar: View {
             .padding(.vertical, 6)
         }
         .background(.bar)
+        // пункт «Вставить» показывается по факту наличия картинки в буфере:
+        // своё копирование даёт changedNotification, чужое видно при возврате в приложение
+        .onReceive(NotificationCenter.default.publisher(for: UIPasteboard.changedNotification)) { _ in
+            pasteboardHasImage = MessageClipboard.hasImages
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            pasteboardHasImage = MessageClipboard.hasImages
+        }
         // подсказка механики записи: плавает над баром, пока запись не залочена
         .overlay(alignment: .top) {
             if recorder.isRecording && !recordingLocked {
@@ -120,17 +140,57 @@ struct InputBar: View {
         }
     }
 
+    /// Превью картинок из буфера: тап по крестику убирает вложение.
+    @ViewBuilder
+    private var pendingImagesBar: some View {
+        if !pendingImages.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(Array(pendingImages.enumerated()), id: \.offset) { pair in
+                        PendingImageThumb(image: pair.element) {
+                            withAnimation(Theme.springFast) {
+                                _ = pendingImages.remove(at: pair.offset)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+            }
+            .frame(height: 68)
+            .accessibilityIdentifier("chat.pendingAttachments")
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    private func pasteImages() {
+        addPending(MessageClipboard.pastedImages())
+    }
+
+    private func addPending(_ images: [UIImage]) {
+        guard !images.isEmpty else { return }
+        Haptics.light()
+        withAnimation(Theme.springFast) { pendingImages.append(contentsOf: images) }
+    }
+
     private var hasText: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     @ViewBuilder
     private var actionButton: some View {
-        if hasText {
+        if hasText || !pendingImages.isEmpty {
             Button {
                 let t = text
+                let images = pendingImages
                 text = ""
-                withAnimation(Theme.springFast) { model.send(text: t) }
+                withAnimation(Theme.springFast) { pendingImages = [] }
+                guard !images.isEmpty else {
+                    withAnimation(Theme.springFast) { model.send(text: t) }
+                    return
+                }
+                model.textChanged("")
+                onSendImages(images, t.trimmingCharacters(in: .whitespacesAndNewlines))
             } label: {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 32))
@@ -232,6 +292,29 @@ struct InputBar: View {
     }
 }
 
+/// Миниатюра вложения в инпут-баре с крестиком удаления.
+struct PendingImageThumb: View {
+    let image: UIImage
+    let onRemove: () -> Void
+
+    var body: some View {
+        Image(uiImage: image)
+            .resizable()
+            .scaledToFill()
+            .frame(width: 56, height: 56)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(alignment: .topTrailing) {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(Color.white, Color.black.opacity(0.55))
+                }
+                .padding(2)
+            }
+    }
+}
+
 /// Живая волна при записи.
 struct LiveWaveView: View {
     let amplitudes: [Float]
@@ -260,12 +343,14 @@ struct GrowingTextView: UIViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
     var onChange: (String) -> Void
+    var onPasteImages: ([UIImage]) -> Void = { _ in }
 
     static let minHeight: CGFloat = 36
     static let maxHeight: CGFloat = 6 * 21 + 16
 
     func makeUIView(context: Context) -> UITextView {
-        let tv = UITextView()
+        let tv = PasteAwareTextView()
+        tv.onPasteImages = onPasteImages
         tv.font = .systemFont(ofSize: 17)
         tv.backgroundColor = UIColor.systemGray6
         tv.layer.cornerRadius = 18
@@ -307,6 +392,26 @@ struct GrowingTextView: UIViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    /// Вставка картинки уходит вложением: обычное поле такой буфер просто игнорирует,
+    /// и пункт «Вставить» в нём даже не появляется.
+    final class PasteAwareTextView: UITextView {
+        var onPasteImages: ([UIImage]) -> Void = { _ in }
+
+        override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+            if action == #selector(paste(_:)), UIPasteboard.general.hasImages { return true }
+            return super.canPerformAction(action, withSender: sender)
+        }
+
+        override func paste(_ sender: Any?) {
+            let images = UIPasteboard.general.hasImages ? (UIPasteboard.general.images ?? []) : []
+            guard !images.isEmpty else {
+                super.paste(sender)
+                return
+            }
+            onPasteImages(images)
+        }
+    }
 
     final class Coordinator: NSObject, UITextViewDelegate {
         let parent: GrowingTextView

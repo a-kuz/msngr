@@ -408,30 +408,55 @@ final class ChatViewModel: ObservableObject {
 
     /// Пагинация вверх: догрузка старых сообщений с сервера (если локально меньше).
     func loadOlder() {
-        guard let chat, !loadingOlder else { return }
+        Task { await loadOlderPage() }
+    }
+
+    /// Одна страница истории вверх. false — грузить нечего либо загрузка уже идёт.
+    @discardableResult
+    private func loadOlderPage() async -> Bool {
+        guard chat != nil, !loadingOlder else { return false }
         loadingOlder = true
-        Task {
-            defer { loadingOlder = false }
-            let minSeq = (try? await app.db.read { [chatId] dbc in
-                try Int.fetchOne(dbc, sql: "SELECT MIN(seq) FROM message WHERE chatId = ? AND seq IS NOT NULL",
-                                 arguments: [chatId])
-            }) ?? nil
-            guard let minSeq, minSeq > 1 else { return }
-            guard let msgs = try? await app.api.history(chatId: chatId,
-                                                        fromSeq: max(0, minSeq - 51),
-                                                        toSeq: minSeq - 1, limit: 50) else { return }
-            for m in msgs where m.body != nil {
-                // расшифровка старой истории тем же pipeline
-                let result = (try? app.e2ee.decrypt(envelopeJSON: m.body!, chatId: chatId,
-                                                    fromUserId: m.from, fromDeviceId: m.fromDevice))
-                if case .content(let content) = result {
-                    // применение (включая edit/reaction поверх оригиналов) — в движке
-                    await app.engine.storeHistoric(content: content, chatId: chatId,
-                                                   msgId: m.msgId, seq: m.seq, from: m.from,
-                                                   sentAt: m.sentAt, ts: m.ts)
-                }
+        defer { loadingOlder = false }
+        let minSeq = (try? await app.db.read { [chatId] dbc in
+            try Int.fetchOne(dbc, sql: "SELECT MIN(seq) FROM message WHERE chatId = ? AND seq IS NOT NULL",
+                             arguments: [chatId])
+        }) ?? nil
+        guard let minSeq, minSeq > 1 else { return false }
+        guard let msgs = try? await app.api.history(chatId: chatId,
+                                                    fromSeq: max(0, minSeq - 51),
+                                                    toSeq: minSeq - 1, limit: 50) else { return false }
+        for m in msgs where m.body != nil {
+            // расшифровка старой истории тем же pipeline
+            let result = (try? app.e2ee.decrypt(envelopeJSON: m.body!, chatId: chatId,
+                                                fromUserId: m.from, fromDeviceId: m.fromDevice))
+            if case .content(let content) = result {
+                // применение (включая edit/reaction поверх оригиналов) — в движке
+                await app.engine.storeHistoric(content: content, chatId: chatId,
+                                               msgId: m.msgId, seq: m.seq, from: m.from,
+                                               sentAt: m.sentAt, ts: m.ts)
             }
         }
+        return !msgs.isEmpty
+    }
+
+    /// Сообщение уже в ленте (по серверному msgId или локальному id).
+    func isLoaded(msgId: String) -> Bool {
+        lastMsgs.contains { $0.id == msgId || $0.msgId == msgId }
+    }
+
+    /// Догружает историю страницами, пока сообщение не окажется в ленте:
+    /// переход по цитате к оригиналу за пределами загруженной страницы.
+    func ensureLoaded(msgId: String, maxPages: Int = 6) async -> Bool {
+        if isLoaded(msgId: msgId) { return true }
+        for _ in 0..<maxPages {
+            guard await loadOlderPage() else { break }
+            // лента приходит из наблюдения БД асинхронно — ждём появления сообщения
+            for _ in 0..<20 {
+                if isLoaded(msgId: msgId) { return true }
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
+        return isLoaded(msgId: msgId)
     }
 }
 
