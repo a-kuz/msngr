@@ -102,15 +102,15 @@ public enum StorageMigration {
     /// перемещает на место и только после этого удаляет оригиналы. Ошибка на любом
     /// шаге оставляет старое размещение нетронутым и пробрасывается наверх.
     ///
-    /// Ничего не делает, если новое размещение уже занято (там есть БД или ключ)
-    /// или если переносить нечего — повторный запуск безопасен.
+    /// Ничего не делает, если новое размещение уже занято (там есть БД) или если
+    /// переносить нечего — повторный запуск безопасен. Прерванный перенос
+    /// доводится до конца: остатки в новом размещении заменяются оригиналами.
     @discardableResult
     public static func run(from old: StorageLocation,
                            to new: StorageLocation,
                            fileManager: FileManager = .default) throws -> Outcome {
         guard old.root.standardizedFileURL.path != new.root.standardizedFileURL.path else { return .notNeeded }
-        guard !fileManager.fileExists(atPath: new.databaseURL.path),
-              !fileManager.fileExists(atPath: new.masterKeyURL.path) else { return .notNeeded }
+        guard !fileManager.fileExists(atPath: new.databaseURL.path) else { return .notNeeded }
 
         let present = StorageLocation.movableItems.filter {
             fileManager.fileExists(atPath: old.root.appendingPathComponent($0).path)

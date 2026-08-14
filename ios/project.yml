@@ -21,6 +21,8 @@ targets:
     sources: [Msngr]
     entitlements:
       path: Msngr/Msngr.entitlements
+      properties:
+        com.apple.security.application-groups: [group.ai.enface.msngr]
     dependencies:
       - package: MsngrKit
         product: MsngrCrypto

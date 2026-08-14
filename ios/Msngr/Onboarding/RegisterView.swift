@@ -83,10 +83,9 @@ struct RegisterView: View {
         defer { busy = false }
         do {
             // временная БД нужна до session: identity создаём в постоянной БД приложения
-            let support = AppState.sharedContainer
-            try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
-            let db = try AppDatabase.open(at: support.appendingPathComponent("msngr.sqlite"))
-            let store = try IdentityStore(db: db, masterKeyProvider: SharedFileMasterKey(containerURL: support))
+            let storage = AppState.storage
+            let db = try AppDatabase.open(at: storage.databaseURL)
+            let store = try IdentityStore(db: db, masterKeyProvider: SharedFileMasterKey(location: storage))
             let identity = try store.identity()
             let prekeys = try store.generatePrekeys(count: 100)
 

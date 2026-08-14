@@ -108,6 +108,20 @@ final class StorageMigrationTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: old.masterKeyURL), oldKey)
     }
 
+    /// Перенос прервали между файлами: в новом размещении лежит ключ, БД ещё
+    /// в старом. Следующий запуск доводит перенос до конца.
+    func testInterruptedMigrationCompletes() throws {
+        let key = try seed(old, userId: "alice")
+        try fm.moveItem(at: old.masterKeyURL, to: new.masterKeyURL)
+
+        let outcome = try StorageMigration.run(from: old, to: new, fileManager: fm)
+
+        guard case .migrated = outcome else { return XCTFail("ожидался перенос, получено \(outcome)") }
+        XCTAssertEqual(try storedUserIds(new), ["alice"])
+        XCTAssertEqual(try Data(contentsOf: new.masterKeyURL), key)
+        XCTAssertFalse(fm.fileExists(atPath: old.databaseURL.path))
+    }
+
     func testEmptyOldLocationIsNoOp() throws {
         XCTAssertEqual(try StorageMigration.run(from: old, to: new, fileManager: fm), .notNeeded)
         XCTAssertFalse(fm.fileExists(atPath: new.databaseURL.path))
