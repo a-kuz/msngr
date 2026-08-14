@@ -104,6 +104,22 @@ final class ChatFeedTests: XCTestCase {
         XCTAssertFalse(feed.contains { if case .unreadMarker = $0 { return true }; return false })
     }
 
+    /// Заявка до принятия: лента пустая, сообщения из БД на экран не попадают.
+    /// После принятия та же история строится обычным образом.
+    @MainActor
+    func testFeedHiddenForRequestChat() {
+        let base: TimeInterval = 1_700_000_000
+        let msgs = [incoming("m3", sentAt: base + 20, seq: 3),
+                    incoming("m2", sentAt: base + 10, seq: 2),
+                    incoming("m1", sentAt: base, seq: 1)]
+        XCTAssertTrue(ChatViewModel.buildFeed(msgs, members: [], contentHidden: true).isEmpty)
+        let shown = ChatViewModel.buildFeed(msgs, members: [], contentHidden: false)
+        XCTAssertEqual(shown.compactMap { item -> String? in
+            if case .message(let m, _, _, _, _) = item { return m.id }
+            return nil
+        }, ["m3", "m2", "m1"])
+    }
+
     // MARK: - Группировка серий: хвостик и зазор
 
     /// Флаги группировки сообщений ленты в её порядке (index 0 — самое новое).

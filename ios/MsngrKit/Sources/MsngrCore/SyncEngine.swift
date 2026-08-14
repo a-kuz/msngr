@@ -354,8 +354,12 @@ public actor SyncEngine {
                     arguments: [seq, seq, seq, isOwn, seq, seq, isOwn, seq, chatId])
             }
         }
-        // recv-ack немедленно, по каждому фрейму (delivered-галочки автору)
-        if from != ownUserId {
+        // recv-ack немедленно, по каждому фрейму (delivered-галочки автору);
+        // по заявке до принятия не шлём: получатель невидим автору
+        let isRequestChat = (try? await db.read { dbc in
+            try Bool.fetchOne(dbc, sql: "SELECT isRequest FROM chat WHERE id = ?", arguments: [chatId]) ?? false
+        }) ?? false
+        if from != ownUserId, !isRequestChat {
             try? await ws.send(.recv(chatId: chatId, seqs: [seq]))
         }
         // событие для in-app уведомления — после записи в БД (превью уже читается)
@@ -899,7 +903,13 @@ public actor SyncEngine {
         wakeOutbox()
     }
 
+    /// Заявку до принятия не отмечаем прочитанной: автор не должен узнать,
+    /// что получатель открывал чат (сервер такую марку тоже отбрасывает).
     public func markRead(chatId: String, upToSeq: Int) async {
+        let isRequest = (try? await db.read { dbc in
+            try Bool.fetchOne(dbc, sql: "SELECT isRequest FROM chat WHERE id = ?", arguments: [chatId]) ?? false
+        }) ?? false
+        guard !isRequest else { return }
         try? await db.write { dbc in
             try dbc.execute(sql: "UPDATE chat SET myReadUpTo = MAX(myReadUpTo, ?), unreadCount = 0 WHERE id = ?",
                             arguments: [upToSeq, chatId])
@@ -986,7 +996,10 @@ public actor SyncEngine {
               myReadUpTo = MAX(chat.myReadUpTo, excluded.myReadUpTo),
               peerReadUpTo = MAX(chat.peerReadUpTo, excluded.peerReadUpTo),
               peerDeliveredUpTo = MAX(chat.peerDeliveredUpTo, excluded.peerDeliveredUpTo),
-              isRequest = excluded.isRequest, iAccepted = excluded.iAccepted,
+              -- принятие необратимо: локальный accept не откатывается снапшотом,
+              -- который сервер собрал до доставки нашего /accept
+              isRequest = MIN(chat.isRequest, excluded.isRequest),
+              iAccepted = MAX(chat.iAccepted, excluded.iAccepted),
               unreadCount = MAX(0, MAX(chat.lastSeq, excluded.lastSeq) - MAX(chat.myReadUpTo, excluded.myReadUpTo))
             """,
             arguments: [s.chatId, s.kind, s.title, s.avatarId, s.description, s.createdBy,

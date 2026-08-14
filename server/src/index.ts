@@ -91,15 +91,33 @@ app.get("/api/users", async (c) => {
   return json({ ok: true, users: rows.results });
 });
 
+// Профиль пользователя. Presence отдаётся только тому, кому этот пользователь
+// уже виден: у них есть общий direct-чат и запрашиваемый его принял. Автор
+// заявки до принятия presence получателя не видит — так же, как по WS.
 app.get("/api/users/:id", async (c) => {
+  const { userId } = c.get("auth");
+  const targetId = c.req.param("id");
   const u = await c.env.DB.prepare(
     "SELECT id, username, display_name, bio, avatar_id FROM users WHERE id = ?"
-  ).bind(c.req.param("id")).first();
+  ).bind(targetId).first();
   if (!u) return err("not_found", 404);
-  const p = await userStub(c.env, c.req.param("id")).fetch("https://do/presence-info");
-  const presence = (await p.json()) as { online: boolean; lastSeen: number };
+  let presence: { online: boolean; lastSeen: number } | null = null;
+  if (await presenceVisible(c.env, userId, targetId)) {
+    const p = await userStub(c.env, targetId).fetch("https://do/presence-info");
+    presence = (await p.json()) as { online: boolean; lastSeen: number };
+  }
   return json({ ok: true, user: u, presence });
 });
+
+/// Виден ли presence target'а запрашивающему: общий direct-чат, в котором
+/// target принял переписку. Себя видно всегда.
+async function presenceVisible(env: Env, viewerId: string, targetId: string): Promise<boolean> {
+  if (viewerId === targetId) return true;
+  const r = await convStub(env, directChatName(viewerId, targetId)).fetch("https://do/state");
+  const j = (await r.json()) as { ok: boolean; state?: ChatState };
+  if (!j.ok || !j.state) return false;
+  return j.state.members.some((m) => m.userId === targetId && m.accepted);
+}
 
 // Устройства и identity-ключи списка пользователей (?ids=uid1,uid2).
 // Ничего не потребляет — в отличие от /prekeys, который выдаёт one-time prekey.

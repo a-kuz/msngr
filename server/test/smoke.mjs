@@ -126,8 +126,17 @@ await new Promise((r) => setTimeout(r, 600));
 check("no read receipt before accept", !ca.frames.some((f) => f.t === "receipt" && f.kind === "read"));
 check("no typing before accept", !ca.frames.some((f) => f.t === "typing" && f.from === bob.userId));
 
+// presence получателя не виден автору заявки и через профиль
+const profBefore = await api(`/api/users/${bob.userId}`, { token: alice.token });
+check("no presence before accept", profBefore.ok && profBefore.presence === null,
+  JSON.stringify(profBefore.presence));
+
 const acc = await api(`/api/chats/${chat.chatId}/accept`, { token: bob.token, body: {} });
 check("accept request", acc.ok);
+
+const profAfter = await api(`/api/users/${bob.userId}`, { token: alice.token });
+check("presence after accept", profAfter.ok && !!profAfter.presence,
+  JSON.stringify(profAfter.presence));
 
 // Receipts после accept
 cb.send({ t: "recv", chatId: chat.chatId, seqs: [1] });
@@ -287,7 +296,8 @@ await cb4.waitFor((f) => f.t === "msg" && f.chatId === grp.chatId && f.seq === l
 const bulkGot = cb4.frames.filter((f) => f.t === "msg" && f.chatId === grp.chatId && f.seq > 1);
 check("sync backfill beyond 200", bulkGot.length === N, `got ${bulkGot.length}`);
 
-// 20. Пуш-путь: мини-приёмник вместо APNs на :9871 (куда указывает APNS_HOST в .dev.vars)
+// 20. Пуш-путь: мини-приёмник вместо APNs на порту, куда смотрит APNS_HOST
+// (по умолчанию :9871 из .dev.vars; свой стенд задаёт PUSH_PORT)
 const pushes = [];
 const pushSrv = http.createServer((req, res) => {
   let data = "";
@@ -298,7 +308,7 @@ const pushSrv = http.createServer((req, res) => {
     res.end();
   });
 });
-await new Promise((r) => pushSrv.listen(9871, r));
+await new Promise((r) => pushSrv.listen(Number(process.env.PUSH_PORT ?? 9871), r));
 
 async function waitPush(pred, ms = 4000) {
   const t0 = Date.now();
@@ -336,7 +346,8 @@ check("push delivered offline", !!push1, JSON.stringify(pushes));
 if (push1) {
   check("push chatId", push1.body.chatId === echat.chatId);
   check("push thread-id", push1.body.aps["thread-id"] === echat.chatId);
-  check("push badge=1", push1.body.aps.badge === 1, `badge=${push1.body.aps.badge}`);
+  // чат ещё заявка: счётчик не выдаёт, сколько сообщений уже написали
+  check("push badge=0 before accept", push1.body.aps.badge === 0, `badge=${push1.body.aps.badge}`);
   check("push alert w/o plaintext", push1.body.aps.alert.body === "Новое сообщение"
     && push1.body.aps["mutable-content"] === 1 && push1.body.aps.sound === "default");
   check("push collapse-id=msgId", push1.headers["apns-collapse-id"] === p1.msgId);
@@ -354,7 +365,8 @@ const p2 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p2")
 check("eve got ws msg", !!(await ce.waitFor((f) => f.t === "msg" && f.msgId === p2.msgId)));
 const push2 = await waitPush(pushFor("eve-sim-udid", p2.msgId));
 check("push delivered despite live ws", !!push2);
-check("push badge=2", push2 && push2.body.aps.badge === 2, `badge=${push2?.body.aps.badge}`);
+check("push badge stays 0 before accept", push2 && push2.body.aps.badge === 0,
+  `badge=${push2?.body.aps.badge}`);
 
 // read сдвигает бейдж: eve принимает чат (message request), читает всё,
 // следующий пуш приходит с badge=1

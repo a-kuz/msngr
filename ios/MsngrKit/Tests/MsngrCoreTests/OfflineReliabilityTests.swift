@@ -59,4 +59,36 @@ final class OfflineReliabilityTests: XCTestCase {
         let p2 = try JSONDecoder().decode(SyncEngine.ReadActionPayload.self, from: Data(rows[1].payload.utf8))
         XCTAssertEqual(p2.upToSeq, 3)
     }
+
+    /// Заявка до принятия: read-марка не ставится и в очередь не попадает —
+    /// автор не должен узнать, что получатель открывал чат.
+    func testMarkReadSkippedForRequestChat() async throws {
+        let db = try AppDatabase.openInMemory()
+        let engine = try makeEngine(db: db)
+        try await db.write { dbc in
+            var chat = Chat(id: "req", kind: .direct, title: nil, createdBy: "peer",
+                            createdAt: 1, lastSeq: 3)
+            chat.isRequest = true
+            chat.iAccepted = false
+            try chat.insert(dbc)
+        }
+
+        await engine.markRead(chatId: "req", upToSeq: 3)
+        var queued = try await db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingAction WHERE type = 'read'")!
+        }
+        XCTAssertEqual(queued, 0)
+        let readUpTo = try await db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT myReadUpTo FROM chat WHERE id = 'req'")!
+        }
+        XCTAssertEqual(readUpTo, 0)
+
+        // после принятия марки снова ходят
+        await engine.acceptChatRequest(chatId: "req")
+        await engine.markRead(chatId: "req", upToSeq: 3)
+        queued = try await db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingAction WHERE type = 'read'")!
+        }
+        XCTAssertEqual(queued, 1)
+    }
 }

@@ -167,6 +167,9 @@ export class ConversationDO implements DurableObject {
       case "/unread-count": {
         // компактный счётчик для бейджа: lastSeq минус read-марка юзера
         const userId = url.searchParams.get("userId") ?? "";
+        // заявка до принятия в бейдж не идёт: число выдало бы, сколько уже написали
+        const members = await this.loadMembers();
+        if (!members.get(userId)?.accepted) return json({ ok: true, unread: 0 });
         const marks =
           (await this.state.storage.get<Record<string, number>>("readMarks")) ?? {};
         return json({ ok: true, unread: Math.max(0, meta.lastSeq - (marks[userId] ?? 0)) });

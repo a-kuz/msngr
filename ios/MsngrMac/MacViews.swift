@@ -86,8 +86,11 @@ struct MacChatRow: View {
                 Text(item.preview).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
-            if item.chat.unreadCount > 0 {
-                Text("\(item.chat.unreadCount)")
+            let unread = ChatPrivacy.visibleUnread(isRequest: item.chat.isRequest,
+                                                   iAccepted: item.chat.iAccepted,
+                                                   unreadCount: item.chat.unreadCount)
+            if unread > 0 {
+                Text("\(unread)")
                     .font(.caption2).foregroundStyle(.white)
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(.blue, in: Capsule())
@@ -123,7 +126,9 @@ final class MacChatListModel: ObservableObject {
                     title = peer.displayName
                 }
                 let last = try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE chatId = ? AND kind != 'system' ORDER BY COALESCE(serverTs,sentAt) DESC LIMIT 1", arguments: [chat.id])
-                return Item(chat: chat, title: title, preview: last.map { macPreviewText($0) } ?? "")
+                let preview = ChatPrivacy.preview(isRequest: chat.isRequest, iAccepted: chat.iAccepted,
+                                                  content: last.map { macPreviewText($0) })
+                return Item(chat: chat, title: title, preview: preview ?? "")
             }
         }
         .publisher(in: db, scheduling: .async(onQueue: .main))
@@ -155,6 +160,31 @@ struct MacChatView: View {
     @State private var text = ""
 
     var body: some View {
+        Group {
+            if model.contentHidden {
+                requestCard
+            } else {
+                chatBody
+            }
+        }
+        .navigationTitle(model.title)
+        .onAppear { model.start(chatId: chatId) }
+    }
+
+    /// Заявка до принятия: содержимое не показываем, только имя и решение.
+    private var requestCard: some View {
+        VStack(spacing: 12) {
+            Text(model.title).font(.title2.bold())
+            Text("хочет вам написать").foregroundStyle(.secondary)
+            Text("Сообщения откроются после принятия")
+                .font(.caption).foregroundStyle(.tertiary)
+            Button("Принять") { model.acceptRequest() }
+                .keyboardShortcut(.defaultAction)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var chatBody: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
@@ -203,8 +233,6 @@ struct MacChatView: View {
             }
             .padding(10)
         }
-        .navigationTitle(model.title)
-        .onAppear { model.start(chatId: chatId) }
     }
 
     private func sendText() {
@@ -220,6 +248,8 @@ final class MacChatModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var title = ""
     @Published var replyingTo: Message?
+    /// заявка до принятия: ленту и поле ввода не показываем
+    @Published var contentHidden = false
     private var cancellable: AnyCancellable?
     private var members: [String: String] = [:]
     private var chatId = ""
@@ -228,7 +258,7 @@ final class MacChatModel: ObservableObject {
         self.chatId = chatId
         guard let db = MacAppStateHolder.shared?.db else { return }
         let ownId = OwnUser.id
-        cancellable = ValueObservation.tracking { dbc -> ([Message], String, [String: String]) in
+        cancellable = ValueObservation.tracking { dbc -> ([Message], String, [String: String], Bool) in
             let msgs = try Message.fetchAll(dbc, sql: "SELECT * FROM message WHERE chatId = ? ORDER BY COALESCE(seq, 999999999) ASC, sentAt ASC", arguments: [chatId])
             let users = try User.fetchAll(dbc, sql: "SELECT u.* FROM user u JOIN member m ON m.userId=u.id WHERE m.chatId = ?", arguments: [chatId])
             let chat = try Chat.fetchOne(dbc, key: chatId)
@@ -236,15 +266,22 @@ final class MacChatModel: ObservableObject {
             if chat?.kind == .direct, let peer = users.first(where: { $0.id != ownId }) {
                 title = peer.displayName
             }
-            return (msgs, title, Dictionary(uniqueKeysWithValues: users.map { ($0.id, $0.displayName) }))
+            return (msgs, title, Dictionary(uniqueKeysWithValues: users.map { ($0.id, $0.displayName) }),
+                    ChatPrivacy.hidesContent(chat))
         }
         .publisher(in: db, scheduling: .async(onQueue: .main))
-        .sink(receiveCompletion: { _ in }, receiveValue: { [weak self] msgs, title, members in
-            self?.messages = msgs
-            self?.title = title
-            self?.members = members
-            self?.markRead()
+        .sink(receiveCompletion: { _ in }, receiveValue: { [weak self] msgs, title, members, hidden in
+            guard let self else { return }
+            self.contentHidden = hidden
+            self.messages = hidden ? [] : msgs
+            self.title = title
+            self.members = members
+            self.markRead()
         })
+    }
+
+    func acceptRequest() {
+        Task { [chatId] in await MacAppStateHolder.shared?.engine.acceptChatRequest(chatId: chatId) }
     }
 
     func name(for id: String) -> String { members[id] ?? "?" }

@@ -79,6 +79,16 @@ public enum NotificationContentBuilder {
             threadIdentifier: chat.chatId)
     }
 
+    /// Заявка до принятия: имя отправителя и аватар остаются, содержимого нет.
+    public static func requestContent(chat: ChatInfo, sender: SenderInfo) -> NotificationContent {
+        let name = sender.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return NotificationContent(
+            title: name.isEmpty ? "Msngr" : name,
+            subtitle: nil,
+            body: ChatPrivacy.requestPlaceholder,
+            threadIdentifier: chat.chatId)
+    }
+
     /// Тот же билдер для строки сообщения из локальной БД (текст уже расшифрован).
     public static func build(message: Message,
                              chat: ChatInfo,
