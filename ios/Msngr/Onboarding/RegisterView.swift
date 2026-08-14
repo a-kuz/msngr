@@ -34,6 +34,12 @@ struct RegisterView: View {
                     TextField("Имя", text: $displayName)
                         .textFieldStyle(.roundedBorder)
                         .accessibilityIdentifier("reg.displayName")
+                    if !trimmedName.isEmpty && !nameValid {
+                        Text("Имя — минимум 3 символа")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
                 .padding(.horizontal, 32)
 
@@ -48,11 +54,13 @@ struct RegisterView: View {
                         if busy { ProgressView().tint(.white) }
                         else { Text("Создать аккаунт").bold() }
                     }
+                    .foregroundStyle(.white.opacity(formValid ? 1 : 0.85))
                     .frame(maxWidth: .infinity)
                     .frame(height: 48)
+                    .background(Theme.accent.opacity(formValid ? 1 : 0.4),
+                                in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(busy || !usernameValid)
+                .disabled(busy || !formValid)
                 .accessibilityIdentifier("reg.submit")
                 .padding(.horizontal, 32)
                 Spacer()
@@ -61,9 +69,13 @@ struct RegisterView: View {
         }
     }
 
-    private var usernameValid: Bool {
-        username.range(of: "^[a-zA-Z0-9_]{3,32}$", options: .regularExpression) != nil
-    }
+    private var usernameValid: Bool { RegistrationValidator.isValidUsername(username) }
+
+    private var trimmedName: String { RegistrationValidator.trimmedName(displayName) }
+
+    private var nameValid: Bool { RegistrationValidator.isValidName(displayName) }
+
+    private var formValid: Bool { usernameValid && nameValid }
 
     private func register() async {
         busy = true
@@ -79,7 +91,7 @@ struct RegisterView: View {
             let prekeys = try store.generatePrekeys(count: 100)
 
             let api = APIClient(baseURL: AppState.httpBase)
-            let name = displayName.isEmpty ? username : displayName
+            let name = trimmedName
             let reg = try await api.register(.init(
                 username: username, displayName: name, deviceName: UIDevice.current.name,
                 identityKey: identity.dh.publicKey.rawRepresentation.base64urlEncodedString(),

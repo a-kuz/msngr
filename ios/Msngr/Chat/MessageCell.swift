@@ -389,6 +389,9 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 enum BubbleBackground {
     private static var cache: [String: UIImage] = [:]
 
+    /// Цвета бабблов запечены в картинки — при смене палитры кэш сбрасывается.
+    static func clearCache() { cache.removeAll() }
+
     static func image(outgoing: Bool, tail: Bool, mediaOnly: Bool) -> UIImage {
         let key = "\(outgoing)|\(tail)|\(mediaOnly)|\(UITraitCollection.current.userInterfaceStyle.rawValue)"
         if let img = cache[key] { return img }

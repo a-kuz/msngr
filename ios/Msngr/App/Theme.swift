@@ -1,14 +1,25 @@
 import SwiftUI
 
 /// Палитра приложения: согласованный набор всех цветовых ролей.
-/// Переключение — одной строкой: `Theme.palette`.
-enum Palette {
+/// Выбор пользователя хранится в UserDefaults("palette") — см. `ThemeStore`.
+enum Palette: String, CaseIterable, Identifiable {
     /// Нейтральный светлый фон, синий исходящий, серый входящий.
     case imessage
     /// Белый фон с лёгким тоном, мятно-шалфейный исходящий, синий акцент.
     case telegram
     /// Кремовый фон, индиго исходящий, оранжевый акцент.
     case graphite
+
+    var id: String { rawValue }
+
+    /// Название пресета в настройках.
+    var title: String {
+        switch self {
+        case .imessage: return "iMessage"
+        case .telegram: return "Telegram"
+        case .graphite: return "Графит"
+        }
+    }
 
     /// Фон ленты сообщений.
     var chatBackground: Color {
@@ -91,10 +102,33 @@ enum Palette {
     }
 }
 
+/// Выбор палитры: персистентный (UserDefaults "palette"), наблюдаемый из SwiftUI.
+/// Смена палитры сбрасывает кэш картинок бабблов и рассылается всем открытым экранам.
+final class ThemeStore: ObservableObject {
+    static let shared = ThemeStore()
+
+    @Published var palette: Palette {
+        didSet {
+            guard palette != oldValue else { return }
+            UserDefaults.standard.set(palette.rawValue, forKey: "palette")
+            BubbleBackground.clearCache()
+            NotificationCenter.default.post(name: .paletteChanged, object: nil)
+        }
+    }
+
+    private init() {
+        palette = Palette(rawValue: UserDefaults.standard.string(forKey: "palette") ?? "") ?? .graphite
+    }
+}
+
+extension Notification.Name {
+    static let paletteChanged = Notification.Name("paletteChanged")
+}
+
 /// Единая точка стиля: цвета, шрифты, кривые анимаций. Ничего линейного по умолчанию.
 enum Theme {
-    /// Текущая палитра — переключается заменой этой строки.
-    static let palette: Palette = .graphite
+    /// Текущая палитра — выбранная пользователем в настройках.
+    static var palette: Palette { ThemeStore.shared.palette }
 
     // Роли цветов
     static var chatBackground: Color { palette.chatBackground }

@@ -12,6 +12,7 @@ struct RootView: View {
 struct ChatListView: View {
     @EnvironmentObject var app: AppState
     @StateObject private var model = ChatListModel()
+    @ObservedObject private var theme = ThemeStore.shared
     @State private var showNewChat = false
     @State private var showSettings = false
     @State private var path = NavigationPath()
@@ -28,6 +29,12 @@ struct ChatListView: View {
                 }
             }
             .listStyle(.plain)
+            .overlay {
+                if model.loaded, model.searchText.isEmpty,
+                   model.items.isEmpty, model.requests.isEmpty, model.archived.isEmpty {
+                    emptyState
+                }
+            }
             .navigationTitle("Чаты")
             .searchable(text: $model.searchText, prompt: "Поиск")
             .onChange(of: model.searchText) { _, _ in model.updateSearch() }
@@ -63,6 +70,34 @@ struct ChatListView: View {
                 path.append(chatId)
             }
         }
+    }
+
+    /// Пустой список: иконка, текст и кнопка, открывающая NewChat.
+    private var emptyState: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "bubble.left.and.bubble.right.fill")
+                .font(.system(size: 52))
+                .foregroundStyle(Theme.accent.opacity(0.55))
+            VStack(spacing: 5) {
+                Text("Нет чатов")
+                    .font(.title3.weight(.semibold))
+                Text("Найдите собеседника по юзернейму\nили из адресной книги")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            Button {
+                showNewChat = true
+            } label: {
+                Text("Начать переписку")
+                    .fontWeight(.semibold)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 4)
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("chatlist.empty.start")
+        }
+        .padding(.bottom, 40)
     }
 
     private var chatsSection: some View {

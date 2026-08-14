@@ -5,6 +5,7 @@ import MsngrCore
 struct MsngrApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var app = AppState.shared
+    @StateObject private var theme = ThemeStore.shared
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {

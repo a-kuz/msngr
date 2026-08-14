@@ -4,6 +4,7 @@ import MsngrCore
 
 struct SettingsView: View {
     @EnvironmentObject var app: AppState
+    @ObservedObject private var theme = ThemeStore.shared
     @Environment(\.dismiss) private var dismiss
     @State private var displayName = ""
     @State private var bio = ""
@@ -39,6 +40,18 @@ struct SettingsView: View {
                     }
                     TextField("О себе", text: $bio, axis: .vertical)
                         .lineLimit(1...3)
+                }
+
+                Section("Оформление") {
+                    HStack(spacing: 12) {
+                        ForEach(Palette.allCases) { palette in
+                            PaletteCard(palette: palette, selected: theme.palette == palette) {
+                                Haptics.light()
+                                theme.palette = palette
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
                 }
 
                 Section("Безопасность") {
@@ -127,6 +140,65 @@ struct SettingsView: View {
         case ..<(1024 * 1024): return String(format: "%.1f МБ", kb / 1024)
         default: return String(format: "%.2f ГБ", kb / 1024 / 1024)
         }
+    }
+}
+
+/// Карточка пресета палитры: мини-мокап чата (фон, входящий и исходящий бабблы,
+/// акцентная кнопка) + название; текущий пресет обведён акцентом с галочкой.
+struct PaletteCard: View {
+    let palette: Palette
+    let selected: Bool
+    var onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(spacing: 6) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(palette.chatBackground)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Capsule()
+                            .fill(palette.incomingBubble)
+                            .frame(width: 44, height: 14)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Capsule()
+                            .fill(palette.outgoingBubble)
+                            .frame(width: 52, height: 14)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                        HStack {
+                            Capsule()
+                                .fill(palette.incomingBubble)
+                                .frame(width: 32, height: 14)
+                            Spacer()
+                            Circle()
+                                .fill(palette.accent)
+                                .frame(width: 14, height: 14)
+                        }
+                    }
+                    .padding(8)
+                }
+                .frame(height: 76)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(selected ? palette.accent : Color(.separator),
+                                      lineWidth: selected ? 2 : 0.5)
+                }
+                .overlay(alignment: .topTrailing) {
+                    if selected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 16))
+                            .foregroundStyle(.white, palette.accent)
+                            .padding(4)
+                    }
+                }
+                Text(palette.title)
+                    .font(.caption)
+                    .fontWeight(selected ? .semibold : .regular)
+                    .foregroundStyle(selected ? .primary : .secondary)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
     }
 }
 

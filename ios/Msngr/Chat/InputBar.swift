@@ -11,6 +11,7 @@ struct InputBar: View {
     var onSendVoice: (URL, TimeInterval, [Int]) -> Void
 
     @StateObject private var recorder = VoiceRecorder()
+    @ObservedObject private var theme = ThemeStore.shared
     @State private var inputHeight: CGFloat = GrowingTextView.minHeight
     @State private var recordingLocked = false
     @State private var dragOffset: CGFloat = 0
@@ -48,6 +49,37 @@ struct InputBar: View {
             .padding(.vertical, 6)
         }
         .background(.bar)
+        // подсказка механики записи: плавает над баром, пока запись не залочена
+        .overlay(alignment: .top) {
+            if recorder.isRecording && !recordingLocked {
+                recordingHint
+                    .offset(y: -40)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+        .animation(Theme.springFast, value: recorder.isRecording)
+        .animation(Theme.springFast, value: recordingLocked)
+    }
+
+    /// «Влево — отмена, вверх — замок»: появляется при начале записи.
+    private var recordingHint: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 3) {
+                Image(systemName: "chevron.left")
+                Text("влево — отмена")
+            }
+            HStack(spacing: 3) {
+                Image(systemName: "lock.fill")
+                Text("вверх — замок")
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(.regularMaterial, in: Capsule())
+        .shadow(color: .black.opacity(0.1), radius: 4, y: 2)
+        .allowsHitTesting(false)
     }
 
     @ViewBuilder
