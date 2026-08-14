@@ -41,6 +41,10 @@
 	<string>Запись голосовых сообщений</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Выбор фото и видео для отправки</string>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>INSendMessageIntent</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
