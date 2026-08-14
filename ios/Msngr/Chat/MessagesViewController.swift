@@ -33,6 +33,7 @@ final class MessagesViewController: UIViewController {
         collectionView.register(MessageCell.self, forCellWithReuseIdentifier: "msg")
         collectionView.register(DateSeparatorCell.self, forCellWithReuseIdentifier: "date")
         collectionView.register(SystemCell.self, forCellWithReuseIdentifier: "system")
+        collectionView.register(UnreadMarkerCell.self, forCellWithReuseIdentifier: "unread")
         view.addSubview(collectionView)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardChanged(_:)),
                                                name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
@@ -96,6 +97,12 @@ final class MessagesViewController: UIViewController {
         if old.isEmpty {
             items = newItems
             collectionView.reloadData()
+            // открытие чата с непрочитанными: лента встаёт на плашку.
+            // Коллекция инвертирована — визуальный верх экрана это .bottom
+            if let idx = newItems.firstIndex(where: { if case .unreadMarker = $0 { return true }; return false }) {
+                collectionView.layoutIfNeeded()
+                collectionView.scrollToItem(at: IndexPath(item: idx, section: 0), at: .bottom, animated: false)
+            }
             return
         }
         let oldIds = old.map(\.id)
@@ -148,6 +155,15 @@ final class MessagesViewController: UIViewController {
 
         let nearBottom = collectionView.contentOffset.y < 60
         items = newItems
+
+        // дифф из одного лишь удаления плашки непрочитанных — уходит с анимацией
+        // (свернул в шторку / отправил своё / поставил реакцию)
+        let onlyMarkerDelete = inserts.isEmpty && !deletes.isEmpty
+            && deletes.allSatisfy { if case .unreadMarker = old[$0.item] { return true }; return false }
+        if onlyMarkerDelete {
+            collectionView.performBatchUpdates { collectionView.deleteItems(at: deletes) }
+            return
+        }
         // новое сообщение внизу — анимируем появление (spring); вставки истории
         // сверху идут без анимации, чтобы не дёргать контент под пальцем
         // новое сообщение приходит в item 0 (низ инвертированного списка)
@@ -173,6 +189,13 @@ final class MessagesViewController: UIViewController {
             // вставленной ячейки (cellForItem там nil) — материализуем её сразу
             // и запускаем анимацию появления синхронно, до первого кадра
             collectionView.layoutIfNeeded()
+        }
+        // счётчик плашки непрочитанных мог вырасти в том же апдейте, где
+        // вставилось входящее — дифф по id её не пересоздаёт, обновляем на месте
+        if let idx = newItems.firstIndex(where: { if case .unreadMarker = $0 { return true }; return false }),
+           case .unreadMarker(_, let count) = newItems[idx],
+           let cell = collectionView.cellForItem(at: IndexPath(item: idx, section: 0)) as? UnreadMarkerCell {
+            cell.configure(count: count)
         }
         if let nb = newBottom,
            let cell = collectionView.cellForItem(at: IndexPath(item: 0, section: 0)) as? MessageCell {
@@ -207,6 +230,8 @@ final class MessagesViewController: UIViewController {
             return m1 == m2 && t1 == t2 && s1 == s2
         case let (.dateSeparator(_, l1), .dateSeparator(_, l2)):
             return l1 == l2
+        case let (.unreadMarker(_, c1), .unreadMarker(_, c2)):
+            return c1 == c2
         default:
             return false
         }
@@ -238,6 +263,10 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "date", for: indexPath) as! DateSeparatorCell
             cell.configure(label)
             return cell
+        case .unreadMarker(_, let count):
+            let cell = cv.dequeueReusableCell(withReuseIdentifier: "unread", for: indexPath) as! UnreadMarkerCell
+            cell.configure(count: count)
+            return cell
         case .message(let msg, let tightGap, let showTail, let showName, let authorName):
             if msg.kind == .system {
                 let cell = cv.dequeueReusableCell(withReuseIdentifier: "system", for: indexPath) as! SystemCell
@@ -257,6 +286,8 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
         switch items[indexPath.item] {
         case .dateSeparator:
             return CGSize(width: cv.bounds.width, height: 32)
+        case .unreadMarker:
+            return CGSize(width: cv.bounds.width, height: 36)
         case .message(let msg, let tightGap, let showTail, let showName, let authorName):
             if msg.kind == .system {
                 return CGSize(width: cv.bounds.width, height: 30)
@@ -306,6 +337,51 @@ final class DateSeparatorCell: UICollectionViewCell {
     override func layoutSubviews() {
         super.layoutSubviews()
         if let text = label.text { configure(text) }
+    }
+}
+
+/// Плашка-разделитель «N непрочитанных сообщений»: полоса на всю ширину,
+/// скроллится вместе с лентой.
+final class UnreadMarkerCell: UICollectionViewCell {
+    private let label = UILabel()
+    private let band = UIView()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        contentView.transform = CGAffineTransform(scaleX: 1, y: -1)
+        band.backgroundColor = .tertiarySystemFill
+        band.autoresizingMask = [.flexibleWidth]
+        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.textColor = .secondaryLabel
+        label.textAlignment = .center
+        label.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        contentView.addSubview(band)
+        band.addSubview(label)
+        band.frame = CGRect(x: 0, y: 5, width: contentView.bounds.width, height: 26)
+        label.frame = band.bounds
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(count: Int) {
+        label.text = Self.title(count: count)
+    }
+
+    /// «1 непрочитанное сообщение / 2 непрочитанных сообщения / 5 непрочитанных сообщений»
+    static func title(count: Int) -> String {
+        let mod100 = count % 100
+        let mod10 = count % 10
+        let (adj, noun): (String, String)
+        if mod100 / 10 == 1 {
+            (adj, noun) = ("непрочитанных", "сообщений")
+        } else if mod10 == 1 {
+            (adj, noun) = ("непрочитанное", "сообщение")
+        } else if (2...4).contains(mod10) {
+            (adj, noun) = ("непрочитанных", "сообщения")
+        } else {
+            (adj, noun) = ("непрочитанных", "сообщений")
+        }
+        return "\(count) \(adj) \(noun)"
     }
 }
 
