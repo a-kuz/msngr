@@ -186,6 +186,18 @@ const hist = await api(`/api/chats/${chat.chatId}/history?fromSeq=0`, { token: b
 const tomb = hist.msgs.find((m) => m.msgId === sent.msgId);
 check("tombstoned on server", tomb && tomb.deleted === true && tomb.body === null);
 
+// 11a. Чужое сообщение «у всех» не сносится: ни тумбстоуна, ни рассылки
+cb2.send({ t: "send", chatId: chat.chatId, clientMsgId: "cm-bob-own", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const bobOwn = await cb2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-bob-own");
+ca.send({ t: "delete", chatId: chat.chatId, msgIds: [bobOwn.msgId], forAll: true });
+const foreignDel = await cb2.waitFor((f) => f.t === "deleted" && f.msgIds.includes(bobOwn.msgId), 1500);
+check("no fanout deleting someone else's message", foreignDel === null);
+const hist2 = await api(`/api/chats/${chat.chatId}/history?fromSeq=0`, { token: bob.token });
+const keptMsg = hist2.msgs.find((m) => m.msgId === bobOwn.msgId);
+check("someone else's message survives delete for all",
+  keptMsg && !keptMsg.deleted && keptMsg.body !== null);
+
 // 12. Флаги чата (pin/mute/archive)
 const fl = await api(`/api/chats/${chat.chatId}/flags`, { token: alice.token,
   body: { pinned: true, muted: true } });

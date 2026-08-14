@@ -288,17 +288,24 @@ export class ConversationDO implements DurableObject {
           const idx =
             (await this.state.storage.get<Record<string, number>>("msgIdx")) ?? {};
           const updates: Record<string, StoredMsg> = {};
+          const tombstoned: string[] = [];
           for (const [key, m] of await this.state.storage.list<StoredMsg>({ prefix: "msg:" })) {
             if (b.msgIds.includes(m.msgId)) {
+              // чужое сообщение сносит только админ группы
               if (m.from !== b.userId && actor.role !== "admin") continue;
               updates[key] = { ...m, body: null, deleted: true, deletedBy: b.userId };
+              tombstoned.push(m.msgId);
             }
           }
           void idx;
-          if (Object.keys(updates).length) await this.state.storage.put(updates);
-          await this.fanout({
-            t: "deleted", chatId: meta.chatId, msgIds: b.msgIds, forAll: true, by: b.userId,
-          });
+          if (tombstoned.length) {
+            await this.state.storage.put(updates);
+            // рассылаем только то, что действительно снесено: иначе участники
+            // потеряли бы у себя сообщения, оставшиеся на сервере
+            await this.fanout({
+              t: "deleted", chatId: meta.chatId, msgIds: tombstoned, forAll: true, by: b.userId,
+            });
+          }
         }
         return json({ ok: true });
       }
