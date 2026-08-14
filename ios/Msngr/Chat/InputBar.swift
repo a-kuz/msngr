@@ -22,6 +22,33 @@ struct InputBar: View {
     @GestureState private var pressing = false
 
     var body: some View {
+        if model.peer?.isBlocked == true {
+            blockedBar
+        } else {
+            composer
+        }
+    }
+
+    /// Заблокированному не пишут: вместо поля ввода — плашка со снятием блокировки.
+    private var blockedBar: some View {
+        VStack(spacing: 6) {
+            Text("Вы заблокировали пользователя.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Button("Разблокировать") {
+                guard let peerId = model.peer?.id else { return }
+                Task { try? await AppState.shared.engine.setBlocked(userId: peerId, blocked: false) }
+            }
+            .font(.callout.weight(.semibold))
+            .accessibilityIdentifier("chat.unblock")
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(.bar)
+        .accessibilityIdentifier("chat.blockedBar")
+    }
+
+    private var composer: some View {
         VStack(spacing: 0) {
             replyEditBanner
             pendingImagesBar
