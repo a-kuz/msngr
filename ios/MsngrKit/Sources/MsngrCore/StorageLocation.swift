@@ -17,14 +17,15 @@ public struct StorageLocation: Sendable, Equatable {
     /// Исходники вложений, приложенных офлайн: переживают чистку Caches.
     public var pendingMediaDir: URL { root.appendingPathComponent("media-outgoing") }
 
-    /// Содержимое размещения, которое переносится при смене корня.
+    /// Содержимое размещения, которое переносится при смене корня. Файл БД —
+    /// последний: его наличие в новом размещении означает, что перенос завершён.
     public static let movableItems = [
-        databaseFileName,
-        databaseFileName + "-wal",
-        databaseFileName + "-shm",
         masterKeyFileName,
         "media-outgoing",
         "avatars",
+        databaseFileName + "-wal",
+        databaseFileName + "-shm",
+        databaseFileName,
     ]
 }
 
@@ -104,7 +105,9 @@ public enum StorageMigration {
     ///
     /// Ничего не делает, если новое размещение уже занято (там есть БД) или если
     /// переносить нечего — повторный запуск безопасен. Прерванный перенос
-    /// доводится до конца: остатки в новом размещении заменяются оригиналами.
+    /// доводится до конца на следующем запуске: БД перемещается последней, так
+    /// что до неё новое размещение считается незанятым, а остатки в нём
+    /// заменяются оригиналами.
     @discardableResult
     public static func run(from old: StorageLocation,
                            to new: StorageLocation,
