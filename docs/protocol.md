@@ -224,8 +224,24 @@ Dev без Apple-аккаунта: `APNS_HOST` (в `server/.dev.vars` — `http:
 `ai.enface.Msngr`. Ограничение канала: `simctl push` не запускает Notification
 Service Extension — см. `docs/research/nse-simulator-experiment.md`.
 
+## Схема D1 и миграции
+
+Схема живёт в `server/migrations/` нумерованными файлами (`0001_init.sql`,
+`0002_…`), применяет их штатный раннер wrangler; каталог и таблица журнала
+заданы в `wrangler.jsonc` (`migrations_dir`, `migrations_table: d1_migrations`).
+
+```
+npm run migrate:local     # локальная база wrangler dev
+npm run migrate           # удалённая база
+npm run deploy            # миграции на удалённой базе, затем wrangler deploy
+```
+
+Новая миграция — новый файл со следующим номером; ранее применённые файлы не
+редактируются, раннер сверяется с `d1_migrations`.
+
 ## Версии
 
 Обратной совместимости нет (см. `docs/PROCESS.md`), но точки для неё заложены:
-`v` в E2E-конверте, версия схемы БД в миграторе GRDB, `migrations` в
-`wrangler.jsonc`. Версия протокола в рукопожатии (`hello`) пока не передаётся.
+`v` в E2E-конверте, версия схемы БД в миграторе GRDB, миграции D1 в
+`server/migrations/`, `migrations` (теги DO) в `wrangler.jsonc`. Версия
+протокола в рукопожатии (`hello`) пока не передаётся.
