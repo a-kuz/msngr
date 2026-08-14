@@ -12,6 +12,11 @@
 - Auth: токен устройства (`Authorization: Bearer <token>` или `?token=`),
   в D1 хранится SHA-256 токена. Логина как отдельной операции нет: восстановление
   доступа — новая регистрация.
+- Отзыв токена: `devices.revoked_at`. Проверяется в middleware авторизации, так
+  что отозванный токен даёт 401 и на `/api/*`, и на апгрейде `/ws`. Отзыв рвёт
+  живые сокеты этого устройства (код закрытия 4401) и стирает его APNs-токен,
+  так что до устройства перестают доходить и пуши. Срока жизни у токена нет:
+  он действует, пока не отозван.
 - Все клиент-видимые метки времени — в секундах (`nowSec()` на сервере,
   `timeIntervalSince1970` на клиенте).
 
@@ -33,6 +38,9 @@ POST /api/register    {username, displayName, device:{name}, identityKey, identi
                        signedPrekey:{id,key,sig}, oneTimePrekeys:[{id,key}], phoneHash?}
                       → {userId, deviceId, token}    (без auth; username [a-zA-Z0-9_]{3,32})
 GET  /api/me                      → {user, deviceId}
+GET  /api/sessions                → {sessions:[{deviceId,name,createdAt,lastSeen,hasPushToken,current}]}
+POST /api/logout                  отозвать токен текущего устройства
+POST /api/sessions/:deviceId/revoke   отозвать токен другого своего устройства
 GET  /api/users?q=                поиск по username/displayName (LOWER LIKE, лимит 20)
 GET  /api/users/:id               → {user, presence:{online,lastSeen}}
 GET  /api/devices?ids=a,b,c       устройства и identity-ключи; ничего не расходует
