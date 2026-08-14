@@ -37,6 +37,9 @@ final class ChatViewModel: ObservableObject {
     @Published var pinnedMessage: Message?
     @Published var keyChangePending = false
     @Published var connected = true
+    /// Режим мультивыбора: чекбоксы у бабблов, панель действий вместо поля ввода.
+    @Published var selecting = false
+    @Published var selection = MessageSelection()
 
     /// Плашка непрочитанных: состояние живёт от входа в чат, лента
     /// перестраивается при его изменении из последнего снапшота БД.
@@ -350,6 +353,48 @@ final class ChatViewModel: ObservableObject {
 
     func delete(_ msg: Message, forAll: Bool) {
         Task { await app.engine.deleteMessages(chatId: chatId, msgIds: [msg.msgId ?? msg.id], forAll: forAll) }
+    }
+
+    // MARK: - Мультивыбор
+
+    /// Выбранные сообщения в порядке ленты (сверху — самое новое).
+    var selectedMessages: [Message] { selection.messages(in: lastMsgs) }
+
+    var canDeleteSelectedForAll: Bool { MessageSelection.canDeleteForAll(selectedMessages) }
+
+    func beginSelection(with msg: Message) {
+        selection.clear()
+        selection.select(msg)
+        selecting = true
+        Haptics.light()
+    }
+
+    func toggleSelection(_ msg: Message) {
+        selection.toggle(msg)
+        Haptics.light()
+    }
+
+    func endSelection() {
+        selecting = false
+        selection.clear()
+    }
+
+    func deleteSelected(forAll: Bool) {
+        let ids = selectedMessages.map { $0.msgId ?? $0.id }
+        guard !ids.isEmpty else { return }
+        endSelection()
+        Task { await app.engine.deleteMessages(chatId: chatId, msgIds: ids, forAll: forAll) }
+    }
+
+    func copySelected() {
+        MessageClipboard.copy(selectedMessages)
+        endSelection()
+    }
+
+    func forwardSelected(to targetChatId: String) {
+        // порядок ленты обратный: пересылаем от старого к новому
+        for msg in selectedMessages.reversed() { forward(msg, to: targetChatId) }
+        endSelection()
     }
 
     func forward(_ msg: Message, to targetChatId: String) {
