@@ -10,11 +10,15 @@ enum ChatFeedItem: Identifiable, Equatable {
     case message(Message, tightGap: Bool, showTail: Bool, showName: Bool, authorName: String?)
     /// id уникален в пределах ленты (label может повторяться при немонотонном sentAt)
     case dateSeparator(id: String, label: String)
+    /// плашка «N непрочитанных сообщений» над первым непрочитанным;
+    /// id стабилен в пределах сессии просмотра (привязан к якорному seq)
+    case unreadMarker(id: String, count: Int)
 
     var id: String {
         switch self {
         case .message(let m, _, _, _, _): return m.id
         case .dateSeparator(let id, _): return id
+        case .unreadMarker(let id, _): return id
         }
     }
 }
@@ -33,6 +37,15 @@ final class ChatViewModel: ObservableObject {
     @Published var pinnedMessage: Message?
     @Published var keyChangePending = false
     @Published var connected = true
+
+    /// Плашка непрочитанных: состояние живёт от входа в чат, лента
+    /// перестраивается при его изменении из последнего снапшота БД.
+    private(set) var unreadMarker = UnreadMarkerState()
+    private var enteredChat = false
+    /// seq, до которого входящие уже учтены счётчиком плашки
+    private var markerCountedUpToSeq = 0
+    private var lastMsgs: [Message] = []
+    private var obscuredCancellable: AnyCancellable?
 
     private var cancellable: AnyCancellable?
     private var typingTask: Task<Void, Never>?
@@ -68,7 +81,9 @@ final class ChatViewModel: ObservableObject {
                 self.chat = chat
                 self.members = users
                 self.peer = users.first { $0.id != ownId }
-                self.feed = Self.buildFeed(msgs, members: users)
+                self.updateUnreadMarker(chat: chat, msgs: msgs)
+                self.lastMsgs = msgs
+                self.feed = Self.buildFeed(msgs, members: users, unreadMarker: self.markerFeedParam)
                 if let pinId = chat?.pinnedMsgId {
                     self.pinnedMessage = msgs.first { $0.msgId == pinId }
                 } else {
@@ -77,6 +92,19 @@ final class ChatViewModel: ObservableObject {
                 self.markVisibleRead()
                 self.refreshKeyChangePending()
             })
+
+        // фон/шторка: плашка непрочитанных убирается, пришедшее за время
+        // отсутствия копится и показывается новой плашкой при возврате
+        obscuredCancellable = app.$obscured.removeDuplicates().dropFirst()
+            .sink { [weak self] obscured in
+                guard let self else { return }
+                if obscured {
+                    self.unreadMarker.becameObscured()
+                } else {
+                    self.unreadMarker.becameActive()
+                }
+                self.rebuildFeed()
+            }
 
         connectionTask?.cancel()
         connectionTask = Task { [weak self] in
@@ -109,10 +137,58 @@ final class ChatViewModel: ObservableObject {
 
     func stop() {
         cancellable = nil
+        obscuredCancellable = nil
         typingTask?.cancel()
         typingTask = nil
         connectionTask?.cancel()
         connectionTask = nil
+    }
+
+    // MARK: - Плашка непрочитанных
+
+    private var markerFeedParam: (anchorSeq: Int, count: Int)? {
+        guard let anchor = unreadMarker.anchorSeq, unreadMarker.isActive else { return nil }
+        return (anchorSeq: anchor, count: unreadMarker.count)
+    }
+
+    /// Первый снапшот чата задаёт якорь и стартовый счётчик; дальше входящие
+    /// с новым seq увеличивают счётчик (или копятся, пока экран не виден).
+    private func updateUnreadMarker(chat: Chat?, msgs: [Message]) {
+        guard let chat else { return }
+        if !enteredChat {
+            enteredChat = true
+            unreadMarker.enterChat(unreadCount: chat.unreadCount, myReadUpTo: chat.myReadUpTo)
+            // всё, что уже есть на сервере на момент входа, учтено стартовым счётчиком
+            markerCountedUpToSeq = chat.lastSeq
+            return
+        }
+        let newIncoming = msgs
+            .compactMap { m -> Int? in m.isOutgoing ? nil : m.seq }
+            .filter { $0 > markerCountedUpToSeq }
+            .sorted()
+        for seq in newIncoming {
+            unreadMarker.incoming(seq: seq)
+            markerCountedUpToSeq = seq
+        }
+        // своя отправка любым путём (текст, вложение, голосовое): новое
+        // исходящее внизу ленты убирает плашку. Догрузка старой истории сюда
+        // не попадает — она добавляет сообщения не в начало ленты
+        if unreadMarker.isActive, let first = msgs.first, first.isOutgoing,
+           first.id != lastMsgs.first?.id, (first.seq ?? Int.max) > markerCountedUpToSeq {
+            unreadMarker.dismiss()
+        }
+    }
+
+    /// Перестройка ленты из последнего снапшота при изменении состояния плашки.
+    private func rebuildFeed() {
+        feed = Self.buildFeed(lastMsgs, members: members, unreadMarker: markerFeedParam)
+    }
+
+    /// Своя отправка или реакция убирает плашку.
+    private func dismissUnreadMarker() {
+        guard unreadMarker.isActive else { return }
+        unreadMarker.dismiss()
+        rebuildFeed()
     }
 
     /// TOFU: смена identity-ключа собеседника блокирует исходящие до принятия.
@@ -132,8 +208,10 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    /// Группировка бабблов + дата-разделители (лента инвертирована).
-    static func buildFeed(_ msgs: [Message], members: [User]) -> [ChatFeedItem] {
+    /// Группировка бабблов + дата-разделители + плашка непрочитанных
+    /// (лента инвертирована).
+    static func buildFeed(_ msgs: [Message], members: [User],
+                          unreadMarker: (anchorSeq: Int, count: Int)? = nil) -> [ChatFeedItem] {
         var out: [ChatFeedItem] = []
         let cal = Calendar.current
         let nameById = Dictionary(uniqueKeysWithValues: members.map { ($0.id, $0.displayName) })
@@ -162,6 +240,13 @@ final class ChatViewModel: ObservableObject {
                                 showName: showName,
                                 authorName: nameById[msg.fromUserId] ?? "?"))
             let next = older
+
+            // плашка непрочитанных — над первым сообщением с seq >= якоря
+            // (в инвертированной ленте — сразу после самого старого такого)
+            if let um = unreadMarker, let seq = msg.seq, seq >= um.anchorSeq,
+               !((older?.seq).map { $0 >= um.anchorSeq } ?? false) {
+                out.append(.unreadMarker(id: "unread:\(um.anchorSeq)", count: um.count))
+            }
 
             // разделитель дат: перед первым сообщением дня (в инвертированной ленте — после).
             // id привязан к сообщению, а не к label: label может повторяться,
@@ -217,6 +302,7 @@ final class ChatViewModel: ObservableObject {
     func send(text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        dismissUnreadMarker()
         if let editing {
             var c = ContentPayload(kind: "edit")
             c.targetMsgId = editing.msgId ?? editing.id
@@ -249,6 +335,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     func react(_ msg: Message, emoji: String) {
+        dismissUnreadMarker()
         var c = ContentPayload(kind: "reaction")
         c.targetMsgId = msg.msgId ?? msg.id
         // повторный тап той же реакцией — снять
