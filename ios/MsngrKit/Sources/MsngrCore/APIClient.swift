@@ -303,6 +303,10 @@ public final class APIClient: @unchecked Sendable {
     public func avatarURL(_ avatarId: String) -> URL {
         baseURL.appendingPathComponent("api/avatar/\(avatarId)")
     }
+    /// Байты аватара (запрос идёт с токеном).
+    public func avatarData(_ avatarId: String) async throws -> Data {
+        try await request("api/avatar/\(avatarId)")
+    }
 
     // MARK: - Profile / contacts / misc
 

@@ -13,6 +13,7 @@ struct SettingsView: View {
     @State private var showPinSetup = false
     @State private var pinEnabled = PinStore.hasPin()
     @State private var biometrics = PinStore.biometricsEnabled()
+    @State private var showsMessageText = NotificationPreferences.showsMessageText(in: .standard)
 
     var body: some View {
         NavigationStack {
@@ -52,6 +53,20 @@ struct SettingsView: View {
                         }
                     }
                     .padding(.vertical, 4)
+                }
+
+                Section("Уведомления") {
+                    Toggle(isOn: $showsMessageText) {
+                        Label("Показывать текст сообщений", systemImage: "text.bubble")
+                    }
+                    .onChange(of: showsMessageText) { _, on in
+                        NotificationPreferences.setShowsMessageText(on, in: .standard)
+                    }
+                    Text(showsMessageText
+                         ? "В баннере видны имя отправителя и текст."
+                         : "В баннере остаются имя и аватар отправителя, текст скрыт.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Безопасность") {

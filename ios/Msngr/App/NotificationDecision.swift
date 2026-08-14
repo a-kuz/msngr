@@ -11,25 +11,34 @@ enum NotificationDecision {
         case none
         /// верхний in-app баннер (только активное приложение, чат не открыт)
         case inAppBanner
+        /// системный баннер, который приложение постит само
+        case localNotification
     }
 
     /// Сообщение пришло по WS.
-    /// В фоне ничего не показываем: системный APNs-пуш придёт сам,
-    /// локальная нотификация дала бы дубль.
+    /// В фоне баннер показывает системный APNs-пуш, локальная нотификация дала
+    /// бы дубль. Когда пуш прийти не может (симулятор, устройство без
+    /// зарегистрированного токена), а WS ещё жив — баннер постит приложение.
     static func forIncomingWS(appActive: Bool, chatOpen: Bool, isOwn: Bool,
-                              isService: Bool, muted: Bool, alreadyShown: Bool) -> WSAction {
+                              isService: Bool, muted: Bool, alreadyShown: Bool,
+                              apnsAvailable: Bool = true) -> WSAction {
         if isOwn || isService || muted || alreadyShown { return .none }
-        guard appActive, !chatOpen else { return .none }
-        return .inAppBanner
+        guard appActive else { return apnsAvailable ? .none : .localNotification }
+        return chatOpen ? .none : .inAppBanner
     }
 
-    /// Показывать ли системный пуш, догнавший активное приложение (willPresent).
+    /// Показывать ли уведомление, о котором система спросила делегата (willPresent).
+    /// - isLocal: уведомление поставило само приложение по WS-фрейму. Оно уже
+    ///   прошло все проверки при постановке, а его msgId лежит в alreadyShown,
+    ///   и общий дедуп погасил бы его же.
     /// - messageInDB: сообщение уже принято по WS (строка в БД) — баннер был бы дублем
     /// - alreadyShown: для этого msgId уже показан in-app баннер или системный пуш
     /// - messageRead: сообщение уже прочитано (seq <= myReadUpTo)
-    static func shouldPresentSystemPush(chatOpen: Bool, alreadyShown: Bool,
+    static func shouldPresentSystemPush(isLocal: Bool = false,
+                                        chatOpen: Bool, alreadyShown: Bool,
                                         messageInDB: Bool, messageRead: Bool,
                                         muted: Bool) -> Bool {
-        !(chatOpen || alreadyShown || messageInDB || messageRead || muted)
+        if isLocal { return true }
+        return !(chatOpen || alreadyShown || messageInDB || messageRead || muted)
     }
 }

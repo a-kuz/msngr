@@ -8,7 +8,9 @@ import MsngrCore
 /// параллельно живой WS доставляет то же сообщение в приложение, поэтому:
 /// - при активном приложении баннер о сообщении показывается по WS (in-app),
 ///   а догнавший системный пуш гасится в willPresent (дедуп по msgId);
-/// - в фоне показывает только системный пуш (NSE подставляет расшифрованное превью);
+/// - в фоне показывает системный пуш (NSE подставляет расшифрованное превью), а
+///   когда пуш недоступен (симулятор, устройство без токена) — своё локальное
+///   уведомление по WS-фрейму;
 /// - бейдж на иконке всегда равен сумме unreadCount по чатам из локальной БД;
 /// - при прочтении чата его доставленные уведомления снимаются из шторки.
 @MainActor
@@ -16,6 +18,9 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
     static let shared = NotificationCoordinator()
     /// chatId чата, открытого на экране (nil — чат-лист/другой экран)
     var activeChatId: String?
+    /// доставит ли баннер в фоне сам APNs; false — приложение постит своё
+    /// локальное уведомление, пока в фоне жив WS
+    var apnsAvailable = true
 
     /// msgId, для которых баннер уже показан (in-app или системный) — дедуп WS↔APNs
     private var shownMsgIds: Set<String> = []
@@ -32,6 +37,9 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
     func attach(db: DatabaseQueue, engine: SyncEngine, ownUserId: String) {
         self.db = db
         observeUnread(db: db)
+        if let api = AppState.shared.api {
+            Task { await AvatarCache.shared.prefetchAll(db: db, api: api) }
+        }
         incomingTask?.cancel()
         incomingTask = Task { [weak self] in
             for await ev in engine.incomingMessageStream.subscribe() {
@@ -51,101 +59,145 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
             chatOpen: activeChatId == ev.chatId,
             isOwn: ev.isOwn,
             isService: ev.isService,
-            muted: info.muted,
-            alreadyShown: shownMsgIds.contains(ev.msgId))
-        guard action == .inAppBanner else { return }
+            muted: info?.muted ?? false,
+            alreadyShown: shownMsgIds.contains(ev.msgId),
+            apnsAvailable: apnsAvailable)
+        guard action != .none, let info, let content = info.content else { return }
         shownMsgIds.insert(ev.msgId)
-        InAppBannerPresenter.show(title: info.title, body: info.preview, chatId: ev.chatId)
+        await show(action, content: content, info: info, chatId: ev.chatId, msgId: ev.msgId)
     }
 
-    private struct BannerInfo {
-        var title = "Msngr"
-        var preview = "Новое сообщение"
-        var muted = false
+    /// Показывает готовый контент: аватар подтягивается из кэша (при отсутствии
+    /// файла — качается, но показ не ждёт больше, чем занимает запрос).
+    private func show(_ action: NotificationDecision.WSAction,
+                      content: NotificationContent,
+                      info: BannerInfo,
+                      chatId: String,
+                      msgId: String) async {
+        let api = AppState.shared.api
+        let avatar = await AvatarCache.shared.ensure(info.sender.avatarId, api: api)
+        switch action {
+        case .inAppBanner:
+            InAppBannerPresenter.show(title: content.title, subtitle: content.subtitle,
+                                      body: content.body, avatar: avatar, chatId: chatId)
+        case .localNotification:
+            let groupAvatar = info.isGroup
+                ? await AvatarCache.shared.ensure(info.chatAvatarId, api: api)
+                : nil
+            let built = CommunicationNotification.content(
+                content,
+                sender: info.sender,
+                ownUserId: AppState.shared.session?.userId ?? "",
+                isGroup: info.isGroup,
+                avatarFile: avatar,
+                groupMembers: info.groupMembers,
+                groupAvatarFile: groupAvatar,
+                userInfo: ["chatId": chatId, "msgId": msgId])
+            try? await UNUserNotificationCenter.current().add(
+                UNNotificationRequest(identifier: msgId, content: built, trigger: nil))
+        case .none:
+            break
+        }
     }
 
-    /// Заголовок чата и расшифрованное превью из локальной БД.
-    private func bannerInfo(chatId: String, msgId: String, from: String) async -> BannerInfo {
-        guard let db else { return BannerInfo() }
-        let ownId = AppState.shared.session?.userId ?? ""
-        return (try? await db.read { dbc -> BannerInfo in
-            var info = BannerInfo()
+    struct BannerInfo {
+        /// nil — уведомления по этому сообщению быть не должно
+        var content: NotificationContent?
+        var sender: NotificationContentBuilder.SenderInfo
+        var isGroup: Bool
+        var chatAvatarId: String?
+        var muted: Bool
+        /// участники группы кроме себя — по ним система понимает, что разговор групповой
+        var groupMembers: [NotificationContentBuilder.SenderInfo] = []
+    }
+
+    /// Собирает контент уведомления из локальной БД: чат, отправитель, сообщение.
+    private func bannerInfo(chatId: String, msgId: String, from: String) async -> BannerInfo? {
+        guard let db else { return nil }
+        let showsText = NotificationPreferences.showsMessageText(in: .standard)
+        let ownUserId = AppState.shared.session?.userId ?? ""
+        return try? await db.read { dbc -> BannerInfo in
             let chat = try Chat.fetchOne(dbc, key: chatId)
-            info.muted = chat?.muted ?? false
             let isGroup = chat?.kind == .group
+            let sender = try User.fetchOne(dbc, key: from)
+            let senderInfo = NotificationContentBuilder.SenderInfo(
+                userId: from,
+                displayName: sender?.displayName ?? "",
+                avatarId: sender?.avatarId)
+            let chatInfo = NotificationContentBuilder.ChatInfo(
+                chatId: chatId, isGroup: isGroup, title: chat?.title)
+            var info = BannerInfo(content: nil, sender: senderInfo, isGroup: isGroup,
+                                  chatAvatarId: chat?.avatarId, muted: chat?.muted ?? false)
             if isGroup {
-                info.title = chat?.title ?? "Группа"
-            } else if let peerId = try String.fetchOne(
-                dbc, sql: "SELECT userId FROM member WHERE chatId = ? AND userId != ?",
-                arguments: [chatId, ownId]),
-                let peer = try User.fetchOne(dbc, key: peerId) {
-                info.title = peer.displayName
+                info.groupMembers = try Row.fetchAll(dbc, sql: """
+                    SELECT m.userId AS id, u.displayName AS name
+                    FROM member m LEFT JOIN user u ON u.id = m.userId
+                    WHERE m.chatId = ? AND m.userId <> ?
+                    """, arguments: [chatId, ownUserId])
+                    .map { NotificationContentBuilder.SenderInfo(userId: $0["id"],
+                                                                 displayName: $0["name"] ?? "") }
             }
             if let m = try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE msgId = ?",
                                             arguments: [msgId]) {
-                let author = isGroup
-                    ? try String.fetchOne(dbc, sql: "SELECT displayName FROM user WHERE id = ?",
-                                          arguments: [from])
-                    : nil
-                info.preview = Self.preview(m, authorName: author)
+                info.content = NotificationContentBuilder.build(
+                    message: m, chat: chatInfo, sender: senderInfo, showsMessageText: showsText)
             }
             return info
-        }) ?? BannerInfo()
-    }
-
-    /// Однострочное превью сообщения (текст уже расшифрован движком в БД).
-    nonisolated static func preview(_ m: Message, authorName: String?) -> String {
-        let body: String
-        switch m.kind {
-        case .photo: body = "📷 Фото"
-        case .video: body = "🎥 Видео"
-        case .voice: body = "🎤 Голосовое сообщение"
-        case .file: body = "📎 " + (m.media?.name ?? "Файл")
-        case .album: body = "🖼 Альбом"
-        case .system: body = "Новое сообщение"
-        default: body = m.text ?? "Новое сообщение"
         }
-        if let authorName { return "\(authorName): \(body)" }
-        return body
     }
 
     // MARK: - Бейдж и шторка ↔ unreadCount в БД
 
     /// Единый источник истины — chat.unreadCount: бейдж — сумма по чатам;
-    /// доставленные уведомления прочитанных чатов снимаются из шторки.
+    /// прочитанные сообщения снимаются из шторки.
     private func observeUnread(db: DatabaseQueue) {
         badgeCancellable = ValueObservation
             .tracking { dbc in
-                try Row.fetchAll(dbc, sql: "SELECT id, unreadCount FROM chat")
-                    .map { (id: $0["id"] as String, unread: $0["unreadCount"] as Int) }
+                try Int.fetchOne(dbc, sql: "SELECT COALESCE(SUM(unreadCount), 0) FROM chat") ?? 0
             }
             .publisher(in: db, scheduling: .async(onQueue: .main))
-            .sink(receiveCompletion: { _ in }, receiveValue: { rows in
-                let total = rows.reduce(0) { $0 + $1.unread }
-                let readChatIds = Set(rows.filter { $0.unread == 0 }.map(\.id))
-                let center = UNUserNotificationCenter.current()
-                center.setBadgeCount(total)
-                guard !readChatIds.isEmpty else { return }
-                center.getDeliveredNotifications { delivered in
-                    let ids = delivered
-                        .filter { n in
-                            let content = n.request.content
-                            let chatId = (content.userInfo["chatId"] as? String)
-                                ?? (content.threadIdentifier.isEmpty ? nil : content.threadIdentifier)
-                            return chatId.map(readChatIds.contains) ?? false
-                        }
-                        .map(\.request.identifier)
-                    if !ids.isEmpty {
-                        center.removeDeliveredNotifications(withIdentifiers: ids)
-                    }
-                }
+            .sink(receiveCompletion: { _ in }, receiveValue: { [weak self] total in
+                UNUserNotificationCenter.current().setBadgeCount(total)
+                self?.dropReadNotifications()
             })
+    }
+
+    /// Снимает из шторки уведомления о сообщениях, которые уже прочитаны.
+    /// Сверка идёт по msgId с myReadUpTo чата: счётчик непрочитанных приходит
+    /// наблюдателю снимком, и по нему только что показанное уведомление
+    /// снималось бы раньше, чем сообщение успело в этот счётчик попасть.
+    private func dropReadNotifications() {
+        guard let db else { return }
+        let center = UNUserNotificationCenter.current()
+        center.getDeliveredNotifications { delivered in
+            let items = delivered.compactMap { n -> (id: String, msgId: String)? in
+                guard let msgId = n.request.content.userInfo["msgId"] as? String else { return nil }
+                return (n.request.identifier, msgId)
+            }
+            guard !items.isEmpty else { return }
+            Task {
+                let msgIds = items.map(\.msgId)
+                let placeholders = databaseQuestionMarks(count: msgIds.count)
+                let read = (try? await db.read { dbc in
+                    try String.fetchSet(dbc, sql: """
+                        SELECT m.msgId FROM message m JOIN chat c ON c.id = m.chatId
+                        WHERE m.msgId IN (\(placeholders)) AND m.seq <= c.myReadUpTo
+                        """, arguments: StatementArguments(msgIds))
+                }) ?? []
+                let ids = items.filter { read.contains($0.msgId) }.map(\.id)
+                if !ids.isEmpty {
+                    UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ids)
+                }
+            }
+        }
     }
 
     // MARK: - Системные пуши (APNs)
 
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        // у APNs-пуша здесь UNPushNotificationTrigger, у своего локального — nil
+        let isLocal = notification.request.trigger == nil
         let userInfo = notification.request.content.userInfo
         guard let chatId = userInfo["chatId"] as? String else { return [.banner] }
         let msgId = userInfo["msgId"] as? String
@@ -171,6 +223,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         }
 
         let show = NotificationDecision.shouldPresentSystemPush(
+            isLocal: isLocal,
             chatOpen: activeChatId == chatId,
             alreadyShown: msgId.map(shownMsgIds.contains) ?? false,
             messageInDB: messageInDB,
