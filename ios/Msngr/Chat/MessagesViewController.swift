@@ -137,6 +137,12 @@ final class MessagesViewController: UIViewController {
         guard onlyAppendOrRemove, deletes.count + inserts.count < 60 else {
             items = newItems
             collectionView.reloadData()
+            // своё новое сообщение внизу обязано стать видимым и на reload-пути
+            if case .message(let m, _, _, _, _)? = newItems.first, m.isOutgoing,
+               oldIndex[newIds[0]] == nil {
+                collectionView.layoutIfNeeded()
+                collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.contentInset.top), animated: false)
+            }
             return
         }
 
@@ -156,6 +162,13 @@ final class MessagesViewController: UIViewController {
                 if !deletes.isEmpty { collectionView.deleteItems(at: deletes) }
                 if !inserts.isEmpty { collectionView.insertItems(at: inserts) }
             }
+            // своё сообщение показываем всегда, из любой глубины истории:
+            // мгновенный переход к низу до материализации ячейки — анимированный
+            // скролл отсюда гонялся бы с полётом баббла и отменялся следующим
+            // апдейтом ленты (ack), из-за чего иногда не доезжал
+            if newBottom?.outgoing == true {
+                collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.contentInset.top), animated: false)
+            }
             // completion у batch-апдейта без анимации вызывается до создания
             // вставленной ячейки (cellForItem там nil) — материализуем её сразу
             // и запускаем анимацию появления синхронно, до первого кадра
@@ -171,8 +184,9 @@ final class MessagesViewController: UIViewController {
                 cell.animateAppearance()
             }
         }
-        // новое сообщение и мы были у низа — плавно подскроллим к нему
-        if newIds.count > oldIds.count, inserts.contains(where: { $0.item == 0 }), nearBottom {
+        // чужое новое сообщение: плавно подскролливаем, только если пользователь
+        // и так был у низа — читающего историю не дёргаем
+        if let nb = newBottom, !nb.outgoing, nearBottom {
             collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.contentInset.top), animated: true)
         }
     }
