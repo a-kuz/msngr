@@ -25,6 +25,9 @@ public actor SyncEngine {
     /// состояние соединения для UI (сабтайтл «подключение…» вместо стейл-презенса);
     /// подписчик сразу получает текущее состояние
     public nonisolated let connectionStream = Broadcast<Bool>(initial: false)
+    /// устройство отключено от аккаунта (токен отозван): переподключений больше
+    /// не будет, приложению остаётся увести пользователя на регистрацию
+    public nonisolated let sessionRevokedStream = Broadcast<Void>()
 
     /// Новое сообщение, принятое по WS (msg-фрейм, не повтор): для in-app уведомлений.
     public struct IncomingMessage: Sendable {
@@ -134,6 +137,10 @@ public actor SyncEngine {
         case .disconnected:
             connected = false
             connectionStream.send(false)
+        case .unauthorized:
+            connected = false
+            connectionStream.send(false)
+            sessionRevokedStream.send(())
         case .frame(let data):
             guard let frame = try? JSONDecoder().decode(WSIncoming.self, from: data) else { return }
             await apply(frame)

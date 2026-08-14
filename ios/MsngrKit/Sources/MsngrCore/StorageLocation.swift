@@ -83,6 +83,16 @@ public enum AppContainer {
         }
     }
 
+    /// Стирает данные размещения: БД, мастер-ключ, аватары, исходники вложений.
+    /// Каталоги остаются пустыми и готовыми к работе, поэтому после логаута
+    /// приложение регистрируется заново без перезапуска.
+    public static func wipe(_ location: StorageLocation, fileManager: FileManager = .default) {
+        for name in StorageLocation.movableItems {
+            try? fileManager.removeItem(at: location.root.appendingPathComponent(name))
+        }
+        prepare(location, fileManager: fileManager)
+    }
+
     static func applyProtection(at url: URL, fileManager: FileManager) {
         #if os(iOS)
         try? fileManager.setAttributes(

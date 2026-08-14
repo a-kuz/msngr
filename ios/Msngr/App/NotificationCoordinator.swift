@@ -49,6 +49,19 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         }
     }
 
+    /// Отпускает БД и движок прежней сессии: после логаута файлы хранилища
+    /// удаляются, держать на них ссылки нельзя.
+    func detach() {
+        incomingTask?.cancel()
+        incomingTask = nil
+        badgeCancellable = nil
+        db = nil
+        shownMsgIds.removeAll()
+        activeChatId = nil
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        UNUserNotificationCenter.current().setBadgeCount(0)
+    }
+
     // MARK: - Входящее по WS → in-app баннер
 
     private func handleIncomingWS(_ ev: SyncEngine.IncomingMessage) async {
