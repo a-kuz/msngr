@@ -9,9 +9,12 @@ public struct StorageLocation: Sendable, Equatable {
 
     public static let databaseFileName = "msngr.sqlite"
     public static let masterKeyFileName = ".masterkey"
+    public static let sessionFileName = "session.json"
 
     public var databaseURL: URL { root.appendingPathComponent(Self.databaseFileName) }
     public var masterKeyURL: URL { root.appendingPathComponent(Self.masterKeyFileName) }
+    /// Сессия клиента: userId, deviceId, токен.
+    public var sessionURL: URL { root.appendingPathComponent(Self.sessionFileName) }
     /// Аватары файлами: NSE читает байты локально, без сети.
     public var avatarsDir: URL { root.appendingPathComponent("avatars") }
     /// Исходники вложений, приложенных офлайн: переживают чистку Caches.
@@ -21,6 +24,7 @@ public struct StorageLocation: Sendable, Equatable {
     /// последний: его наличие в новом размещении означает, что перенос завершён.
     public static let movableItems = [
         masterKeyFileName,
+        sessionFileName,
         "media-outgoing",
         "avatars",
         databaseFileName + "-wal",
@@ -54,26 +58,31 @@ public enum AppContainer {
     /// старого размещения.
     public static func resolve(fileManager: FileManager = .default) -> StorageLocation {
         let legacy = legacyLocation(fileManager: fileManager)
-        guard let group = groupLocation(fileManager: fileManager) else {
-            prepare(legacy, fileManager: fileManager)
-            return legacy
+        if let group = groupLocation(fileManager: fileManager) {
+            do {
+                try fileManager.createDirectory(at: group.root, withIntermediateDirectories: true)
+                try StorageMigration.run(from: legacy, to: group, fileManager: fileManager)
+                try prepare(group, fileManager: fileManager)
+                return group
+            } catch {
+                MsngrLog.storage.error("контейнер группы недоступен, работаем в Application Support: \(error)")
+            }
         }
+        // Application Support в свежем контейнере не существует: каталог создаётся здесь,
+        // иначе запись мастер-ключа, БД и сессии упадёт на первом же обращении.
         do {
-            try fileManager.createDirectory(at: group.root, withIntermediateDirectories: true)
-            try StorageMigration.run(from: legacy, to: group, fileManager: fileManager)
+            try prepare(legacy, fileManager: fileManager)
         } catch {
-            prepare(legacy, fileManager: fileManager)
-            return legacy
+            MsngrLog.storage.error("не удалось подготовить \(legacy.root.path): \(error)")
         }
-        prepare(group, fileManager: fileManager)
-        return group
+        return legacy
     }
 
     /// Создаёт каталоги размещения и выставляет защиту данных, при которой файлы
     /// доступны расширению после первой разблокировки устройства.
-    public static func prepare(_ location: StorageLocation, fileManager: FileManager = .default) {
-        try? fileManager.createDirectory(at: location.root, withIntermediateDirectories: true)
-        try? fileManager.createDirectory(at: location.avatarsDir, withIntermediateDirectories: true)
+    public static func prepare(_ location: StorageLocation, fileManager: FileManager = .default) throws {
+        try fileManager.createDirectory(at: location.root, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: location.avatarsDir, withIntermediateDirectories: true)
         applyProtection(at: location.root, fileManager: fileManager)
         applyProtection(at: location.avatarsDir, fileManager: fileManager)
         for name in StorageLocation.movableItems {

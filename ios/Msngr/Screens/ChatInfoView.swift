@@ -62,7 +62,7 @@ struct ChatInfoView: View {
                     guard newTTL != model.chat?.ttlSeconds else { return }
                     var c = ContentPayload(kind: "disappearing")
                     c.ttlSeconds = newTTL
-                    Task { try? await app.engine.enqueue(content: c, chatId: model.chatId) }
+                    model.enqueue(c)
                 }
             }
 

@@ -9,6 +9,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     var onTapMedia: ((Int, UIView) -> Void)?
     var onTapLink: ((URL) -> Void)?
     var onTapReplyQuote: (() -> Void)?
+    var onToggleSelection: (() -> Void)?
 
     private let bubbleView = UIImageView()
     private let tailView = UIImageView()
@@ -30,6 +31,16 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private var panStartX: CGFloat = 0
     private let replyIcon = UIImageView(image: UIImage(systemName: "arrowshape.turn.up.left.fill"))
     private var replyTriggered = false
+
+    // мультивыбор
+    private let checkbox = SelectionCheckboxView()
+    private var selectionMode = false
+    private var gestures: [UIGestureRecognizer] = []
+    private var selectionTap: UITapGestureRecognizer!
+    /// сдвиг входящего баббла вправо, чтобы освободить место под чекбокс
+    static let selectionShift: CGFloat = 34
+
+    var messageId: String? { msg?.id }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -70,6 +81,10 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         replyIcon.alpha = 0
         contentView.addSubview(replyIcon)
 
+        checkbox.alpha = 0
+        checkbox.isUserInteractionEnabled = false
+        contentView.addSubview(checkbox)
+
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         pan.delegate = self
         contentView.addGestureRecognizer(pan)
@@ -95,6 +110,38 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         replyTap.require(toFail: longPress)
         replyTap.require(toFail: doubleTap)
         replyBar.addGestureRecognizer(replyTap)
+
+        // в режиме выбора работает только тап по строке: остальные жесты гасятся
+        gestures = [pan, doubleTap, longPress, tap, replyTap]
+        selectionTap = UITapGestureRecognizer(target: self, action: #selector(handleSelectionTap))
+        selectionTap.isEnabled = false
+        contentView.addGestureRecognizer(selectionTap)
+    }
+
+    @objc private func handleSelectionTap() {
+        onToggleSelection?()
+    }
+
+    /// Режим мультивыбора: чекбокс у строки, входящий баббл сдвигается вправо.
+    func setSelection(mode: Bool, selected: Bool, animated: Bool) {
+        selectionMode = mode
+        for g in gestures { g.isEnabled = !mode }
+        selectionTap.isEnabled = mode
+        checkbox.setChecked(selected, animated: animated)
+        applySelectionLayout(animated: animated)
+    }
+
+    private func applySelectionLayout(animated: Bool) {
+        guard let plan else { return }
+        let shift = (selectionMode && !plan.isOutgoing) ? Self.selectionShift : 0
+        let apply = {
+            self.bubbleView.frame = plan.bubbleFrame.offsetBy(dx: shift, dy: 0)
+            self.checkbox.center = CGPoint(x: 20, y: plan.bubbleFrame.midY)
+            self.checkbox.alpha = self.selectionMode ? 1 : 0
+        }
+        guard animated else { return apply() }
+        UIView.animate(withDuration: 0.24, delay: 0, usingSpringWithDamping: 0.9,
+                       initialSpringVelocity: 0, options: [.allowUserInteraction], animations: apply)
     }
 
     @objc private func handleReplyQuoteTap() {
@@ -296,6 +343,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             reactionViews.append(capsule)
         }
         configuredMsgId = msg.id
+        applySelectionLayout(animated: false)
     }
 
     private func configureMedia(msg: Message, plan: BubbleLayoutPlan) {
@@ -469,6 +517,56 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 }
 
 // MARK: - Компоненты
+
+/// Чекбокс мультивыбора слева от строки: пустой контур либо залитый акцентом
+/// кружок с галочкой.
+final class SelectionCheckboxView: UIView {
+    private let ring = UIView()
+    private let check = UIImageView(image: UIImage(systemName: "checkmark",
+                                                  withConfiguration: UIImage.SymbolConfiguration(pointSize: 12,
+                                                                                                 weight: .bold)))
+    private(set) var isChecked = false
+
+    init() {
+        super.init(frame: CGRect(x: 0, y: 0, width: 22, height: 22))
+        ring.frame = bounds
+        ring.layer.cornerRadius = 11
+        ring.layer.borderWidth = 1.5
+        ring.layer.borderColor = UIColor.secondaryLabel.withAlphaComponent(0.6).cgColor
+        addSubview(ring)
+        check.tintColor = .white
+        check.contentMode = .center
+        check.frame = bounds
+        check.alpha = 0
+        addSubview(check)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func setChecked(_ checked: Bool, animated: Bool) {
+        guard checked != isChecked || !animated else { return }
+        isChecked = checked
+        let apply = {
+            self.ring.backgroundColor = checked ? UIColor(Theme.accent) : .clear
+            self.ring.layer.borderColor = checked
+                ? UIColor(Theme.accent).cgColor
+                : UIColor.secondaryLabel.withAlphaComponent(0.6).cgColor
+            self.check.alpha = checked ? 1 : 0
+        }
+        guard animated else { return apply() }
+        UIView.animate(withDuration: 0.18, animations: apply)
+        if checked {
+            check.transform = CGAffineTransform(scaleX: 0.4, y: 0.4)
+            UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.6,
+                           initialSpringVelocity: 0.4) { self.check.transform = .identity }
+        }
+    }
+
+    override func traitCollectionDidChange(_ previous: UITraitCollection?) {
+        super.traitCollectionDidChange(previous)
+        setChecked(isChecked, animated: false)
+    }
+}
 
 /// Фоны бабблов: ресайзабл-картинка тела (без хвоста — правый/левый край
 /// тела не зависит от наличия хвоста) + отдельная маленькая картинка
@@ -662,8 +760,16 @@ extension MessageCell {
                 self?.onContextAction?(.copy)
             })
         }
+        if msg.text?.isEmpty == false {
+            items.append(.init(title: "Выделить текст", icon: "selection.pin.in.out") { [weak self] in
+                self?.onContextAction?(.selectText)
+            })
+        }
         items.append(.init(title: "Переслать", icon: "arrowshape.turn.up.right") { [weak self] in
             self?.onContextAction?(.forward)
+        })
+        items.append(.init(title: "Выбрать", icon: "checkmark.circle") { [weak self] in
+            self?.onContextAction?(.select)
         })
         items.append(.init(title: "Закрепить", icon: "pin") { [weak self] in
             self?.onContextAction?(.pin)
@@ -673,14 +779,9 @@ extension MessageCell {
                 self?.onContextAction?(.edit)
             })
         }
-        items.append(.init(title: "Удалить", icon: "trash", destructive: true, submenu: [
-            .init(title: "Удалить у меня", icon: "trash", destructive: true) { [weak self] in
-                self?.onContextAction?(.deleteForMe)
-            },
-            .init(title: "Удалить у всех", icon: "trash.fill", destructive: true) { [weak self] in
-                self?.onContextAction?(.deleteForAll)
-            },
-        ]))
+        items.append(.init(title: "Удалить", icon: "trash", destructive: true) { [weak self] in
+            self?.onContextAction?(.delete)
+        })
 
         let mine = msg.reactions.first(where: { $0.value.contains(OwnUser.id) })?.key
         MessageContextOverlay.present(over: bubbleView, in: window, isOutgoing: msg.isOutgoing,

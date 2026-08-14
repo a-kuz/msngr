@@ -135,8 +135,34 @@ final class StorageMigrationTests: XCTestCase {
 
     func testPrepareCreatesDirectories() throws {
         let fresh = StorageLocation(root: tmp.appendingPathComponent("fresh"))
-        AppContainer.prepare(fresh, fileManager: fm)
+        try AppContainer.prepare(fresh, fileManager: fm)
         XCTAssertTrue(fm.fileExists(atPath: fresh.root.path))
         XCTAssertTrue(fm.fileExists(atPath: fresh.avatarsDir.path))
+    }
+
+    /// Свежая установка: корня размещения ещё нет, запись сессии в него падает,
+    /// пока каталог не создан.
+    func testSessionWriteNeedsPreparedRoot() throws {
+        let fresh = StorageLocation(root: tmp.appendingPathComponent("fresh-session"))
+        let payload = Data(#"{"userId":"u1"}"#.utf8)
+
+        XCTAssertThrowsError(try payload.write(to: fresh.sessionURL))
+
+        try AppContainer.prepare(fresh, fileManager: fm)
+        try payload.write(to: fresh.sessionURL)
+        XCTAssertEqual(try Data(contentsOf: fresh.sessionURL), payload)
+    }
+
+    func testSessionMovesWithDatabase() throws {
+        try seed(old, userId: "alice")
+        let payload = Data(#"{"userId":"alice"}"#.utf8)
+        try payload.write(to: old.sessionURL)
+
+        let outcome = try StorageMigration.run(from: old, to: new, fileManager: fm)
+
+        guard case .migrated(let names) = outcome else { return XCTFail("ожидался перенос, получено \(outcome)") }
+        XCTAssertTrue(names.contains(StorageLocation.sessionFileName))
+        XCTAssertEqual(try Data(contentsOf: new.sessionURL), payload)
+        XCTAssertFalse(fm.fileExists(atPath: old.sessionURL.path))
     }
 }

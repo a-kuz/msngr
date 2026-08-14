@@ -36,22 +36,35 @@ final class AppState: ObservableObject {
 
     // MARK: - Session
 
-    private var sessionFileURL: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("session.json")
-    }
+    private var sessionFileURL: URL { Self.storage.sessionURL }
 
     private func loadSession() {
-        guard let data = try? Data(contentsOf: sessionFileURL),
-              let s = try? JSONDecoder().decode(Session.self, from: data) else { return }
+        let url = sessionFileURL
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        let s: Session
+        do {
+            s = try JSONDecoder().decode(Session.self, from: Data(contentsOf: url))
+        } catch {
+            MsngrLog.session.error("не удалось прочитать \(url.path): \(error)")
+            return
+        }
         session = s
         Task { await bootstrap(s) }
         if PinStore.hasPin() { isLocked = true }
     }
 
-    func saveSession(_ s: Session) {
+    /// Сохраняет сессию на диск и поднимает ядро. Ошибка записи означает, что
+    /// после перезапуска пользователь окажется на экране регистрации, поэтому
+    /// она пробрасывается вызывающему, а не глотается.
+    func saveSession(_ s: Session) throws {
+        // размещение готовится при первом обращении к storage, но каталог могли
+        // удалить снаружи, а запись в несуществующий каталог падает
+        try AppContainer.prepare(Self.storage)
+        // защита как у мастер-ключа: файл доступен после первой разблокировки,
+        // иначе запуск в фоне на заблокированном устройстве не увидит сессию
+        try JSONEncoder().encode(s).write(
+            to: sessionFileURL, options: [.completeFileProtectionUntilFirstUserAuthentication, .atomic])
         session = s
-        try? JSONEncoder().encode(s).write(to: sessionFileURL, options: .completeFileProtection)
         Task { await bootstrap(s) }
     }
 
