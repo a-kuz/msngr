@@ -29,7 +29,7 @@ final class MessageTextView: UIView {
         let mutable = NSMutableAttributedString(attributedString: attr)
         let full = NSRange(location: 0, length: mutable.length)
         mutable.addAttribute(.foregroundColor, value: color, range: full)
-        mutable.enumerateAttribute(.link, in: full) { value, range, _ in
+        mutable.enumerateAttribute(.msngrLink, in: full) { value, range, _ in
             guard value != nil else { return }
             mutable.addAttributes([.foregroundColor: linkColor,
                                    .underlineStyle: NSUnderlineStyle.single.rawValue], range: range)
@@ -80,16 +80,6 @@ final class MessageTextView: UIView {
         guard box.insetBy(dx: -3, dy: -3).contains(point) else { return nil }
         let index = manager.characterIndexForGlyph(at: glyph)
         guard index < storage.length else { return nil }
-        return storage.attribute(.link, at: index, effectiveRange: nil) as? URL
-    }
-
-    /// Есть ли в тексте хоть одна ссылка — чтобы не вешать распознавание тапа зря.
-    var hasLinks: Bool {
-        guard storage.length > 0 else { return false }
-        var found = false
-        storage.enumerateAttribute(.link, in: NSRange(location: 0, length: storage.length)) { value, _, stop in
-            if value != nil { found = true; stop.pointee = true }
-        }
-        return found
+        return storage.attribute(.msngrLink, at: index, effectiveRange: nil) as? URL
     }
 }

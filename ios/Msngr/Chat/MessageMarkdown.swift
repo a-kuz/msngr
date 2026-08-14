@@ -4,6 +4,9 @@ import MsngrCore
 extension NSAttributedString.Key {
     /// Диапазон, который рисуется подложкой блока кода.
     static let msngrCodeBlock = NSAttributedString.Key("msngrCodeBlock")
+    /// Ссылка (URL). Свой ключ вместо .link: системный красит текст в синий,
+    /// нечитаемый на исходящем баббле, — цвет задаёт ячейка.
+    static let msngrLink = NSAttributedString.Key("msngrLink")
 }
 
 /// Сборка NSAttributedString из мини-маркдауна: шрифты производятся от
@@ -56,7 +59,7 @@ enum MessageMarkdownRenderer {
             attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
         }
         if let link = span.link, let url = url(from: link) {
-            attrs[.link] = url
+            attrs[.msngrLink] = url
         }
         return NSAttributedString(string: span.text, attributes: attrs)
     }

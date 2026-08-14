@@ -225,11 +225,11 @@ final class BubbleLayoutTests: XCTestCase {
         XCTAssertEqual(codeFont, MessageMarkdownRenderer.codeFont)
     }
 
-    /// Ссылка получает атрибут .link — по нему ячейка открывает браузер.
+    /// Ссылка получает атрибут .msngrLink — по нему ячейка открывает браузер.
     func testLinkAttributePresent() {
         let attr = try! XCTUnwrap(plan("жми https://example.com сюда").text)
         var found: URL?
-        attr.enumerateAttribute(.link, in: NSRange(location: 0, length: attr.length)) { value, _, _ in
+        attr.enumerateAttribute(.msngrLink, in: NSRange(location: 0, length: attr.length)) { value, _, _ in
             if let url = value as? URL { found = url }
         }
         XCTAssertEqual(found, URL(string: "https://example.com"))
