@@ -66,12 +66,12 @@ enum BubbleLayout {
     }
 
     static func plan(for msg: Message, width: CGFloat, tightGap: Bool, showTail: Bool,
-                     showName: Bool, authorName: String?) -> BubbleLayoutPlan {
+                     showName: Bool, authorName: String?, replyAuthorName: String? = nil) -> BubbleLayoutPlan {
         let key = cacheKey(msg, width: width, tightGap: tightGap, showTail: showTail,
                            showName: showName, ownId: OwnUser.id)
         if let boxed = cache.object(forKey: key) { return boxed.plan }
         let p = compute(for: msg, width: width, tightGap: tightGap, showTail: showTail,
-                        showName: showName, authorName: authorName)
+                        showName: showName, authorName: authorName, replyAuthorName: replyAuthorName)
         cache.setObject(Box(p), forKey: key)
         return p
     }
@@ -81,7 +81,8 @@ enum BubbleLayout {
     static func clearCache() { cache.removeAllObjects() }
 
     private static func compute(for msg: Message, width: CGFloat, tightGap: Bool, showTail: Bool,
-                                showName: Bool, authorName: String?) -> BubbleLayoutPlan {
+                                showName: Bool, authorName: String?,
+                                replyAuthorName: String?) -> BubbleLayoutPlan {
         // защита от заниженной/завышенной ширины коллекции: баббл не шире экрана
         let safeWidth = min(width, UIScreen.main.bounds.width)
         let maxBubbleWidth = floor(safeWidth * Theme.bubbleMaxWidthRatio)
@@ -339,7 +340,8 @@ enum BubbleLayout {
             mediaFrame: mediaFrame, albumRects: albumRects,
             voiceFrame: voiceFrame,
             replyFrame: replyFrame,
-            replyAuthor: msg.replyTo?.authorId, replyText: msg.replyTo?.text,
+            replyAuthor: msg.replyTo != nil ? replyAuthorName : nil,
+            replyText: msg.replyTo.map(Self.replyPreviewText),
             forwardFrame: forwardFrame,
             forwardText: msg.forward.map { "Переслано от \($0.fromName)" },
             authorNameFrame: authorNameFrame, authorName: authorName,
@@ -350,6 +352,20 @@ enum BubbleLayout {
             timeString: timeString,
             edited: msg.edited,
             statusWidth: statusWidth)
+    }
+
+    /// Превью цитируемого сообщения в плашке reply: для медиа — иконка и
+    /// подпись вместо пустой строки, для текста — сам текст (или заглушка,
+    /// если он не сохранился).
+    static func replyPreviewText(_ reply: ReplyPreview) -> String {
+        switch MessageKind(rawValue: reply.kind) {
+        case .photo: return "📷 Фото"
+        case .video: return "🎥 Видео"
+        case .voice: return "🎤 Голосовое сообщение"
+        case .file: return "📎 " + (reply.text.isEmpty ? "Файл" : reply.text)
+        case .album: return "🖼 Альбом"
+        default: return reply.text.isEmpty ? "Сообщение" : reply.text
+        }
     }
 
     // MARK: - Текстовые замеры (TextKit)

@@ -313,6 +313,70 @@ final class BubbleLayoutTests: XCTestCase {
         assertReactionsInsideBubble(p)
     }
 
+    // MARK: - Цитата ответа (reply-плашка)
+
+    private func replyPlan(replyTo: ReplyPreview, replyAuthorName: String?) -> BubbleLayoutPlan {
+        var m = outgoing("Текст ответа")
+        m.replyTo = replyTo
+        return BubbleLayout.plan(for: m, width: width, tightGap: false, showTail: true,
+                                 showName: false, authorName: nil, replyAuthorName: replyAuthorName)
+    }
+
+    /// Автор цитаты — переданное имя (резолвится вызывающей стороной из user/participants),
+    /// а не сырой userId из replyTo.authorId.
+    func testReplyAuthorUsesResolvedName() {
+        let reply = ReplyPreview(msgId: "m1", authorId: "01KZXED9XMFKTKYDBVH30C", text: "привет", kind: "text")
+        let p = replyPlan(replyTo: reply, replyAuthorName: "Аня")
+        XCTAssertEqual(p.replyAuthor, "Аня")
+        XCTAssertNotEqual(p.replyAuthor, reply.authorId, "в цитате не должен показываться сырой userId")
+    }
+
+    /// Ответ на своё сообщение — автор цитаты «Вы».
+    func testReplyAuthorShowsYouForOwnMessage() {
+        let reply = ReplyPreview(msgId: "m1", authorId: "me", text: "моё сообщение", kind: "text")
+        let p = replyPlan(replyTo: reply, replyAuthorName: "Вы")
+        XCTAssertEqual(p.replyAuthor, "Вы")
+    }
+
+    /// Без цитаты replyAuthor не выставляется, даже если имя было бы известно.
+    func testReplyAuthorNilWithoutReplyTo() {
+        let p = BubbleLayout.plan(for: outgoing("без ответа"), width: width, tightGap: false,
+                                  showTail: true, showName: false, authorName: nil,
+                                  replyAuthorName: "Аня")
+        XCTAssertNil(p.replyAuthor)
+    }
+
+    /// Превью цитаты для нетекстовых сообщений — иконка и подпись, не пустая строка.
+    func testReplyPreviewTextForEachKind() {
+        XCTAssertEqual(BubbleLayout.replyPreviewText(
+            ReplyPreview(msgId: "1", authorId: "u", text: "Фото", kind: "photo")), "📷 Фото")
+        XCTAssertEqual(BubbleLayout.replyPreviewText(
+            ReplyPreview(msgId: "1", authorId: "u", text: "Видео", kind: "video")), "🎥 Видео")
+        XCTAssertEqual(BubbleLayout.replyPreviewText(
+            ReplyPreview(msgId: "1", authorId: "u", text: "Голосовое сообщение", kind: "voice")),
+            "🎤 Голосовое сообщение")
+        XCTAssertEqual(BubbleLayout.replyPreviewText(
+            ReplyPreview(msgId: "1", authorId: "u", text: "Договор.pdf", kind: "file")), "📎 Договор.pdf")
+        XCTAssertEqual(BubbleLayout.replyPreviewText(
+            ReplyPreview(msgId: "1", authorId: "u", text: "", kind: "album")), "🖼 Альбом")
+    }
+
+    /// Пустой сохранённый текст (файл без имени, отсутствующее превью) — заглушка,
+    /// а не пустая строка в баббле.
+    func testReplyPreviewTextFallsBackWhenEmpty() {
+        XCTAssertEqual(BubbleLayout.replyPreviewText(
+            ReplyPreview(msgId: "1", authorId: "u", text: "", kind: "file")), "📎 Файл")
+        XCTAssertEqual(BubbleLayout.replyPreviewText(
+            ReplyPreview(msgId: "1", authorId: "u", text: "", kind: "text")), "Сообщение")
+    }
+
+    /// План собирает итоговую строку превью через replyPreviewText, а не сырой replyTo.text.
+    func testPlanReplyTextUsesPreviewMapping() {
+        let reply = ReplyPreview(msgId: "1", authorId: "peer", text: "Видео", kind: "video")
+        let p = replyPlan(replyTo: reply, replyAuthorName: "Петя")
+        XCTAssertEqual(p.replyText, "🎥 Видео")
+    }
+
     /// Файл с реакциями: те же гарантии, что и для голосового.
     func testFileBubbleGrowsForReactions() {
         let base = mediaPlan(.file, [:])
