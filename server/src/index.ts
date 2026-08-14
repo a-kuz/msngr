@@ -397,17 +397,35 @@ app.get("/api/media/:id", async (c) => {
   return new Response(obj.body, { headers });
 });
 
-// аватары — не E2E, публичные
+// аватары — не E2E, публичные. Без ?chatId — свой профиль, с ним — аватар чата
+// (права те же, что у /chats/:id/settings: в группе только админ).
 app.post("/api/avatar", async (c) => {
   const { userId } = c.get("auth");
+  const chatId = c.req.query("chatId");
+  if (chatId) {
+    const sr = await convStub(c.env, chatId).fetch("https://do/state");
+    const sj = (await sr.json()) as { ok: boolean; state?: ChatState };
+    const me = sj.state?.members.find((m) => m.userId === userId);
+    if (!sj.ok || !me) return err("not_member", 403);
+    if (sj.state!.kind === "group" && me.role !== "admin") return err("not_admin", 403);
+  }
   const mediaId = "avatar-" + ulid();
   const body = c.req.raw.body;
   if (!body) return err("empty_body");
   await c.env.MEDIA.put(mediaId, body, {
     httpMetadata: { contentType: c.req.header("content-type") ?? "image/jpeg" },
   });
-  await c.env.DB.prepare("UPDATE users SET avatar_id = ? WHERE id = ?")
-    .bind(mediaId, userId).run();
+  if (chatId) {
+    const r = await convStub(c.env, chatId).fetch("https://do/settings", {
+      method: "POST",
+      body: JSON.stringify({ actor: userId, avatarId: mediaId }),
+    });
+    const rj = (await r.json()) as { ok: boolean; error?: string };
+    if (!rj.ok) return err(rj.error ?? "settings_failed", r.status);
+  } else {
+    await c.env.DB.prepare("UPDATE users SET avatar_id = ? WHERE id = ?")
+      .bind(mediaId, userId).run();
+  }
   return json({ ok: true, avatarId: mediaId });
 });
 
