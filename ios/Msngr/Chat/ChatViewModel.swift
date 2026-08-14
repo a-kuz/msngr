@@ -102,6 +102,9 @@ final class ChatViewModel: ObservableObject {
                     self.unreadMarker.becameObscured()
                 } else {
                     self.unreadMarker.becameActive()
+                    // пришедшее в фоне уже на экране — read receipt шлём сразу,
+                    // не дожидаясь следующего изменения БД
+                    self.markVisibleRead()
                 }
                 self.rebuildFeed()
             }
