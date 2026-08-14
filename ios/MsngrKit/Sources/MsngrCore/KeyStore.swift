@@ -61,7 +61,11 @@ public struct SharedFileMasterKey: MasterKeyProvider {
     let url: URL
 
     public init(containerURL: URL) {
-        self.url = containerURL.appendingPathComponent(".masterkey")
+        self.url = containerURL.appendingPathComponent(StorageLocation.masterKeyFileName)
+    }
+
+    public init(location: StorageLocation) {
+        self.url = location.masterKeyURL
     }
 
     public func masterKey() throws -> SymmetricKey {
