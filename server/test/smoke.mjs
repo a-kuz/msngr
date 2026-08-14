@@ -1,10 +1,14 @@
-// Интеграционный смоук: 2 пользователя, direct-чат, WS-обмен, receipts, sync, группа, пуши.
-// Пуш-проверки требуют, чтобы wrangler dev видел APNS_HOST=http://localhost:9871 (.dev.vars).
+// Интеграционный смоук: пользователи, direct-чат, WS-обмен, receipts, sync, группа,
+// блокировки, логаут, пуши.
+// Пуш-проверки требуют, чтобы wrangler dev видел APNS_HOST на порт приёмника смоука:
+// по умолчанию http://localhost:9871 (.dev.vars), иначе PUSH_PORT=<порт>.
 import http from "node:http";
 import WebSocket from "ws";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:8787";
 const WS_BASE = BASE.replace(/^http/, "ws");
+// Порт приёмника пушей: должен совпадать с APNS_HOST у проверяемого wrangler dev.
+const PUSH_PORT = Number(process.env.PUSH_PORT ?? 9871);
 let failures = 0;
 
 function check(name, cond, extra = "") {
@@ -12,8 +16,8 @@ function check(name, cond, extra = "") {
   else { failures++; console.log(`FAIL ${name} ${extra}`); }
 }
 
-async function api(path, { token, body, method } = {}) {
-  const res = await fetch(BASE + path, {
+async function apiRaw(path, { token, body, method } = {}) {
+  return fetch(BASE + path, {
     method: method ?? (body !== undefined ? "POST" : "GET"),
     headers: {
       ...(token ? { authorization: `Bearer ${token}` } : {}),
@@ -21,7 +25,10 @@ async function api(path, { token, body, method } = {}) {
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  return res.json();
+}
+
+async function api(path, opts) {
+  return (await apiRaw(path, opts)).json();
 }
 
 function fakeKeys(n) {
@@ -287,7 +294,51 @@ await cb4.waitFor((f) => f.t === "msg" && f.chatId === grp.chatId && f.seq === l
 const bulkGot = cb4.frames.filter((f) => f.t === "msg" && f.chatId === grp.chatId && f.seq > 1);
 check("sync backfill beyond 200", bulkGot.length === N, `got ${bulkGot.length}`);
 
-// 20. Пуш-путь: мини-приёмник вместо APNs на :9871 (куда указывает APNS_HOST в .dev.vars)
+// 20. Логаут и отзыв устройства
+const frank = await api("/api/register", { body: {
+  username: "frank_" + suffix, displayName: "Frank", ...fakeKeys("f") } });
+const sess0 = await api("/api/sessions", { token: frank.token });
+check("sessions lists current device", sess0.ok && sess0.sessions.length === 1
+  && sess0.sessions[0].deviceId === frank.deviceId && sess0.sessions[0].current === true,
+  JSON.stringify(sess0));
+
+const cf = new Client("frank", frank.token);
+await cf.connect();
+check("frank ws before logout", !!(await cf.waitFor((f) => f.t === "hello")));
+
+const out = await api("/api/logout", { token: frank.token, body: {} });
+check("logout ok", out.ok, JSON.stringify(out));
+
+const meAfter = await apiRaw("/api/me", { token: frank.token });
+check("revoked token rejected on api", meAfter.status === 401
+  && (await meAfter.json()).error === "unauthorized");
+
+// сервер шлёт close-фрейм 4401 сразу; TCP-хвост wrangler dev рвёт с задержкой,
+// поэтому проверяем, что сокет вышел из OPEN
+await new Promise((r) => setTimeout(r, 400));
+check("revoked token closes live socket", cf.ws.readyState !== 1,
+  `readyState=${cf.ws.readyState}`);
+
+const wsAfter = await new Promise((r) => {
+  const ws = new WebSocket(`${WS_BASE}/ws?token=${frank.token}`);
+  ws.on("open", () => { ws.close(); r("open"); });
+  ws.on("error", () => r("error"));
+});
+check("revoked token rejected on ws upgrade", wsAfter === "error");
+
+// отзыв конкретного устройства из списка
+const gina = await api("/api/register", { body: {
+  username: "gina_" + suffix, displayName: "Gina", ...fakeKeys("g") } });
+const alien = await api(`/api/sessions/${alice.deviceId}/revoke`, { token: gina.token, body: {} });
+check("cannot revoke foreign device", !alien.ok && alien.error === "device_not_found");
+const revoked = await api(`/api/sessions/${gina.deviceId}/revoke`, { token: gina.token, body: {} });
+check("revoke device by id", revoked.ok, JSON.stringify(revoked));
+const ginaAfter = await apiRaw("/api/me", { token: gina.token });
+check("revoked device token dead", ginaAfter.status === 401);
+const aliceStill = await api("/api/me", { token: alice.token });
+check("foreign device untouched", aliceStill.ok && aliceStill.user.id === alice.userId);
+
+// 21. Пуш-путь: мини-приёмник вместо APNs (порт из PUSH_PORT, туда же смотрит APNS_HOST)
 const pushes = [];
 const pushSrv = http.createServer((req, res) => {
   let data = "";
@@ -298,7 +349,7 @@ const pushSrv = http.createServer((req, res) => {
     res.end();
   });
 });
-await new Promise((r) => pushSrv.listen(9871, r));
+await new Promise((r) => pushSrv.listen(PUSH_PORT, r));
 
 async function waitPush(pred, ms = 4000) {
   const t0 = Date.now();

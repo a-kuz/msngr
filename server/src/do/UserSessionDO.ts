@@ -178,6 +178,24 @@ export class UserSessionDO implements DurableObject {
         return json({ ok: true });
       }
 
+      // токен устройства отозван: рвём его сокеты и убираем его APNs-токен
+      case "/revoke-device": {
+        const b = (await req.json()) as { deviceId: string };
+        for (const ws of this.sockets()) {
+          const att = ws.deserializeAttachment() as SocketAttachment | null;
+          if (att?.deviceId !== b.deviceId) continue;
+          try { ws.close(4401, "revoked"); } catch { /* уже закрыт */ }
+        }
+        const tokens =
+          (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
+        if (b.deviceId in tokens) {
+          delete tokens[b.deviceId];
+          await this.state.storage.put("apns", tokens);
+        }
+        if (this.sockets().length === 0) await this.broadcastPresence(false);
+        return json({ ok: true });
+      }
+
       case "/presence-info": {
         const lastSeen = (await this.state.storage.get<number>("lastSeen")) ?? 0;
         const online = this.presenceFresh();
