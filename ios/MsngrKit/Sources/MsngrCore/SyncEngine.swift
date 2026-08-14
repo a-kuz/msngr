@@ -220,6 +220,8 @@ public actor SyncEngine {
                 // пользователей дотягиваются, иначе UI показывает «…» до рестарта
                 await fetchMissingUsers(state.members.map(\.userId))
             }
+        case "error":
+            await applyServerError(f)
         case "deleted":
             if let chatId = f.chatId, let msgIds = f.msgIds {
                 try? await db.write { dbc in
@@ -560,7 +562,8 @@ public actor SyncEngine {
         try? await db.write { dbc in
             try dbc.execute(
                 sql: """
-                UPDATE message SET msgId = ?, seq = ?, serverTs = ?, status = MAX(status, 1)
+                UPDATE message SET msgId = ?, seq = ?, serverTs = ?, status = MAX(status, 1),
+                  failReason = NULL
                 WHERE clientMsgId = ?
                 """,
                 arguments: [msgId, seq, f.ts, clientMsgId])
@@ -574,6 +577,20 @@ public actor SyncEngine {
                   lastActivityAt = ? WHERE id = ?
                 """,
                 arguments: [seq, seq, seq, seq, f.ts ?? Date().timeIntervalSince1970, chatId])
+        }
+    }
+
+    /// Отказ сервера по нашему фрейму. Отправка помечается неотправленной с кодом
+    /// причины и уходит из outbox: то, что сервер отверг, повторять бессмысленно —
+    /// иначе сообщение навсегда остаётся в состоянии «отправляется».
+    private func applyServerError(_ f: WSIncoming) async {
+        guard let clientMsgId = f.clientMsgId else { return }
+        let reason = f.error ?? SendFailure.sendFailed
+        try? await db.write { dbc in
+            try dbc.execute(sql: "DELETE FROM outbox WHERE clientMsgId = ?", arguments: [clientMsgId])
+            try dbc.execute(
+                sql: "UPDATE message SET status = ?, failReason = ? WHERE clientMsgId = ?",
+                arguments: [MessageStatus.failed.rawValue, reason, clientMsgId])
         }
     }
 
@@ -672,8 +689,9 @@ public actor SyncEngine {
                     try? await db.write { dbc in
                         try dbc.execute(sql: "UPDATE outbox SET state = 'blocked' WHERE clientMsgId = ?",
                                         arguments: [item.clientMsgId])
-                        try dbc.execute(sql: "UPDATE message SET status = -1 WHERE clientMsgId = ?",
-                                        arguments: [item.clientMsgId])
+                        try dbc.execute(
+                            sql: "UPDATE message SET status = -1, failReason = ? WHERE clientMsgId = ?",
+                            arguments: [SendFailure.identityChanged, item.clientMsgId])
                     }
                     await insertSystemMessage(chatId: item.chatId, text: "identity_changed:\(uid)")
                     continue
@@ -686,8 +704,9 @@ public actor SyncEngine {
                 let attempts = item.attempts + 1
                 if attempts > 10 {
                     try? await db.write { dbc in
-                        try dbc.execute(sql: "UPDATE message SET status = -1 WHERE clientMsgId = ?",
-                                        arguments: [item.clientMsgId])
+                        try dbc.execute(
+                            sql: "UPDATE message SET status = -1, failReason = ? WHERE clientMsgId = ?",
+                            arguments: [SendFailure.tooManyAttempts, item.clientMsgId])
                         try dbc.execute(sql: "DELETE FROM outbox WHERE clientMsgId = ?",
                                         arguments: [item.clientMsgId])
                     }
@@ -894,7 +913,7 @@ public actor SyncEngine {
         try? e2ee.store.acceptChangedKey(userId: peerUserId)
         try? await db.write { dbc in
             try dbc.execute(sql: """
-                UPDATE message SET status = 0 WHERE clientMsgId IN
+                UPDATE message SET status = 0, failReason = NULL WHERE clientMsgId IN
                 (SELECT clientMsgId FROM outbox WHERE chatId = ? AND state = 'blocked')
                 """, arguments: [chatId])
             try dbc.execute(sql: "UPDATE outbox SET state = 'ready' WHERE chatId = ? AND state = 'blocked'",
