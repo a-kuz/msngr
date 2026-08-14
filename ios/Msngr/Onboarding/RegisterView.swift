@@ -69,16 +69,11 @@ struct RegisterView: View {
         }
     }
 
-    private var usernameValid: Bool {
-        username.range(of: "^[a-zA-Z0-9_]{3,32}$", options: .regularExpression) != nil
-    }
+    private var usernameValid: Bool { RegistrationValidator.isValidUsername(username) }
 
-    private var trimmedName: String {
-        displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
+    private var trimmedName: String { RegistrationValidator.trimmedName(displayName) }
 
-    /// Имя обязательно: минимум 3 символа после обрезки пробелов.
-    private var nameValid: Bool { trimmedName.count >= 3 }
+    private var nameValid: Bool { RegistrationValidator.isValidName(displayName) }
 
     private var formValid: Bool { usernameValid && nameValid }
 
