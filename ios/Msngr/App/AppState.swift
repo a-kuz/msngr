@@ -55,29 +55,26 @@ final class AppState: ObservableObject {
         Task { await bootstrap(s) }
     }
 
-    /// Общий с NSE контейнер (app group) для БД и ключей.
-    static var sharedContainer: URL {
-        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: AppGroup.identifier)
-            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-    }
+    /// Общее с NSE размещение данных: контейнер app group, куда при первом запуске
+    /// переезжает содержимое Application Support.
+    static let storage: StorageLocation = AppContainer.resolve()
 
     private func bootstrap(_ s: Session) async {
         OwnUser.id = s.userId
         // NSE читает эти значения из shared defaults
         UserDefaults(suiteName: AppGroup.identifier)?.set(s.userId, forKey: "ownUserId")
         do {
-            let support = Self.sharedContainer
-            try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
-            db = try AppDatabase.open(at: support.appendingPathComponent("msngr.sqlite"))
+            let storage = Self.storage
+            db = try AppDatabase.open(at: storage.databaseURL)
             api = APIClient(baseURL: Self.httpBase, token: s.token)
-            store = try IdentityStore(db: db, masterKeyProvider: SharedFileMasterKey(containerURL: support))
+            store = try IdentityStore(db: db, masterKeyProvider: SharedFileMasterKey(location: storage))
             e2ee = E2EEManager(store: store, api: api, ownUserId: s.userId, ownDeviceId: s.deviceId)
             // pendingDir — в постоянном контейнере: исходники офлайн-вложений
             // должны пережить чистку Caches до выгрузки
             media = MediaManager(api: api,
                                  cacheDir: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
                                      .appendingPathComponent("media"),
-                                 pendingDir: support.appendingPathComponent("media-outgoing"))
+                                 pendingDir: storage.pendingMediaDir)
             var comps = URLComponents(url: Self.httpBase.appendingPathComponent("ws"), resolvingAgainstBaseURL: false)!
             comps.scheme = Self.httpBase.scheme == "https" ? "wss" : "ws"
             comps.queryItems = [URLQueryItem(name: "token", value: s.token)]

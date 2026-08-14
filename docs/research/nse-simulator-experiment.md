@@ -125,11 +125,12 @@ group.ai.enface.msngr  …/data/Containers/Shared/AppGroup/A560C895-…
 симуляторных сборках показывают пустой словарь. Реальные entitlements лежат
 рядом в `*-Simulated.xcent` (и `.der`), их и читает installd.
 
-В репозиторий entitlement по итогам не заведён: включение группы меняет
-`AppState.sharedContainer` с Application Support на контейнер группы, а вместе
-с ним переезжают `msngr.sqlite` и `.masterkey`. Для уже установленных сборок
-это выглядит как чистая установка со сменой identity-ключей. Заводить нужно
-одним куском с переносом файлов, отдельной задачей.
+Entitlement заведён вместе с переносом файлов (`StorageLocation`,
+`StorageMigration` в MsngrCore): включение группы меняет корень хранилища с
+Application Support на контейнер группы, а вместе с ним переезжают
+`msngr.sqlite` и `.masterkey`. Без переноса для уже установленных сборок это
+выглядело бы как чистая установка со сменой identity-ключей; живой апгрейд
+проверен в `docs/qa/runs/2026-08-14-appgroup-run.md`.
 
 Мастер-ключ, которым NSE будет расшифровывать превью, хранится файлом
 `.masterkey` в контейнере app group (`SharedFileMasterKey`,
