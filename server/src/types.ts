@@ -38,6 +38,8 @@ export type ServerFrame =
   | { t: "presence"; userId: string; online: boolean; lastSeen: number }
   | { t: "chat"; chatId: string; event: string; state: ChatState }
   | { t: "deleted"; chatId: string; msgIds: string[]; forAll: boolean; by: string }
+  /// отказ по клиентскому фрейму: error — машиночитаемый код
+  | { t: "error"; error: string; chatId?: string; clientMsgId?: string }
   | { t: "pong" };
 
 export interface ChatMember {
@@ -75,6 +77,9 @@ export interface StoredMsg {
   service?: boolean;
   deleted?: boolean;
   deletedBy?: string;
+  /// userId получателя, который заблокировал автора: этому участнику сообщение
+  /// не рассылается и не отдаётся в истории
+  blockedFor?: string;
 }
 
 export interface AuthCtx {

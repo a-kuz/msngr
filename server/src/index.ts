@@ -301,6 +301,7 @@ app.get("/api/chats/:id/history", async (c) => {
   if (!sj.ok || !sj.state?.members.some((m) => m.userId === userId))
     return err("not_member", 403);
   const qs = new URL(c.req.url).searchParams;
+  qs.set("userId", userId);
   const r = await convStub(c.env, chatId).fetch(
     `https://do/history?${qs.toString()}`
   );
@@ -507,6 +508,9 @@ app.post("/api/block", async (c) => {
       "DELETE FROM blocks WHERE user_id = ? AND blocked_id = ?"
     ).bind(userId, b.userId).run();
   }
+  // сбросить кэш блокировок в direct-чате пары (чат может ещё не существовать)
+  await convStub(c.env, directChatName(userId, b.userId))
+    .fetch("https://do/block-changed", { method: "POST" });
   return json({ ok: true });
 });
 

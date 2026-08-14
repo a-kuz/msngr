@@ -314,6 +314,11 @@ export class UserSessionDO implements DurableObject {
             t: "sent", chatId: frame.chatId, clientMsgId: frame.clientMsgId,
             msgId: r.msgId, seq: r.seq!, ts: r.ts!,
           });
+        } else {
+          this.send(ws, {
+            t: "error", error: r.error ?? "send_failed",
+            chatId: frame.chatId, clientMsgId: frame.clientMsgId,
+          });
         }
         return;
       }
@@ -369,12 +374,14 @@ export class UserSessionDO implements DurableObject {
           let cursor = lastSeq;
           for (;;) {
             const res = await this.convStub(chatId).fetch(
-              `https://do/history?fromSeq=${cursor}&limit=${BATCH}`
+              `https://do/history?fromSeq=${cursor}&limit=${BATCH}&userId=${userId}`
             );
-            const r = (await res.json()) as { ok: boolean; msgs?: Array<Record<string, unknown>> };
-            if (!r.ok || !r.msgs?.length) break;
-            for (const m of r.msgs) {
-              cursor = m.seq as number;
+            const r = (await res.json()) as {
+              ok: boolean; msgs?: Array<Record<string, unknown>>;
+              scanned?: number; lastScannedSeq?: number | null;
+            };
+            if (!r.ok || !r.scanned) break;
+            for (const m of r.msgs ?? []) {
               // тумбстоуны уходят deleted-фреймами ниже
               if (m.deleted) continue;
               this.send(ws, {
@@ -385,7 +392,11 @@ export class UserSessionDO implements DurableObject {
                 ...(m.service ? { service: true } : {}),
               });
             }
-            if (r.msgs.length < BATCH) break;
+            // курсор двигается по просмотренным записям, а не по отданным:
+            // страница, целиком отфильтрованная блокировкой, не должна
+            // останавливать доигрывание
+            cursor = r.lastScannedSeq ?? cursor;
+            if (r.scanned < BATCH) break;
           }
           // тумбстоуны и read/delivered-марки, которые случились пока клиент был офлайн
           const er = await this.convStub(chatId).fetch("https://do/events");
