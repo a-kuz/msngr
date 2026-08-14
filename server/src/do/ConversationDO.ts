@@ -203,9 +203,11 @@ export class ConversationDO implements DurableObject {
       case "/events": {
         // тумбстоуны удалённых сообщений и текущие read/delivered-марки —
         // для доигрывания при sync после офлайна
+        const viewer = url.searchParams.get("userId");
         const deleted: Array<{ msgId: string; by: string }> = [];
         for (const [, m] of await this.state.storage.list<StoredMsg>({ prefix: "msg:" })) {
-          if (m.deleted) deleted.push({ msgId: m.msgId, by: m.deletedBy ?? m.from });
+          if (!m.deleted || m.blockedFor === viewer) continue;
+          deleted.push({ msgId: m.msgId, by: m.deletedBy ?? m.from });
         }
         const readMarks =
           (await this.state.storage.get<Record<string, number>>("readMarks")) ?? {};
