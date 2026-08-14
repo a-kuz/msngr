@@ -153,7 +153,7 @@ final class MessagesViewController: UIViewController {
             items = newItems
             collectionView.reloadData()
             // своё новое сообщение внизу обязано стать видимым и на reload-пути
-            if case .message(let m, _, _, _, _)? = newItems.first, m.isOutgoing,
+            if case .message(let m, _, _, _, _, _)? = newItems.first, m.isOutgoing,
                oldIndex[newIds[0]] == nil {
                 collectionView.layoutIfNeeded()
                 collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.contentInset.top), animated: false)
@@ -177,7 +177,7 @@ final class MessagesViewController: UIViewController {
         // новое сообщение приходит в item 0 (низ инвертированного списка)
         let newBottom: (id: String, outgoing: Bool)? = {
             guard inserts.contains(where: { $0.item == 0 }),
-                  case .message(let m, _, _, _, _) = newItems[0] else { return nil }
+                  case .message(let m, _, _, _, _, _) = newItems[0] else { return nil }
             return (m.id, m.isOutgoing)
         }()
 
@@ -230,11 +230,12 @@ final class MessagesViewController: UIViewController {
     private func refreshItem(at index: Int, item: ChatFeedItem) {
         let indexPath = IndexPath(item: index, section: 0)
         switch item {
-        case .message(let msg, let tightGap, let showTail, let showName, let authorName)
+        case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName)
             where msg.kind != .system:
             if let cell = collectionView.cellForItem(at: indexPath) as? MessageCell {
                 let plan = BubbleLayout.plan(for: msg, width: collectionView.bounds.width, tightGap: tightGap,
-                                             showTail: showTail, showName: showName, authorName: authorName)
+                                             showTail: showTail, showName: showName, authorName: authorName,
+                                             replyAuthorName: replyAuthorName)
                 if abs(cell.bounds.height - plan.cellHeight) < 0.5 {
                     configureMessageCell(cell, msg: msg, plan: plan)
                     return
@@ -279,7 +280,7 @@ final class MessagesViewController: UIViewController {
 
     private func contentEqual(_ a: ChatFeedItem, _ b: ChatFeedItem) -> Bool {
         switch (a, b) {
-        case let (.message(m1, t1, s1, _, _), .message(m2, t2, s2, _, _)):
+        case let (.message(m1, t1, s1, _, _, _), .message(m2, t2, s2, _, _, _)):
             return m1 == m2 && t1 == t2 && s1 == s2
         case let (.dateSeparator(_, l1), .dateSeparator(_, l2)):
             return l1 == l2
@@ -317,7 +318,7 @@ final class MessagesViewController: UIViewController {
     /// а ссылаются на них (цитата, закреп) серверным msgId.
     static func index(ofMsgId msgId: String, in items: [ChatFeedItem]) -> Int? {
         items.firstIndex { item in
-            guard case .message(let m, _, _, _, _) = item else { return false }
+            guard case .message(let m, _, _, _, _, _) = item else { return false }
             return m.id == msgId || m.msgId == msgId
         }
     }
@@ -349,7 +350,7 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "unread", for: indexPath) as! UnreadMarkerCell
             cell.configure(count: count)
             return cell
-        case .message(let msg, let tightGap, let showTail, let showName, let authorName):
+        case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName):
             if msg.kind == .system {
                 let cell = cv.dequeueReusableCell(withReuseIdentifier: "system", for: indexPath) as! SystemCell
                 cell.configure(msg)
@@ -357,7 +358,8 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             }
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "msg", for: indexPath) as! MessageCell
             let plan = BubbleLayout.plan(for: msg, width: cv.bounds.width, tightGap: tightGap,
-                                         showTail: showTail, showName: showName, authorName: authorName)
+                                         showTail: showTail, showName: showName, authorName: authorName,
+                                         replyAuthorName: replyAuthorName)
             configureMessageCell(cell, msg: msg, plan: plan)
             // ячейка оригинала создаётся уже по ходу скролла к нему — вспышка ждала её
             if let id = pendingHighlightId, id == msg.id || id == msg.msgId {
@@ -375,12 +377,13 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             return CGSize(width: cv.bounds.width, height: 32)
         case .unreadMarker:
             return CGSize(width: cv.bounds.width, height: 36)
-        case .message(let msg, let tightGap, let showTail, let showName, let authorName):
+        case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName):
             if msg.kind == .system {
                 return CGSize(width: cv.bounds.width, height: 30)
             }
             let plan = BubbleLayout.plan(for: msg, width: cv.bounds.width, tightGap: tightGap,
-                                         showTail: showTail, showName: showName, authorName: authorName)
+                                         showTail: showTail, showName: showName, authorName: authorName,
+                                         replyAuthorName: replyAuthorName)
             return CGSize(width: cv.bounds.width, height: plan.cellHeight)
         }
     }
