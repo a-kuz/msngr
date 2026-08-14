@@ -294,7 +294,93 @@ await cb4.waitFor((f) => f.t === "msg" && f.chatId === grp.chatId && f.seq === l
 const bulkGot = cb4.frames.filter((f) => f.t === "msg" && f.chatId === grp.chatId && f.seq > 1);
 check("sync backfill beyond 200", bulkGot.length === N, `got ${bulkGot.length}`);
 
-// 20. Логаут и отзыв устройства
+// 20. Блокировка внутри существующего чата
+const henry = await api("/api/register", { body: {
+  username: "henry_" + suffix, displayName: "Henry", ...fakeKeys("h") } });
+const iris = await api("/api/register", { body: {
+  username: "iris_" + suffix, displayName: "Iris", ...fakeKeys("i") } });
+const bchat = await api("/api/chats", { token: henry.token,
+  body: { kind: "direct", memberIds: [iris.userId] } });
+check("block: chat created", bchat.ok, JSON.stringify(bchat));
+await api(`/api/chats/${bchat.chatId}/accept`, { token: iris.token, body: {} });
+
+const ch = new Client("henry", henry.token);
+const ci = new Client("iris", iris.token);
+await ch.connect(); await ci.connect();
+
+// до блокировки обмен идёт как обычно
+ch.send({ t: "send", chatId: bchat.chatId, clientMsgId: "cm-b0", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const b0 = await ch.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-b0");
+check("block: msg before block delivered",
+  !!(await ci.waitFor((f) => f.t === "msg" && f.msgId === b0.msgId)));
+
+// Iris блокирует Henry
+check("block: applied", (await api("/api/block", { token: iris.token,
+  body: { userId: henry.userId, blocked: true } })).ok);
+
+// (а) Henry пишет: ack приходит как обычно, до Iris ничего не доходит
+ch.send({ t: "send", chatId: bchat.chatId, clientMsgId: "cm-b1", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const b1 = await ch.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-b1");
+check("block: sender still gets sent ack", !!b1 && b1.seq === b0.seq + 1, JSON.stringify(b1));
+check("block: no error frame to sender",
+  !ch.frames.some((f) => f.t === "error" && f.clientMsgId === "cm-b1"));
+check("block: msg not delivered",
+  !(await ci.waitFor((f) => f.t === "msg" && f.msgId === b1.msgId, 1200)));
+check("block: own echo still delivered",
+  !!(await ch.waitFor((f) => f.t === "msg" && f.msgId === b1.msgId)));
+
+// (б) в истории блокирующего заблокированного сообщения нет, у автора — есть
+const irisHist = await api(`/api/chats/${bchat.chatId}/history?fromSeq=0`, { token: iris.token });
+check("block: hidden from blocker history",
+  !irisHist.msgs.some((m) => m.msgId === b1.msgId)
+  && irisHist.msgs.some((m) => m.msgId === b0.msgId), JSON.stringify(irisHist.msgs.length));
+const henryHist = await api(`/api/chats/${bchat.chatId}/history?fromSeq=0`, { token: henry.token });
+check("block: visible in sender history",
+  henryHist.msgs.some((m) => m.msgId === b1.msgId));
+
+// (в) sync блокирующего не доигрывает заблокированное
+const ci2 = new Client("iris2", iris.token);
+await ci2.connect();
+ci2.send({ t: "sync", cursors: { [bchat.chatId]: 0 } });
+await ci2.waitFor((f) => f.t === "msg" && f.msgId === b0.msgId);
+await new Promise((r) => setTimeout(r, 500));
+check("block: sync skips blocked msg",
+  !ci2.frames.some((f) => f.t === "msg" && f.msgId === b1.msgId));
+
+// (г) квитанции и typing заблокированного до блокирующего не доходят
+ch.send({ t: "read", chatId: bchat.chatId, upToSeq: b1.seq });
+ch.send({ t: "typing", chatId: bchat.chatId, kind: "text" });
+await new Promise((r) => setTimeout(r, 700));
+check("block: no receipt to blocker",
+  !ci.frames.some((f) => f.t === "receipt" && f.by === henry.userId));
+check("block: no typing to blocker",
+  !ci.frames.some((f) => f.t === "typing" && f.from === henry.userId));
+
+// (д) блокирующий пишет заблокированному: явный машиночитаемый отказ
+ci.send({ t: "send", chatId: bchat.chatId, clientMsgId: "cm-b2", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const bErr = await ci.waitFor((f) => f.t === "error" && f.clientMsgId === "cm-b2");
+check("block: blocker gets error code", !!bErr && bErr.error === "blocked", JSON.stringify(bErr));
+check("block: blocker msg not delivered",
+  !(await ch.waitFor((f) => f.t === "msg" && f.from === iris.userId, 1200)));
+
+// (е) разблокировка возвращает доставку; сообщения периода блокировки остаются скрытыми
+check("block: released", (await api("/api/block", { token: iris.token,
+  body: { userId: henry.userId, blocked: false } })).ok);
+ch.send({ t: "send", chatId: bchat.chatId, clientMsgId: "cm-b3", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const b3 = await ch.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-b3");
+check("block: delivery resumes after unblock",
+  !!(await ci.waitFor((f) => f.t === "msg" && f.msgId === b3.msgId)));
+const irisHist2 = await api(`/api/chats/${bchat.chatId}/history?fromSeq=0`, { token: iris.token });
+check("block: blocked msg stays hidden after unblock",
+  !irisHist2.msgs.some((m) => m.msgId === b1.msgId)
+  && irisHist2.msgs.some((m) => m.msgId === b3.msgId));
+ch.ws.close(); ci.ws.close(); ci2.ws.close();
+
+// 21. Логаут и отзыв устройства
 const frank = await api("/api/register", { body: {
   username: "frank_" + suffix, displayName: "Frank", ...fakeKeys("f") } });
 const sess0 = await api("/api/sessions", { token: frank.token });
@@ -338,7 +424,7 @@ check("revoked device token dead", ginaAfter.status === 401);
 const aliceStill = await api("/api/me", { token: alice.token });
 check("foreign device untouched", aliceStill.ok && aliceStill.user.id === alice.userId);
 
-// 21. Пуш-путь: мини-приёмник вместо APNs (порт из PUSH_PORT, туда же смотрит APNS_HOST)
+// 22. Пуш-путь: мини-приёмник вместо APNs (порт из PUSH_PORT, туда же смотрит APNS_HOST)
 const pushes = [];
 const pushSrv = http.createServer((req, res) => {
   let data = "";
