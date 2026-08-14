@@ -276,9 +276,13 @@ final class MessagesViewController: UIViewController {
         return true
     }
 
+    private func index(ofMsgId msgId: String) -> Int? {
+        Self.index(ofMsgId: msgId, in: items)
+    }
+
     /// Позиция сообщения в ленте: свои сообщения лежат под clientMsgId,
     /// а ссылаются на них (цитата, закреп) серверным msgId.
-    private func index(ofMsgId msgId: String) -> Int? {
+    static func index(ofMsgId msgId: String, in items: [ChatFeedItem]) -> Int? {
         items.firstIndex { item in
             guard case .message(let m, _, _, _, _) = item else { return false }
             return m.id == msgId || m.msgId == msgId
