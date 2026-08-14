@@ -9,6 +9,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     var onTapMedia: ((Int, UIView) -> Void)?
 
     private let bubbleView = UIImageView()
+    private let tailView = UIImageView()
     private let textLabel = UILabel()
     private let nameLabel = UILabel()
     private let forwardLabel = UILabel()
@@ -34,6 +35,11 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
         bubbleView.isUserInteractionEnabled = true
         contentView.addSubview(bubbleView)
+        // хвостик — subview тела: наследует его transform/alpha при анимациях
+        // (появление, swipe-to-reply, «вылет» при отправке) без лишнего кода;
+        // clipsToBounds у bubbleView не включён, так что вылет за пределы
+        // тела (сам хвост) не обрезается
+        bubbleView.addSubview(tailView)
 
         textLabel.numberOfLines = 0
         textLabel.font = BubbleLayout.textFont
@@ -130,8 +136,23 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         self.plan = plan
 
         bubbleView.frame = plan.bubbleFrame
-        bubbleView.image = BubbleBackground.image(outgoing: plan.isOutgoing, tail: plan.showTail,
-                                                  mediaOnly: plan.statusOnMedia)
+        bubbleView.image = BubbleBackground.image(outgoing: plan.isOutgoing, mediaOnly: plan.statusOnMedia)
+
+        // хвостик — отдельная картинка у нижнего угла тела, торчит за его
+        // пределы; тело (закруглённый прямоугольник) от showTail не зависит,
+        // поэтому правый/левый край баббла не сдвигается при появлении хвоста
+        if plan.showTail && !plan.statusOnMedia {
+            tailView.isHidden = false
+            tailView.image = BubbleBackground.tailImage(outgoing: plan.isOutgoing)
+            let anchorX = BubbleBackground.tailAnchorX(outgoing: plan.isOutgoing)
+            let cornerX: CGFloat = plan.isOutgoing ? plan.bubbleFrame.width : 0
+            tailView.frame = CGRect(x: cornerX - anchorX,
+                                    y: plan.bubbleFrame.height - BubbleBackground.tailAnchorY,
+                                    width: BubbleBackground.tailCanvasSize.width,
+                                    height: BubbleBackground.tailCanvasSize.height)
+        } else {
+            tailView.isHidden = true
+        }
 
         // текст
         if let tf = plan.textFrame, let text = plan.text {
@@ -385,15 +406,24 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
 // MARK: - Компоненты
 
-/// Фоны бабблов: ресайзабл-картинки с хвостиком, без offscreen-rendering.
+/// Фоны бабблов: ресайзабл-картинка тела (без хвоста — правый/левый край
+/// тела не зависит от наличия хвоста) + отдельная маленькая картинка
+/// хвоста, наложенная поверх тела и торчащая за его пределы.
 enum BubbleBackground {
     private static var cache: [String: UIImage] = [:]
+    private static var tailCache: [String: UIImage] = [:]
+
+    /// Холст хвоста и точка угла тела баббла внутри этого холста: см. tailImage.
+    /// Публичные — MessageCell позиционирует tailView теми же числами.
+    static let tailCanvasSize = CGSize(width: 20, height: 18)
+    static let tailAnchorY: CGFloat = 16
+    static func tailAnchorX(outgoing: Bool) -> CGFloat { outgoing ? 12 : 8 }
 
     /// Цвета бабблов запечены в картинки — при смене палитры кэш сбрасывается.
-    static func clearCache() { cache.removeAll() }
+    static func clearCache() { cache.removeAll(); tailCache.removeAll() }
 
-    static func image(outgoing: Bool, tail: Bool, mediaOnly: Bool) -> UIImage {
-        let key = "\(outgoing)|\(tail)|\(mediaOnly)|\(UITraitCollection.current.userInterfaceStyle.rawValue)"
+    static func image(outgoing: Bool, mediaOnly: Bool) -> UIImage {
+        let key = "\(outgoing)|\(mediaOnly)|\(UITraitCollection.current.userInterfaceStyle.rawValue)"
         if let img = cache[key] { return img }
         let size = CGSize(width: 44, height: 40)
         let img = UIGraphicsImageRenderer(size: size).image { ctx in
@@ -403,23 +433,41 @@ enum BubbleBackground {
             let path = UIBezierPath(roundedRect: rect, cornerRadius: Theme.bubbleCorner)
             color.setFill()
             path.fill()
-            if tail && !mediaOnly {
-                // хвостик снизу у соответствующего края
-                let tailPath = UIBezierPath()
-                let x: CGFloat = outgoing ? size.width - 2 : 2
-                let dir: CGFloat = outgoing ? 1 : -1
-                tailPath.move(to: CGPoint(x: x, y: size.height - 14))
-                tailPath.addQuadCurve(to: CGPoint(x: x + dir * 6, y: size.height - 1),
-                                      controlPoint: CGPoint(x: x, y: size.height - 5))
-                tailPath.addQuadCurve(to: CGPoint(x: x - dir * 8, y: size.height - 4),
-                                      controlPoint: CGPoint(x: x - dir * 2, y: size.height - 1))
-                tailPath.close()
-                color.setFill()
-                tailPath.fill()
-            }
         }
         .resizableImage(withCapInsets: UIEdgeInsets(top: 19, left: 21, bottom: 19, right: 21))
         cache[key] = img
+        return img
+    }
+
+    /// Хвостик — маленькая нерастягиваемая картинка, накладывается поверх тела
+    /// как отдельный subview у соответствующего нижнего угла. Холст с запасом
+    /// вокруг кривой, чтобы внешняя часть хвоста не обрезалась по краю; точка
+    /// (tailAnchorX, tailAnchorY) — угол тела баббла, к которому хвост крепится.
+    static func tailImage(outgoing: Bool) -> UIImage {
+        let key = "\(outgoing)|\(UITraitCollection.current.userInterfaceStyle.rawValue)"
+        if let img = tailCache[key] { return img }
+        let size = tailCanvasSize
+        let anchorX = tailAnchorX(outgoing: outgoing)
+        // старые координаты хвоста были рассчитаны для холста тела 44x40
+        // (правый нижний угол в (44,40)); переносим их на холст хвоста тем же
+        // сдвигом, которым угол тела (44,40) или (0,40) переезжает в (anchorX, tailAnchorY)
+        let dx = anchorX - (outgoing ? 44 : 0)
+        let dy = tailAnchorY - 40
+        let x: CGFloat = (outgoing ? 44 - 2 : 2) + dx
+        let dir: CGFloat = outgoing ? 1 : -1
+        let color = UIColor(outgoing ? Theme.outgoingBubble : Theme.incomingBubble)
+        let img = UIGraphicsImageRenderer(size: size).image { ctx in
+            let tailPath = UIBezierPath()
+            tailPath.move(to: CGPoint(x: x, y: 26 + dy))
+            tailPath.addQuadCurve(to: CGPoint(x: x + dir * 6, y: 39 + dy),
+                                  controlPoint: CGPoint(x: x, y: 35 + dy))
+            tailPath.addQuadCurve(to: CGPoint(x: x - dir * 8, y: 36 + dy),
+                                  controlPoint: CGPoint(x: x - dir * 2, y: 39 + dy))
+            tailPath.close()
+            color.setFill()
+            tailPath.fill()
+        }
+        tailCache[key] = img
         return img
     }
 }
