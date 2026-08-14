@@ -42,7 +42,10 @@ struct ChatScreen: View {
                     InputBar(model: model, text: $text,
                              onAttachPhoto: { photoPickerPresented = true },
                              onAttachFile: { showFilePicker = true },
-                             onSendVoice: sendVoice)
+                             onSendVoice: sendVoice,
+                             onSendImages: { images, caption in
+                                 Task { await sendImages(images, caption: caption) }
+                             })
                 }
             }
             scrollDownButton
@@ -307,6 +310,24 @@ struct ChatScreen: View {
                 photos.append((prepared.data, prepared.size, bh))
             }
         }
+        await sendPhotos(photos, caption: nil)
+    }
+
+    /// Вставленные из буфера картинки — тем же путём, что и выбранные в пикере.
+    private func sendImages(_ images: [UIImage], caption: String) async {
+        var photos: [(Data, CGSize, String)] = []
+        for image in images {
+            guard let data = image.jpegData(compressionQuality: 0.95),
+                  let prepared = ImageProcessor.prepareForSending(data) else { continue }
+            let bh = ImageProcessor.rgbaPixels(prepared.data).flatMap {
+                BlurHash.encode(pixels: $0.pixels, width: $0.width, height: $0.height)
+            } ?? ""
+            photos.append((prepared.data, prepared.size, bh))
+        }
+        await sendPhotos(photos, caption: caption.isEmpty ? nil : caption)
+    }
+
+    private func sendPhotos(_ photos: [(Data, CGSize, String)], caption: String?) async {
         guard !photos.isEmpty else { return }
 
         // без сети не теряется: файл в постоянную папку, аплоад делает outbox-воркер
@@ -325,10 +346,12 @@ struct ChatScreen: View {
         if infos.count == 1 {
             var c = ContentPayload(kind: "photo")
             c.media = infos[0]
+            c.text = caption
             try? await app.engine.enqueue(content: c, chatId: chatId)
         } else {
             var c = ContentPayload(kind: "album")
             c.album = infos
+            c.text = caption
             try? await app.engine.enqueue(content: c, chatId: chatId)
         }
     }
@@ -464,7 +487,7 @@ struct MessagesView: UIViewControllerRepresentable {
             guard let model else { return }
             switch action {
             case .reply: withAnimation(Theme.springFast) { model.replyingTo = msg }
-            case .copy: UIPasteboard.general.string = msg.text
+            case .copy: MessageClipboard.copy(msg)
             case .edit: withAnimation(Theme.springFast) { model.editing = msg }
             case .pin: model.pin(msg)
             case .forward: NotificationCenter.default.post(name: .forwardRequested, object: msg)
