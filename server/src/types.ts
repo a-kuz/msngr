@@ -3,6 +3,7 @@ export interface Env {
   MEDIA: R2Bucket;
   USER_DO: DurableObjectNamespace;
   CONV_DO: DurableObjectNamespace;
+  APNS_DO: DurableObjectNamespace;
   APNS_ENV: string;
   /// Переопределение APNs-эндпоинта (dev-мок, например http://localhost:9871);
   /// не задан — прод/sandbox Apple по apns-env устройства.

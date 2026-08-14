@@ -7,7 +7,8 @@
 
 ```
 server/src/index.ts        HTTP API (hono) + апгрейд /ws
-server/src/do/             UserSessionDO (сокеты, presence, пуши), ConversationDO (журнал чата)
+server/src/do/             UserSessionDO (сокеты, presence, пуши), ConversationDO (журнал чата),
+                           ApnsTokenDO (синглтон-владелец APNs JWT)
 server/src/push/apns.ts    APNs
 server/migrations/         миграции D1 (wrangler d1 migrations apply)
 ios/MsngrKit/              ядро: MsngrCrypto (примитивы), MsngrCore (БД, WS, SyncEngine, E2EE)

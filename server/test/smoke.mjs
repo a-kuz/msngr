@@ -426,11 +426,23 @@ check("foreign device untouched", aliceStill.ok && aliceStill.user.id === alice.
 
 // 22. Пуш-путь: мини-приёмник вместо APNs (порт из PUSH_PORT, туда же смотрит APNS_HOST)
 const pushes = [];
+// приёмник изображает APNs: dead-token отвечает 410, flaky-token — 429 на первую попытку
+let flakyHits = 0;
 const pushSrv = http.createServer((req, res) => {
   let data = "";
   req.on("data", (c) => (data += c));
   req.on("end", () => {
     pushes.push({ url: req.url, headers: req.headers, body: JSON.parse(data) });
+    if (req.url === "/3/device/dead-token") {
+      res.writeHead(410, { "content-type": "application/json" });
+      res.end(JSON.stringify({ reason: "Unregistered", timestamp: Date.now() }));
+      return;
+    }
+    if (req.url === "/3/device/flaky-token" && ++flakyHits === 1) {
+      res.writeHead(429, { "content-type": "application/json" });
+      res.end(JSON.stringify({ reason: "TooManyRequests" }));
+      return;
+    }
     res.writeHead(200, { "apns-id": "mock" });
     res.end();
   });
@@ -520,6 +532,45 @@ check("no push for muted chat", !(await waitPush(pushFor("eve-sim-udid", p5.msgI
 
 // (д) own echo: у alice токен зарегистрирован, но её собственные отправки пуш не создают
 check("no push for own echo", !pushes.some((p) => p.url === "/3/device/alice-sim-udid"));
+
+// 23. Разбор ответа APNs: 410 удаляет токен, 429 повторяется
+const jack = await api("/api/register", { body: {
+  username: "jack_" + suffix, displayName: "Jack", ...fakeKeys("j") } });
+await api("/api/push-token", { token: jack.token,
+  body: { apnsToken: "dead-token", env: "development" } });
+const jchat = await api("/api/chats", { token: alice.token,
+  body: { kind: "direct", memberIds: [jack.userId] } });
+ca2.send({ t: "send", chatId: jchat.chatId, clientMsgId: "cm-dead1", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const d1 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-dead1");
+check("dead token: push attempted", !!(await waitPush(pushFor("dead-token", d1.msgId))));
+
+await new Promise((r) => setTimeout(r, 600));
+const jackSess = await api("/api/sessions", { token: jack.token });
+check("dead token: dropped from d1",
+  jackSess.ok && jackSess.sessions[0].hasPushToken === false, JSON.stringify(jackSess));
+
+ca2.send({ t: "send", chatId: jchat.chatId, clientMsgId: "cm-dead2", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const d2 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-dead2");
+check("dead token: no push after drop",
+  !(await waitPush(pushFor("dead-token", d2.msgId), 1500)));
+
+const kate = await api("/api/register", { body: {
+  username: "kate_" + suffix, displayName: "Kate", ...fakeKeys("k") } });
+await api("/api/push-token", { token: kate.token,
+  body: { apnsToken: "flaky-token", env: "development" } });
+const kchat = await api("/api/chats", { token: alice.token,
+  body: { kind: "direct", memberIds: [kate.userId] } });
+ca2.send({ t: "send", chatId: kchat.chatId, clientMsgId: "cm-flaky", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const fk = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-flaky");
+await new Promise((r) => setTimeout(r, 2500));
+const flakyTries = pushes.filter((p) =>
+  p.url === "/3/device/flaky-token" && p.body.msgId === fk.msgId);
+check("429 retried once and succeeded", flakyTries.length === 2, `tries=${flakyTries.length}`);
+const kateSess = await api("/api/sessions", { token: kate.token });
+check("retried token kept", kateSess.sessions[0].hasPushToken === true);
 
 pushSrv.close();
 ca.ws.close(); cb2.ws.close(); cb3.ws.close(); cb4.ws.close(); ca2.ws.close(); ce.ws.close();
