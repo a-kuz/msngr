@@ -72,6 +72,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
             var info = BannerInfo()
             let chat = try Chat.fetchOne(dbc, key: chatId)
             info.muted = chat?.muted ?? false
+            let hidden = ChatPrivacy.hidesContent(chat)
             let isGroup = chat?.kind == .group
             if isGroup {
                 info.title = chat?.title ?? "Группа"
@@ -81,8 +82,11 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
                 let peer = try User.fetchOne(dbc, key: peerId) {
                 info.title = peer.displayName
             }
-            if let m = try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE msgId = ?",
-                                            arguments: [msgId]) {
+            // заявка до принятия: имя отправителя показываем, содержимое — нет
+            if hidden {
+                info.preview = ChatPrivacy.requestPlaceholder
+            } else if let m = try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE msgId = ?",
+                                                   arguments: [msgId]) {
                 let author = isGroup
                     ? try String.fetchOne(dbc, sql: "SELECT displayName FROM user WHERE id = ?",
                                           arguments: [from])
@@ -111,17 +115,21 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
 
     // MARK: - Бейдж и шторка ↔ unreadCount в БД
 
-    /// Единый источник истины — chat.unreadCount: бейдж — сумма по чатам;
+    /// Единый источник истины — chat.unreadCount: бейдж — сумма по чатам
+    /// (заявка до принятия в него не входит: счётчик выдал бы, сколько написали);
     /// доставленные уведомления прочитанных чатов снимаются из шторки.
     private func observeUnread(db: DatabaseQueue) {
         badgeCancellable = ValueObservation
             .tracking { dbc in
-                try Row.fetchAll(dbc, sql: "SELECT id, unreadCount FROM chat")
-                    .map { (id: $0["id"] as String, unread: $0["unreadCount"] as Int) }
+                try Row.fetchAll(dbc, sql: "SELECT id, unreadCount, isRequest, iAccepted FROM chat")
+                    .map { (id: $0["id"] as String, unread: $0["unreadCount"] as Int,
+                            visible: ChatPrivacy.visibleUnread(isRequest: $0["isRequest"],
+                                                               iAccepted: $0["iAccepted"],
+                                                               unreadCount: $0["unreadCount"])) }
             }
             .publisher(in: db, scheduling: .async(onQueue: .main))
             .sink(receiveCompletion: { _ in }, receiveValue: { rows in
-                let total = rows.reduce(0) { $0 + $1.unread }
+                let total = rows.reduce(0) { $0 + $1.visible }
                 let readChatIds = Set(rows.filter { $0.unread == 0 }.map(\.id))
                 let center = UNUserNotificationCenter.current()
                 center.setBadgeCount(total)

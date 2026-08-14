@@ -24,7 +24,7 @@ struct ChatRowView: View {
                     }
                     Spacer(minLength: 4)
                     // галочки своего последнего сообщения
-                    if let last = item.lastMessage, last.isOutgoing {
+                    if let last = item.lastMessage, last.isOutgoing, !contentHidden {
                         TickView(status: last.status)
                             .font(.system(size: 12))
                     }
@@ -38,8 +38,8 @@ struct ChatRowView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                     Spacer(minLength: 4)
-                    if item.chat.unreadCount > 0 {
-                        Text("\(item.chat.unreadCount)")
+                    if visibleUnread > 0 {
+                        Text("\(visibleUnread)")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 7)
@@ -56,12 +56,22 @@ struct ChatRowView: View {
             }
         }
         .padding(.vertical, 2)
-        .animation(Theme.springFast, value: item.chat.unreadCount)
+        .animation(Theme.springFast, value: visibleUnread)
+    }
+
+    /// Заявка до принятия: ни превью, ни счётчика, ни галочек.
+    private var contentHidden: Bool { ChatPrivacy.hidesContent(item.chat) }
+
+    private var visibleUnread: Int {
+        ChatPrivacy.visibleUnread(isRequest: item.chat.isRequest, iAccepted: item.chat.iAccepted,
+                                  unreadCount: item.chat.unreadCount)
     }
 
     @ViewBuilder
     private var previewText: some View {
-        if let typing = item.typingText {
+        if contentHidden {
+            Text(ChatPrivacy.requestPlaceholder).foregroundStyle(Theme.accent)
+        } else if let typing = item.typingText {
             Text(typing).foregroundStyle(Theme.accent).italic()
         } else if let draft = item.chat.draft,
                   !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -80,7 +90,7 @@ struct ChatRowView: View {
                 }
             }
         } else {
-            Text(item.chat.isRequest ? "Заявка на переписку" : " ")
+            Text(" ")
         }
     }
 

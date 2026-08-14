@@ -336,7 +336,8 @@ check("push delivered offline", !!push1, JSON.stringify(pushes));
 if (push1) {
   check("push chatId", push1.body.chatId === echat.chatId);
   check("push thread-id", push1.body.aps["thread-id"] === echat.chatId);
-  check("push badge=1", push1.body.aps.badge === 1, `badge=${push1.body.aps.badge}`);
+  // чат ещё заявка: счётчик не выдаёт, сколько сообщений уже написали
+  check("push badge=0 before accept", push1.body.aps.badge === 0, `badge=${push1.body.aps.badge}`);
   check("push alert w/o plaintext", push1.body.aps.alert.body === "Новое сообщение"
     && push1.body.aps["mutable-content"] === 1 && push1.body.aps.sound === "default");
   check("push collapse-id=msgId", push1.headers["apns-collapse-id"] === p1.msgId);
@@ -354,7 +355,8 @@ const p2 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p2")
 check("eve got ws msg", !!(await ce.waitFor((f) => f.t === "msg" && f.msgId === p2.msgId)));
 const push2 = await waitPush(pushFor("eve-sim-udid", p2.msgId));
 check("push delivered despite live ws", !!push2);
-check("push badge=2", push2 && push2.body.aps.badge === 2, `badge=${push2?.body.aps.badge}`);
+check("push badge stays 0 before accept", push2 && push2.body.aps.badge === 0,
+  `badge=${push2?.body.aps.badge}`);
 
 // read сдвигает бейдж: eve принимает чат (message request), читает всё,
 // следующий пуш приходит с badge=1

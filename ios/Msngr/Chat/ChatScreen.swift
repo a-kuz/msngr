@@ -14,6 +14,7 @@ struct ChatScreen: View {
     @State private var messagesVC = MessagesViewController()
     @EnvironmentObject var app: AppState
     @ObservedObject private var theme = ThemeStore.shared
+    @Environment(\.dismiss) private var dismiss
 
     init(chatId: String) {
         self.chatId = chatId
@@ -24,21 +25,21 @@ struct ChatScreen: View {
         ZStack(alignment: .bottom) {
             Theme.chatBackground.ignoresSafeArea()
             VStack(spacing: 0) {
-                if let pinned = model.pinnedMessage {
-                    pinnedBar(pinned)
-                }
-                messagesList
-                    .overlay {
-                        if model.chat != nil, model.feed.isEmpty {
-                            emptyChatHint
-                        }
-                    }
-                if model.keyChangePending {
-                    keyChangeBanner
-                }
-                if model.chat?.isRequest == true {
-                    requestBanner
+                if model.contentHidden {
+                    requestCard
                 } else {
+                    if let pinned = model.pinnedMessage {
+                        pinnedBar(pinned)
+                    }
+                    messagesList
+                        .overlay {
+                            if model.chat != nil, model.feed.isEmpty {
+                                emptyChatHint
+                            }
+                        }
+                    if model.keyChangePending {
+                        keyChangeBanner
+                    }
                     InputBar(model: model, text: $text,
                              onAttachPhoto: { photoPickerPresented = true },
                              onAttachFile: { showFilePicker = true },
@@ -208,28 +209,56 @@ struct ChatScreen: View {
         .transition(.move(edge: .top).combined(with: .opacity))
     }
 
-    private var requestBanner: some View {
-        VStack(spacing: 10) {
-            Text("\(model.peer?.displayName ?? "Пользователь") хочет вам написать")
-                .font(.subheadline)
-            HStack(spacing: 12) {
-                Button("Заблокировать", role: .destructive) {
-                    Task {
-                        if let peer = model.peer {
-                            try? await app.api.setBlocked(peer.id, blocked: true)
-                        }
+    /// Заявка до принятия: вместо ленты — профиль отправителя и решение.
+    /// Сообщения уже лежат в БД, но на экран не попадают.
+    private var requestCard: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            VStack(spacing: 14) {
+                AvatarView(name: model.headerTitle, avatarId: model.peer?.avatarId)
+                    .frame(width: 96, height: 96)
+                VStack(spacing: 4) {
+                    Text(model.peer?.displayName ?? "Пользователь")
+                        .font(.title3.weight(.semibold))
+                    if let username = model.peer?.username, !username.isEmpty {
+                        Text("@" + username)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                     }
                 }
-                .buttonStyle(.bordered)
-                Button("Принять") {
+                Text("хочет вам написать")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Label("Сообщения откроются после принятия", systemImage: "eye.slash")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal, 32)
+            Spacer()
+            VStack(spacing: 10) {
+                Button {
                     withAnimation(Theme.spring) { model.acceptRequest() }
+                } label: {
+                    Text("Принять").fontWeight(.semibold).frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .accessibilityIdentifier("request.accept")
+                Button(role: .destructive) {
+                    model.blockRequest()
+                    dismiss()
+                } label: {
+                    Text("Заблокировать").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .accessibilityIdentifier("request.block")
             }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 24)
         }
-        .padding()
-        .frame(maxWidth: .infinity)
-        .background(.bar)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     /// TOFU-баннер: ключ собеседника сменился, исходящие заблокированы.
