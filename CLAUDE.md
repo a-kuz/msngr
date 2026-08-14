@@ -29,7 +29,7 @@ xcodebuild -project ios/Msngr.xcodeproj -scheme Msngr -destination 'id=<UDID>' b
 xcodebuild -project ios/Msngr.xcodeproj -scheme Msngr -destination 'id=<UDID>' \
   test -only-testing:MsngrTests
 cd ios/MsngrKit && swift test                       # ядро
-cd server && node test/smoke.mjs                    # 63 проверки, нужен wrangler dev
+cd server && node test/smoke.mjs                    # 95 проверок, нужен wrangler dev
 ```
 
 `ios/Msngr.xcodeproj` в `.gitignore` и генерируется из `ios/project.yml`. Руками
@@ -60,7 +60,9 @@ make check DEV_UDID=74B78AFC-E8D7-4317-B16F-E51A65504B2D   # gate-runner
   тестовых пользователей.
 - Дев-мок APNs `node server/tools/apns-mock.mjs` слушает :9871 и доставляет
   пуши в симулятор через `simctl push`. `node test/smoke.mjs` поднимает на этом
-  же порту собственный приёмник — перед смоуком мок нужно остановить.
+  же порту собственный приёмник — перед смоуком мок нужно остановить. На своём
+  стенде порт разводится: `wrangler dev --port 8803 --var APNS_HOST:http://localhost:9873`
+  (перекрывает `.dev.vars`) и `PUSH_PORT=9873 node test/smoke.mjs`.
 - «Офлайн» в сценариях — убитый `wrangler dev`, не выключенная сеть.
 
 ## Симуляторы
