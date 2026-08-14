@@ -12,7 +12,13 @@
     { "tag": "v1", "new_sqlite_classes": ["UserSessionDO", "ConversationDO"] }
   ],
   "d1_databases": [
-    { "binding": "DB", "database_name": "msngr", "database_id": "REPLACE_ON_DEPLOY" }
+    {
+      "binding": "DB",
+      "database_name": "msngr",
+      "database_id": "REPLACE_ON_DEPLOY",
+      "migrations_dir": "migrations",
+      "migrations_table": "d1_migrations"
+    }
   ],
   "r2_buckets": [
     { "binding": "MEDIA", "bucket_name": "msngr-media" }
