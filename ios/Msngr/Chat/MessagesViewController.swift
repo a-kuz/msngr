@@ -111,21 +111,7 @@ final class MessagesViewController: UIViewController {
         if oldIds == newIds {
             items = newItems
             for (i, item) in newItems.enumerated() where !contentEqual(old[i], item) {
-                let indexPath = IndexPath(item: i, section: 0)
-                // reload пересоздаёт ячейку и мгновенно обрывает идущую анимацию
-                // появления (ack pending→sent приходит в первые миллисекунды полёта) —
-                // видимую ячейку той же высоты обновляем на месте
-                if case .message(let msg, let tightGap, let showTail, let showName, let authorName) = item,
-                   msg.kind != .system,
-                   let cell = collectionView.cellForItem(at: indexPath) as? MessageCell {
-                    let plan = BubbleLayout.plan(for: msg, width: collectionView.bounds.width, tightGap: tightGap,
-                                                 showTail: showTail, showName: showName, authorName: authorName)
-                    if abs(cell.bounds.height - plan.cellHeight) < 0.5 {
-                        configureMessageCell(cell, msg: msg, plan: plan)
-                        continue
-                    }
-                }
-                UIView.performWithoutAnimation { collectionView.reloadItems(at: [indexPath]) }
+                refreshItem(at: i, item: item)
             }
             return
         }
@@ -190,12 +176,13 @@ final class MessagesViewController: UIViewController {
             // и запускаем анимацию появления синхронно, до первого кадра
             collectionView.layoutIfNeeded()
         }
-        // счётчик плашки непрочитанных мог вырасти в том же апдейте, где
-        // вставилось входящее — дифф по id её не пересоздаёт, обновляем на месте
-        if let idx = newItems.firstIndex(where: { if case .unreadMarker = $0 { return true }; return false }),
-           case .unreadMarker(_, let count) = newItems[idx],
-           let cell = collectionView.cellForItem(at: IndexPath(item: idx, section: 0)) as? UnreadMarkerCell {
-            cell.configure(count: count)
+        // уцелевшие элементы могли сменить содержимое в том же апдейте, где что-то
+        // вставилось: у соседа сверху пропадает хвостик и меняется зазор, когда
+        // сообщение продолжает его серию, растёт счётчик плашки непрочитанных.
+        // Дифф по id такие ячейки не пересоздаёт — обновляем их отдельно
+        for (i, item) in newItems.enumerated() {
+            guard let oldIdx = oldIndex[item.id], !contentEqual(old[oldIdx], item) else { continue }
+            refreshItem(at: i, item: item)
         }
         if let nb = newBottom,
            let cell = collectionView.cellForItem(at: IndexPath(item: 0, section: 0)) as? MessageCell {
@@ -212,6 +199,34 @@ final class MessagesViewController: UIViewController {
         if let nb = newBottom, !nb.outgoing, nearBottom {
             collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.contentInset.top), animated: true)
         }
+    }
+
+    /// Обновление уже стоящей в ленте позиции, содержимое которой изменилось.
+    /// reload пересоздаёт ячейку и мгновенно обрывает идущую анимацию появления
+    /// (ack pending→sent приходит в первые миллисекунды полёта), поэтому видимую
+    /// ячейку той же высоты перенастраиваем на месте.
+    private func refreshItem(at index: Int, item: ChatFeedItem) {
+        let indexPath = IndexPath(item: index, section: 0)
+        switch item {
+        case .message(let msg, let tightGap, let showTail, let showName, let authorName)
+            where msg.kind != .system:
+            if let cell = collectionView.cellForItem(at: indexPath) as? MessageCell {
+                let plan = BubbleLayout.plan(for: msg, width: collectionView.bounds.width, tightGap: tightGap,
+                                             showTail: showTail, showName: showName, authorName: authorName)
+                if abs(cell.bounds.height - plan.cellHeight) < 0.5 {
+                    configureMessageCell(cell, msg: msg, plan: plan)
+                    return
+                }
+            }
+        case .unreadMarker(_, let count):
+            if let cell = collectionView.cellForItem(at: indexPath) as? UnreadMarkerCell {
+                cell.configure(count: count)
+                return
+            }
+        default:
+            break
+        }
+        UIView.performWithoutAnimation { collectionView.reloadItems(at: [indexPath]) }
     }
 
     /// Полная настройка ячейки сообщения: контент + колбэки (замыкания захватывают msg,

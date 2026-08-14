@@ -154,6 +154,38 @@ final class BubbleLayoutTests: XCTestCase {
                        "зазор между текстом и временем фиксированный")
     }
 
+    // MARK: - Зазор между бабблами
+
+    private func gapPlan(tightGap: Bool) -> BubbleLayoutPlan {
+        BubbleLayout.plan(for: outgoing("Привет"), width: width, tightGap: tightGap,
+                          showTail: true, showName: false, authorName: nil)
+    }
+
+    /// Продолжение серии — зазор groupGap, разрыв серии — normalGap;
+    /// сам баббл при этом одинаковой высоты.
+    func testCellHeightTightVersusNormalGap() {
+        let tight = gapPlan(tightGap: true)
+        let normal = gapPlan(tightGap: false)
+        XCTAssertEqual(tight.bubbleFrame.height, normal.bubbleFrame.height,
+                       "зазор не должен менять высоту самого баббла")
+        XCTAssertEqual(tight.cellHeight - tight.bubbleFrame.height, BubbleLayout.groupGap, accuracy: 0.01)
+        XCTAssertEqual(normal.cellHeight - normal.bubbleFrame.height, BubbleLayout.normalGap, accuracy: 0.01)
+        XCTAssertEqual(normal.cellHeight - tight.cellHeight,
+                       BubbleLayout.normalGap - BubbleLayout.groupGap, accuracy: 0.01)
+    }
+
+    /// Зазор лежит над бабблом: ячейка перевёрнута, её верх на экране —
+    /// граница с сообщением выше, о котором и говорит tightGap.
+    func testGapSitsAboveBubble() {
+        XCTAssertEqual(gapPlan(tightGap: true).bubbleFrame.minY, BubbleLayout.groupGap, accuracy: 0.01)
+        XCTAssertEqual(gapPlan(tightGap: false).bubbleFrame.minY, BubbleLayout.normalGap, accuracy: 0.01)
+        // баббл прижат к низу ячейки: под ним пустого места не остаётся
+        for tight in [true, false] {
+            let p = gapPlan(tightGap: tight)
+            XCTAssertEqual(p.bubbleFrame.maxY, p.cellHeight, accuracy: 0.01)
+        }
+    }
+
     // MARK: - Реакции на voice/file
 
     private func mediaMessage(_ kind: MessageKind, reactions: [String: [String]]) -> Message {
