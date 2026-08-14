@@ -96,6 +96,8 @@ public struct WSIncoming: Decodable {
     public let serverTime: Double?
     /// msg: служебный фрейм (skd/reaction/edit) — не растит unread
     public let service: Bool?
+    /// error: машиночитаемый код отказа по нашему фрейму (см. SendFailure)
+    public let error: String?
 }
 
 public struct ChatStateDTO: Decodable {
