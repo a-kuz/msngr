@@ -39,10 +39,10 @@ final class AppState: ObservableObject {
 
     // MARK: - Session
 
-    private var sessionFileURL: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("session.json")
-    }
+    /// Сессия лежит в подготовленном размещении рядом с БД и мастер-ключом:
+    /// Application Support в контейнере приложения система не создаёт, и запись
+    /// туда терялась вместе с сессией.
+    private var sessionFileURL: URL { Self.storage.sessionURL }
 
     private func loadSession() {
         guard let data = try? Data(contentsOf: sessionFileURL),
@@ -87,7 +87,6 @@ final class AppState: ObservableObject {
         ready = false
         session = nil
         OwnUser.id = ""
-        try? FileManager.default.removeItem(at: sessionFileURL)
         UserDefaults(suiteName: AppGroup.identifier)?.removeObject(forKey: "ownUserId")
         PinStore.removePin()
         PinStore.setBiometricsEnabled(false)

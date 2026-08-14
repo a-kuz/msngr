@@ -140,12 +140,26 @@ final class StorageMigrationTests: XCTestCase {
         XCTAssertTrue(fm.fileExists(atPath: fresh.avatarsDir.path))
     }
 
+    /// Сессию нужно писать в каталог, который существует после prepare:
+    /// Application Support система в контейнере приложения не создаёт,
+    /// и запись туда пропадала вместе с токеном устройства.
+    func testSessionFileSurvivesInPreparedLocation() throws {
+        let fresh = StorageLocation(root: tmp.appendingPathComponent("fresh"))
+        AppContainer.prepare(fresh, fileManager: fm)
+
+        try Data(#"{"token":"t"}"#.utf8).write(to: fresh.sessionURL)
+
+        XCTAssertEqual(try Data(contentsOf: fresh.sessionURL), Data(#"{"token":"t"}"#.utf8))
+    }
+
     /// Логаут: данные размещения стёрты, само размещение годится для новой регистрации.
     func testWipeRemovesDataAndKeepsLocationUsable() throws {
         try seed(old, userId: "alice")
+        try Data(#"{"token":"t"}"#.utf8).write(to: old.sessionURL)
 
         AppContainer.wipe(old, fileManager: fm)
 
+        XCTAssertFalse(fm.fileExists(atPath: old.sessionURL.path))
         XCTAssertFalse(fm.fileExists(atPath: old.databaseURL.path))
         XCTAssertFalse(fm.fileExists(atPath: old.masterKeyURL.path))
         XCTAssertFalse(fm.fileExists(atPath: old.pendingMediaDir.path))

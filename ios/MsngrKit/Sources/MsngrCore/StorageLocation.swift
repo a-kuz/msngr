@@ -9,9 +9,12 @@ public struct StorageLocation: Sendable, Equatable {
 
     public static let databaseFileName = "msngr.sqlite"
     public static let masterKeyFileName = ".masterkey"
+    public static let sessionFileName = "session.json"
 
     public var databaseURL: URL { root.appendingPathComponent(Self.databaseFileName) }
     public var masterKeyURL: URL { root.appendingPathComponent(Self.masterKeyFileName) }
+    /// Токен устройства и идентификаторы текущего пользователя.
+    public var sessionURL: URL { root.appendingPathComponent(Self.sessionFileName) }
     /// Аватары файлами: NSE читает байты локально, без сети.
     public var avatarsDir: URL { root.appendingPathComponent("avatars") }
     /// Исходники вложений, приложенных офлайн: переживают чистку Caches.
@@ -20,6 +23,7 @@ public struct StorageLocation: Sendable, Equatable {
     /// Содержимое размещения, которое переносится при смене корня. Файл БД —
     /// последний: его наличие в новом размещении означает, что перенос завершён.
     public static let movableItems = [
+        sessionFileName,
         masterKeyFileName,
         "media-outgoing",
         "avatars",
