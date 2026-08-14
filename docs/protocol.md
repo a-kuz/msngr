@@ -41,6 +41,7 @@ GET  /api/prekeys/count           остаток собственных one-time
 POST /api/prekeys                 {oneTimePrekeys:[{id,key}]} — пополнение (до 200 за раз)
 POST /api/profile                 {displayName?, bio?, avatarId?}
 POST /api/avatar                  raw body (image/jpeg) → {avatarId};  GET /api/avatar/:id
+                                  ?chatId=<id> — аватар чата вместо своего профиля
 POST /api/chats                   {kind:"direct"|"group", memberIds[], title?} → {chatId}
 GET  /api/chats                   снапшот: [{flags, state}] + профили всех участников
 GET  /api/chats/:id/history       ?fromSeq=&toSeq=&limit=&dir=back → {msgs:[StoredMsg]}
@@ -50,7 +51,8 @@ POST /api/chats/:id/leave
 POST /api/chats/:id/settings      {title?, avatarId?, description?}
 POST /api/chats/:id/admins        {userId, admin:bool}
 POST /api/chats/:id/pin-message   {msgId|null}
-POST /api/chats/:id/flags         {pinned?, muted?, archived?} — локальные для пользователя
+POST /api/chats/:id/flags         {pinned?, muted?, mutedUntil?, archived?} — локальные
+                                  для пользователя; mutedUntil — секунды, null = бессрочно
 POST /api/chats/:id/invite        → {code, link:"msngr://join/<code>"}
 POST /api/join/:code              → {chatId}
 POST /api/media                   raw body (ciphertext) → {mediaId, size}
@@ -66,6 +68,19 @@ GET  /api/blocked                 → {blocked:[userId]}
 может админ, а не-админ — только самого себя; вступление по инвайт-ссылке
 разрешено не-участнику (`viaInvite`); создать инвайт может любой участник чата.
 Создать direct с тем, кто заблокировал (или кого заблокировали), нельзя.
+
+## Блокировки
+
+Блокировка симметрично гасит доставку в уже существующем direct-чате: сообщение
+автора принимается, занимает `seq` и лежит в журнале, но `ConversationDO` не
+рассылает его заблокированной стороне — ни `msg`-фреймом, ни пушем. Так же
+режутся `typing` и `presence`. Автор получает обычный `sent` и видит одну
+галочку: `delivered` не приходит никогда.
+
+Чтобы непрочитанное блокирующего не росло на невидимые сообщения, его read-марка
+двигается до `seq` придержанного сообщения прямо в `/send` (без `receipt`-фрейма
+автору). После разблокировки придержанные сообщения доезжают обычным `sync`:
+журнал их хранит, отдельного отсева в истории нет.
 
 ## WS: клиент → сервер
 
@@ -193,7 +208,9 @@ At-least-once. Порядок — по `seq` внутри чата. Клиент
 ## Пуши
 
 APNs уходит немедленно для каждого контентного `msg` — независимо от presence и
-живых сокетов. Исключения: `service:true`, собственное эхо автора, muted-чат.
+живых сокетов. Исключения: `service:true`, собственное эхо автора, muted-чат,
+блокировка. Mute со сроком (`mutedUntil`) истекает сам: `UserSessionDO` снимает
+флаг при первой же проверке после срока — на пуше и в снапшоте `/api/chats`.
 Дедуп на клиенте: `willPresent` гасит баннер, если сообщение уже показано по WS
 (матч по chatId/msgId, см. `NotificationDecision`).
 

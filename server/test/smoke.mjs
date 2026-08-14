@@ -206,6 +206,52 @@ const tryChat = await api("/api/chats", { token: carol.token,
   body: { kind: "direct", memberIds: [bob.userId] } });
 check("blocked direct rejected", bl.ok && !tryChat.ok && tryChat.error === "blocked");
 
+// 13a. Блокировка в уже созданном чате: отправка удаётся, доставки нет
+const frank = await api("/api/register", { body: {
+  username: "frank_" + suffix, displayName: "Frank", ...fakeKeys("f") } });
+const grace = await api("/api/register", { body: {
+  username: "grace_" + suffix, displayName: "Grace", ...fakeKeys("g") } });
+const fgChat = await api("/api/chats", { token: frank.token,
+  body: { kind: "direct", memberIds: [grace.userId] } });
+await api(`/api/chats/${fgChat.chatId}/accept`, { token: grace.token, body: {} });
+const cf = new Client("frank", frank.token);
+const cg = new Client("grace", grace.token);
+await cf.connect();
+await cg.connect();
+
+cg.send({ t: "send", chatId: fgChat.chatId, clientMsgId: "cm-fg1", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+check("delivery before block", !!(await cf.waitFor((f) => f.t === "msg" && f.chatId === fgChat.chatId)));
+
+await api("/api/block", { token: frank.token, body: { userId: grace.userId, blocked: true } });
+cg.send({ t: "send", chatId: fgChat.chatId, clientMsgId: "cm-fg2", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const fg2 = await cg.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-fg2");
+check("blocked sender still gets ack", !!fg2);
+check("blocked message not delivered",
+  !(await cf.waitFor((f) => f.t === "msg" && f.msgId === fg2?.msgId, 1200)));
+
+// обратная сторона: заблокировавший тоже не достучится до заблокированного
+cf.send({ t: "send", chatId: fgChat.chatId, clientMsgId: "cm-fg3", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const fg3 = await cf.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-fg3");
+check("message to blocked user not delivered",
+  !!fg3 && !(await cg.waitFor((f) => f.t === "msg" && f.msgId === fg3.msgId, 1200)));
+
+// непрочитанное блокирующего не растёт на невидимые сообщения
+const fgState = await api("/api/chats", { token: frank.token });
+const fgEntry = fgState.chats.find((e) => e.state.chatId === fgChat.chatId);
+check("read mark covers blocked messages",
+  !!fgEntry && (fgEntry.state.readMarks[frank.userId] ?? 0) >= fg2.seq,
+  JSON.stringify(fgEntry?.state.readMarks));
+
+await api("/api/block", { token: frank.token, body: { userId: grace.userId, blocked: false } });
+cg.send({ t: "send", chatId: fgChat.chatId, clientMsgId: "cm-fg4", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const fg4 = await cg.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-fg4");
+check("delivery resumes after unblock",
+  !!(await cf.waitFor((f) => f.t === "msg" && f.msgId === fg4?.msgId)));
+
 // 14. Медиа: upload/download с range
 const blob = new Uint8Array(1024 * 64).fill(7);
 const up = await fetch(BASE + "/api/media", {
@@ -255,6 +301,43 @@ check("dave is member after join", !!daveGrp
 const dinv = await api(`/api/chats/${chat.chatId}/invite`, { token: alice.token, body: {} });
 const djoin = await api(`/api/join/${dinv.code}`, { token: dave.token, body: {} });
 check("join into direct rejected", !djoin.ok && djoin.error === "not_group");
+
+// 16a. Настройки группы: имя и аватар меняет только админ, участники видят chat-фрейм
+const titleByMember = await api(`/api/chats/${grp.chatId}/settings`, { token: dave.token,
+  body: { title: "Захвачено" } });
+check("group title by non-admin rejected",
+  !titleByMember.ok && titleByMember.error === "not_admin");
+
+const newTitle = "Команда " + suffix;
+const titleByAdmin = await api(`/api/chats/${grp.chatId}/settings`, { token: alice.token,
+  body: { title: newTitle } });
+const titleFrame = await cb2.waitFor((f) =>
+  f.t === "chat" && f.chatId === grp.chatId && f.state.title === newTitle);
+check("group title by admin", titleByAdmin.ok && !!titleFrame);
+
+async function uploadAvatar(token, query = "") {
+  const res = await fetch(`${BASE}/api/avatar${query}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "image/jpeg" },
+    body: new Uint8Array([0xff, 0xd8, 0xff, 0xdb, 1, 2, 3]),
+  });
+  return res.json();
+}
+const avByMember = await uploadAvatar(dave.token, `?chatId=${grp.chatId}`);
+check("group avatar by non-admin rejected", !avByMember.ok && avByMember.error === "not_admin");
+
+const avByAdmin = await uploadAvatar(alice.token, `?chatId=${grp.chatId}`);
+const avFrame = await cb2.waitFor((f) =>
+  f.t === "chat" && f.chatId === grp.chatId && f.state.avatarId === avByAdmin.avatarId);
+check("group avatar by admin", avByAdmin.ok && !!avFrame);
+
+const meAfter = await api("/api/me", { token: alice.token });
+check("group avatar does not touch profile", meAfter.user.avatar_id !== avByAdmin.avatarId);
+
+const ownAvatar = await uploadAvatar(alice.token);
+const meOwn = await api("/api/me", { token: alice.token });
+check("own avatar still updates profile",
+  ownAvatar.ok && meOwn.user.avatar_id === ownAvatar.avatarId);
 
 // 17. Service-фрейм: флаг доходит получателю, дедуп по clientMsgId работает
 ca.send({ t: "send", chatId: chat.chatId, clientMsgId: "cm-skd-1", sentAt: Date.now(),
@@ -393,10 +476,33 @@ ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p5", sentAt: Date.n
 const p5 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p5");
 check("no push for muted chat", !(await waitPush(pushFor("eve-sim-udid", p5.msgId), 1200)));
 
-// (д) own echo: у alice токен зарегистрирован, но её собственные отправки пуш не создают
+// (д) mute со сроком: пока срок не вышел — пуша нет
+const nowS = Math.floor(Date.now() / 1000);
+await api(`/api/chats/${echat.chatId}/flags`, { token: eve.token,
+  body: { muted: true, mutedUntil: nowS + 3600 } });
+ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p6", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const p6 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p6");
+check("no push while mute not expired", !(await waitPush(pushFor("eve-sim-udid", p6.msgId), 1200)));
+
+// (е) срок вышел — пуш уходит, флаг снимается сам
+await api(`/api/chats/${echat.chatId}/flags`, { token: eve.token,
+  body: { muted: true, mutedUntil: nowS - 1 } });
+ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p7", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const p7 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p7");
+check("push after mute expired", !!(await waitPush(pushFor("eve-sim-udid", p7.msgId))));
+const eveChats = await api("/api/chats", { token: eve.token });
+const eveEntry = eveChats.chats.find((e) => e.state.chatId === echat.chatId);
+check("expired mute cleared in flags",
+  !!eveEntry && eveEntry.flags.muted === false && eveEntry.flags.mutedUntil === undefined,
+  JSON.stringify(eveEntry?.flags));
+
+// (ж) own echo: у alice токен зарегистрирован, но её собственные отправки пуш не создают
 check("no push for own echo", !pushes.some((p) => p.url === "/3/device/alice-sim-udid"));
 
 pushSrv.close();
 ca.ws.close(); cb2.ws.close(); cb3.ws.close(); cb4.ws.close(); ca2.ws.close(); ce.ws.close();
+cf.ws.close(); cg.ws.close();
 console.log(failures ? `\n${failures} FAILURES` : "\nALL PASS");
 process.exit(failures ? 1 : 0);

@@ -37,19 +37,39 @@ export class ConversationDO implements DurableObject {
     return this.env.USER_DO.get(this.env.USER_DO.idFromName(userId));
   }
 
-  private async fanout(frame: ServerFrame, opts?: { except?: string; only?: string[] }) {
+  private async fanout(
+    frame: ServerFrame,
+    opts?: { except?: string; only?: string[]; skip?: string[] }
+  ) {
     const members = await this.loadMembers();
     const targets = opts?.only ?? [...members.keys()];
     const body = JSON.stringify(frame);
     await Promise.all(
       targets
-        .filter((u) => u !== opts?.except && members.has(u))
+        .filter((u) => u !== opts?.except && !opts?.skip?.includes(u) && members.has(u))
         .map((u) =>
           this.userStub(u)
             .fetch("https://do/event", { method: "POST", body })
             .catch(() => {})
         )
     );
+  }
+
+  /// Участники direct-чата, которым сообщение не доставляется из-за блокировки
+  /// (в любую сторону: заблокировал отправитель или заблокировали его).
+  private async blockedPeers(from: string): Promise<string[]> {
+    const meta = (await this.loadMeta())!;
+    if (meta.kind !== "direct") return [];
+    const members = await this.loadMembers();
+    const peers = [...members.keys()].filter((u) => u !== from);
+    const out: string[] = [];
+    for (const peer of peers) {
+      const row = await this.env.DB.prepare(
+        "SELECT 1 FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)"
+      ).bind(from, peer, peer, from).first();
+      if (row) out.push(peer);
+    }
+    return out;
   }
 
   private async chatState(): Promise<ChatState> {
@@ -212,7 +232,17 @@ export class ConversationDO implements DurableObject {
           sentAt: msg.sentAt, ts: msg.ts, body: msg.body,
           ...(msg.service ? { service: true } : {}),
         };
-        await this.fanout(frame, { except: b.from });
+        // блокировка: отправка удаётся (автор видит «отправлено»), но адресату
+        // сообщение не уходит — ни по WS, ни пушем. Read-марка блокирующего
+        // двигается сразу, иначе его непрочитанное растёт на невидимые сообщения
+        const blocked = await this.blockedPeers(b.from);
+        if (blocked.length) {
+          const marks =
+            (await this.state.storage.get<Record<string, number>>("readMarks")) ?? {};
+          for (const u of blocked) marks[u] = Math.max(marks[u] ?? 0, seq);
+          await this.state.storage.put("readMarks", marks);
+        }
+        await this.fanout(frame, { except: b.from, skip: blocked });
         // эхо на другие устройства автора идёт через его же UserDO
         await this.fanout(frame, { only: [b.from] });
         return json({ ok: true, msgId: msg.msgId, seq, ts: msg.ts });
@@ -276,7 +306,7 @@ export class ConversationDO implements DurableObject {
         if (!members.get(b.userId)!.accepted) return json({ ok: true });
         await this.fanout(
           { t: "typing", chatId: meta.chatId, from: b.userId, kind: b.kind },
-          { except: b.userId }
+          { except: b.userId, skip: await this.blockedPeers(b.userId) }
         );
         return json({ ok: true });
       }
@@ -417,7 +447,7 @@ export class ConversationDO implements DurableObject {
         if (!members.get(b.userId)?.accepted) return json({ ok: true });
         await this.fanout(
           { t: "presence", userId: b.userId, online: b.online, lastSeen: b.lastSeen },
-          { except: b.userId }
+          { except: b.userId, skip: await this.blockedPeers(b.userId) }
         );
         return json({ ok: true });
       }
