@@ -102,8 +102,15 @@ struct RegisterView: View {
                     .init(id: $0.id, key: $0.key.publicKey.rawRepresentation.base64urlEncodedString())
                 },
                 phoneHash: nil))
-            app.saveSession(Session(userId: reg.userId, deviceId: reg.deviceId,
-                                    token: reg.token, username: username))
+            let session = Session(userId: reg.userId, deviceId: reg.deviceId,
+                                  token: reg.token, username: username)
+            do {
+                try app.saveSession(session)
+            } catch {
+                MsngrLog.session.error("не удалось сохранить сессию: \(error)")
+                self.error = "Не удалось сохранить сессию на устройстве"
+                return
+            }
         } catch let e as APIError {
             error = e.code == "username_taken" ? "Юзернейм занят" : "Ошибка: \(e.code)"
         } catch {

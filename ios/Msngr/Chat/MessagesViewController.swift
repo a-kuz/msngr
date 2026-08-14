@@ -15,12 +15,29 @@ final class MessagesViewController: UIViewController {
     var onTapMedia: ((Message, Int, UIView) -> Void)?
     /// тап по цитате в баббле-ответе (переход к оригиналу)
     var onTapReplyQuote: ((Message) -> Void)?
+    /// тап по строке в режиме мультивыбора
+    var onToggleSelection: ((Message) -> Void)?
 
     private(set) var collectionView: UICollectionView!
     private var items: [ChatFeedItem] = []
     private var width: CGFloat = 0
     /// сообщение, которое ждёт вспышки подсветки после перехода по цитате
     private var pendingHighlightId: String?
+    private var selectionMode = false
+    private var selectedIds: Set<String> = []
+
+    /// Состояние мультивыбора: видимые ячейки перестраиваются на месте
+    /// (reload оборвал бы анимации ленты), новые получают его при настройке.
+    func setSelection(mode: Bool, ids: Set<String>) {
+        guard mode != selectionMode || ids != selectedIds else { return }
+        let animated = isViewLoaded && view.window != nil
+        selectionMode = mode
+        selectedIds = ids
+        for case let cell as MessageCell in collectionView.visibleCells {
+            guard let id = cell.messageId else { continue }
+            cell.setSelection(mode: mode, selected: ids.contains(id), animated: animated)
+        }
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -244,6 +261,8 @@ final class MessagesViewController: UIViewController {
         cell.onTapMedia = { [weak self] index, view in self?.onTapMedia?(msg, index, view) }
         cell.onTapLink = { [weak self] url in self?.open(url) }
         cell.onTapReplyQuote = { [weak self] in self?.onTapReplyQuote?(msg) }
+        cell.onToggleSelection = { [weak self] in self?.onToggleSelection?(msg) }
+        cell.setSelection(mode: selectionMode, selected: selectedIds.contains(msg.id), animated: false)
     }
 
     /// Ссылка из сообщения открывается во встроенном браузере: чат остаётся
@@ -312,7 +331,7 @@ final class MessagesViewController: UIViewController {
 }
 
 enum MessageContextAction {
-    case reply, copy, forward, edit, pin, deleteForMe, deleteForAll
+    case reply, copy, selectText, forward, select, edit, pin, delete
 }
 
 extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {

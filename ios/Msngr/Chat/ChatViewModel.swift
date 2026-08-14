@@ -37,6 +37,12 @@ final class ChatViewModel: ObservableObject {
     @Published var pinnedMessage: Message?
     @Published var keyChangePending = false
     @Published var connected = true
+    /// Режим мультивыбора: чекбоксы у бабблов, панель действий вместо поля ввода.
+    @Published var selecting = false
+    @Published var selection = MessageSelection()
+    /// Сообщение не попало в очередь отправки: показывается алертом, иначе
+    /// набранный текст или вложение исчезли бы молча.
+    @Published var sendFailure: String?
 
     /// Плашка непрочитанных: состояние живёт от входа в чат, лента
     /// перестраивается при его изменении из последнего снапшота БД.
@@ -310,6 +316,21 @@ final class ChatViewModel: ObservableObject {
 
     // MARK: - Действия
 
+    /// Кладёт контент в очередь отправки. Очередь локальная, сеть здесь не
+    /// участвует: отказ означает, что запись не легла в базу и сообщение
+    /// потеряно, — о таком сообщаем пользователю.
+    func enqueue(_ content: ContentPayload, chatId: String? = nil) {
+        let target = chatId ?? self.chatId
+        Task { [weak self] in
+            do {
+                try await app.engine.enqueue(content: content, chatId: target)
+            } catch {
+                MsngrLog.outbox.error("не удалось поставить \(content.kind) в очередь: \(error)")
+                self?.sendFailure = "Сообщение не отправлено: не удалось записать его на устройство"
+            }
+        }
+    }
+
     func send(text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -318,7 +339,7 @@ final class ChatViewModel: ObservableObject {
             var c = ContentPayload(kind: "edit")
             c.targetMsgId = editing.msgId ?? editing.id
             c.text = trimmed
-            Task { try? await app.engine.enqueue(content: c, chatId: chatId) }
+            enqueue(c)
             self.editing = nil
             return
         }
@@ -330,7 +351,7 @@ final class ChatViewModel: ObservableObject {
         }
         replyingTo = nil
         saveDraft(nil)
-        Task { try? await app.engine.enqueue(content: c, chatId: chatId) }
+        enqueue(c)
         Haptics.light()
     }
 
@@ -352,12 +373,54 @@ final class ChatViewModel: ObservableObject {
         // повторный тап той же реакцией — снять
         let mine = msg.reactions.first { $0.value.contains(ownUserId) }?.key
         c.emoji = (mine == emoji) ? nil : emoji
-        Task { try? await app.engine.enqueue(content: c, chatId: chatId) }
+        enqueue(c)
         Haptics.medium()
     }
 
     func delete(_ msg: Message, forAll: Bool) {
         Task { await app.engine.deleteMessages(chatId: chatId, msgIds: [msg.msgId ?? msg.id], forAll: forAll) }
+    }
+
+    // MARK: - Мультивыбор
+
+    /// Выбранные сообщения в порядке ленты (сверху — самое новое).
+    var selectedMessages: [Message] { selection.messages(in: lastMsgs) }
+
+    var canDeleteSelectedForAll: Bool { MessageSelection.canDeleteForAll(selectedMessages) }
+
+    func beginSelection(with msg: Message) {
+        selection.clear()
+        selection.select(msg)
+        selecting = true
+        Haptics.light()
+    }
+
+    func toggleSelection(_ msg: Message) {
+        selection.toggle(msg)
+        Haptics.light()
+    }
+
+    func endSelection() {
+        selecting = false
+        selection.clear()
+    }
+
+    func deleteSelected(forAll: Bool) {
+        let ids = selectedMessages.map { $0.msgId ?? $0.id }
+        guard !ids.isEmpty else { return }
+        endSelection()
+        Task { await app.engine.deleteMessages(chatId: chatId, msgIds: ids, forAll: forAll) }
+    }
+
+    func copySelected() {
+        MessageClipboard.copy(selectedMessages)
+        endSelection()
+    }
+
+    func forwardSelected(to targetChatId: String) {
+        // порядок ленты обратный: пересылаем от старого к новому
+        for msg in selectedMessages.reversed() { forward(msg, to: targetChatId) }
+        endSelection()
     }
 
     func forward(_ msg: Message, to targetChatId: String) {
@@ -367,7 +430,7 @@ final class ChatViewModel: ObservableObject {
         c.album = msg.album
         let fromName = members.first { $0.id == msg.fromUserId }?.displayName ?? "?"
         c.fwd = ForwardInfo(fromUserId: msg.fromUserId, fromName: fromName)
-        Task { try? await app.engine.enqueue(content: c, chatId: targetChatId) }
+        enqueue(c, chatId: targetChatId)
     }
 
     func pin(_ msg: Message?) {

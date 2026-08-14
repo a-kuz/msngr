@@ -11,6 +11,13 @@ struct ChatScreen: View {
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showFilePicker = false
     @State private var forwardMessage: Message?
+    /// сообщение, для которого открыт режим выделения текста
+    @State private var selectingText: Message?
+    /// сообщение, для которого спрошено подтверждение удаления
+    @State private var deleteCandidate: Message?
+    /// подтверждение удаления выбранных в мультивыборе
+    @State private var confirmDeleteSelection = false
+    @State private var forwardingSelection = false
     @State private var messagesVC = MessagesViewController()
     @EnvironmentObject var app: AppState
     @ObservedObject private var theme = ThemeStore.shared
@@ -25,6 +32,7 @@ struct ChatScreen: View {
         ZStack(alignment: .bottom) {
             Theme.chatBackground.ignoresSafeArea()
             VStack(spacing: 0) {
+                // заявка до принятия: вместо ленты карточка с профилем и кнопками
                 if model.contentHidden {
                     requestCard
                 } else {
@@ -37,23 +45,44 @@ struct ChatScreen: View {
                                 emptyChatHint
                             }
                         }
-                    if model.keyChangePending {
+                    if model.keyChangePending && !model.selecting {
                         keyChangeBanner
                     }
-                    InputBar(model: model, text: $text,
-                             onAttachPhoto: { photoPickerPresented = true },
-                             onAttachFile: { showFilePicker = true },
-                             onSendVoice: sendVoice,
-                             onSendImages: { images, caption in
-                                 Task { await sendImages(images, caption: caption) }
-                             })
+                    if model.selecting {
+                        selectionActionBar
+                    } else {
+                        InputBar(model: model, text: $text,
+                                 onAttachPhoto: { photoPickerPresented = true },
+                                 onAttachFile: { showFilePicker = true },
+                                 onSendVoice: sendVoice,
+                                 onSendImages: { images, caption in
+                                     Task { await sendImages(images, caption: caption) }
+                                 })
+                    }
                 }
             }
-            scrollDownButton
+            if !model.selecting { scrollDownButton }
         }
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(model.selecting)
         .toolbar {
-            ToolbarItem(placement: .principal) { header }
+            if model.selecting {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button {
+                        withAnimation(Theme.springFast) { model.endSelection() }
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .accessibilityIdentifier("chat.selection.close")
+                }
+                ToolbarItem(placement: .principal) {
+                    Text(MessageSelection.title(count: model.selection.count))
+                        .font(.system(size: 16, weight: .semibold))
+                        .accessibilityIdentifier("chat.selection.count")
+                }
+            } else {
+                ToolbarItem(placement: .principal) { header }
+            }
         }
         .onAppear {
             model.start()
@@ -106,6 +135,98 @@ struct ChatScreen: View {
                 forwardMessage = nil
             }
         }
+        .sheet(isPresented: $forwardingSelection) {
+            ForwardPickerView { targetChatId in
+                model.forwardSelected(to: targetChatId)
+                forwardingSelection = false
+            }
+        }
+        .sheet(item: $selectingText) { msg in
+            TextSelectionView(text: msg.text ?? "")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .forwardRequested)) { note in
+            forwardMessage = note.object as? Message
+        }
+        .alert("Не отправлено", isPresented: sendFailureBinding) {
+            Button("Понятно", role: .cancel) { model.sendFailure = nil }
+        } message: {
+            Text(model.sendFailure ?? "")
+        }
+        // удаление одного сообщения из контекстного меню
+        .confirmationDialog("Удалить сообщение?", isPresented: deleteCandidateBinding,
+                            titleVisibility: .visible) {
+            if deleteCandidate?.isOutgoing == true {
+                Button("Удалить у всех", role: .destructive) {
+                    if let msg = deleteCandidate { model.delete(msg, forAll: true) }
+                    deleteCandidate = nil
+                }
+            }
+            Button("Удалить у меня", role: .destructive) {
+                if let msg = deleteCandidate { model.delete(msg, forAll: false) }
+                deleteCandidate = nil
+            }
+            Button("Отмена", role: .cancel) { deleteCandidate = nil }
+        }
+        // удаление выбранных в мультивыборе
+        .confirmationDialog(deleteSelectionTitle, isPresented: $confirmDeleteSelection,
+                            titleVisibility: .visible) {
+            if model.canDeleteSelectedForAll {
+                Button("Удалить у всех", role: .destructive) {
+                    withAnimation(Theme.springFast) { model.deleteSelected(forAll: true) }
+                }
+            }
+            Button("Удалить у меня", role: .destructive) {
+                withAnimation(Theme.springFast) { model.deleteSelected(forAll: false) }
+            }
+            Button("Отмена", role: .cancel) {}
+        }
+    }
+
+    private var sendFailureBinding: Binding<Bool> {
+        Binding(get: { model.sendFailure != nil },
+                set: { if !$0 { model.sendFailure = nil } })
+    }
+
+    private var deleteCandidateBinding: Binding<Bool> {
+        Binding(get: { deleteCandidate != nil },
+                set: { if !$0 { deleteCandidate = nil } })
+    }
+
+    private var deleteSelectionTitle: String {
+        "Удалить " + MessageSelection.title(count: model.selection.count) + "?"
+    }
+
+    /// Панель действий мультивыбора вместо поля ввода.
+    private var selectionActionBar: some View {
+        HStack(spacing: 0) {
+            selectionAction("Удалить", icon: "trash", destructive: true) {
+                confirmDeleteSelection = true
+            }
+            selectionAction("Переслать", icon: "arrowshape.turn.up.right") {
+                forwardingSelection = true
+            }
+            selectionAction("Копировать", icon: "doc.on.doc") {
+                withAnimation(Theme.springFast) { model.copySelected() }
+            }
+        }
+        .padding(.top, 6)
+        .background(.bar)
+        .transition(.move(edge: .bottom))
+    }
+
+    private func selectionAction(_ title: String, icon: String,
+                                 destructive: Bool = false,
+                                 action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                Image(systemName: icon).font(.system(size: 20))
+                Text(title).font(.caption2)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .tint(destructive ? .red : Theme.accent)
+        .disabled(model.selection.isEmpty)
+        .accessibilityIdentifier("chat.selection." + icon)
     }
 
     @State private var photoPickerPresented = false
@@ -113,9 +234,11 @@ struct ChatScreen: View {
 
     private var messagesList: MessagesView {
         MessagesView(vc: messagesVC, model: model, items: model.feed,
+                     selecting: model.selecting, selectedIds: model.selection.ids,
                      onTapMedia: { (msg: Message, idx: Int, _: UIView) in
                          MediaViewerPresenter.present(message: msg, startIndex: idx)
                      },
+                     selectingText: $selectingText, deleteCandidate: $deleteCandidate,
                      showScrollDown: $showScrollDown)
     }
 
@@ -362,7 +485,7 @@ struct ChatScreen: View {
         // без сети не теряется: файл в постоянную папку, аплоад делает outbox-воркер
         var infos: [MediaInfo] = []
         for (jpeg, size, bh) in photos {
-            guard let localName = try? app.media.stash(jpeg, mime: "image/jpeg") else { continue }
+            guard let localName = stash(jpeg, mime: "image/jpeg") else { return }
             var info = MediaInfo(type: "photo", mediaId: "", key: "",
                                  hash: "", size: jpeg.count, mime: "image/jpeg")
             info.localPath = localName
@@ -376,12 +499,25 @@ struct ChatScreen: View {
             var c = ContentPayload(kind: "photo")
             c.media = infos[0]
             c.text = caption
-            try? await app.engine.enqueue(content: c, chatId: chatId)
+            model.enqueue(c)
         } else {
             var c = ContentPayload(kind: "album")
             c.album = infos
             c.text = caption
-            try? await app.engine.enqueue(content: c, chatId: chatId)
+            model.enqueue(c)
+        }
+    }
+
+    /// Кладёт исходник вложения в постоянную папку. nil — отказ записи, о котором
+    /// пользователь узнаёт из алерта: молча пропущенное вложение выглядело бы как
+    /// «ничего не произошло».
+    private func stash(_ data: Data, mime: String? = nil) -> String? {
+        do {
+            return try app.media.stash(data, mime: mime)
+        } catch {
+            MsngrLog.outbox.error("не удалось сохранить вложение: \(error)")
+            model.sendFailure = "Вложение не отправлено: не удалось сохранить его на устройстве"
+            return nil
         }
     }
 
@@ -395,7 +531,7 @@ struct ChatScreen: View {
         export.shouldOptimizeForNetworkUse = true // faststart
         await export.export()
         guard export.status == .completed, let data = try? Data(contentsOf: out),
-              let localName = try? app.media.stash(data, mime: "video/mp4") else { return }
+              let localName = stash(data, mime: "video/mp4") else { return }
 
         // превью-кадр
         let gen = AVAssetImageGenerator(asset: asset)
@@ -407,6 +543,7 @@ struct ChatScreen: View {
             dims = CGSize(width: cg.width, height: cg.height)
             let ui = UIImage(cgImage: cg)
             if let jpeg = ui.jpegData(compressionQuality: 0.7) {
+                // превью не критично: без него видео уходит с одним blurhash
                 thumbLocal = try? app.media.stash(jpeg, mime: "image/jpeg")
                 if let px = ImageProcessor.rgbaPixels(jpeg) {
                     blurhash = BlurHash.encode(pixels: px.pixels, width: px.width, height: px.height) ?? ""
@@ -423,7 +560,7 @@ struct ChatScreen: View {
         info.blurhash = blurhash
         var c = ContentPayload(kind: "video")
         c.media = info
-        try? await app.engine.enqueue(content: c, chatId: chatId)
+        model.enqueue(c)
         try? FileManager.default.removeItem(at: out)
     }
 
@@ -431,7 +568,7 @@ struct ChatScreen: View {
         let secured = url.startAccessingSecurityScopedResource()
         defer { if secured { url.stopAccessingSecurityScopedResource() } }
         guard let data = try? Data(contentsOf: url), data.count < 100_000_000 else { return }
-        guard let localName = try? app.media.stash(data) else { return }  // файл: расширение не критично
+        guard let localName = stash(data) else { return }  // файл: расширение не критично
         var info = MediaInfo(type: "file", mediaId: "", key: "",
                              hash: "", size: data.count,
                              mime: "application/octet-stream")
@@ -439,13 +576,13 @@ struct ChatScreen: View {
         info.name = url.lastPathComponent
         var c = ContentPayload(kind: "file")
         c.media = info
-        try? await app.engine.enqueue(content: c, chatId: chatId)
+        model.enqueue(c)
     }
 
     private func sendVoice(_ url: URL, duration: TimeInterval, waveform: [Int]) {
         Task {
             guard let data = try? Data(contentsOf: url),
-                  let localName = try? app.media.stash(data, mime: "audio/mp4") else { return }
+                  let localName = stash(data, mime: "audio/mp4") else { return }
             var info = MediaInfo(type: "voice", mediaId: "", key: "",
                                  hash: "", size: data.count, mime: "audio/mp4")
             info.localPath = localName
@@ -453,7 +590,7 @@ struct ChatScreen: View {
             info.waveform = waveform
             var c = ContentPayload(kind: "voice")
             c.media = info
-            try? await app.engine.enqueue(content: c, chatId: chatId)
+            model.enqueue(c)
             try? FileManager.default.removeItem(at: url)
         }
     }
@@ -482,7 +619,12 @@ struct MessagesView: UIViewControllerRepresentable {
     /// feed передаётся и значением: изменение массива меняет value представляемого
     /// view — SwiftUI гарантированно зовёт updateUIViewController
     let items: [ChatFeedItem]
+    /// режим и состав выбора передаются значением по той же причине, что и feed
+    let selecting: Bool
+    let selectedIds: Set<String>
     var onTapMedia: (Message, Int, UIView) -> Void
+    @Binding var selectingText: Message?
+    @Binding var deleteCandidate: Message?
     @Binding var showScrollDown: Bool
 
     func makeUIViewController(context: Context) -> MessagesViewController {
@@ -512,23 +654,30 @@ struct MessagesView: UIViewControllerRepresentable {
                 Self.scrollWhenReady(vc: vc, msgId: targetId)
             }
         }
-        vc.onContextAction = { [weak model] msg, action in
-            guard let model else { return }
-            switch action {
-            case .reply: withAnimation(Theme.springFast) { model.replyingTo = msg }
-            case .copy: MessageClipboard.copy(msg)
-            case .edit: withAnimation(Theme.springFast) { model.editing = msg }
-            case .pin: model.pin(msg)
-            case .forward: NotificationCenter.default.post(name: .forwardRequested, object: msg)
-            case .deleteForMe: model.delete(msg, forAll: false)
-            case .deleteForAll: model.delete(msg, forAll: true)
-            }
+        vc.onToggleSelection = { [weak model] msg in
+            withAnimation(Theme.springFast) { model?.toggleSelection(msg) }
         }
         return vc
     }
 
     func updateUIViewController(_ vc: MessagesViewController, context: Context) {
+        // колбэки с биндингами переустанавливаются на каждом апдейте: снимок
+        // биндинга из makeUIViewController живёт дольше, чем породившее его тело
+        vc.onContextAction = { [weak model] msg, action in
+            guard let model else { return }
+            switch action {
+            case .reply: withAnimation(Theme.springFast) { model.replyingTo = msg }
+            case .copy: MessageClipboard.copy(msg)
+            case .selectText: selectingText = msg
+            case .edit: withAnimation(Theme.springFast) { model.editing = msg }
+            case .pin: model.pin(msg)
+            case .forward: NotificationCenter.default.post(name: .forwardRequested, object: msg)
+            case .select: withAnimation(Theme.springFast) { model.beginSelection(with: msg) }
+            case .delete: deleteCandidate = msg
+            }
+        }
         vc.apply(items)
+        vc.setSelection(mode: selecting, ids: selectedIds)
     }
 
     /// Догруженная история попадает в список через updateUIViewController —

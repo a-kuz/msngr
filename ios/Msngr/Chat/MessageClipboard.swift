@@ -25,6 +25,16 @@ enum MessageClipboard {
         }
     }
 
+    /// Мультивыбор: строка на сообщение, в порядке переписки (сверху старое).
+    /// Одно сообщение копируется обычным путём — фото попадает в буфер картинкой.
+    static func copy(_ msgs: [Message]) {
+        guard msgs.count != 1 else { return copy(msgs[0]) }
+        guard !msgs.isEmpty else { return }
+        UIPasteboard.general.string = msgs.reversed()
+            .map { ($0.text?.isEmpty == false ? $0.text! : ChatViewModel.previewText($0)) }
+            .joined(separator: "\n")
+    }
+
     /// Картинки из буфера; пусто, если там их нет.
     static func pastedImages() -> [UIImage] {
         guard UIPasteboard.general.hasImages else { return [] }
