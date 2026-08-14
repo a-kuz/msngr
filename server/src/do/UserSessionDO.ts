@@ -428,7 +428,7 @@ export class UserSessionDO implements DurableObject {
             if (r.scanned < BATCH) break;
           }
           // тумбстоуны и read/delivered-марки, которые случились пока клиент был офлайн
-          const er = await this.convStub(chatId).fetch("https://do/events");
+          const er = await this.convStub(chatId).fetch(`https://do/events?userId=${userId}`);
           const e = (await er.json()) as {
             ok: boolean;
             deleted?: Array<{ msgId: string; by: string }>;
