@@ -126,8 +126,17 @@ await new Promise((r) => setTimeout(r, 600));
 check("no read receipt before accept", !ca.frames.some((f) => f.t === "receipt" && f.kind === "read"));
 check("no typing before accept", !ca.frames.some((f) => f.t === "typing" && f.from === bob.userId));
 
+// presence получателя не виден автору заявки и через профиль
+const profBefore = await api(`/api/users/${bob.userId}`, { token: alice.token });
+check("no presence before accept", profBefore.ok && profBefore.presence === null,
+  JSON.stringify(profBefore.presence));
+
 const acc = await api(`/api/chats/${chat.chatId}/accept`, { token: bob.token, body: {} });
 check("accept request", acc.ok);
+
+const profAfter = await api(`/api/users/${bob.userId}`, { token: alice.token });
+check("presence after accept", profAfter.ok && !!profAfter.presence,
+  JSON.stringify(profAfter.presence));
 
 // Receipts после accept
 cb.send({ t: "recv", chatId: chat.chatId, seqs: [1] });
@@ -287,7 +296,8 @@ await cb4.waitFor((f) => f.t === "msg" && f.chatId === grp.chatId && f.seq === l
 const bulkGot = cb4.frames.filter((f) => f.t === "msg" && f.chatId === grp.chatId && f.seq > 1);
 check("sync backfill beyond 200", bulkGot.length === N, `got ${bulkGot.length}`);
 
-// 20. Пуш-путь: мини-приёмник вместо APNs на :9871 (куда указывает APNS_HOST в .dev.vars)
+// 20. Пуш-путь: мини-приёмник вместо APNs на порту, куда смотрит APNS_HOST
+// (по умолчанию :9871 из .dev.vars; свой стенд задаёт PUSH_PORT)
 const pushes = [];
 const pushSrv = http.createServer((req, res) => {
   let data = "";
@@ -298,7 +308,7 @@ const pushSrv = http.createServer((req, res) => {
     res.end();
   });
 });
-await new Promise((r) => pushSrv.listen(9871, r));
+await new Promise((r) => pushSrv.listen(Number(process.env.PUSH_PORT ?? 9871), r));
 
 async function waitPush(pred, ms = 4000) {
   const t0 = Date.now();
