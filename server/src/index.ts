@@ -5,6 +5,7 @@ import { ulid, newToken, sha256hex, json, err, directChatName, b64url } from "./
 
 export { UserSessionDO } from "./do/UserSessionDO";
 export { ConversationDO } from "./do/ConversationDO";
+export { ApnsTokenDO } from "./do/ApnsTokenDO";
 
 type Vars = { auth: AuthCtx };
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();

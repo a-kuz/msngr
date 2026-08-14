@@ -5,11 +5,13 @@
   "durable_objects": {
     "bindings": [
       { "name": "USER_DO", "class_name": "UserSessionDO" },
-      { "name": "CONV_DO", "class_name": "ConversationDO" }
+      { "name": "CONV_DO", "class_name": "ConversationDO" },
+      { "name": "APNS_DO", "class_name": "ApnsTokenDO" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["UserSessionDO", "ConversationDO"] }
+    { "tag": "v1", "new_sqlite_classes": ["UserSessionDO", "ConversationDO"] },
+    { "tag": "v2", "new_sqlite_classes": ["ApnsTokenDO"] }
   ],
   "d1_databases": [
     {

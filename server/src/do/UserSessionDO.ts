@@ -251,12 +251,41 @@ export class UserSessionDO implements DurableObject {
   private async pushToDevices(chatId: string, msgId?: string) {
     const tokens =
       (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
-    const devices = Object.values(tokens);
+    const devices = Object.entries(tokens);
     if (!devices.length) return;
     const badge = await this.totalUnread();
+    // каждое устройство обрабатывается независимо: падение одного не отменяет остальные
+    const results = await Promise.all(
+      devices.map(async ([deviceId, t]) => {
+        try {
+          return { deviceId, res: await sendPush(this.env, t.token, t.env, { chatId, msgId, badge }) };
+        } catch (e) {
+          console.log(`apns: отправка на устройство ${deviceId} упала: ${String(e)}`);
+          return { deviceId, res: null };
+        }
+      })
+    );
+    const dead = results.filter((r) => r.res?.dead).map((r) => r.deviceId);
+    if (dead.length) await this.dropPushTokens(dead);
+  }
+
+  /// Токен, на который APNs ответил 410, удаляется и из DO, и из D1.
+  private async dropPushTokens(deviceIds: string[]) {
+    const tokens =
+      (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
+    let changed = false;
+    for (const id of deviceIds) {
+      if (id in tokens) {
+        delete tokens[id];
+        changed = true;
+      }
+    }
+    if (changed) await this.state.storage.put("apns", tokens);
     await Promise.all(
-      devices.map((t) =>
-        sendPush(this.env, t.token, t.env, { chatId, msgId, badge }).catch(() => {})
+      deviceIds.map((id) =>
+        this.env.DB.prepare(
+          "UPDATE devices SET apns_token = NULL, apns_env = NULL WHERE id = ?"
+        ).bind(id).run().catch(() => {})
       )
     );
   }
