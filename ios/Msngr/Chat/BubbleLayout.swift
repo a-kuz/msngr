@@ -217,9 +217,13 @@ enum BubbleLayout {
         } else if !chips.isEmpty {
             // есть реакции → время привязано к ним, а не к последней строке текста
             let contentBottom = y
-            let lastLine = (textFrame != nil && attrText != nil)
-                ? Self.lastLineWidth(attrText!, maxWidth: maxContent) : 0
-            let singleLineText = textFrame.map { $0.height <= ceil(textFont.lineHeight) + 2 } ?? true
+            // текст, оканчивающийся блоком кода, занимает всю ширину подложкой:
+            // ни реакции, ни время рядом с последней строкой не встают
+            let trailingCode = attrText.map(Self.endsWithCodeBlock) ?? false
+            let lastLine = (textFrame != nil && attrText != nil && !trailingCode)
+                ? Self.lastLineWidth(attrText!, maxWidth: maxContent) : (trailingCode ? maxContent : 0)
+            let singleLineText = !trailingCode
+                && (textFrame.map { $0.height <= ceil(textFont.lineHeight) + 2 } ?? true)
             let chipsWidth = chips.reduce(0) { $0 + $1.width } + CGFloat(chips.count - 1) * chipGap
             // voice/file: капсулы всегда своими рядами под волной/плашкой файла,
             // inline-строка «текст + реакции + время» есть только у текстовых
@@ -271,8 +275,10 @@ enum BubbleLayout {
                 reactionsHeight = y - contentBottom
             }
         } else if let tf = textFrame, let at = attrText {
-            // без реакций — три случая размещения времени как в TG
-            let lastLineWidth = Self.lastLineWidth(at, maxWidth: maxContent)
+            // без реакций — три случая размещения времени как в TG;
+            // после блока кода время всегда уходит на свою строку
+            let lastLineWidth = Self.endsWithCodeBlock(at)
+                ? maxContent : Self.lastLineWidth(at, maxWidth: maxContent)
             if lastLineWidth + gap + statusWidth <= maxContent {
                 // случай 1/3: статус в последней строке текста
                 let bubbleContentW = max(contentWidth, lastLineWidth + gap + statusWidth)
@@ -348,25 +354,65 @@ enum BubbleLayout {
 
     // MARK: - Текстовые замеры (TextKit)
 
+    /// Текст меряется ровно тем же attributed-текстом и тем же стеком TextKit,
+    /// каким он рисуется в MessageTextView, — иначе поедут высоты бабблов.
     private static func measureText(_ text: String, maxWidth: CGFloat, startY: CGFloat) -> (CGRect, NSAttributedString) {
-        let attr = NSAttributedString(string: text, attributes: [.font: textFont])
-        let rect = attr.boundingRect(with: CGSize(width: maxWidth, height: .greatestFiniteMagnitude),
-                                     options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
-        return (CGRect(x: hPadding, y: startY, width: ceil(rect.width), height: ceil(rect.height)), attr)
+        let attr = MessageMarkdownRenderer.attributed(text)
+        let size = textSize(attr, maxWidth: maxWidth)
+        return (CGRect(x: hPadding, y: startY, width: size.width, height: size.height), attr)
+    }
+
+    static func textSize(_ attr: NSAttributedString, maxWidth: CGFloat) -> CGSize {
+        let stack = TextKitStack(attr, maxWidth: maxWidth)
+        let glyphs = stack.manager.glyphRange(for: stack.container)
+        guard glyphs.length > 0 else { return .zero }
+        let used = stack.manager.usedRect(for: stack.container)
+        // высота — по фрагментам строк: в них входят интервалы абзацев,
+        // то есть вертикальные отступы блока кода
+        let bounding = stack.manager.boundingRect(forGlyphRange: glyphs, in: stack.container)
+        var width = used.maxX
+        if hasCodeBlock(attr) { width += MessageMarkdownRenderer.codeInset } // правый отступ подложки
+        return CGSize(width: ceil(min(width, maxWidth)), height: ceil(max(used.maxY, bounding.maxY)))
+    }
+
+    /// Последний блок — код: время не должно садиться рядом с подложкой.
+    static func endsWithCodeBlock(_ attr: NSAttributedString) -> Bool {
+        guard attr.length > 0 else { return false }
+        return attr.attribute(.msngrCodeBlock, at: attr.length - 1, effectiveRange: nil) != nil
+    }
+
+    private static func hasCodeBlock(_ attr: NSAttributedString) -> Bool {
+        var found = false
+        attr.enumerateAttribute(.msngrCodeBlock, in: NSRange(location: 0, length: attr.length)) { value, _, stop in
+            if value != nil { found = true; stop.pointee = true }
+        }
+        return found
+    }
+
+    /// Стек TextKit держит storage: layout manager ссылается на него не владея.
+    private final class TextKitStack {
+        let storage: NSTextStorage
+        let manager = NSLayoutManager()
+        let container: NSTextContainer
+
+        init(_ attr: NSAttributedString, maxWidth: CGFloat) {
+            storage = NSTextStorage(attributedString: attr)
+            container = NSTextContainer(size: CGSize(width: maxWidth, height: .greatestFiniteMagnitude))
+            container.lineFragmentPadding = 0
+            container.maximumNumberOfLines = 0
+            manager.addTextContainer(container)
+            storage.addLayoutManager(manager)
+            manager.ensureLayout(for: container)
+        }
     }
 
     /// Ширина последней строки — ключ к размещению времени.
     static func lastLineWidth(_ attr: NSAttributedString, maxWidth: CGFloat) -> CGFloat {
-        let storage = NSTextStorage(attributedString: attr)
-        let container = NSTextContainer(size: CGSize(width: maxWidth, height: .greatestFiniteMagnitude))
-        container.lineFragmentPadding = 0
-        let manager = NSLayoutManager()
-        manager.addTextContainer(container)
-        storage.addLayoutManager(manager)
-        let glyphRange = manager.glyphRange(for: container)
+        let stack = TextKitStack(attr, maxWidth: maxWidth)
+        let glyphRange = stack.manager.glyphRange(for: stack.container)
         guard glyphRange.length > 0 else { return 0 }
         let lastGlyph = glyphRange.upperBound - 1
-        let lineRect = manager.lineFragmentUsedRect(forGlyphAt: lastGlyph, effectiveRange: nil)
+        let lineRect = stack.manager.lineFragmentUsedRect(forGlyphAt: lastGlyph, effectiveRange: nil)
         return ceil(lineRect.width)
     }
 

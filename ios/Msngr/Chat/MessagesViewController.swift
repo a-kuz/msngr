@@ -1,5 +1,6 @@
 import UIKit
 import SwiftUI
+import SafariServices
 import MsngrCore
 
 /// Инвертированный список сообщений: UICollectionView, перевёрнутый по Y.
@@ -237,6 +238,19 @@ final class MessagesViewController: UIViewController {
         cell.onReact = { [weak self] emoji in self?.onReact?(msg, emoji) }
         cell.onContextAction = { [weak self] action in self?.onContextAction?(msg, action) }
         cell.onTapMedia = { [weak self] index, view in self?.onTapMedia?(msg, index, view) }
+        cell.onTapLink = { [weak self] url in self?.open(url) }
+    }
+
+    /// Ссылка из сообщения открывается во встроенном браузере: чат остаётся
+    /// на месте, возврат — свайпом вниз.
+    private func open(_ url: URL) {
+        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+            UIApplication.shared.open(url)
+            return
+        }
+        let safari = SFSafariViewController(url: url)
+        safari.preferredControlTintColor = UIColor(Theme.accent)
+        present(safari, animated: true)
     }
 
     private func contentEqual(_ a: ChatFeedItem, _ b: ChatFeedItem) -> Bool {

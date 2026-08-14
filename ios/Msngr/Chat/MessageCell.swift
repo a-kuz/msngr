@@ -7,9 +7,10 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     var onReact: ((String) -> Void)?
     var onContextAction: ((MessageContextAction) -> Void)?
     var onTapMedia: ((Int, UIView) -> Void)?
+    var onTapLink: ((URL) -> Void)?
 
     private let bubbleView = UIImageView()
-    private let textLabel = UILabel()
+    private let textView = MessageTextView()
     private let nameLabel = UILabel()
     private let forwardLabel = UILabel()
     private let replyBar = ReplyStripView()
@@ -35,9 +36,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         bubbleView.isUserInteractionEnabled = true
         contentView.addSubview(bubbleView)
 
-        textLabel.numberOfLines = 0
-        textLabel.font = BubbleLayout.textFont
-        bubbleView.addSubview(textLabel)
+        bubbleView.addSubview(textView)
 
         nameLabel.font = BubbleLayout.nameFont
         bubbleView.addSubview(nameLabel)
@@ -75,6 +74,13 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
         longPress.minimumPressDuration = 0.35
         bubbleView.addGestureRecognizer(longPress)
+
+        // одиночный тап отрабатывает только попадание по ссылке; двойной тап
+        // (реакция) имеет приоритет, остальные касания проходят насквозь
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        tap.require(toFail: doubleTap)
+        tap.cancelsTouchesInView = false
+        bubbleView.addGestureRecognizer(tap)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -114,14 +120,14 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             .scaledBy(x: 0.15, y: 0.15)
         bubbleView.alpha = 0.5
         bubbleView.layer.cornerRadius = 18
-        for sub in [textLabel, timeLabel, tickView] { sub.alpha = 0 }
+        for sub in [textView, timeLabel, tickView] { sub.alpha = 0 }
         UIView.animate(withDuration: 0.6, delay: 0, usingSpringWithDamping: 0.72,
                        initialSpringVelocity: 1.1, options: [.allowUserInteraction]) {
             self.bubbleView.transform = .identity
             self.bubbleView.alpha = 1
         }
         UIView.animate(withDuration: 0.25, delay: 0.18, options: [.allowUserInteraction]) {
-            for sub in [self.textLabel, self.timeLabel, self.tickView] { sub.alpha = 1 }
+            for sub in [self.textView, self.timeLabel, self.tickView] { sub.alpha = 1 }
         }
     }
 
@@ -135,14 +141,16 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
         // текст
         if let tf = plan.textFrame, let text = plan.text {
-            textLabel.isHidden = false
-            textLabel.attributedText = text
-            textLabel.textColor = msg.deletedForAll
+            textView.isHidden = false
+            textView.frame = tf
+            let color: UIColor = msg.deletedForAll
                 ? (plan.isOutgoing ? UIColor(Theme.outgoingMeta) : .secondaryLabel)
                 : (plan.isOutgoing ? UIColor(Theme.outgoingText) : .label)
-            textLabel.frame = tf
+            textView.configure(text, color: color,
+                               linkColor: plan.isOutgoing ? UIColor(Theme.outgoingText) : UIColor(Theme.accent),
+                               codeBackground: Self.codeBackground(outgoing: plan.isOutgoing))
         } else {
-            textLabel.isHidden = true
+            textView.isHidden = true
         }
 
         // имя автора
@@ -320,6 +328,24 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     @objc private func handleDoubleTap() {
         Haptics.medium()
         onReact?("❤️")
+    }
+
+    @objc private func handleTap(_ g: UITapGestureRecognizer) {
+        guard !textView.isHidden else { return }
+        let point = g.location(in: textView)
+        guard let url = textView.url(at: point) else { return }
+        onTapLink?(url)
+    }
+
+    /// Подложка блока кода: на исходящем баббле — светлее фона, на входящем —
+    /// затемнение, различимое и в тёмной теме.
+    static func codeBackground(outgoing: Bool) -> UIColor {
+        if outgoing { return UIColor(Theme.outgoingText).withAlphaComponent(0.16) }
+        return UIColor { trait in
+            trait.userInterfaceStyle == .dark
+                ? UIColor.white.withAlphaComponent(0.12)
+                : UIColor.black.withAlphaComponent(0.06)
+        }
     }
 
     // MARK: - Swipe-to-reply с резистенцией
