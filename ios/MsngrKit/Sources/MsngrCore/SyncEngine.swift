@@ -16,6 +16,8 @@ public actor SyncEngine {
     private var eventTask: Task<Void, Never>?
     private var outboxTask: Task<Void, Never>?
     private var actionTask: Task<Void, Never>?
+    /// периодическое снятие mute с истёкшим сроком
+    private var muteTask: Task<Void, Never>?
     private var outboxWakeup = AsyncStream<Void>.makeStream()
     private var actionWakeup = AsyncStream<Void>.makeStream()
     private var connected = false
@@ -80,6 +82,14 @@ public actor SyncEngine {
         // начальный снапшот — не блокирует UI, БД уже показывает старое
         Task { try? await self.refreshSnapshot() }
         Task { await self.replenishPrekeysIfNeeded() }
+        Task { await self.refreshBlocked() }
+        muteTask?.cancel()
+        muteTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.sweepExpiredMutes()
+                try? await Task.sleep(nanoseconds: 30_000_000_000)
+            }
+        }
     }
 
     private var prekeysChecked = false
@@ -105,6 +115,7 @@ public actor SyncEngine {
         eventTask?.cancel()
         outboxTask?.cancel()
         actionTask?.cancel()
+        muteTask?.cancel()
         await ws.stop()
         connected = false
     }
@@ -121,6 +132,49 @@ public actor SyncEngine {
         await ws.nudge()
         try? await ws.sendRaw(Data(#"{"t":"fg"}"#.utf8))
         outboxWakeup.continuation.yield()
+        await sweepExpiredMutes()
+    }
+
+    /// Снимает mute у чатов, чей срок вышел: локально и на сервере.
+    /// Сервер считает истёкший mute снятым сам, но без явного снятия флаг
+    /// вернулся бы в клиент со следующим снапшотом.
+    public func sweepExpiredMutes() async {
+        let now = Date().timeIntervalSince1970
+        let expired: [String] = (try? await db.write { dbc in
+            let ids = try String.fetchAll(dbc, sql: """
+                SELECT id FROM chat WHERE muted = 1 AND mutedUntil IS NOT NULL AND mutedUntil <= ?
+                """, arguments: [now])
+            if !ids.isEmpty {
+                try dbc.execute(sql: """
+                    UPDATE chat SET muted = 0, mutedUntil = NULL
+                    WHERE muted = 1 AND mutedUntil IS NOT NULL AND mutedUntil <= ?
+                    """, arguments: [now])
+            }
+            return ids
+        }) ?? []
+        for chatId in expired {
+            try? await api.setChatFlags(chatId, muted: false)
+        }
+    }
+
+    /// Список заблокированных с сервера в локальный флаг user.isBlocked.
+    public func refreshBlocked() async {
+        guard let ids = try? await api.blockedUsers() else { return }
+        try? await db.write { dbc in
+            try dbc.execute(sql: "UPDATE user SET isBlocked = 0 WHERE isBlocked = 1")
+            for id in ids {
+                try dbc.execute(sql: "UPDATE user SET isBlocked = 1 WHERE id = ?", arguments: [id])
+            }
+        }
+    }
+
+    /// Блокировка собеседника: сервер + локальный флаг, который гасит инпут-бар.
+    public func setBlocked(userId: String, blocked: Bool) async throws {
+        try await api.setBlocked(userId, blocked: blocked)
+        try await db.write { dbc in
+            try dbc.execute(sql: "UPDATE user SET isBlocked = ? WHERE id = ?",
+                            arguments: [blocked, userId])
+        }
     }
 
     private func handle(_ ev: WSEvent) async {
@@ -154,8 +208,10 @@ public actor SyncEngine {
                 try SyncEngine.upsertUser(dbc, u)
             }
             for entry in snap.chats {
-                try SyncEngine.upsertChatState(dbc, entry.state, ownUserId: ownUserId,
-                                               flags: (entry.flags.pinned, entry.flags.muted, entry.flags.archived))
+                try SyncEngine.upsertChatState(
+                    dbc, entry.state, ownUserId: ownUserId,
+                    flags: ChatFlags(pinned: entry.flags.pinned, muted: entry.flags.muted,
+                                     mutedUntil: entry.flags.mutedUntil, archived: entry.flags.archived))
             }
         }
     }
@@ -975,8 +1031,22 @@ public actor SyncEngine {
             arguments: [u.id, u.username, u.display_name, u.bio, u.avatar_id])
     }
 
+    /// Локальные флаги чата из снапшота сервера.
+    public struct ChatFlags: Sendable {
+        public let pinned: Bool
+        public let muted: Bool
+        public let mutedUntil: Double?
+        public let archived: Bool
+        public init(pinned: Bool, muted: Bool, mutedUntil: Double?, archived: Bool) {
+            self.pinned = pinned
+            self.muted = muted
+            self.mutedUntil = mutedUntil
+            self.archived = archived
+        }
+    }
+
     static func upsertChatState(_ dbc: GRDB.Database, _ s: ChatStateDTO, ownUserId: String,
-                                flags: (pinned: Bool, muted: Bool, archived: Bool)?) throws {
+                                flags: ChatFlags?) throws {
         let me = s.members.first { $0.userId == ownUserId }
         let iAccepted = me?.accepted ?? true
         let isRequest = s.kind == "direct" && !iAccepted
@@ -1007,9 +1077,10 @@ public actor SyncEngine {
                         s.createdAt, isRequest, iAccepted,
                         flags?.pinned ?? false, flags?.muted ?? false, flags?.archived ?? false,
                         max(0, s.lastSeq - myRead)])
-        if flags != nil {
-            try dbc.execute(sql: "UPDATE chat SET pinned = ?, muted = ?, archived = ? WHERE id = ?",
-                            arguments: [flags!.pinned, flags!.muted, flags!.archived, s.chatId])
+        if let flags {
+            try dbc.execute(
+                sql: "UPDATE chat SET pinned = ?, muted = ?, mutedUntil = ?, archived = ? WHERE id = ?",
+                arguments: [flags.pinned, flags.muted, flags.mutedUntil, flags.archived, s.chatId])
         }
         try dbc.execute(sql: "DELETE FROM member WHERE chatId = ?", arguments: [s.chatId])
         for m in s.members {

@@ -184,6 +184,12 @@ public enum AppDatabase {
                 t.primaryKey(["chatId", "targetMsgId", "kind", "fromUserId"])
             }
         }
+        m.registerMigration("v6-mutedUntil") { db in
+            // mute со сроком: до этого момента чат молчит, дальше флаг снимается
+            try db.alter(table: "chat") { t in
+                t.add(column: "mutedUntil", .double)
+            }
+        }
         return m
     }
 }
