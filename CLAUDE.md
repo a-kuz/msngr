@@ -1,0 +1,118 @@
+# Работа в этом репозитории
+
+Мессенджер с E2EE: Swift-клиенты (iOS, macOS) + Cloudflare Worker.
+Прода нет, пользователей нет.
+
+## Раскладка
+
+```
+server/src/index.ts        HTTP API (hono) + апгрейд /ws
+server/src/do/             UserSessionDO (сокеты, presence, пуши), ConversationDO (журнал чата)
+server/src/push/apns.ts    APNs
+server/schema.sql          D1
+ios/MsngrKit/              ядро: MsngrCrypto (примитивы), MsngrCore (БД, WS, SyncEngine, E2EE)
+ios/Msngr/                 iOS-приложение
+ios/NotificationService/   NSE
+ios/project.yml            описание проекта для xcodegen
+```
+
+Документация: `docs/protocol.md` (фреймы и API), `docs/crypto-flows.md`,
+`docs/ui-spec.md`, `docs/PROCESS.md` (процесс и гейт), `docs/audits/`,
+`docs/qa/`, `docs/research/`.
+
+## Сборка и тесты
+
+```bash
+cd ios && xcodegen                                  # обязательно после правки project.yml
+xcodebuild -project ios/Msngr.xcodeproj -scheme Msngr -destination 'id=<UDID>' build
+xcodebuild -project ios/Msngr.xcodeproj -scheme Msngr -destination 'id=<UDID>' \
+  test -only-testing:MsngrTests
+cd ios/MsngrKit && swift test                       # ядро
+cd server && node test/smoke.mjs                    # 63 проверки, нужен wrangler dev
+```
+
+`ios/Msngr.xcodeproj` в `.gitignore` и генерируется из `ios/project.yml`. Руками
+`.pbxproj` не править — правки затрёт следующий `xcodegen`. Entitlements
+приложения и расширения тоже собираются из `project.yml`
+(`entitlements.properties`), редактировать `.entitlements` бессмысленно.
+
+`swift test` в MsngrKit: `CoreIntegrationTests` сами пропускаются, если на :8787
+никто не отвечает; остальные тесты сервера не требуют.
+
+## Гейт перед сдачей
+
+`make check` в корне: `xcodegen` → сборка → `swift test` → MsngrTests →
+MsngrUITests → серверный смоук → сбор свежих крешей симулятора (свежий креш
+роняет гейт). UI-тесты и смоук требуют поднятого `wrangler dev`.
+
+Makefile по умолчанию собирает на симуляторе владельца, поэтому агент
+запускает гейт со своим симулятором:
+
+```bash
+make check DEV_UDID=74B78AFC-E8D7-4317-B16F-E51A65504B2D   # gate-runner
+```
+
+## Стенд
+
+- `wrangler dev` на :8787 — общий, живой. Не перезапускать и не сносить его
+  состояние (`server/.wrangler/`) без явной просьбы: там переписки и ключи
+  тестовых пользователей.
+- Дев-мок APNs `node server/tools/apns-mock.mjs` слушает :9871 и доставляет
+  пуши в симулятор через `simctl push`. `node test/smoke.mjs` поднимает на этом
+  же порту собственный приёмник — перед смоуком мок нужно остановить.
+- «Офлайн» в сценариях — убитый `wrangler dev`, не выключенная сеть.
+
+## Симуляторы
+
+Симулятор — эксклюзивный ресурс: в один момент он принадлежит одному агенту.
+
+- Не трогать симуляторы владельца: `44CE2242-EBB9-48EA-A605-5988A00E4C31`
+  (iPhone 17 dev) и `0E0CF155-B4B7-4794-A963-AD7C76EFDCEA` (iPhone 17 Pro Max).
+  Они выдаются только по явной эксклюзивной броне.
+- `74B78AFC-E8D7-4317-B16F-E51A65504B2D` (gate-runner) — прогон гейта.
+- Для своих сценариев создавать собственный симулятор
+  (`xcrun simctl create <имя> "iPhone 17"` → `boot` → `install` → регистрация
+  свежего юзера) и удалять его за собой (`shutdown` + `delete`).
+- Slow Animations в Simulator.app — глобальный тумблер: включил, значит
+  выключил в конце.
+
+## Что легко сломать
+
+- **Порядок и курсоры.** `syncedSeq` двигается только по непрерывному префиксу;
+  `unreadCount` производный (`lastSeq − myReadUpTo`), а не ручной инкремент.
+- **service-флаг.** `edit`, `reaction`, `disappearing` и раздача sender key
+  уходят с `service: true`: они занимают `seq`, но не растят unread и не
+  порождают пуш. Новый служебный вид контента добавляется в
+  `SyncEngine.serviceKinds`.
+- **Идемпотентность.** Отправка дедуплицируется сервером по `clientMsgId`;
+  повторная отправка того же — норма, а не ошибка. `clientMsgId` раздачи sender
+  key детерминирован специально.
+- **Отложенное применение.** Сообщение раньше своего ключа идёт в
+  `pendingDecrypt`, правка или реакция без оригинала — в `pendingApply`. Новый
+  путь применения контента должен уметь и то, и другое.
+- **Пути хранилища.** Только через `StorageLocation`/`AppContainer`: приложение
+  и NSE работают с одними файлами в контейнере app group.
+- **Лента.** `reloadData()` на живом чате обрывает анимации; обновление идёт
+  точечным диффом и переконфигурацией ячейки на месте.
+- **APNs.** Пуш уходит на каждое контентное сообщение, даже при живом сокете;
+  дубль гасит клиент в `willPresent`. Не «чинить» это условием на presence.
+
+## Совместимость
+
+Обратной совместимости нет и compat-слоёв не пишем: схему БД можно менять без
+миграции (базу снести, юзера перерегистрировать), фреймы и REST меняются
+свободно, ключи и сессии терять можно. Механизм версий при этом закладывается —
+`v` в E2E-конверте, версия схемы, `migrations` в `wrangler.jsonc`. Подробности
+в `docs/PROCESS.md`.
+
+## Оформление работы
+
+- Микро-скоуп: одно поведение за изменение, коммиты инкрементальные.
+  Живой прогон затронутого сценария на симуляторе, потом `make check`.
+- Коммиты и PR без `Co-Authored-By`.
+- Комментарии и документация — по-русски и только о текущем поведении кода.
+  История изменений живёт в git, а не в комментариях.
+- Найденная после сдачи регрессия сначала получает воспроизводящий тест, потом
+  фикс.
+- Отчёт в конце: что сделано, что проверено (какой командой или прогоном), что
+  не сделано и почему.
