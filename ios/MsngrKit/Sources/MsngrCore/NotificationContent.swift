@@ -79,6 +79,19 @@ public enum NotificationContentBuilder {
             threadIdentifier: chat.chatId)
     }
 
+    /// Тот же билдер для строки сообщения из локальной БД (текст уже расшифрован).
+    public static func build(message: Message,
+                             chat: ChatInfo,
+                             sender: SenderInfo,
+                             showsMessageText: Bool = true) -> NotificationContent? {
+        var payload = ContentPayload(kind: message.kind.rawValue)
+        payload.text = message.text
+        payload.media = message.media
+        payload.album = message.album
+        return build(payload: payload, chat: chat, sender: sender,
+                     showsMessageText: showsMessageText, isDeleted: message.deletedForAll)
+    }
+
     /// Однострочное превью контента: текст или плейсхолдер медиа с подписью.
     public static func preview(_ payload: ContentPayload) -> String {
         let caption = truncate(payload.text ?? "")

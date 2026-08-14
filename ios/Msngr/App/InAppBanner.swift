@@ -8,14 +8,15 @@ enum InAppBannerPresenter {
     private static var window: UIWindow?
     private static var hideTask: Task<Void, Never>?
 
-    static func show(title: String, body: String, chatId: String) {
+    static func show(title: String, subtitle: String? = nil, body: String,
+                     avatar: URL? = nil, chatId: String) {
         // новый баннер замещает предыдущий без анимации ухода
         if window != nil { teardown() }
         guard let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
             .first(where: { $0.activationState == .foregroundActive }) else { return }
         let host = UIHostingController(rootView: InAppBannerView(
-            title: title, body: body,
+            title: title, subtitle: subtitle, body: body, avatar: avatar,
             onTap: {
                 dismiss(animated: false)
                 NotificationCenter.default.post(name: .openChatRequested, object: chatId)
@@ -62,17 +63,23 @@ enum InAppBannerPresenter {
     }
 }
 
-/// Содержимое баннера: имя чата/отправителя + превью расшифрованного текста.
+/// Содержимое баннера: аватар и имя отправителя, название группы и превью
+/// расшифрованного текста — то же, что видно в системном уведомлении.
 struct InAppBannerView: View {
     let title: String
+    let subtitle: String?
+    let avatar: URL?
     let body_: String
     let onTap: () -> Void
     let onSwipeUp: () -> Void
     @State private var appeared = false
     @State private var dragOffset: CGFloat = 0
 
-    init(title: String, body: String, onTap: @escaping () -> Void, onSwipeUp: @escaping () -> Void) {
+    init(title: String, subtitle: String? = nil, body: String, avatar: URL? = nil,
+         onTap: @escaping () -> Void, onSwipeUp: @escaping () -> Void) {
         self.title = title
+        self.subtitle = subtitle
+        self.avatar = avatar
         self.body_ = body
         self.onTap = onTap
         self.onSwipeUp = onSwipeUp
@@ -80,14 +87,26 @@ struct InAppBannerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                Text(body_)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+            HStack(spacing: 10) {
+                BannerAvatar(name: title, file: avatar)
+                    .frame(width: 38, height: 38)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Text(title)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                        if let subtitle {
+                            Text(subtitle)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    Text(body_)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 14)
@@ -113,5 +132,22 @@ struct InAppBannerView: View {
         .onAppear {
             withAnimation(.spring(duration: 0.35)) { appeared = true }
         }
+    }
+}
+
+/// Аватар из локального файла; файла нет — инициалы.
+struct BannerAvatar: View {
+    let name: String
+    let file: URL?
+
+    var body: some View {
+        Group {
+            if let file, let image = UIImage(contentsOfFile: file.path) {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else {
+                AvatarView(name: name, avatarId: nil)
+            }
+        }
+        .clipShape(Circle())
     }
 }

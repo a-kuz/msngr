@@ -21,6 +21,9 @@ targets:
     sources: [Msngr]
     entitlements:
       path: Msngr/Msngr.entitlements
+      properties:
+        # аватар и имя отправителя в баннере (Communication Notifications)
+        com.apple.developer.usernotifications.communication: true
     dependencies:
       - package: MsngrKit
         product: MsngrCrypto
@@ -39,6 +42,7 @@ targets:
         NSContactsUsageDescription: "Поиск знакомых, которые уже в Msngr"
         NSFaceIDUsageDescription: "Разблокировка приложения"
         UIBackgroundModes: [remote-notification]
+        NSUserActivityTypes: [INSendMessageIntent]
         ITSAppUsesNonExemptEncryption: false
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         CFBundleURLTypes:

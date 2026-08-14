@@ -55,8 +55,8 @@ final class AppState: ObservableObject {
         Task { await bootstrap(s) }
     }
 
-    /// Общий с NSE контейнер (app group) для БД и ключей.
-    static var sharedContainer: URL {
+    /// Общий с NSE контейнер (app group) для БД, ключей и аватаров.
+    nonisolated static var sharedContainer: URL {
         FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: AppGroup.identifier)
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
     }
@@ -92,6 +92,8 @@ final class AppState: ObservableObject {
             // по UDID, он же регистрируется на сервере вместо APNs-токена
             let udid = ProcessInfo.processInfo.environment["SIMULATOR_UDID"] ?? "unknown-simulator"
             try? await api.registerPushToken(udid, env: "dev-sim")
+            // APNs симулятору недоступен: баннер в фоне постит приложение
+            NotificationCoordinator.shared.apnsAvailable = false
             #else
             UIApplication.shared.registerForRemoteNotifications()
             #endif
@@ -112,17 +114,20 @@ final class AppState: ObservableObject {
     // MARK: - Lifecycle / lock
 
     private var backgroundedAt: Date?
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
     func scenePhaseChanged(_ phase: ScenePhase) {
         switch phase {
         case .background:
             obscured = true
             backgroundedAt = Date()
+            beginBackgroundWork()
             if let engine { Task { await engine.appEnteredBackground() } }
         case .inactive:
             obscured = true
         case .active:
             obscured = false
+            endBackgroundWork()
             if let engine { Task { await engine.appBecameActive() } }
             // авто-лок: пин есть и в фоне были дольше грейс-периода
             if PinStore.hasPin(), let t = backgroundedAt,
@@ -133,6 +138,22 @@ final class AppState: ObservableObject {
         @unknown default:
             break
         }
+    }
+
+    /// Без этого процесс усыпляют сразу после сворачивания, и сообщение,
+    /// пришедшее по живому WS, остаётся без уведомления. Система даёт около
+    /// 30 секунд — этого хватает дочитать входящие и поднять баннер.
+    private func beginBackgroundWork() {
+        guard backgroundTask == .invalid else { return }
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "ws-incoming") { [weak self] in
+            Task { @MainActor in self?.endBackgroundWork() }
+        }
+    }
+
+    private func endBackgroundWork() {
+        guard backgroundTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTask)
+        backgroundTask = .invalid
     }
 
     func unlock() {
