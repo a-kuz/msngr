@@ -43,6 +43,8 @@ public struct Chat: Codable, Identifiable, Equatable, FetchableRecord, Persistab
     public var unreadCount: Int = 0
     public var pinned: Bool = false
     public var muted: Bool = false
+    /// момент снятия mute; nil при muted — бессрочно
+    public var mutedUntil: Double?
     public var archived: Bool = false
     public var draft: String?
     public var myReadUpTo: Int = 0

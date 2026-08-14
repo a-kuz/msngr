@@ -205,6 +205,7 @@ public final class APIClient: @unchecked Sendable {
             public struct Flags: Decodable {
                 public let pinned: Bool
                 public let muted: Bool
+                public let mutedUntil: Double?
                 public let archived: Bool
             }
         }
@@ -260,11 +261,16 @@ public final class APIClient: @unchecked Sendable {
         struct Body: Encodable { let msgId: String? }
         _ = try await request("api/chats/\(chatId)/pin-message", method: "POST", jsonBody: Body(msgId: msgId))
     }
+    /// `mutedUntil` без `muted` игнорируется сервером; `muted: true` без срока — бессрочно.
     public func setChatFlags(_ chatId: String, pinned: Bool? = nil,
-                             muted: Bool? = nil, archived: Bool? = nil) async throws {
-        struct Body: Encodable { let pinned: Bool?; let muted: Bool?; let archived: Bool? }
+                             muted: Bool? = nil, mutedUntil: Double? = nil,
+                             archived: Bool? = nil) async throws {
+        struct Body: Encodable {
+            let pinned: Bool?; let muted: Bool?; let mutedUntil: Double?; let archived: Bool?
+        }
         _ = try await request("api/chats/\(chatId)/flags", method: "POST",
-                              jsonBody: Body(pinned: pinned, muted: muted, archived: archived))
+                              jsonBody: Body(pinned: pinned, muted: muted,
+                                             mutedUntil: mutedUntil, archived: archived))
     }
 
     public struct InviteResponse: Decodable {
@@ -298,6 +304,13 @@ public final class APIClient: @unchecked Sendable {
     public struct AvatarResponse: Decodable { public let avatarId: String }
     public func uploadAvatar(_ jpeg: Data) async throws -> String {
         let raw = try await request("api/avatar", method: "POST", rawBody: jpeg, contentType: "image/jpeg")
+        return try JSONDecoder().decode(AvatarResponse.self, from: raw).avatarId
+    }
+    /// Аватар чата: тот же блоб-путь, но сервер кладёт id в настройки чата,
+    /// а не в свой профиль (права — как у /chats/:id/settings).
+    public func uploadChatAvatar(chatId: String, jpeg: Data) async throws -> String {
+        let raw = try await request("api/avatar?chatId=\(chatId)", method: "POST",
+                                    rawBody: jpeg, contentType: "image/jpeg")
         return try JSONDecoder().decode(AvatarResponse.self, from: raw).avatarId
     }
     public func avatarURL(_ avatarId: String) -> URL {
