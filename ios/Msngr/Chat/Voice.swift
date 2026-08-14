@@ -229,9 +229,19 @@ final class VoiceMessageView: UIView {
         waveform.onSeek = { fraction in
             VoicePlayer.shared.seek(to: fraction)
         }
+
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleFileTap))
+        tap.delegate = self
+        addGestureRecognizer(tap)
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func handleFileTap() {
+        guard let msg, msg.kind == .file else { return }
+        Haptics.light()
+        FilePreviewPresenter.present(message: msg)
+    }
 
     func configure(msg: Message, outgoing: Bool) {
         self.msg = msg
@@ -305,5 +315,19 @@ final class VoiceMessageView: UIView {
         durationLabel.frame = CGRect(x: 48, y: 27, width: 100, height: 14)
         fileIcon.frame = CGRect(x: 4, y: 5, width: 32, height: 32)
         fileName.frame = CGRect(x: 48, y: 3, width: bounds.width - 48, height: 22)
+    }
+}
+
+extension VoiceMessageView: UIGestureRecognizerDelegate {
+    /// Просмотр открывается только по файлам; удержание уходит контекстному меню,
+    /// двойной тап — реакции.
+    func gestureRecognizer(_ g: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        msg?.kind == .file
+    }
+
+    func gestureRecognizer(_ g: UIGestureRecognizer,
+                           shouldRequireFailureOf other: UIGestureRecognizer) -> Bool {
+        other is UILongPressGestureRecognizer
+            || (other as? UITapGestureRecognizer)?.numberOfTapsRequired == 2
     }
 }

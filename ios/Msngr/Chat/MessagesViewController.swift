@@ -12,10 +12,14 @@ final class MessagesViewController: UIViewController {
     var onReact: ((Message, String) -> Void)?
     var onContextAction: ((Message, MessageContextAction) -> Void)?
     var onTapMedia: ((Message, Int, UIView) -> Void)?
+    /// тап по цитате в баббле-ответе (переход к оригиналу)
+    var onTapReplyQuote: ((Message) -> Void)?
 
     private(set) var collectionView: UICollectionView!
     private var items: [ChatFeedItem] = []
     private var width: CGFloat = 0
+    /// сообщение, которое ждёт вспышки подсветки после перехода по цитате
+    private var pendingHighlightId: String?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -237,6 +241,7 @@ final class MessagesViewController: UIViewController {
         cell.onReact = { [weak self] emoji in self?.onReact?(msg, emoji) }
         cell.onContextAction = { [weak self] action in self?.onContextAction?(msg, action) }
         cell.onTapMedia = { [weak self] index, view in self?.onTapMedia?(msg, index, view) }
+        cell.onTapReplyQuote = { [weak self] in self?.onTapReplyQuote?(msg) }
     }
 
     private func contentEqual(_ a: ChatFeedItem, _ b: ChatFeedItem) -> Bool {
@@ -256,10 +261,39 @@ final class MessagesViewController: UIViewController {
         collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.contentInset.top), animated: animated)
     }
 
-    func scrollTo(msgId: String) {
-        if let idx = items.firstIndex(where: { $0.id == msgId }) {
-            collectionView.scrollToItem(at: IndexPath(item: idx, section: 0), at: .centeredVertically, animated: true)
+    /// Скролл к сообщению по серверному msgId или локальному id.
+    /// Возвращает false, если сообщения нет в загруженной ленте (нужна догрузка истории).
+    @discardableResult
+    func scrollTo(msgId: String, highlight: Bool = false) -> Bool {
+        guard let idx = index(ofMsgId: msgId) else { return false }
+        collectionView.scrollToItem(at: IndexPath(item: idx, section: 0), at: .centeredVertically, animated: true)
+        if highlight {
+            pendingHighlightId = msgId
+            // ячейка уже на экране — вспышка идёт параллельно доводке скролла;
+            // иначе сработает, когда ячейка материализуется или скролл доедет
+            flushPendingHighlight()
         }
+        return true
+    }
+
+    private func index(ofMsgId msgId: String) -> Int? {
+        Self.index(ofMsgId: msgId, in: items)
+    }
+
+    /// Позиция сообщения в ленте: свои сообщения лежат под clientMsgId,
+    /// а ссылаются на них (цитата, закреп) серверным msgId.
+    static func index(ofMsgId msgId: String, in items: [ChatFeedItem]) -> Int? {
+        items.firstIndex { item in
+            guard case .message(let m, _, _, _, _) = item else { return false }
+            return m.id == msgId || m.msgId == msgId
+        }
+    }
+
+    private func flushPendingHighlight() {
+        guard let id = pendingHighlightId, let idx = index(ofMsgId: id),
+              let cell = collectionView.cellForItem(at: IndexPath(item: idx, section: 0)) as? MessageCell else { return }
+        pendingHighlightId = nil
+        cell.flashHighlight()
     }
 }
 
@@ -292,6 +326,11 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             let plan = BubbleLayout.plan(for: msg, width: cv.bounds.width, tightGap: tightGap,
                                          showTail: showTail, showName: showName, authorName: authorName)
             configureMessageCell(cell, msg: msg, plan: plan)
+            // ячейка оригинала создаётся уже по ходу скролла к нему — вспышка ждала её
+            if let id = pendingHighlightId, id == msg.id || id == msg.msgId {
+                pendingHighlightId = nil
+                DispatchQueue.main.async { cell.flashHighlight() }
+            }
             return cell
         }
     }
@@ -311,6 +350,10 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
                                          showTail: showTail, showName: showName, authorName: authorName)
             return CGSize(width: cv.bounds.width, height: plan.cellHeight)
         }
+    }
+
+    func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+        flushPendingHighlight()
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {

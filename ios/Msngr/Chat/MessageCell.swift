@@ -7,6 +7,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     var onReact: ((String) -> Void)?
     var onContextAction: ((MessageContextAction) -> Void)?
     var onTapMedia: ((Int, UIView) -> Void)?
+    var onTapReplyQuote: (() -> Void)?
 
     private let bubbleView = UIImageView()
     private let tailView = UIImageView()
@@ -81,7 +82,43 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
         longPress.minimumPressDuration = 0.35
         bubbleView.addGestureRecognizer(longPress)
+
+        // тап только по области цитаты; удержание отдаёт жест контекстному меню,
+        // двойной тап — реакции
+        let replyTap = UITapGestureRecognizer(target: self, action: #selector(handleReplyQuoteTap))
+        replyTap.require(toFail: longPress)
+        replyTap.require(toFail: doubleTap)
+        replyBar.addGestureRecognizer(replyTap)
     }
+
+    @objc private func handleReplyQuoteTap() {
+        guard msg?.replyTo != nil else { return }
+        onTapReplyQuote?()
+    }
+
+    /// Кратковременная вспышка баббла: подтверждает переход к оригиналу.
+    func flashHighlight() {
+        bubbleView.viewWithTag(Self.highlightTag)?.removeFromSuperview()
+        let overlay = UIView(frame: bubbleView.bounds)
+        overlay.tag = Self.highlightTag
+        overlay.backgroundColor = UIColor(Theme.accent).withAlphaComponent(0.3)
+        overlay.layer.cornerRadius = Theme.bubbleCorner
+        overlay.layer.cornerCurve = .continuous
+        overlay.isUserInteractionEnabled = false
+        overlay.alpha = 0
+        bubbleView.addSubview(overlay)
+        UIView.animate(withDuration: 0.16) {
+            overlay.alpha = 1
+        } completion: { _ in
+            UIView.animate(withDuration: 0.44, delay: 0.06) {
+                overlay.alpha = 0
+            } completion: { _ in
+                overlay.removeFromSuperview()
+            }
+        }
+    }
+
+    private static let highlightTag = 7181
 
     required init?(coder: NSCoder) { fatalError() }
 
@@ -89,6 +126,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         super.prepareForReuse()
         reactionViews.forEach { $0.removeFromSuperview() }
         reactionViews = []
+        bubbleView.viewWithTag(Self.highlightTag)?.removeFromSuperview()
         contentView.transform = CGAffineTransform(scaleX: 1, y: -1)
         // сброс незавершённого свайпа-reply
         bubbleView.transform = .identity
@@ -592,7 +630,8 @@ extension MessageCell {
         items.append(.init(title: "Ответить", icon: "arrowshape.turn.up.left") { [weak self] in
             self?.onContextAction?(.reply)
         })
-        if msg.kind == .text {
+        // фото и альбом копируются картинкой в буфер, текст — строкой
+        if msg.kind == .text || msg.kind == .photo || msg.kind == .album {
             items.append(.init(title: "Копировать", icon: "doc.on.doc") { [weak self] in
                 self?.onContextAction?(.copy)
             })
