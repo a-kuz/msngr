@@ -307,8 +307,11 @@ enum BubbleLayout {
         // капсулы реакций всегда внутри баббла: низ баббла не выше низа капсул
         for r in reactionsFrames { bubbleHeight = max(bubbleHeight, r.3.maxY + vPadding) }
 
+        // зазор занимает верх ячейки, баббл прижат к её низу: на экране это
+        // расстояние до сообщения выше, о котором и говорит tightGap
+        let seriesGap = tightGap ? groupGap : normalGap
         let bubbleX = msg.isOutgoing ? safeWidth - sideMargin - bubbleWidth : sideMargin
-        let bubbleFrame = CGRect(x: bubbleX, y: 0, width: bubbleWidth, height: bubbleHeight)
+        let bubbleFrame = CGRect(x: bubbleX, y: seriesGap, width: bubbleWidth, height: bubbleHeight)
 
         // фикс ширины имени
         if var nf = authorNameFrame {
@@ -323,7 +326,7 @@ enum BubbleLayout {
         }
 
         return BubbleLayoutPlan(
-            cellHeight: bubbleHeight + (tightGap ? groupGap : normalGap),
+            cellHeight: bubbleHeight + seriesGap,
             bubbleFrame: bubbleFrame,
             textFrame: textFrame, text: attrText,
             statusFrame: statusFrame, statusOnMedia: statusOnMedia,

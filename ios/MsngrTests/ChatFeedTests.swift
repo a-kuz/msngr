@@ -104,6 +104,110 @@ final class ChatFeedTests: XCTestCase {
         XCTAssertFalse(feed.contains { if case .unreadMarker = $0 { return true }; return false })
     }
 
+    // MARK: - Группировка серий: хвостик и зазор
+
+    /// Флаги группировки сообщений ленты в её порядке (index 0 — самое новое).
+    private func grouping(_ feed: [ChatFeedItem]) -> [(id: String, tightGap: Bool, showTail: Bool)] {
+        feed.compactMap { item in
+            if case .message(let m, let tightGap, let showTail, _, _) = item {
+                return (m.id, tightGap, showTail)
+            }
+            return nil
+        }
+    }
+
+    /// Серия одного автора внутри минуты: хвостик только у последнего снизу,
+    /// у остальных тесный зазор сверху.
+    @MainActor
+    func testSeriesWithinMinuteTailOnlyOnNewest() {
+        let base: TimeInterval = 1_700_000_000
+        let msgs = [
+            msg("m3", sentAt: base + 40, seq: 3),
+            msg("m2", sentAt: base + 20, seq: 2),
+            msg("m1", sentAt: base, seq: 1),
+        ]
+        let g = grouping(ChatViewModel.buildFeed(msgs, members: []))
+        XCTAssertEqual(g.map(\.id), ["m3", "m2", "m1"])
+        XCTAssertEqual(g.map(\.showTail), [true, false, false],
+                       "хвостик только у самого нового сообщения серии")
+        // тесный зазор — у продолжений серии; самое старое открывает серию
+        XCTAssertEqual(g.map(\.tightGap), [true, true, false])
+    }
+
+    /// Разрыв больше минуты рвёт серию: хвостик у обоих, зазор обычный.
+    @MainActor
+    func testPauseOverMinuteBreaksSeries() {
+        let base: TimeInterval = 1_700_000_000
+        let msgs = [
+            msg("m2", sentAt: base + 120, seq: 2),
+            msg("m1", sentAt: base, seq: 1),
+        ]
+        let g = grouping(ChatViewModel.buildFeed(msgs, members: []))
+        XCTAssertEqual(g.map(\.showTail), [true, true])
+        XCTAssertEqual(g.map(\.tightGap), [false, false])
+    }
+
+    /// Ровно 60 секунд — уже не серия (условие строгое: < 60).
+    @MainActor
+    func testExactlySixtySecondsBreaksSeries() {
+        let base: TimeInterval = 1_700_000_000
+        let msgs = [
+            msg("m2", sentAt: base + 60, seq: 2),
+            msg("m1", sentAt: base, seq: 1),
+        ]
+        let g = grouping(ChatViewModel.buildFeed(msgs, members: []))
+        XCTAssertEqual(g.map(\.showTail), [true, true])
+    }
+
+    /// Чередование авторов: каждое сообщение — своя серия.
+    @MainActor
+    func testAlternatingAuthorsBreakSeries() {
+        let base: TimeInterval = 1_700_000_000
+        let msgs = [
+            msg("m4", sentAt: base + 30, seq: 4),
+            incoming("m3", sentAt: base + 20, seq: 3),
+            msg("m2", sentAt: base + 10, seq: 2),
+            incoming("m1", sentAt: base, seq: 1),
+        ]
+        let g = grouping(ChatViewModel.buildFeed(msgs, members: []))
+        XCTAssertEqual(g.map(\.showTail), [true, true, true, true])
+        XCTAssertEqual(g.map(\.tightGap), [false, false, false, false])
+    }
+
+    /// Подряд идущие сообщения одного автора рвутся сменой дня,
+    /// даже если по времени они укладываются в минуту.
+    @MainActor
+    func testDayChangeBreaksSeries() {
+        // 23:59:40 и 00:00:10 следующего дня — разница 30 секунд, но дни разные
+        var comps = DateComponents()
+        comps.year = 2026; comps.month = 3; comps.day = 10
+        comps.hour = 23; comps.minute = 59; comps.second = 40
+        let cal = Calendar.current
+        let late = cal.date(from: comps)!.timeIntervalSince1970
+        let msgs = [
+            msg("m2", sentAt: late + 30, seq: 2),
+            msg("m1", sentAt: late, seq: 1),
+        ]
+        let g = grouping(ChatViewModel.buildFeed(msgs, members: []))
+        XCTAssertEqual(g.map(\.showTail), [true, true], "смена дня рвёт серию")
+        XCTAssertEqual(g.map(\.tightGap), [false, false])
+    }
+
+    /// Системное сообщение не склеивается в серию с соседями своего автора.
+    @MainActor
+    func testSystemMessageBreaksSeries() {
+        let base: TimeInterval = 1_700_000_000
+        var system = msg("s1", sentAt: base + 10, seq: 2)
+        system.kind = .system
+        let msgs = [
+            msg("m2", sentAt: base + 20, seq: 3),
+            system,
+            msg("m1", sentAt: base, seq: 1),
+        ]
+        let g = grouping(ChatViewModel.buildFeed(msgs, members: []))
+        XCTAssertEqual(g.map(\.showTail), [true, true, true])
+    }
+
     @MainActor
     func testTwoMessagesSameDaySingleSeparator() {
         let base: TimeInterval = 1_700_000_000
