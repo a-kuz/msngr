@@ -186,15 +186,13 @@ export class UserSessionDO implements DurableObject {
         const flags = await this.state.storage.get<ChatFlags>(key);
         if (!flags) return err("chat_not_found", 404);
         if (b.pinned !== undefined) flags.pinned = b.pinned;
+        // срок живёт только вместе со своим включением mute: muted без mutedUntil
+        // (или mutedUntil: null) — бессрочно, muted:false — снятие
         if (b.muted !== undefined) {
           flags.muted = b.muted;
-          if (!b.muted) delete flags.mutedUntil;
+          delete flags.mutedUntil;
         }
-        // срок задаётся вместе с включением mute; null — бессрочно
-        if (b.mutedUntil !== undefined && flags.muted) {
-          if (b.mutedUntil === null) delete flags.mutedUntil;
-          else flags.mutedUntil = b.mutedUntil;
-        }
+        if (b.mutedUntil != null && flags.muted) flags.mutedUntil = b.mutedUntil;
         if (b.archived !== undefined) flags.archived = b.archived;
         await this.state.storage.put(key, flags);
         return json({ ok: true });
