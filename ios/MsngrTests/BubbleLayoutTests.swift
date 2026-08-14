@@ -186,6 +186,70 @@ final class BubbleLayoutTests: XCTestCase {
         }
     }
 
+    // MARK: - Мини-маркдаун
+
+    /// Блок кода занимает больше места, чем тот же текст без разметки:
+    /// подложка с отступами плюс время на своей строке.
+    func testCodeBlockBubbleIsTallerThanPlainText() {
+        let plain = plan("let a = 1")
+        let code = plan("```\nlet a = 1\n```")
+        XCTAssertGreaterThan(code.bubbleFrame.height, plain.bubbleFrame.height,
+                             "баббл с блоком кода обязан быть выше")
+        XCTAssertGreaterThan(code.cellHeight, plain.cellHeight)
+    }
+
+    /// Многострочный блок кода выше однострочного минимум на строку.
+    func testMultilineCodeBlockGrowsWithLines() {
+        let one = plan("```\nlet a = 1\n```")
+        let three = plan("```\nlet a = 1\nlet b = 2\nlet c = 3\n```")
+        XCTAssertGreaterThan(three.bubbleFrame.height - one.bubbleFrame.height,
+                             2 * BubbleLayout.textFont.lineHeight - 6)
+    }
+
+    /// После блока кода время не садится в последнюю строку.
+    func testStatusBelowCodeBlock() {
+        let p = plan("```\nx\n```")
+        let tf = try! XCTUnwrap(p.textFrame)
+        XCTAssertGreaterThanOrEqual(p.statusFrame.minY, tf.maxY - 2,
+                                    "время должно уйти под подложку кода")
+    }
+
+    /// Маркеры разметки в баббл не попадают, начертания применены.
+    func testMarkersAreNotRendered() {
+        let p = plan("**жирный** и `код`")
+        let attr = try! XCTUnwrap(p.text)
+        XCTAssertEqual(attr.string, "жирный и код")
+        let boldFont = attr.attribute(.font, at: 0, effectiveRange: nil) as? UIFont
+        XCTAssertTrue(boldFont?.fontDescriptor.symbolicTraits.contains(.traitBold) ?? false)
+        let codeFont = attr.attribute(.font, at: attr.length - 1, effectiveRange: nil) as? UIFont
+        XCTAssertEqual(codeFont, MessageMarkdownRenderer.codeFont)
+    }
+
+    /// Ссылка получает атрибут .msngrLink — по нему ячейка открывает браузер.
+    func testLinkAttributePresent() {
+        let attr = try! XCTUnwrap(plan("жми https://example.com сюда").text)
+        var found: URL?
+        attr.enumerateAttribute(.msngrLink, in: NSRange(location: 0, length: attr.length)) { value, _, _ in
+            if let url = value as? URL { found = url }
+        }
+        XCTAssertEqual(found, URL(string: "https://example.com"))
+    }
+
+    /// Замер в плане совпадает с замером того же attributed-текста:
+    /// рисуется ровно то, что померено.
+    func testTextFrameMatchesMeasuredSize() {
+        for source in ["Привет", "**жирный** текст", "```\nlet a = 1\nlet b = 22\n```",
+                       "текст\n```\ncode\n```\nхвост"] {
+            let p = plan(source)
+            let tf = try! XCTUnwrap(p.textFrame)
+            let attr = try! XCTUnwrap(p.text)
+            let maxContent = floor(width * Theme.bubbleMaxWidthRatio) - 2 * BubbleLayout.hPadding
+            let size = BubbleLayout.textSize(attr, maxWidth: maxContent)
+            XCTAssertEqual(tf.width, size.width, accuracy: 0.01, source)
+            XCTAssertEqual(tf.height, size.height, accuracy: 0.01, source)
+        }
+    }
+
     // MARK: - Реакции на voice/file
 
     private func mediaMessage(_ kind: MessageKind, reactions: [String: [String]]) -> Message {
