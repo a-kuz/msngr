@@ -130,7 +130,10 @@ final class ReceiveThroughputBench: XCTestCase {
         }
         let root = URL(fileURLWithPath: dir)
         let suffix = String(UUID().uuidString.prefix(6)).lowercased()
-        let alice = try await provision(at: root.appendingPathComponent("alice"), username: "pa_\(suffix)")
+        // a fixed name for the sender lets a stand of one's own carry the
+        // account the UI smoke opens a chat with
+        let aliceName = ProcessInfo.processInfo.environment["MSNGR_PROVISION_SENDER"] ?? "pa_\(suffix)"
+        let alice = try await provision(at: root.appendingPathComponent("alice"), username: aliceName)
         let bob = try await provision(at: root.appendingPathComponent("bob"), username: "pb_\(suffix)")
 
         let chatId = try await alice.api.createChat(kind: "direct", memberIds: [bob.userId], title: nil)
