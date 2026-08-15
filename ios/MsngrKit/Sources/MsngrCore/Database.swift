@@ -191,6 +191,13 @@ public enum AppDatabase {
                 t.add(column: "failReason", .text)
             }
         }
+
+        m.registerMigration("v7-mutedUntil") { db in
+            // mute со сроком: до этого момента чат молчит, дальше флаг снимается
+            try db.alter(table: "chat") { t in
+                t.add(column: "mutedUntil", .double)
+            }
+        }
         return m
     }
 }

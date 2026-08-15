@@ -307,7 +307,7 @@ struct BlockedListView: View {
                 Spacer()
                 Button("Разблокировать") {
                     Task {
-                        try? await app.api.setBlocked(user.id, blocked: false)
+                        try? await app.engine.setBlocked(userId: user.id, blocked: false)
                         blocked.removeAll { $0.id == user.id }
                     }
                 }

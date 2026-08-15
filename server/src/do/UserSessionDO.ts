@@ -9,8 +9,20 @@ const PRESENCE_TTL = PRESENCE_TTL_MS / 1000;
 interface ChatFlags {
   pinned: boolean;
   muted: boolean;
+  /// момент снятия mute (сек); не задан — mute бессрочный
+  mutedUntil?: number;
   archived: boolean;
   joinedAt: number;
+}
+
+/// Mute со сроком: истёкший считается снятым.
+function muteActive(flags: ChatFlags | undefined, now: number): boolean {
+  if (!flags?.muted) return false;
+  return !flags.mutedUntil || flags.mutedUntil > now;
+}
+
+function muteExpired(flags: ChatFlags | undefined, now: number): boolean {
+  return !!flags?.muted && !!flags.mutedUntil && flags.mutedUntil <= now;
 }
 
 interface SocketAttachment {
@@ -54,6 +66,17 @@ export class UserSessionDO implements DurableObject {
       const att = ws.deserializeAttachment() as SocketAttachment | null;
       return (att?.lastPing ?? 0) > cutoff;
     });
+  }
+
+  /// Снимает mute, у которого истёк срок, и отдаёт актуальные флаги чата.
+  private async clearExpiredMute(chatId: string): Promise<ChatFlags | undefined> {
+    const key = "chat:" + chatId;
+    const flags = await this.state.storage.get<ChatFlags>(key);
+    if (!muteExpired(flags, nowSec())) return flags;
+    flags!.muted = false;
+    delete flags!.mutedUntil;
+    await this.state.storage.put(key, flags!);
+    return flags;
   }
 
   private async chatIds(): Promise<string[]> {
@@ -110,8 +133,8 @@ export class UserSessionDO implements DurableObject {
         if (frame.t === "msg" && !frame.service) {
           // контентное сообщение меняет unread чата → кэш бейджа устарел
           await this.invalidateUnread(frame.chatId);
-          const flags = await this.state.storage.get<ChatFlags>("chat:" + frame.chatId);
-          const muted = flags?.muted ?? false;
+          const flags = await this.clearExpiredMute(frame.chatId);
+          const muted = muteActive(flags, nowSec());
           const userId = await this.getUserId();
           const isOwnEcho = userId !== null && frame.from === userId;
           // APNs уходит всегда и сразу, независимо от live-сокетов:
@@ -143,20 +166,33 @@ export class UserSessionDO implements DurableObject {
 
       case "/chats": {
         const listed = await this.state.storage.list<ChatFlags>({ prefix: "chat:" });
+        const now = nowSec();
         const out: Record<string, ChatFlags> = {};
-        for (const [k, v] of listed) out[k.slice(5)] = v;
+        for (const [k, v] of listed) {
+          const chatId = k.slice(5);
+          out[chatId] = muteExpired(v, now)
+            ? (await this.clearExpiredMute(chatId)) ?? v
+            : v;
+        }
         return json({ ok: true, chats: out });
       }
 
       case "/flags": {
         const b = (await req.json()) as {
-          chatId: string; pinned?: boolean; muted?: boolean; archived?: boolean;
+          chatId: string; pinned?: boolean; muted?: boolean;
+          mutedUntil?: number | null; archived?: boolean;
         };
         const key = "chat:" + b.chatId;
         const flags = await this.state.storage.get<ChatFlags>(key);
         if (!flags) return err("chat_not_found", 404);
         if (b.pinned !== undefined) flags.pinned = b.pinned;
-        if (b.muted !== undefined) flags.muted = b.muted;
+        // срок живёт только вместе со своим включением mute: muted без mutedUntil
+        // (или mutedUntil: null) — бессрочно, muted:false — снятие
+        if (b.muted !== undefined) {
+          flags.muted = b.muted;
+          delete flags.mutedUntil;
+        }
+        if (b.mutedUntil != null && flags.muted) flags.mutedUntil = b.mutedUntil;
         if (b.archived !== undefined) flags.archived = b.archived;
         await this.state.storage.put(key, flags);
         return json({ ok: true });
