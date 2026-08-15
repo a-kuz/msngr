@@ -56,7 +56,6 @@ GET  /api/chats/:id/history       ?fromSeq=&toSeq=&limit=&dir=back
                                   → {msgs:[StoredMsg], scanned, lastScannedSeq}
 POST /api/chats/:id/accept        принять message request
 POST /api/chats/:id/members       {add[], remove[]}
-POST /api/chats/:id/leave
 POST /api/chats/:id/delete        удалить чат у себя: группу покидает, переписку
                                   убирает из своего списка (журнал и участие
                                   остаются, собеседник ничего не узнаёт); своя

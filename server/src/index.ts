@@ -368,14 +368,6 @@ app.post("/api/chats/:id/accept", async (c) => {
   return new Response(r.body, r);
 });
 
-app.post("/api/chats/:id/leave", async (c) => {
-  const { userId } = c.get("auth");
-  const r = await convStub(c.env, c.req.param("id")).fetch("https://do/leave", {
-    method: "POST", body: JSON.stringify({ userId }),
-  });
-  return new Response(r.body, r);
-});
-
 // Deleting a chat is the caller's own act. A group is left, because the others
 // have to stop seeing the member. A direct chat keeps its journal and its
 // membership: the peer keeps his copy and is told nothing, and the chat only
