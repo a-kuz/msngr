@@ -40,15 +40,20 @@ function fakeKeys(n) {
   };
 }
 
+/// Версия протокола, которой представляется клиент в апгрейде: смоук ходит
+/// той же дверью, что и приложение.
+const PROTOCOL = 1;
+
 class Client {
-  constructor(name, token) {
+  constructor(name, token, protocol = PROTOCOL) {
     this.name = name;
     this.token = token;
+    this.protocol = protocol;
     this.frames = [];
   }
   connect() {
     return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(`${WS_BASE}/ws?token=${this.token}`);
+      this.ws = new WebSocket(`${WS_BASE}/ws?token=${this.token}&v=${this.protocol}`);
       // at: момент получения фрейма — по нему сравнивается порядок ack и пуша
       this.ws.on("message", (d) =>
         this.frames.push({ ...JSON.parse(d.toString()), at: Date.now() }));
@@ -146,7 +151,49 @@ check("direct dedupe", chatDupe.chatId === chat.chatId);
 const ca = new Client("alice", alice.token);
 const cb = new Client("bob", bob.token);
 await ca.connect(); await cb.connect();
-check("ws hello", !!(await ca.waitFor((f) => f.t === "hello")));
+const hello = await ca.waitFor((f) => f.t === "hello");
+check("ws hello", !!hello);
+
+// 4a. Рукопожатие: версия протокола
+const ver = await api("/api/version");
+check("version endpoint", ver.ok && ver.protocol >= ver.minProtocol, JSON.stringify(ver));
+check("hello states both versions",
+  hello.protocol === ver.protocol && hello.minProtocol === ver.minProtocol,
+  JSON.stringify(hello));
+check("smoke speaks a supported version", PROTOCOL >= ver.minProtocol);
+
+/// Апгрейд, который сервер не принял: ws отдаёт HTTP-ответ вместо сокета.
+function upgrade(token, query) {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(`${WS_BASE}/ws?token=${token}${query}`);
+    let answered = false;
+    ws.on("open", () => { answered = true; ws.close(); resolve({ status: 101 }); });
+    ws.on("unexpected-response", (_req, res) => {
+      answered = true;
+      let body = "";
+      res.on("data", (d) => (body += d));
+      res.on("end", () => {
+        let parsed = null;
+        try { parsed = JSON.parse(body); } catch { /* не json — отдадим как есть */ }
+        resolve({ status: res.statusCode, body: parsed ?? body });
+      });
+    });
+    ws.on("error", (e) => { if (!answered) resolve({ status: 0, error: String(e) }); });
+  });
+}
+
+const tooOld = await upgrade(alice.token, `&v=${ver.minProtocol - 1}`);
+check("upgrade of an old client is refused",
+  tooOld.status === 426 && tooOld.body?.error === "client_too_old", JSON.stringify(tooOld));
+check("refusal names the supported range",
+  tooOld.body?.minProtocol === ver.minProtocol && tooOld.body?.protocol === ver.protocol,
+  JSON.stringify(tooOld.body));
+const noVersion = await upgrade(alice.token, "");
+check("upgrade without a version is refused",
+  noVersion.status === 426 && noVersion.body?.error === "client_too_old",
+  JSON.stringify(noVersion));
+const supported = await upgrade(alice.token, `&v=${ver.protocol}`);
+check("upgrade of a current client is accepted", supported.status === 101, JSON.stringify(supported));
 
 // 5. Отправка сообщения
 ca.send({ t: "send", chatId: chat.chatId, clientMsgId: "cm-1", sentAt: Date.now(),

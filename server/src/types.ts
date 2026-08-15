@@ -35,7 +35,7 @@ export type ClientFrame =
 
 // --- WS frames: server -> client ---
 export type ServerFrame =
-  | { t: "hello"; serverTime: number }
+  | { t: "hello"; serverTime: number; protocol: number; minProtocol: number }
   | { t: "sent"; chatId: string; clientMsgId: string; msgId: string; seq: number; ts: number }
   | { t: "msg"; chatId: string; seq: number; msgId: string; from: string; fromDevice: string; sentAt: number; ts: number; body: unknown; service?: boolean }
   | { t: "receipt"; chatId: string; kind: "delivered" | "read"; upToSeq?: number; seqs?: number[]; by: string }
