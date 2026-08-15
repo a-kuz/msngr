@@ -42,6 +42,7 @@ final class NotificationService: UNNotificationServiceExtension {
         let content = (request.content.mutableCopy() as? UNMutableNotificationContent)
             ?? UNMutableNotificationContent()
         bestAttempt = content
+        applyBadge(to: content)
 
         guard let item = Self.item(from: request.content.userInfo) else {
             journal?.record(.received, msgId: "", seq: 0, detail: "no-item")
@@ -64,6 +65,23 @@ final class NotificationService: UNNotificationServiceExtension {
         if let handler = contentHandler, let content = bestAttempt {
             handler(content)
         }
+    }
+
+    /// The unread total on the icon is the server's count, carried by the push.
+    /// The extension only orders the counts: the handlers of a burst run at
+    /// once and answer in no fixed order, so the number that arrives after a
+    /// newer one is dropped rather than put back on the icon.
+    ///
+    /// Without the database there is nothing to order against, and the count
+    /// the push arrived with stays — the system applies it either way.
+    private func applyBadge(to content: UNMutableNotificationContent) {
+        guard let db = sharedDatabase,
+              let pushed = BadgeStore.pushedBadge(from: content.userInfo,
+                                                  badge: content.badge?.intValue) else { return }
+        guard let resolved = try? db.write({ dbc in
+            try BadgeStore.applyFromPush(dbc, value: pushed.value, stamp: pushed.stamp)
+        }) else { return }
+        content.badge = NSNumber(value: resolved)
     }
 
     /// The push carries the address of the message and its place in the chat.
@@ -97,14 +115,17 @@ private final class PushAnswer: @unchecked Sendable {
                 content.body = built.body
                 content.threadIdentifier = built.threadIdentifier
             }
-            if let badge = step.badge { content.badge = NSNumber(value: badge) }
             handler(content)
         case .skip(let reason):
             journal?.record(.answered, msgId: step.item.msgId, seq: step.item.seq,
                             detail: "skip:" + reason.rawValue)
             // content without an alert is not presented: this message already
-            // has its banner, or is not to be announced at all
-            handler(UNMutableNotificationContent())
+            // has its banner, or is not to be announced at all. The badge still
+            // travels with it — the count is about the mailbox, not about this
+            // one banner.
+            let silent = UNMutableNotificationContent()
+            silent.badge = content.badge
+            handler(silent)
         }
     }
 }
