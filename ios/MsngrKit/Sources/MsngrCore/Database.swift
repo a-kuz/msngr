@@ -266,6 +266,18 @@ public enum AppDatabase {
                 t.add(column: "syncCursor", .integer).notNull().defaults(to: 0)
             }
         }
+        m.registerMigration("v12-badge") { db in
+            // The number on the app icon and the position of the count it came
+            // from. The app and the extension are separate processes, so the
+            // row is what serialises them: a write is a transaction, and a
+            // count that lost the race is dropped instead of overwriting a
+            // newer one.
+            try db.create(table: "badge") { t in
+                t.column("id", .integer).primaryKey()
+                t.column("value", .integer).notNull().defaults(to: 0)
+                t.column("stamp", .integer).notNull().defaults(to: 0)
+            }
+        }
         return m
     }
 }

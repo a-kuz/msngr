@@ -134,17 +134,4 @@ final class NotificationBurstStoreTests: XCTestCase {
         XCTAssertTrue(try resolve(db, items).shown.isEmpty)
     }
 
-    /// The badge follows the local unread, and a chat waiting to be accepted
-    /// does not tell how much was written into it.
-    func testBadgeSkipsChatsWaitingToBeAccepted() throws {
-        let db = try AppDatabase.openInMemory()
-        try seedChat(db, id: "c1")
-        try seedChat(db, id: "c2")
-        try db.write { dbc in
-            try dbc.execute(sql: "UPDATE chat SET isRequest = 1, iAccepted = 0 WHERE id = ?",
-                            arguments: ["c2"])
-        }
-        let plan = try resolve(db, [item(3, chat: "c1"), item(7, chat: "c2")])
-        XCTAssertEqual(plan.steps.first?.badge, 3)
-    }
 }

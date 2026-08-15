@@ -46,6 +46,10 @@ export interface PushPayload {
   seq?: number; // позиция сообщения в чате: по ней клиент выстраивает порядок показа
   sentAt?: number; // время отправки, мс: порядок между чатами
   badge?: number; // суммарный unread пользователя по всем чатам
+  /// Position of `badge` in the sequence of numbers this user's object
+  /// produced. APNs delivers a burst in an arbitrary order, so the device
+  /// needs it to tell a fresh count from one that overtook it.
+  badgeStamp?: number;
 }
 
 export interface PushResult {
@@ -113,6 +117,7 @@ export async function sendPush(
     // them in an arbitrary order, and the banner order is the posting order.
     seq: payload.seq,
     sentAt: payload.sentAt,
+    badgeStamp: payload.badgeStamp,
   });
 
   let forceJwt = false;
