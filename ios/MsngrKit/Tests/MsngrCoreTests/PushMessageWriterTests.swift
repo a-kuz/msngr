@@ -203,6 +203,81 @@ final class PushMessageWriterTests: XCTestCase {
         XCTAssertEqual(entries.first?.msgId, "m1")
     }
 
+    /// A message written by the other process reaches the screens: an
+    /// observation hears only its own process, so coming back to the screen is
+    /// where the app is told to look at the file again.
+    func testForegroundShowsWhatTheOtherProcessWrote() async throws {
+        let device = try makeDevice()
+        defer { TestStorage.remove(device.location) }
+        try seedChat(device.db)
+        let api = APIClient(baseURL: URL(string: "http://localhost:1")!)
+        let e2ee = E2EEManager(store: device.store, api: api, ownUserId: "me", ownDeviceId: "dev")
+        let engine = SyncEngine(db: device.db, api: api, e2ee: e2ee,
+                                wsURL: URL(string: "ws://localhost:1/ws")!,
+                                ownUserId: "me", ownDeviceId: "dev")
+
+        let empty = expectation(description: "the feed starts empty")
+        let seen = expectation(description: "the feed sees the message")
+        let cancellable = ValueObservation
+            .tracking { dbc in try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message") ?? 0 }
+            .start(in: device.db, onError: { _ in }) { count in
+                if count == 0 { empty.fulfill() }
+                if count == 1 { seen.fulfill() }
+            }
+        defer { cancellable.cancel() }
+        // the observation is running and has read an empty chat: what it sees
+        // next can only come from being told to look again
+        await fulfillment(of: [empty], timeout: 5)
+
+        // the other process — the extension — writes into the same file
+        let other = try AppDatabase.open(at: device.location.databaseURL)
+        try await other.write { dbc in
+            var msg = Message(id: "m1", chatId: "c1", fromUserId: "peer", sentAt: 1,
+                              kind: .text, text: "from the extension", status: .sent,
+                              isOutgoing: false)
+            msg.msgId = "m1"
+            msg.seq = 1
+            try msg.save(dbc)
+        }
+
+        await engine.appBecameActive()
+        await fulfillment(of: [seen], timeout: 5)
+    }
+
+    /// The app is holding an envelope it could not open, and the extension has
+    /// since stored that very message from its push. The envelope is dropped
+    /// instead of being retried: the ratchet moved with the extension's step,
+    /// and the sweep would otherwise chase a message that is not missing.
+    func testEnvelopeOfAnAlreadyStoredMessageIsDropped() async throws {
+        let device = try makeDevice()
+        defer { TestStorage.remove(device.location) }
+        try seedChat(device.db)
+        let api = APIClient(baseURL: URL(string: "http://localhost:1")!)
+        let e2ee = E2EEManager(store: device.store, api: api, ownUserId: "me", ownDeviceId: "dev")
+        let engine = SyncEngine(db: device.db, api: api, e2ee: e2ee,
+                                wsURL: URL(string: "ws://localhost:1/ws")!,
+                                ownUserId: "me", ownDeviceId: "dev")
+        try await device.db.write { dbc in
+            var msg = Message(id: "m1", chatId: "c1", fromUserId: "peer", sentAt: 1,
+                              kind: .text, text: "already here", status: .sent, isOutgoing: false)
+            msg.msgId = "m1"
+            msg.seq = 1
+            try msg.save(dbc)
+            try SyncEngine.deferEnvelope(dbc, reason: "no_session", chatId: "c1", msgId: "m1",
+                                         seq: 1, from: "peer", fromDevice: "peerdev", sentAt: 1,
+                                         ts: 1, body: Data("{}".utf8), now: 0)
+        }
+
+        await engine.sweepUnreadable()
+
+        let left = try await device.db.read { dbc in
+            (pending: try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingDecrypt") ?? 0,
+             gaps: try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM historyGap") ?? 0)
+        }
+        XCTAssertEqual(left.pending, 0)
+        XCTAssertEqual(left.gaps, 0)
+    }
+
     private func resolve(_ device: Device, items: [BurstItem],
                          envelopes: [String: PushEnvelope],
                          journal: NotificationJournal? = nil) throws -> BurstPlan {
