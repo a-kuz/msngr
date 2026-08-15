@@ -84,7 +84,11 @@ struct RegisterView: View {
         do {
             // временная БД нужна до session: identity создаём в постоянной БД приложения
             let storage = AppState.storage
-            let db = try AppDatabase.open(at: storage.databaseURL)
+            // a new account starts from empty storage: whatever the container
+            // holds belongs to somebody else and is dropped before the identity
+            // keys are generated into the same database
+            let db = try StorageOwnership.openOwned(at: storage, expectedUserId: nil,
+                                                    wipe: { _ in AppState.wipeLocalData() })
             let store = try IdentityStore(db: db, masterKeyProvider: SharedFileMasterKey(location: storage))
             let identity = try store.identity()
             let prekeys = try store.generatePrekeys(count: 100)
@@ -104,6 +108,8 @@ struct RegisterView: View {
                 phoneHash: nil))
             let session = Session(userId: reg.userId, deviceId: reg.deviceId,
                                   token: reg.token, username: username)
+            // the storage is only known to be owned once the account exists
+            try StorageOwnership.stamp(db, userId: reg.userId)
             do {
                 try app.saveSession(session)
             } catch {
