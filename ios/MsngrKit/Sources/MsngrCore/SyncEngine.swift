@@ -611,6 +611,74 @@ public actor SyncEngine {
         }
     }
 
+    /// Closes one seq range this device has never processed.
+    ///
+    /// Envelopes that decrypt go into the feed through the historic path; every
+    /// other seq of the range is written to `historyGap` with the reason it
+    /// produced nothing. That keeps the failure out of silence — repair has the
+    /// reason and the attempt count to ask the sender again — and stops upward
+    /// pagination from requesting the same range on every scroll.
+    ///
+    /// Returns false when the server did not answer: the range stays open.
+    @discardableResult
+    public func fillHistoryGap(chatId: String, from: Int, to: Int) async -> Bool {
+        guard from <= to else { return true }
+        // one request covers at most 200 seqs — the server truncates a longer
+        // range and the tail would be closed without ever being asked for
+        let upper = min(to, from + 199)
+        guard let dtos = try? await api.history(chatId: chatId, fromSeq: from - 1,
+                                                toSeq: upper, limit: upper - from + 1) else { return false }
+        var reasons: [Int: String] = [:]   // seq -> why it produced no feed row
+        for m in dtos where m.seq >= from && m.seq <= upper {
+            guard m.deleted != true, let body = m.body else {
+                reasons[m.seq] = "deleted"
+                continue
+            }
+            guard m.from != ownUserId || m.fromDevice != ownDeviceId else {
+                reasons[m.seq] = "own_echo"   // own content already stored under its clientMsgId
+                continue
+            }
+            let result = (try? e2ee.decrypt(envelopeJSON: body, chatId: chatId,
+                                            fromUserId: m.from, fromDeviceId: m.fromDevice))
+                ?? .undecryptable(reason: "exception")
+            switch result {
+            case .senderKeyDistribution:
+                reasons[m.seq] = "sender_key"
+            case .content(let content), .identityChanged(_, .some(let content)):
+                await storeHistoric(content: content, chatId: chatId, msgId: m.msgId, seq: m.seq,
+                                    from: m.from, sentAt: m.sentAt, ts: m.ts)
+                // edit/reaction/disappearing land on their target instead of
+                // taking a row of their own — the seq is processed all the same
+                if Self.serviceKinds.contains(content.kind) { reasons[m.seq] = "service" }
+            case .identityChanged(_, .none):
+                reasons[m.seq] = "identity_changed"
+            case .undecryptable(let reason):
+                if Self.retryableReasons.contains(reason) {
+                    // the key may still arrive — the envelope waits for a replay
+                    await savePending(chatId: chatId, msgId: m.msgId, seq: m.seq, from: m.from,
+                                      fromDevice: m.fromDevice, sentAt: m.sentAt, ts: m.ts, body: body)
+                } else {
+                    reasons[m.seq] = reason
+                }
+            }
+            if let reason = reasons[m.seq] {
+                try? await db.write { dbc in
+                    try HistoryWindow.recordGap(dbc, chatId: chatId, seq: m.seq, reason: reason,
+                                                msgId: m.msgId, fromUserId: m.from, sentAt: m.sentAt)
+                }
+            }
+        }
+        // seqs the server did not return at all: frames addressed elsewhere or
+        // entries it no longer keeps
+        let answered = Set(dtos.map(\.seq))
+        try? await db.write { dbc in
+            for seq in from...upper where !answered.contains(seq) {
+                try HistoryWindow.recordGap(dbc, chatId: chatId, seq: seq, reason: "not_addressed")
+            }
+        }
+        return true
+    }
+
     private func insertSystemMessage(chatId: String, text: String) async {
         var msg = Message(id: UUID().uuidString, chatId: chatId, fromUserId: "system",
                           sentAt: Date().timeIntervalSince1970, kind: .system,

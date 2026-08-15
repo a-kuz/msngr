@@ -16,12 +16,20 @@ enum ChatFeedItem: Identifiable, Equatable {
     /// плашка «N непрочитанных сообщений» над первым непрочитанным;
     /// id стабилен в пределах сессии просмотра (привязан к якорному seq)
     case unreadMarker(id: String, count: Int)
+    /// Messages this device could not read, between two messages of the feed.
+    /// Neighbouring seqs collapse into one item.
+    case unreadable(id: String)
+    /// The oldest message stored on this device: the ratchet is forward-only,
+    /// so nothing above it can be restored.
+    case historyStart(id: String)
 
     var id: String {
         switch self {
         case .message(let m, _, _, _, _, _): return m.id
         case .dateSeparator(let id, _): return id
         case .unreadMarker(let id, _): return id
+        case .unreadable(let id): return id
+        case .historyStart(let id): return id
         }
     }
 }
@@ -56,6 +64,30 @@ final class ChatViewModel: ObservableObject {
     private var lastMsgs: [Message] = []
     private var obscuredCancellable: AnyCancellable?
 
+    /// Seq of messages inside the window this device could not read.
+    private var unreadableSeqs: [Int] = []
+    /// The window covers the oldest message stored for this chat.
+    private var atHistoryStart = false
+
+    /// Seq floor of the feed window. The observation reads it on every fetch,
+    /// so messages arriving at the bottom never push the oldest loaded ones out.
+    private final class WindowFloor: @unchecked Sendable {
+        private let lock = NSLock()
+        private var seq: Int?
+        func get() -> Int? { lock.lock(); defer { lock.unlock() }; return seq }
+        func set(_ value: Int?) { lock.lock(); seq = value; lock.unlock() }
+    }
+    private let windowFloor = WindowFloor()
+
+    /// One fetch of the chat observation.
+    private struct Snapshot {
+        let chat: Chat?
+        let msgs: [Message]
+        let users: [User]
+        let unreadableSeqs: [Int]
+        let atHistoryStart: Bool
+    }
+
     private var cancellable: AnyCancellable?
     private var typingTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
@@ -69,39 +101,8 @@ final class ChatViewModel: ObservableObject {
 
     /// Переподписывается после stop(): подписка пересоздаётся, если её нет.
     func start() {
-        guard cancellable == nil, let db = app.db else { return }
-        let chatId = self.chatId
-        let ownId = ownUserId
-        cancellable = ValueObservation
-            .tracking { dbc -> (Chat?, [Message], [User]) in
-                let chat = try Chat.fetchOne(dbc, key: chatId)
-                let msgs = try Message.fetchAll(dbc, sql: """
-                    SELECT * FROM message WHERE chatId = ?
-                    ORDER BY COALESCE(seq, 999999999) DESC, sentAt DESC LIMIT 500
-                    """, arguments: [chatId])
-                let users = try User.fetchAll(dbc, sql: """
-                    SELECT u.* FROM user u JOIN member m ON m.userId = u.id WHERE m.chatId = ?
-                    """, arguments: [chatId])
-                return (chat, msgs, users)
-            }
-            .publisher(in: db, scheduling: .async(onQueue: .main))
-            .sink(receiveCompletion: { _ in }, receiveValue: { [weak self] chat, msgs, users in
-                guard let self else { return }
-                self.chat = chat
-                self.members = users
-                self.peer = users.first { $0.id != ownId }
-                self.updateUnreadMarker(chat: chat, msgs: msgs)
-                self.lastMsgs = msgs
-                self.feed = Self.buildFeed(msgs, members: users, ownId: ownId, unreadMarker: self.markerFeedParam,
-                                           contentHidden: self.contentHidden)
-                if let pinId = chat?.pinnedMsgId, !self.contentHidden {
-                    self.pinnedMessage = msgs.first { $0.msgId == pinId }
-                } else {
-                    self.pinnedMessage = nil
-                }
-                self.markVisibleRead()
-                self.refreshKeyChangePending()
-            })
+        guard cancellable == nil, app.db != nil else { return }
+        observeChat()
 
         // фон/шторка: плашка непрочитанных убирается, пришедшее за время
         // отсутствия копится и показывается новой плашкой при возврате
@@ -146,6 +147,61 @@ final class ChatViewModel: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Installs the chat observation for the current window floor. Growing the
+    /// window means a new floor and a fresh observation: the fetch is what
+    /// carries the floor into SQL.
+    private func observeChat() {
+        guard let db = app.db else { return }
+        let chatId = self.chatId
+        let ownId = ownUserId
+        let floorBox = windowFloor
+        cancellable = ValueObservation
+            .tracking { dbc -> Snapshot in
+                let chat = try Chat.fetchOne(dbc, key: chatId)
+                var floor = floorBox.get()
+                if floor == nil {
+                    floor = try HistoryWindow.newestFloor(dbc, chatId: chatId,
+                                                          limit: HistoryWindow.pageSize)
+                    floorBox.set(floor)
+                }
+                let msgs = try HistoryWindow.messages(dbc, chatId: chatId, floor: floor)
+                let users = try User.fetchAll(dbc, sql: """
+                    SELECT u.* FROM user u JOIN member m ON m.userId = u.id WHERE m.chatId = ?
+                    """, arguments: [chatId])
+                return Snapshot(
+                    chat: chat, msgs: msgs, users: users,
+                    unreadableSeqs: try HistoryWindow.exhaustedGapSeqs(dbc, chatId: chatId, floor: floor),
+                    atHistoryStart: try !HistoryWindow.hasOlder(dbc, chatId: chatId, floor: floor))
+            }
+            .publisher(in: db, scheduling: .async(onQueue: .main))
+            .sink(receiveCompletion: { _ in }, receiveValue: { [weak self] snapshot in
+                self?.apply(snapshot, ownId: ownId)
+            })
+    }
+
+    private func apply(_ snapshot: Snapshot, ownId: String) {
+        chat = snapshot.chat
+        members = snapshot.users
+        peer = snapshot.users.first { $0.id != ownId }
+        updateUnreadMarker(chat: snapshot.chat, msgs: snapshot.msgs)
+        lastMsgs = snapshot.msgs
+        unreadableSeqs = snapshot.unreadableSeqs
+        atHistoryStart = snapshot.atHistoryStart
+        // отложенная расшифровка могла положить сообщение ниже окна
+        if !snapshot.atHistoryStart { reachedStart = false }
+        feed = Self.buildFeed(snapshot.msgs, members: snapshot.users, ownId: ownId,
+                              unreadMarker: markerFeedParam, contentHidden: contentHidden,
+                              unreadableSeqs: snapshot.unreadableSeqs,
+                              atHistoryStart: snapshot.atHistoryStart)
+        if let pinId = snapshot.chat?.pinnedMsgId, !contentHidden {
+            pinnedMessage = snapshot.msgs.first { $0.msgId == pinId }
+        } else {
+            pinnedMessage = nil
+        }
+        markVisibleRead()
+        refreshKeyChangePending()
     }
 
     func stop() {
@@ -195,7 +251,8 @@ final class ChatViewModel: ObservableObject {
     /// Перестройка ленты из последнего снапшота при изменении состояния плашки.
     private func rebuildFeed() {
         feed = Self.buildFeed(lastMsgs, members: members, ownId: ownUserId, unreadMarker: markerFeedParam,
-                              contentHidden: contentHidden)
+                              contentHidden: contentHidden, unreadableSeqs: unreadableSeqs,
+                              atHistoryStart: atHistoryStart)
     }
 
     /// Заявка до принятия: содержимое не показываем и не отмечаем прочитанным.
@@ -228,9 +285,14 @@ final class ChatViewModel: ObservableObject {
     /// Группировка бабблов + дата-разделители + плашка непрочитанных
     /// (лента инвертирована). У чата со скрытым содержимым (заявка до принятия)
     /// лента пустая: вместо неё экран показывает карточку заявки.
+    /// unreadableSeqs — seq, которые устройство прочитать не смогло: между двумя
+    /// сообщениями окна они дают нейтральную заглушку, соседние собираются в одну.
+    /// atHistoryStart — окно дошло до самого старого сообщения на устройстве.
     static func buildFeed(_ msgs: [Message], members: [User], ownId: String = "",
                           unreadMarker: (anchorSeq: Int, count: Int)? = nil,
-                          contentHidden: Bool = false) -> [ChatFeedItem] {
+                          contentHidden: Bool = false,
+                          unreadableSeqs: [Int] = [],
+                          atHistoryStart: Bool = false) -> [ChatFeedItem] {
         guard !contentHidden else { return [] }
         var out: [ChatFeedItem] = []
         let cal = Calendar.current
@@ -267,6 +329,14 @@ final class ChatViewModel: ObservableObject {
                                 replyAuthorName: msg.replyTo.map(replyAuthorName)))
             let next = older
 
+            // нечитаемые seq между этим сообщением и следующим (более старым):
+            // дыра на краю окна заглушки не получает — это ещё не догруженный низ
+            if let older, let hi = msg.seq, let lo = older.seq, !unreadableSeqs.isEmpty {
+                for run in Self.runs(of: unreadableSeqs.filter { $0 > lo && $0 < hi }).reversed() {
+                    out.append(.unreadable(id: "gap:\(run.lowerBound)-\(run.upperBound)"))
+                }
+            }
+
             // плашка непрочитанных — над первым сообщением с seq >= якоря
             // (в инвертированной ленте — сразу после самого старого такого)
             if let um = unreadMarker, let seq = msg.seq, seq >= um.anchorSeq,
@@ -280,6 +350,21 @@ final class ChatViewModel: ObservableObject {
             let msgDay = Date(timeIntervalSince1970: msg.sentAt)
             if next == nil || !cal.isDate(Date(timeIntervalSince1970: next!.sentAt), inSameDayAs: msgDay) {
                 out.append(.dateSeparator(id: "date:\(msg.id)", label: Self.dayLabel(msgDay)))
+            }
+        }
+        // самое старое, что есть на устройстве: выше история не восстанавливается
+        if atHistoryStart, !out.isEmpty { out.append(.historyStart(id: "history-start")) }
+        return out
+    }
+
+    /// Consecutive numbers grouped into ranges, ascending.
+    static func runs(of seqs: [Int]) -> [ClosedRange<Int>] {
+        var out: [ClosedRange<Int>] = []
+        for seq in seqs.sorted() {
+            if let last = out.last, seq == last.upperBound + 1 {
+                out[out.count - 1] = last.lowerBound...seq
+            } else if out.last?.contains(seq) != true {
+                out.append(seq...seq)
             }
         }
         return out
@@ -506,38 +591,49 @@ final class ChatViewModel: ObservableObject {
     }
 
     private var loadingOlder = false
+    /// Окно дошло до начала локальной истории, незакрытых разрывов seq нет:
+    /// дальше листать нечего, и скролл вверх ни к базе, ни к серверу не идёт.
+    private var reachedStart = false
 
-    /// Пагинация вверх: догрузка старых сообщений с сервера (если локально меньше).
+    /// Пагинация вверх: расширение окна ленты.
     func loadOlder() {
-        Task { await loadOlderPage() }
+        Task { await expandWindow() }
     }
 
-    /// Одна страница истории вверх. false — грузить нечего либо загрузка уже идёт.
+    /// Одна страница вверх. Сообщения уже расшифрованы и лежат в базе, поэтому
+    /// страница берётся из неё; к серверу уходит только незакрытый разрыв seq —
+    /// то, что это устройство ещё не расшифровывало. false — расширять нечего.
     @discardableResult
-    private func loadOlderPage() async -> Bool {
-        guard chat != nil, !loadingOlder else { return false }
+    private func expandWindow() async -> Bool {
+        guard chat != nil, !loadingOlder, !reachedStart, let db = app.db else { return false }
         loadingOlder = true
         defer { loadingOlder = false }
-        let minSeq = (try? await app.db.read { [chatId] dbc in
-            try Int.fetchOne(dbc, sql: "SELECT MIN(seq) FROM message WHERE chatId = ? AND seq IS NOT NULL",
-                             arguments: [chatId])
-        }) ?? nil
-        guard let minSeq, minSeq > 1 else { return false }
-        guard let msgs = try? await app.api.history(chatId: chatId,
-                                                    fromSeq: max(0, minSeq - 51),
-                                                    toSeq: minSeq - 1, limit: 50) else { return false }
-        for m in msgs where m.body != nil {
-            // расшифровка старой истории тем же pipeline
-            let result = (try? app.e2ee.decrypt(envelopeJSON: m.body!, chatId: chatId,
-                                                fromUserId: m.from, fromDeviceId: m.fromDevice))
-            if case .content(let content) = result {
-                // применение (включая edit/reaction поверх оригиналов) — в движке
-                await app.engine.storeHistoric(content: content, chatId: chatId,
-                                               msgId: m.msgId, seq: m.seq, from: m.from,
-                                               sentAt: m.sentAt, ts: m.ts)
+        let floor = windowFloor.get()
+        if let floor {
+            let next = try? await db.read { [chatId] dbc in
+                try HistoryWindow.floorBelow(dbc, chatId: chatId, floor: floor,
+                                             limit: HistoryWindow.pageSize)
+            }
+            if let next = next ?? nil, next < floor {
+                windowFloor.set(next)
+                observeChat()
+                return true
             }
         }
-        return !msgs.isEmpty
+        // локальная история исчерпана: с сервера полезно только то, что это
+        // устройство ещё не расшифровывало
+        let gaps = (try? await db.read { [chatId] dbc in
+            try HistoryWindow.openGaps(dbc, chatId: chatId)
+        }) ?? []
+        guard let gap = gaps.last else {
+            reachedStart = true
+            return false
+        }
+        guard await app.engine.fillHistoryGap(chatId: chatId, from: gap.lowerBound,
+                                              to: gap.upperBound) else { return false }
+        windowFloor.set(min(floor ?? gap.lowerBound, gap.lowerBound))
+        observeChat()
+        return true
     }
 
     /// Сообщение уже в ленте (по серверному msgId или локальному id).
@@ -545,12 +641,12 @@ final class ChatViewModel: ObservableObject {
         lastMsgs.contains { $0.id == msgId || $0.msgId == msgId }
     }
 
-    /// Догружает историю страницами, пока сообщение не окажется в ленте:
-    /// переход по цитате к оригиналу за пределами загруженной страницы.
-    func ensureLoaded(msgId: String, maxPages: Int = 6) async -> Bool {
+    /// Расширяет окно страницами, пока сообщение не окажется в ленте:
+    /// переход по цитате к оригиналу за пределами окна.
+    func ensureLoaded(msgId: String, maxPages: Int = 12) async -> Bool {
         if isLoaded(msgId: msgId) { return true }
         for _ in 0..<maxPages {
-            guard await loadOlderPage() else { break }
+            guard await expandWindow() else { break }
             // лента приходит из наблюдения БД асинхронно — ждём появления сообщения
             for _ in 0..<20 {
                 if isLoaded(msgId: msgId) { return true }
