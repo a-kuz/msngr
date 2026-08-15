@@ -6,6 +6,9 @@ public enum AppDatabase {
     /// ratchet-состояния дополнительно шифруются ключом из Keychain (см. CryptoStore).
     public static func open(at url: URL) throws -> DatabaseQueue {
         var config = Configuration()
+        // приложение и расширение уведомлений пишут в один файл из разных
+        // процессов: без ожидания чужой транзакции запись падает сразу
+        config.busyMode = .timeout(2)
         config.prepareDatabase { db in
             try db.execute(sql: "PRAGMA journal_mode = WAL")
         }
@@ -236,6 +239,20 @@ public enum AppDatabase {
             // chain is handed out again once the wait is over.
             try db.alter(table: "senderKeyOut") { t in
                 t.add(column: "attemptedAt", .text).notNull().defaults(to: "{}")
+            }
+        }
+
+        m.registerMigration("v10-notificationShown") { db in
+            // One message gets one banner. The row is the claim on it: the
+            // extension and the app both write it before presenting, and the
+            // insert that wins is the one that presents. Two handlers running
+            // at once, or a push arriving after the app already showed the
+            // message, therefore cannot produce a second banner.
+            try db.create(table: "notificationShown") { t in
+                t.column("msgId", .text).primaryKey()
+                t.column("chatId", .text).notNull()
+                t.column("seq", .integer).notNull().defaults(to: 0)
+                t.column("shownAt", .double).notNull().indexed()
             }
         }
         return m
