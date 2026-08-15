@@ -42,7 +42,9 @@ class Client {
   connect() {
     return new Promise((resolve, reject) => {
       this.ws = new WebSocket(`${WS_BASE}/ws?token=${this.token}`);
-      this.ws.on("message", (d) => this.frames.push(JSON.parse(d.toString())));
+      // at: момент получения фрейма — по нему сравнивается порядок ack и пуша
+      this.ws.on("message", (d) =>
+        this.frames.push({ ...JSON.parse(d.toString()), at: Date.now() }));
       this.ws.on("open", resolve);
       this.ws.on("error", reject);
     });
@@ -394,13 +396,17 @@ check("sync backfill beyond 200", bulkGot.length === N, `got ${bulkGot.length}`)
 // 20. Пуш-путь: мини-приёмник вместо APNs на порту, куда смотрит APNS_HOST
 // (по умолчанию :9871 из .dev.vars; свой стенд задаёт PUSH_PORT)
 const pushes = [];
+// hold: приёмник держит ответ на пуш этого устройства holdMs — так проверяется,
+// что ack отправителю не стоит в очереди за APNs
+let hold = { token: null, ms: 0 };
 const pushSrv = http.createServer((req, res) => {
   let data = "";
   req.on("data", (c) => (data += c));
   req.on("end", () => {
-    pushes.push({ url: req.url, headers: req.headers, body: JSON.parse(data) });
-    res.writeHead(200, { "apns-id": "mock" });
-    res.end();
+    pushes.push({ url: req.url, headers: req.headers, body: JSON.parse(data), at: Date.now() });
+    const done = () => { res.writeHead(200, { "apns-id": "mock" }); res.end(); };
+    if (hold.token && req.url === `/3/device/${hold.token}`) setTimeout(done, hold.ms);
+    else done();
   });
 });
 await new Promise((r) => pushSrv.listen(Number(process.env.PUSH_PORT ?? 9871), r));
@@ -513,7 +519,111 @@ check("expired mute cleared in flags",
 // (ж) own echo: у alice токен зарегистрирован, но её собственные отправки пуш не создают
 check("no push for own echo", !pushes.some((p) => p.url === "/3/device/alice-sim-udid"));
 
+// 21. Ack раньше пуша: подтверждение отправителю не ждёт APNs
+hold = { token: "eve-sim-udid", ms: 1500 };
+ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-h1", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const h1 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-h1");
+const hp1 = await waitPush(pushFor("eve-sim-udid", h1.msgId));
+check("ack precedes push", !!h1 && !!hp1 && h1.at <= hp1.at,
+  `ack ${h1?.at} push ${hp1?.at}`);
+
+// пуш предыдущего сообщения ещё висит — ack следующего всё равно приходит сразу
+const holdT0 = Date.now();
+ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-h2", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const h2 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-h2", 3000);
+check("ack while apns still hanging", !!h2 && h2.at - holdT0 < 600,
+  `${h2 ? h2.at - holdT0 : "no ack"}ms`);
+const hp2 = await waitPush(pushFor("eve-sim-udid", h2.msgId), 8000);
+check("push follows its ack", !!hp2 && h2.at < hp2.at, `ack ${h2?.at} push ${hp2?.at}`);
+hold = { token: null, ms: 0 };
+
 pushSrv.close();
+
+// 22. Fanout: падение одного получателя не рвёт доставку остальным
+const mallory = await api("/api/register", { body: {
+  username: "mallory_" + suffix, displayName: "Mallory", ...fakeKeys("m") } });
+const trent = await api("/api/register", { body: {
+  username: "trent_" + suffix, displayName: "Trent", ...fakeKeys("t") } });
+const fgrp = await api("/api/chats", { token: alice.token,
+  body: { kind: "group", memberIds: [mallory.userId, trent.userId], title: "Fanout" } });
+check("create fanout group", fgrp.ok, JSON.stringify(fgrp));
+
+const cmal = new Client("mallory", mallory.token);
+const ctre = new Client("trent", trent.token);
+await cmal.connect(); await ctre.connect();
+// дать presence-фреймам разойтись, чтобы они не съели счётчик сбоев
+await new Promise((r) => setTimeout(r, 600));
+
+const sendTo = (clientMsgId) => ca2.send({ t: "send", chatId: fgrp.chatId, clientMsgId,
+  sentAt: Date.now(), body: { v: 1, mode: "skm", c: "Zg" } });
+const fault = (n) => api("/api/dev/fault", { token: mallory.token, body: { failEvents: n } });
+
+const armed = await fault(1);
+check("dev fault armed", armed.ok && armed.failEvents === 1, JSON.stringify(armed));
+sendTo("cm-f1");
+const f1 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-f1");
+check("sender acked while recipient fails", !!f1);
+check("healthy recipient unaffected",
+  !!(await ctre.waitFor((f) => f.t === "msg" && f.msgId === f1.msgId)));
+check("failed recipient gets retry",
+  !!(await cmal.waitFor((f) => f.t === "msg" && f.msgId === f1.msgId, 4000)));
+
+// typing не повторяется: он устаревает быстрее, чем доедет повтор
+await fault(1);
+ca2.send({ t: "typing", chatId: fgrp.chatId, kind: "text" });
+check("typing reaches healthy recipient",
+  !!(await ctre.waitFor((f) => f.t === "typing" && f.chatId === fgrp.chatId)));
+await new Promise((r) => setTimeout(r, 2000));
+check("typing not retried", !cmal.frames.some((f) => f.t === "typing" && f.chatId === fgrp.chatId));
+
+// получатель сломан насовсем: очередь отдаёт его и продолжает работать
+await fault(99);
+sendTo("cm-f2");
+const f2 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-f2");
+check("delivery survives a broken recipient",
+  !!(await ctre.waitFor((f) => f.t === "msg" && f.msgId === f2.msgId, 8000)));
+sendTo("cm-f3");
+const f3 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-f3");
+check("queue keeps moving after dropped recipient",
+  !!(await ctre.waitFor((f) => f.t === "msg" && f.msgId === f3.msgId, 8000)));
+await fault(0);
+
+// 23. Очередь рассылки: пачка встаёт в очередь и доигрывается до конца
+async function fanoutState() {
+  return api(`/api/chats/${fgrp.chatId}/fanout`, { token: alice.token });
+}
+await fault(2); // головное задание застревает на двух повторах
+const Q = 6;
+for (let i = 0; i < Q; i++) sendTo(`cm-q${i}`);
+const qState = await fanoutState();
+check("fanout is queued, not inline", qState.ok && qState.pending > 0, JSON.stringify(qState));
+
+const qLast = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === `cm-q${Q - 1}`, 10000);
+check("burst acked", !!qLast);
+const qGotT = await ctre.waitFor((f) => f.t === "msg" && f.msgId === qLast.msgId, 20000);
+check("queue replays the whole burst", !!qGotT);
+const qGotM = await cmal.waitFor((f) => f.t === "msg" && f.msgId === qLast.msgId, 20000);
+check("stalled recipient catches up after retries", !!qGotM);
+const qSeqs = ctre.frames.filter((f) => f.t === "msg" && f.chatId === fgrp.chatId)
+  .map((f) => f.seq);
+check("queue keeps frame order", qSeqs.every((s, i) => i === 0 || s > qSeqs[i - 1]),
+  JSON.stringify(qSeqs));
+
+let drained = null;
+for (let i = 0; i < 60; i++) {
+  drained = await fanoutState();
+  if (drained.ok && drained.pending === 0) break;
+  await new Promise((r) => setTimeout(r, 250));
+}
+check("queue drains to empty cursor",
+  !!drained && drained.pending === 0 && drained.cursor === 0, JSON.stringify(drained));
+
+const strangerQ = await api(`/api/chats/${fgrp.chatId}/fanout`, { token: bob.token });
+check("fanout state hidden from non-member", !strangerQ.ok && strangerQ.error === "not_member");
+
+cmal.ws.close(); ctre.ws.close();
 ca.ws.close(); cb2.ws.close(); cb3.ws.close(); cb4.ws.close(); ca2.ws.close(); ce.ws.close();
 cf.ws.close(); cg.ws.close();
 console.log(failures ? `\n${failures} FAILURES` : "\nALL PASS");
