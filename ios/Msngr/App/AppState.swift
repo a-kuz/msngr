@@ -100,21 +100,36 @@ final class AppState: ObservableObject {
         ready = false
         session = nil
         OwnUser.id = ""
-        UserDefaults(suiteName: AppGroup.identifier)?.removeObject(forKey: "ownUserId")
-        PinStore.removePin()
-        PinStore.setBiometricsEnabled(false)
         isLocked = false
-        AppContainer.wipe(Self.storage)
+        Self.wipeLocalData()
     }
 
+    /// Everything an account leaves on the device: storage files, passcode,
+    /// shared defaults. A new account must inherit none of it.
+    static func wipeLocalData() {
+        AppContainer.wipe(storage)
+        PinStore.removePin()
+        PinStore.setBiometricsEnabled(false)
+        UserDefaults(suiteName: AppGroup.identifier)?.removeObject(forKey: "ownUserId")
+    }
 
     private func bootstrap(_ s: Session) async {
+        let storage = Self.storage
+        // the container survives the account: a database owned by somebody else
+        // means the device identity of this session is gone with it, so there is
+        // nothing to resume — back to registration on clean storage
+        guard StorageOwnership.decision(owner: StorageOwnership.owner(at: storage.databaseURL),
+                                        expectedUserId: s.userId) == .keep else {
+            MsngrLog.session.error("local storage belongs to another account, resetting to registration")
+            await resetToRegistration()
+            return
+        }
         OwnUser.id = s.userId
         // NSE читает эти значения из shared defaults
         UserDefaults(suiteName: AppGroup.identifier)?.set(s.userId, forKey: "ownUserId")
         do {
-            let storage = Self.storage
             db = try AppDatabase.open(at: storage.databaseURL)
+            try StorageOwnership.stamp(db, userId: s.userId)
             api = APIClient(baseURL: Self.httpBase, token: s.token)
             store = try IdentityStore(db: db, masterKeyProvider: SharedFileMasterKey(location: storage))
             e2ee = E2EEManager(store: store, api: api, ownUserId: s.userId, ownDeviceId: s.deviceId)
