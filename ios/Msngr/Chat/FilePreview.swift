@@ -18,6 +18,21 @@ enum FilePreviewName {
     }
 }
 
+/// Экран, поверх которого показывается системный просмотрщик.
+@MainActor
+enum TopViewController {
+    static func current() -> UIViewController? {
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive }),
+              let root = (scene.windows.first { $0.isKeyWindow } ?? scene.windows.first)?.rootViewController
+        else { return nil }
+        var top = root
+        while let presented = top.presentedViewController { top = presented }
+        return top
+    }
+}
+
 /// Просмотр файлового сообщения: расшифрованный файл из кэша открывается
 /// в QLPreviewController, нечитаемые типы уходят в системный share-лист.
 @MainActor
@@ -53,7 +68,7 @@ enum FilePreviewPresenter {
     }
 
     private static func show(_ url: URL) {
-        guard let top = topViewController() else { return }
+        guard let top = TopViewController.current() else { return }
         guard QLPreviewController.canPreview(url as QLPreviewItem) else {
             let share = UIActivityViewController(activityItems: [url], applicationActivities: nil)
             share.popoverPresentationController?.sourceView = top.view
@@ -69,17 +84,6 @@ enum FilePreviewPresenter {
         ql.dataSource = ds
         ql.delegate = ds
         top.present(ql, animated: true)
-    }
-
-    private static func topViewController() -> UIViewController? {
-        guard let scene = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .first(where: { $0.activationState == .foregroundActive }),
-              let root = (scene.windows.first { $0.isKeyWindow } ?? scene.windows.first)?.rootViewController
-        else { return nil }
-        var top = root
-        while let presented = top.presentedViewController { top = presented }
-        return top
     }
 
     /// Держит URL живым, пока просмотрщик на экране.

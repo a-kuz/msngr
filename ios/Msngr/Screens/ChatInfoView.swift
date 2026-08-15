@@ -95,6 +95,15 @@ struct ChatInfoView: View {
             }
 
             Section {
+                NavigationLink {
+                    ChatGalleryView(chatId: model.chatId)
+                } label: {
+                    Label("Вложения", systemImage: "photo.on.rectangle.angled")
+                }
+                .accessibilityIdentifier("chatInfo.gallery")
+            }
+
+            Section {
                 Toggle(isOn: Binding(
                     get: { isMuted },
                     set: { on in
@@ -455,6 +464,10 @@ extension ChatInfoView {
                 Button("Отправить \(count) сообщений") { seed(count) }
                     .disabled(seeding)
             }
+            ForEach([1, 10], id: \.self) { rounds in
+                Button("Отправить вложения ×\(rounds)") { seedAttachments(rounds) }
+                    .disabled(seeding)
+            }
             if seeding {
                 HStack {
                     ProgressView()
@@ -462,6 +475,18 @@ extension ChatInfoView {
                         .foregroundStyle(.secondary)
                 }
             }
+        }
+    }
+
+    /// Вложения всех видов: по кругу на каждый прогон.
+    func seedAttachments(_ rounds: Int) {
+        seeding = true
+        seedSent = 0
+        let chatId = model.chatId
+        Task {
+            await AttachmentSeed.send(chatId: chatId, batches: rounds)
+            seedSent = rounds
+            seeding = false
         }
     }
 
