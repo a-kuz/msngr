@@ -16,7 +16,8 @@ public struct BurstItem: Hashable, Sendable {
     public var msgId: String
     /// Position of the message in its chat: the order inside a chat.
     public var seq: Int
-    /// Send time in seconds: the order between chats.
+    /// Send time as the sender stamped it: only compared, never shown. Orders
+    /// the chats of a burst between each other.
     public var sentAt: Double
 
     public init(chatId: String, msgId: String, seq: Int, sentAt: Double) {

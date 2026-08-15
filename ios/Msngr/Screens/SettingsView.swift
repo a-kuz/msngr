@@ -13,7 +13,7 @@ struct SettingsView: View {
     @State private var showPinSetup = false
     @State private var pinEnabled = PinStore.hasPin()
     @State private var biometrics = PinStore.biometricsEnabled()
-    @State private var showsMessageText = NotificationPreferences.showsMessageText(in: .standard)
+    @State private var showsMessageText = NotificationPreferences.showsMessageText(in: AppGroup.defaults)
     @State private var showLogoutConfirm = false
 
     var body: some View {
@@ -61,7 +61,7 @@ struct SettingsView: View {
                         Label("Показывать текст сообщений", systemImage: "text.bubble")
                     }
                     .onChange(of: showsMessageText) { _, on in
-                        NotificationPreferences.setShowsMessageText(on, in: .standard)
+                        NotificationPreferences.setShowsMessageText(on, in: AppGroup.defaults)
                     }
                     Text(showsMessageText
                          ? "В баннере видны имя отправителя и текст."
