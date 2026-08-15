@@ -1,10 +1,14 @@
-// Интеграционный смоук: 2 пользователя, direct-чат, WS-обмен, receipts, sync, группа, пуши.
-// Пуш-проверки требуют, чтобы wrangler dev видел APNS_HOST=http://localhost:9871 (.dev.vars).
+// Интеграционный смоук: пользователи, direct-чат, WS-обмен, receipts, sync, группа,
+// блокировки, логаут, пуши.
+// Пуш-проверки требуют, чтобы wrangler dev видел APNS_HOST на порт приёмника смоука:
+// по умолчанию http://localhost:9871 (.dev.vars), иначе PUSH_PORT=<порт>.
 import http from "node:http";
 import WebSocket from "ws";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:8787";
 const WS_BASE = BASE.replace(/^http/, "ws");
+// Порт приёмника пушей: должен совпадать с APNS_HOST у проверяемого wrangler dev.
+const PUSH_PORT = Number(process.env.PUSH_PORT ?? 9871);
 let failures = 0;
 
 function check(name, cond, extra = "") {
@@ -12,8 +16,8 @@ function check(name, cond, extra = "") {
   else { failures++; console.log(`FAIL ${name} ${extra}`); }
 }
 
-async function api(path, { token, body, method } = {}) {
-  const res = await fetch(BASE + path, {
+async function apiRaw(path, { token, body, method } = {}) {
+  return fetch(BASE + path, {
     method: method ?? (body !== undefined ? "POST" : "GET"),
     headers: {
       ...(token ? { authorization: `Bearer ${token}` } : {}),
@@ -21,7 +25,10 @@ async function api(path, { token, body, method } = {}) {
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  return res.json();
+}
+
+async function api(path, opts) {
+  return (await apiRaw(path, opts)).json();
 }
 
 function fakeKeys(n) {
@@ -391,19 +398,160 @@ await cb4.waitFor((f) => f.t === "msg" && f.chatId === grp.chatId && f.seq === l
 const bulkGot = cb4.frames.filter((f) => f.t === "msg" && f.chatId === grp.chatId && f.seq > 1);
 check("sync backfill beyond 200", bulkGot.length === N, `got ${bulkGot.length}`);
 
-// 20. Пуш-путь: мини-приёмник вместо APNs на порту, куда смотрит APNS_HOST
-// (по умолчанию :9871 из .dev.vars; свой стенд задаёт PUSH_PORT)
+// 20. Блокировка внутри существующего чата
+const henry = await api("/api/register", { body: {
+  username: "henry_" + suffix, displayName: "Henry", ...fakeKeys("h") } });
+const iris = await api("/api/register", { body: {
+  username: "iris_" + suffix, displayName: "Iris", ...fakeKeys("i") } });
+const bchat = await api("/api/chats", { token: henry.token,
+  body: { kind: "direct", memberIds: [iris.userId] } });
+check("block: chat created", bchat.ok, JSON.stringify(bchat));
+await api(`/api/chats/${bchat.chatId}/accept`, { token: iris.token, body: {} });
+
+const ch = new Client("henry", henry.token);
+const ci = new Client("iris", iris.token);
+await ch.connect(); await ci.connect();
+
+// до блокировки обмен идёт как обычно
+ch.send({ t: "send", chatId: bchat.chatId, clientMsgId: "cm-b0", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const b0 = await ch.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-b0");
+check("block: msg before block delivered",
+  !!(await ci.waitFor((f) => f.t === "msg" && f.msgId === b0.msgId)));
+
+// Iris блокирует Henry
+check("block: applied", (await api("/api/block", { token: iris.token,
+  body: { userId: henry.userId, blocked: true } })).ok);
+
+// (а) Henry пишет: ack приходит как обычно, до Iris ничего не доходит
+ch.send({ t: "send", chatId: bchat.chatId, clientMsgId: "cm-b1", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const b1 = await ch.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-b1");
+check("block: sender still gets sent ack", !!b1 && b1.seq === b0.seq + 1, JSON.stringify(b1));
+check("block: no error frame to sender",
+  !ch.frames.some((f) => f.t === "error" && f.clientMsgId === "cm-b1"));
+check("block: msg not delivered",
+  !(await ci.waitFor((f) => f.t === "msg" && f.msgId === b1.msgId, 1200)));
+check("block: own echo still delivered",
+  !!(await ch.waitFor((f) => f.t === "msg" && f.msgId === b1.msgId)));
+
+// (б) в истории блокирующего заблокированного сообщения нет, у автора — есть
+const irisHist = await api(`/api/chats/${bchat.chatId}/history?fromSeq=0`, { token: iris.token });
+check("block: hidden from blocker history",
+  !irisHist.msgs.some((m) => m.msgId === b1.msgId)
+  && irisHist.msgs.some((m) => m.msgId === b0.msgId), JSON.stringify(irisHist.msgs.length));
+const henryHist = await api(`/api/chats/${bchat.chatId}/history?fromSeq=0`, { token: henry.token });
+check("block: visible in sender history",
+  henryHist.msgs.some((m) => m.msgId === b1.msgId));
+
+// (в) sync блокирующего не доигрывает заблокированное
+const ci2 = new Client("iris2", iris.token);
+await ci2.connect();
+ci2.send({ t: "sync", cursors: { [bchat.chatId]: 0 } });
+await ci2.waitFor((f) => f.t === "msg" && f.msgId === b0.msgId);
+await new Promise((r) => setTimeout(r, 500));
+check("block: sync skips blocked msg",
+  !ci2.frames.some((f) => f.t === "msg" && f.msgId === b1.msgId));
+
+// (г) квитанции и typing заблокированного до блокирующего не доходят
+ch.send({ t: "read", chatId: bchat.chatId, upToSeq: b1.seq });
+ch.send({ t: "typing", chatId: bchat.chatId, kind: "text" });
+await new Promise((r) => setTimeout(r, 700));
+check("block: no receipt to blocker",
+  !ci.frames.some((f) => f.t === "receipt" && f.by === henry.userId));
+check("block: no typing to blocker",
+  !ci.frames.some((f) => f.t === "typing" && f.from === henry.userId));
+
+// (д) блокирующий пишет заблокированному: явный машиночитаемый отказ
+ci.send({ t: "send", chatId: bchat.chatId, clientMsgId: "cm-b2", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const bErr = await ci.waitFor((f) => f.t === "error" && f.clientMsgId === "cm-b2");
+check("block: blocker gets error code", !!bErr && bErr.error === "blocked", JSON.stringify(bErr));
+check("block: blocker msg not delivered",
+  !(await ch.waitFor((f) => f.t === "msg" && f.from === iris.userId, 1200)));
+
+// (е) разблокировка возвращает доставку; сообщения периода блокировки остаются скрытыми
+check("block: released", (await api("/api/block", { token: iris.token,
+  body: { userId: henry.userId, blocked: false } })).ok);
+ch.send({ t: "send", chatId: bchat.chatId, clientMsgId: "cm-b3", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const b3 = await ch.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-b3");
+check("block: delivery resumes after unblock",
+  !!(await ci.waitFor((f) => f.t === "msg" && f.msgId === b3.msgId)));
+const irisHist2 = await api(`/api/chats/${bchat.chatId}/history?fromSeq=0`, { token: iris.token });
+check("block: blocked msg stays hidden after unblock",
+  !irisHist2.msgs.some((m) => m.msgId === b1.msgId)
+  && irisHist2.msgs.some((m) => m.msgId === b3.msgId));
+ch.ws.close(); ci.ws.close(); ci2.ws.close();
+
+// 21. Логаут и отзыв устройства
+const logoutUser = await api("/api/register", { body: {
+  username: "logout_" + suffix, displayName: "Frank", ...fakeKeys("f") } });
+const logoutSess0 = await api("/api/sessions", { token: logoutUser.token });
+check("sessions lists current device", logoutSess0.ok && logoutSess0.sessions.length === 1
+  && logoutSess0.sessions[0].deviceId === logoutUser.deviceId && logoutSess0.sessions[0].current === true,
+  JSON.stringify(logoutSess0));
+
+const lg_cLogout = new Client("logout", logoutUser.token);
+await lg_cLogout.connect();
+check("logoutUser ws before logout", !!(await lg_cLogout.waitFor((f) => f.t === "hello")));
+
+const lg_out = await api("/api/logout", { token: logoutUser.token, body: {} });
+check("logout ok", lg_out.ok, JSON.stringify(lg_out));
+
+const lg_meAfter = await apiRaw("/api/me", { token: logoutUser.token });
+check("lg_revoked token rejected on api", lg_meAfter.status === 401
+  && (await lg_meAfter.json()).error === "unauthorized");
+
+// сервер шлёт close-фрейм 4401 сразу; TCP-хвост wrangler dev рвёт с задержкой,
+// поэтому проверяем, что сокет вышел из OPEN
+await new Promise((r) => setTimeout(r, 400));
+check("lg_revoked token closes live socket", lg_cLogout.ws.readyState !== 1,
+  `readyState=${lg_cLogout.ws.readyState}`);
+
+const lg_wsAfter = await new Promise((r) => {
+  const ws = new WebSocket(`${WS_BASE}/ws?token=${logoutUser.token}`);
+  ws.on("open", () => { ws.close(); r("open"); });
+  ws.on("error", () => r("error"));
+});
+check("lg_revoked token rejected on ws upgrade", lg_wsAfter === "error");
+
+// отзыв конкретного устройства из списка
+const lg_gina = await api("/api/register", { body: {
+  username: "gina_" + suffix, displayName: "Gina", ...fakeKeys("g") } });
+const lg_alien = await api(`/api/sessions/${alice.deviceId}/revoke`, { token: lg_gina.token, body: {} });
+check("cannot revoke foreign device", !lg_alien.ok && lg_alien.error === "device_not_found");
+const lg_revoked = await api(`/api/sessions/${lg_gina.deviceId}/revoke`, { token: lg_gina.token, body: {} });
+check("revoke device by id", lg_revoked.ok, JSON.stringify(lg_revoked));
+const lg_ginaAfter = await apiRaw("/api/me", { token: lg_gina.token });
+check("lg_revoked device token dead", lg_ginaAfter.status === 401);
+const lg_aliceStill = await api("/api/me", { token: alice.token });
+check("foreign device untouched", lg_aliceStill.ok && lg_aliceStill.user.id === alice.userId);
+
+// 22. Пуш-путь: мини-приёмник вместо APNs (порт из PUSH_PORT, туда же смотрит APNS_HOST)
 const pushes = [];
+// приёмник изображает APNs: dead-token отвечает 410, flaky-token — 429 на первую попытку
+let flakyHits = 0;
 const pushSrv = http.createServer((req, res) => {
   let data = "";
   req.on("data", (c) => (data += c));
   req.on("end", () => {
     pushes.push({ url: req.url, headers: req.headers, body: JSON.parse(data) });
+    if (req.url === "/3/device/dead-token") {
+      res.writeHead(410, { "content-type": "application/json" });
+      res.end(JSON.stringify({ reason: "Unregistered", timestamp: Date.now() }));
+      return;
+    }
+    if (req.url === "/3/device/flaky-token" && ++flakyHits === 1) {
+      res.writeHead(429, { "content-type": "application/json" });
+      res.end(JSON.stringify({ reason: "TooManyRequests" }));
+      return;
+    }
     res.writeHead(200, { "apns-id": "mock" });
     res.end();
   });
 });
-await new Promise((r) => pushSrv.listen(Number(process.env.PUSH_PORT ?? 9871), r));
+await new Promise((r) => pushSrv.listen(PUSH_PORT, r));
 
 async function waitPush(pred, ms = 4000) {
   const t0 = Date.now();
@@ -512,6 +660,45 @@ check("expired mute cleared in flags",
 
 // (ж) own echo: у alice токен зарегистрирован, но её собственные отправки пуш не создают
 check("no push for own echo", !pushes.some((p) => p.url === "/3/device/alice-sim-udid"));
+
+// 23. Разбор ответа APNs: 410 удаляет токен, 429 повторяется
+const jack = await api("/api/register", { body: {
+  username: "jack_" + suffix, displayName: "Jack", ...fakeKeys("j") } });
+await api("/api/push-token", { token: jack.token,
+  body: { apnsToken: "dead-token", env: "development" } });
+const jchat = await api("/api/chats", { token: alice.token,
+  body: { kind: "direct", memberIds: [jack.userId] } });
+ca2.send({ t: "send", chatId: jchat.chatId, clientMsgId: "cm-dead1", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const d1 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-dead1");
+check("dead token: push attempted", !!(await waitPush(pushFor("dead-token", d1.msgId))));
+
+await new Promise((r) => setTimeout(r, 600));
+const jackSess = await api("/api/sessions", { token: jack.token });
+check("dead token: dropped from d1",
+  jackSess.ok && jackSess.sessions[0].hasPushToken === false, JSON.stringify(jackSess));
+
+ca2.send({ t: "send", chatId: jchat.chatId, clientMsgId: "cm-dead2", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const d2 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-dead2");
+check("dead token: no push after drop",
+  !(await waitPush(pushFor("dead-token", d2.msgId), 1500)));
+
+const kate = await api("/api/register", { body: {
+  username: "kate_" + suffix, displayName: "Kate", ...fakeKeys("k") } });
+await api("/api/push-token", { token: kate.token,
+  body: { apnsToken: "flaky-token", env: "development" } });
+const kchat = await api("/api/chats", { token: alice.token,
+  body: { kind: "direct", memberIds: [kate.userId] } });
+ca2.send({ t: "send", chatId: kchat.chatId, clientMsgId: "cm-flaky", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const fk = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-flaky");
+await new Promise((r) => setTimeout(r, 2500));
+const flakyTries = pushes.filter((p) =>
+  p.url === "/3/device/flaky-token" && p.body.msgId === fk.msgId);
+check("429 retried once and succeeded", flakyTries.length === 2, `tries=${flakyTries.length}`);
+const kateSess = await api("/api/sessions", { token: kate.token });
+check("retried token kept", kateSess.sessions[0].hasPushToken === true);
 
 pushSrv.close();
 ca.ws.close(); cb2.ws.close(); cb3.ws.close(); cb4.ws.close(); ca2.ws.close(); ce.ws.close();

@@ -5,6 +5,7 @@ import { ulid, newToken, sha256hex, json, err, directChatName, b64url } from "./
 
 export { UserSessionDO } from "./do/UserSessionDO";
 export { ConversationDO } from "./do/ConversationDO";
+export { ApnsTokenDO } from "./do/ApnsTokenDO";
 
 type Vars = { auth: AuthCtx };
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
@@ -73,6 +74,60 @@ app.get("/api/me", async (c) => {
     "SELECT id, username, display_name, bio, avatar_id FROM users WHERE id = ?"
   ).bind(userId).first();
   return json({ ok: true, user: u, deviceId });
+});
+
+// --- активные устройства и отзыв токена ---
+
+// Отзывает токен устройства: закрывает его сокеты и гасит его APNs-токен.
+async function revokeDevice(env: Env, userId: string, deviceId: string) {
+  await env.DB.prepare(
+    "UPDATE devices SET revoked_at = ?, apns_token = NULL, apns_env = NULL WHERE id = ? AND user_id = ?"
+  ).bind(Date.now(), deviceId, userId).run();
+  await userStub(env, userId).fetch("https://do/revoke-device", {
+    method: "POST",
+    body: JSON.stringify({ deviceId }),
+  });
+}
+
+app.get("/api/sessions", async (c) => {
+  const { userId, deviceId } = c.get("auth");
+  const rows = await c.env.DB.prepare(
+    `SELECT id, name, created_at, last_seen, apns_token IS NOT NULL AS has_push
+     FROM devices WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at`
+  ).bind(userId).all<{
+    id: string; name: string | null; created_at: number;
+    last_seen: number | null; has_push: number;
+  }>();
+  return json({
+    ok: true,
+    sessions: rows.results.map((r) => ({
+      deviceId: r.id,
+      name: r.name,
+      createdAt: r.created_at,
+      lastSeen: r.last_seen,
+      hasPushToken: r.has_push === 1,
+      current: r.id === deviceId,
+    })),
+  });
+});
+
+// Логаут текущего устройства: его токен перестаёт действовать сразу.
+app.post("/api/logout", async (c) => {
+  const { userId, deviceId } = c.get("auth");
+  await revokeDevice(c.env, userId, deviceId);
+  return json({ ok: true });
+});
+
+// Отзыв конкретного устройства того же пользователя.
+app.post("/api/sessions/:deviceId/revoke", async (c) => {
+  const { userId } = c.get("auth");
+  const target = c.req.param("deviceId");
+  const row = await c.env.DB.prepare(
+    "SELECT id FROM devices WHERE id = ? AND user_id = ? AND revoked_at IS NULL"
+  ).bind(target, userId).first();
+  if (!row) return err("device_not_found", 404);
+  await revokeDevice(c.env, userId, target);
+  return json({ ok: true });
 });
 
 app.get("/api/users", async (c) => {
@@ -265,6 +320,7 @@ app.get("/api/chats/:id/history", async (c) => {
   if (!sj.ok || !sj.state?.members.some((m) => m.userId === userId))
     return err("not_member", 403);
   const qs = new URL(c.req.url).searchParams;
+  qs.set("userId", userId);
   const r = await convStub(c.env, chatId).fetch(
     `https://do/history?${qs.toString()}`
   );
@@ -489,6 +545,9 @@ app.post("/api/block", async (c) => {
       "DELETE FROM blocks WHERE user_id = ? AND blocked_id = ?"
     ).bind(userId, b.userId).run();
   }
+  // сбросить кэш блокировок в direct-чате пары (чат может ещё не существовать)
+  await convStub(c.env, directChatName(userId, b.userId))
+    .fetch("https://do/block-changed", { method: "POST" });
   return json({ ok: true });
 });
 

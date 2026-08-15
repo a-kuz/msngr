@@ -16,6 +16,10 @@ interface Meta {
 export class ConversationDO implements DurableObject {
   private meta: Meta | null = null;
   private members: Map<string, ChatMember> | null = null;
+  /// кто из пары direct-чата кого заблокировал (множество блокирующих);
+  /// источник правды — таблица blocks в D1, сюда читается лениво и
+  /// сбрасывается фреймом /block-changed
+  private blockers: Set<string> | null = null;
 
   constructor(private state: DurableObjectState, private env: Env) {}
 
@@ -35,6 +39,33 @@ export class ConversationDO implements DurableObject {
 
   private userStub(userId: string) {
     return this.env.USER_DO.get(this.env.USER_DO.idFromName(userId));
+  }
+
+  /// Состояние блокировки в direct-чате относительно участника `me`.
+  /// Для групп и для чатов, где `me` не участник, возвращает null.
+  private async blockCheck(
+    me: string
+  ): Promise<{ peer: string; byMe: boolean; byPeer: boolean } | null> {
+    const meta = await this.loadMeta();
+    if (meta?.kind !== "direct") return null;
+    const members = await this.loadMembers();
+    if (!members.has(me)) return null;
+    const peer = [...members.keys()].find((u) => u !== me);
+    if (!peer) return null;
+    if (!this.blockers) {
+      const rows = await this.env.DB.prepare(
+        "SELECT user_id FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)"
+      ).bind(me, peer, peer, me).all<{ user_id: string }>();
+      this.blockers = new Set(rows.results.map((r) => r.user_id));
+    }
+    return { peer, byMe: this.blockers.has(me), byPeer: this.blockers.has(peer) };
+  }
+
+  /// Есть ли блокировка в любую сторону: квитанции, typing и presence при ней
+  /// не рассылаются ни туда, ни обратно.
+  private async blockedEitherWay(userId: string): Promise<boolean> {
+    const b = await this.blockCheck(userId);
+    return !!b && (b.byMe || b.byPeer);
   }
 
   private async fanout(
@@ -149,6 +180,13 @@ export class ConversationDO implements DurableObject {
       return json({ ok: true, chatId: b.chatId });
     }
 
+    // список блокировок в D1 изменился — перечитать при следующей проверке.
+    // Идёт до проверки meta: заблокировать можно и до создания чата.
+    if (path === "/block-changed") {
+      this.blockers = null;
+      return json({ ok: true });
+    }
+
     const meta = await this.loadMeta();
     if (!meta) return err("chat_not_found", 404);
 
@@ -161,21 +199,35 @@ export class ConversationDO implements DurableObject {
         const toSeq = Number(url.searchParams.get("toSeq") ?? String(meta.lastSeq));
         const limit = Math.min(Number(url.searchParams.get("limit") ?? "100"), 200);
         const reverse = url.searchParams.get("dir") === "back";
+        // userId — от чьего лица читаем: сообщения, отправленные ему, пока он
+        // держал автора в блоке, из выдачи выпадают
+        const viewer = url.searchParams.get("userId");
         const listed = await this.state.storage.list<StoredMsg>({
           start: seqKey(fromSeq + 1),
           end: seqKey(toSeq + 1),
           limit,
           reverse,
         });
-        return json({ ok: true, msgs: [...listed.values()] });
+        const page = [...listed.values()];
+        const msgs = viewer ? page.filter((m) => m.blockedFor !== viewer) : page;
+        // scanned/lastScannedSeq считаются до фильтрации, чтобы пагинация
+        // не останавливалась на странице, целиком выпавшей из выдачи
+        return json({
+          ok: true,
+          msgs,
+          scanned: page.length,
+          lastScannedSeq: page.length ? page[page.length - 1].seq : null,
+        });
       }
 
       case "/events": {
         // тумбстоуны удалённых сообщений и текущие read/delivered-марки —
         // для доигрывания при sync после офлайна
+        const viewer = url.searchParams.get("userId");
         const deleted: Array<{ msgId: string; by: string }> = [];
         for (const [, m] of await this.state.storage.list<StoredMsg>({ prefix: "msg:" })) {
-          if (m.deleted) deleted.push({ msgId: m.msgId, by: m.deletedBy ?? m.from });
+          if (!m.deleted || m.blockedFor === viewer) continue;
+          deleted.push({ msgId: m.msgId, by: m.deletedBy ?? m.from });
         }
         const readMarks =
           (await this.state.storage.get<Record<string, number>>("readMarks")) ?? {};
@@ -203,6 +255,13 @@ export class ConversationDO implements DurableObject {
         const members = await this.loadMembers();
         if (!members.has(b.from)) return err("not_member", 403);
 
+        // блокировка в direct-чате: тому, кого заблокировал сам отправитель,
+        // писать нельзя (явный код); тому, кто заблокировал отправителя,
+        // сообщение уходит в журнал, но не рассылается и не отдаётся в истории
+        const block = await this.blockCheck(b.from);
+        if (block?.byMe) return err("blocked", 403);
+        const blockedFor = block?.byPeer ? block.peer : null;
+
         // идемпотентность
         const dupeKey = `cmid:${b.from}/${b.clientMsgId}`;
         const dupe = await this.state.storage.get<{ msgId: string; seq: number; ts: number }>(dupeKey);
@@ -213,6 +272,7 @@ export class ConversationDO implements DurableObject {
           msgId: ulid(), seq, from: b.from, fromDevice: b.fromDevice,
           clientMsgId: b.clientMsgId, sentAt: b.sentAt, ts: nowSec(), body: b.body,
           ...(b.service ? { service: true } : {}),
+          ...(blockedFor ? { blockedFor } : {}),
         };
         meta.lastSeq = seq;
         this.meta = meta;
@@ -253,6 +313,8 @@ export class ConversationDO implements DurableObject {
         const members = await this.loadMembers();
         // до accept получатель заявки невидим автору — delivered-квитанции не шлём
         if (!members.get(b.userId)?.accepted) return json({ ok: true });
+        // при блокировке марка даже не записывается: она видна в chat-фрейме
+        if (await this.blockedEitherWay(b.userId)) return json({ ok: true });
         const marks =
           (await this.state.storage.get<Record<string, number>>("deliveredMarks")) ?? {};
         const upTo = Math.max(marks[b.userId] ?? 0, ...b.seqs);
@@ -285,6 +347,7 @@ export class ConversationDO implements DurableObject {
         const members = await this.loadMembers();
         // до accept read-receipts автору не уходят (message request)
         if (!members.get(b.userId)?.accepted) return json({ ok: true });
+        if (await this.blockedEitherWay(b.userId)) return json({ ok: true });
         const marks =
           (await this.state.storage.get<Record<string, number>>("readMarks")) ?? {};
         if (b.upToSeq > (marks[b.userId] ?? 0)) {
@@ -304,6 +367,7 @@ export class ConversationDO implements DurableObject {
         if (!members.has(b.userId)) return err("not_member", 403);
         // до accept получатель невидим для автора заявки
         if (!members.get(b.userId)!.accepted) return json({ ok: true });
+        if (await this.blockedEitherWay(b.userId)) return json({ ok: true });
         await this.fanout(
           { t: "typing", chatId: meta.chatId, from: b.userId, kind: b.kind },
           { except: b.userId, skip: await this.blockedPeers(b.userId) }
@@ -452,6 +516,7 @@ export class ConversationDO implements DurableObject {
         const members = await this.loadMembers();
         // presence не-принявшего получателя не видна автору заявки
         if (!members.get(b.userId)?.accepted) return json({ ok: true });
+        if (await this.blockedEitherWay(b.userId)) return json({ ok: true });
         await this.fanout(
           { t: "presence", userId: b.userId, online: b.online, lastSeen: b.lastSeen },
           { except: b.userId, skip: await this.blockedPeers(b.userId) }

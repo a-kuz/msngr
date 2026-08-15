@@ -1,9 +1,6 @@
 import type { Env } from "../types";
 import { b64url } from "../util";
 
-// APNs token-based auth (p8, ES256). JWT кэшируется до ~50 минут.
-let cachedJwt: { token: string; iat: number } | null = null;
-
 async function importP8(p8: string): Promise<CryptoKey> {
   const body = p8
     .replace(/-----BEGIN PRIVATE KEY-----/, "")
@@ -19,23 +16,28 @@ async function importP8(p8: string): Promise<CryptoKey> {
   );
 }
 
-async function apnsJwt(env: Env): Promise<string | null> {
+/// Подпись APNs-токена (p8, ES256). Единственный вызывающий — ApnsTokenDO:
+/// владелец минтинга должен быть один, Apple ограничивает его частоту.
+export async function mintApnsJwt(env: Env, iat: number): Promise<string | null> {
   if (!env.APNS_KEY_P8 || !env.APNS_KEY_ID || !env.APNS_TEAM_ID) return null;
-  const now = Math.floor(Date.now() / 1000);
-  if (cachedJwt && now - cachedJwt.iat < 3000) return cachedJwt.token;
-
   const enc = new TextEncoder();
   const header = b64url(enc.encode(JSON.stringify({ alg: "ES256", kid: env.APNS_KEY_ID })));
-  const payload = b64url(enc.encode(JSON.stringify({ iss: env.APNS_TEAM_ID, iat: now })));
+  const payload = b64url(enc.encode(JSON.stringify({ iss: env.APNS_TEAM_ID, iat })));
   const key = await importP8(env.APNS_KEY_P8);
   const sig = await crypto.subtle.sign(
     { name: "ECDSA", hash: "SHA-256" },
     key,
     enc.encode(`${header}.${payload}`)
   );
-  const token = `${header}.${payload}.${b64url(new Uint8Array(sig))}`;
-  cachedJwt = { token, iat: now };
-  return token;
+  return `${header}.${payload}.${b64url(new Uint8Array(sig))}`;
+}
+
+async function apnsJwt(env: Env, force: boolean): Promise<string | null> {
+  if (!env.APNS_KEY_P8 || !env.APNS_KEY_ID || !env.APNS_TEAM_ID) return null;
+  const stub = env.APNS_DO.get(env.APNS_DO.idFromName("apns-jwt"));
+  const r = await stub.fetch(`https://do/jwt${force ? "?force=1" : ""}`);
+  const j = (await r.json()) as { ok: boolean; token?: string };
+  return j.ok ? j.token ?? null : null;
 }
 
 export interface PushPayload {
@@ -43,6 +45,21 @@ export interface PushPayload {
   msgId?: string;
   badge?: number; // суммарный unread пользователя по всем чатам
 }
+
+export interface PushResult {
+  ok: boolean;
+  /// HTTP-статус APNs; 0 — ответа не было
+  status: number;
+  /// reason из тела ответа APNs
+  reason?: string;
+  /// токен устройства больше не действителен, его надо удалить
+  dead?: boolean;
+}
+
+// Лестница повторов на 429 и 5xx.
+const RETRY_DELAYS_MS = [500, 1500];
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // База APNs: env.APNS_HOST (dev-мок вроде http://localhost:9871),
 // иначе прод/sandbox Apple по apns-env устройства.
@@ -56,35 +73,31 @@ function apnsBase(env: Env, apnsEnv: string): string {
     : "https://api.sandbox.push.apple.com";
 }
 
+async function readReason(res: Response): Promise<string | undefined> {
+  try {
+    const text = await res.text();
+    if (!text) return undefined;
+    return (JSON.parse(text) as { reason?: string }).reason;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function sendPush(
   env: Env,
   apnsToken: string,
   apnsEnv: string,
   payload: PushPayload
-): Promise<boolean> {
+): Promise<PushResult> {
   const base = apnsBase(env, apnsEnv);
   const isApple = /\.push\.apple\.com$/.test(new URL(base).hostname);
   // не-яблочный хост = dev-мок: без JWT-подписи, p8-ключ не нужен
   const topic = env.APNS_TOPIC ?? (isApple ? null : "ai.enface.Msngr");
-  if (!topic) return false;
-
-  const headers: Record<string, string> = {
-    "apns-topic": topic,
-    "apns-push-type": "alert",
-    "apns-priority": "10",
-    "content-type": "application/json",
-  };
-  // collapse-id = msgId: повторная доставка того же сообщения не плодит баннеры
-  if (payload.msgId) headers["apns-collapse-id"] = payload.msgId;
-  if (isApple) {
-    const jwt = await apnsJwt(env);
-    if (!jwt) return false;
-    headers.authorization = `bearer ${jwt}`;
-  }
+  if (!topic) return { ok: false, status: 0, reason: "no_topic" };
 
   // Текста сообщения в пуше нет (E2EE). mutable-content: NSE на устройстве
   // подтянет и расшифрует сообщение для превью.
-  const body = {
+  const body = JSON.stringify({
     aps: {
       alert: { title: "Msngr", body: "Новое сообщение" },
       ...(payload.badge !== undefined ? { badge: payload.badge } : {}),
@@ -94,12 +107,52 @@ export async function sendPush(
     },
     chatId: payload.chatId,
     msgId: payload.msgId,
-  };
-
-  const res = await fetch(`${base}/3/device/${apnsToken}`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
   });
-  return res.ok;
+
+  let forceJwt = false;
+  for (let attempt = 0; ; attempt++) {
+    const headers: Record<string, string> = {
+      "apns-topic": topic,
+      "apns-push-type": "alert",
+      "apns-priority": "10",
+      "content-type": "application/json",
+    };
+    // collapse-id = msgId: повторная доставка того же сообщения не плодит баннеры
+    if (payload.msgId) headers["apns-collapse-id"] = payload.msgId;
+    if (isApple) {
+      const jwt = await apnsJwt(env, forceJwt);
+      if (!jwt) return { ok: false, status: 0, reason: "no_jwt" };
+      headers.authorization = `bearer ${jwt}`;
+    }
+
+    let res: Response;
+    try {
+      res = await fetch(`${base}/3/device/${apnsToken}`, { method: "POST", headers, body });
+    } catch (e) {
+      if (attempt < RETRY_DELAYS_MS.length) {
+        await sleep(RETRY_DELAYS_MS[attempt]);
+        continue;
+      }
+      console.log(`apns: сеть не ответила после ${attempt + 1} попыток: ${String(e)}`);
+      return { ok: false, status: 0, reason: "network" };
+    }
+
+    if (res.ok) return { ok: true, status: res.status };
+    const reason = await readReason(res);
+
+    if (res.status === 410) {
+      console.log(`apns: 410 ${reason ?? "Unregistered"} — токен устройства мёртв`);
+      return { ok: false, status: 410, reason, dead: true };
+    }
+    if (res.status === 403 && reason === "ExpiredProviderToken" && !forceJwt) {
+      forceJwt = true;
+      continue;
+    }
+    if ((res.status === 429 || res.status >= 500) && attempt < RETRY_DELAYS_MS.length) {
+      await sleep(RETRY_DELAYS_MS[attempt]);
+      continue;
+    }
+    console.log(`apns: отказ ${res.status} ${reason ?? "без reason"}`);
+    return { ok: false, status: res.status, reason };
+  }
 }

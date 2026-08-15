@@ -12,6 +12,11 @@
 - Auth: токен устройства (`Authorization: Bearer <token>` или `?token=`),
   в D1 хранится SHA-256 токена. Логина как отдельной операции нет: восстановление
   доступа — новая регистрация.
+- Отзыв токена: `devices.revoked_at`. Проверяется в middleware авторизации, так
+  что отозванный токен даёт 401 и на `/api/*`, и на апгрейде `/ws`. Отзыв рвёт
+  живые сокеты этого устройства (код закрытия 4401) и стирает его APNs-токен,
+  так что до устройства перестают доходить и пуши. Срока жизни у токена нет:
+  он действует, пока не отозван.
 - Все клиент-видимые метки времени — в секундах (`nowSec()` на сервере,
   `timeIntervalSince1970` на клиенте).
 
@@ -33,6 +38,9 @@ POST /api/register    {username, displayName, device:{name}, identityKey, identi
                        signedPrekey:{id,key,sig}, oneTimePrekeys:[{id,key}], phoneHash?}
                       → {userId, deviceId, token}    (без auth; username [a-zA-Z0-9_]{3,32})
 GET  /api/me                      → {user, deviceId}
+GET  /api/sessions                → {sessions:[{deviceId,name,createdAt,lastSeen,hasPushToken,current}]}
+POST /api/logout                  отозвать токен текущего устройства
+POST /api/sessions/:deviceId/revoke   отозвать токен другого своего устройства
 GET  /api/users?q=                поиск по username/displayName (LOWER LIKE, лимит 20)
 GET  /api/users/:id               → {user, presence:{online,lastSeen}}
 GET  /api/devices?ids=a,b,c       устройства и identity-ключи; ничего не расходует
@@ -44,7 +52,8 @@ POST /api/avatar                  raw body (image/jpeg) → {avatarId};  GET /ap
                                   ?chatId=<id> — аватар чата вместо своего профиля
 POST /api/chats                   {kind:"direct"|"group", memberIds[], title?} → {chatId}
 GET  /api/chats                   снапшот: [{flags, state}] + профили всех участников
-GET  /api/chats/:id/history       ?fromSeq=&toSeq=&limit=&dir=back → {msgs:[StoredMsg]}
+GET  /api/chats/:id/history       ?fromSeq=&toSeq=&limit=&dir=back
+                                  → {msgs:[StoredMsg], scanned, lastScannedSeq}
 POST /api/chats/:id/accept        принять message request
 POST /api/chats/:id/members       {add[], remove[]}
 POST /api/chats/:id/leave
@@ -67,7 +76,7 @@ GET  /api/blocked                 → {blocked:[userId]}
 Права: удалять участников и менять настройки группы может только админ; добавить
 может админ, а не-админ — только самого себя; вступление по инвайт-ссылке
 разрешено не-участнику (`viaInvite`); создать инвайт может любой участник чата.
-Создать direct с тем, кто заблокировал (или кого заблокировали), нельзя.
+Блокировки — в разделе ниже.
 
 ## Блокировки
 
@@ -112,8 +121,13 @@ GET  /api/blocked                 → {blocked:[userId]}
 {t:"presence",userId, online, lastSeen}
 {t:"chat",    chatId, event:"created"|"members"|"settings"|"pinned"|"sync", state}
 {t:"deleted", chatId, msgIds, forAll, by}
+{t:"error",   error, chatId?, clientMsgId?}
 {t:"pong"}
 ```
+
+`error` — отказ по клиентскому фрейму; `error` несёт машиночитаемый код
+(`blocked`, `not_member`, `send_failed`). На `send` он приходит вместо `sent`
+с тем же `clientMsgId`.
 
 `state` в `chat`-фрейме — полный снапшот чата: `members` (userId, role, joinedAt,
 accepted), `title`, `avatarId`, `description`, `pinnedMsgId`, `lastSeq`,
@@ -136,13 +150,44 @@ accepted), `title`, `avatarId`, `description`, `pinnedMsgId`, `lastSeq`,
 1. по чатам, которых нет в курсорах, шлёт `chat`-фрейм с `event:"sync"` и
    доигрывает историю с нуля;
 2. по каждому чату тянет `/history` батчами по 200 и шлёт `msg`-фреймы, пока
-   батчи не кончатся (ограничения на одну пачку нет);
+   батчи не кончатся (ограничения на одну пачку нет); курсор двигается по
+   `lastScannedSeq`, а не по числу отданных сообщений;
 3. затем шлёт `deleted`-фреймы по тумбстоунам и `receipt`-фреймы по текущим
    `readMarks`/`deliveredMarks` — то, что случилось, пока клиент был офлайн.
 
 Тумбстоуны в истории пропускаются как `msg` и приходят отдельными `deleted`.
 Курсор клиента двигается только по непрерывному префиксу, поэтому дыра в
 доставке не приводит к потере истории.
+
+## Блокировки
+
+Список блокировок — таблица `blocks` в D1, направленная: строка `(user_id,
+blocked_id)` значит «user_id заблокировал blocked_id». `ConversationDO`
+direct-чата читает пару лениво и держит в памяти; `POST /api/block` сбрасывает
+этот кэш фреймом `/block-changed` (чат при этом может ещё не существовать).
+В группах блокировки не проверяются.
+
+Поведение в существующем direct-чате — как принято в мессенджерах: заблокированный
+по ответам сервера не отличает блокировку от молчания собеседника.
+
+- Заблокированный шлёт `send`: сервер отвечает обычным `sent` (сообщение
+  получает `seq` и остаётся в его собственной истории), но не рассылает его
+  получателю, не шлёт пуш и помечает запись `blockedFor: <userId блокирующего>`.
+  Такое сообщение не попадает ни в `/history` блокирующего, ни в его `sync` —
+  в том числе после снятия блокировки.
+- Блокирующий шлёт `send` тому, кого заблокировал: явный отказ, фрейм
+  `{t:"error", error:"blocked"}` (HTTP-эквивалент — 403 `blocked`). Он знает
+  про свою блокировку, скрывать нечего.
+- При блокировке в любую сторону `receipt`, `typing` и `presence` между парой
+  не рассылаются, а `delivered`/`read`-марки заблокированного даже не
+  записываются: они видны в `state` `chat`-фрейма.
+- Создать direct с тем, кто заблокировал (или кого заблокировали), нельзя:
+  403 `blocked`.
+
+`/history` отдаёт рядом с `msgs` два счётчика: `scanned` — сколько записей
+прочитано до фильтрации, `lastScannedSeq` — `seq` последней прочитанной. По ним
+двигается курсор в `sync`, иначе страница, целиком выпавшая из выдачи по
+блокировке, останавливала бы доигрывание.
 
 ## Message requests
 
@@ -230,6 +275,24 @@ POST {APNS_HOST}/3/device/{apnsToken}
 }
 ```
 
+Ответ APNs разбирается:
+
+- `410` — токен устройства мёртв: запись удаляется и из storage `UserSessionDO`,
+  и из `devices.apns_token` в D1;
+- `429` и `5xx` — до двух повторов с задержкой 500 мс и 1500 мс;
+- `403 ExpiredProviderToken` — принудительный перевыпуск JWT и одна повторная
+  попытка;
+- `400` и остальное — код и `reason` уходят в лог, повтора нет.
+
+Устройства обрабатываются независимо: отказ по одному токену не отменяет
+отправку на остальные.
+
+Провайдерский JWT (ES256, p8) принадлежит синглтон-объекту `ApnsTokenDO`
+(имя `apns-jwt`): кэш лежит в его storage и живёт 3000 секунд. Владелец один,
+потому что Apple ограничивает частоту генерации токена, а изолятов, в которых
+живут `UserSessionDO`, может быть много. Принудительный перевыпуск не чаще
+одного раза в минуту.
+
 Текста сообщения в пуше нет. Бейдж: `UserSessionDO` держит в storage кэш unread
 по чатам (`unreadCache`), инвалидирует его по входящему `msg` и собственному
 `read`, а в момент отправки пуша лениво пересчитывает инвалидированные чаты
@@ -243,8 +306,24 @@ Dev без Apple-аккаунта: `APNS_HOST` (в `server/.dev.vars` — `http:
 `ai.enface.Msngr`. Ограничение канала: `simctl push` не запускает Notification
 Service Extension — см. `docs/research/nse-simulator-experiment.md`.
 
+## Схема D1 и миграции
+
+Схема живёт в `server/migrations/` нумерованными файлами (`0001_init.sql`,
+`0002_…`), применяет их штатный раннер wrangler; каталог и таблица журнала
+заданы в `wrangler.jsonc` (`migrations_dir`, `migrations_table: d1_migrations`).
+
+```
+npm run migrate:local     # локальная база wrangler dev
+npm run migrate           # удалённая база
+npm run deploy            # миграции на удалённой базе, затем wrangler deploy
+```
+
+Новая миграция — новый файл со следующим номером; ранее применённые файлы не
+редактируются, раннер сверяется с `d1_migrations`.
+
 ## Версии
 
 Обратной совместимости нет (см. `docs/PROCESS.md`), но точки для неё заложены:
-`v` в E2E-конверте, версия схемы БД в миграторе GRDB, `migrations` в
-`wrangler.jsonc`. Версия протокола в рукопожатии (`hello`) пока не передаётся.
+`v` в E2E-конверте, версия схемы БД в миграторе GRDB, миграции D1 в
+`server/migrations/`, `migrations` (теги DO) в `wrangler.jsonc`. Версия
+протокола в рукопожатии (`hello`) пока не передаётся.
