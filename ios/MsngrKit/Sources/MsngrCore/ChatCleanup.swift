@@ -60,7 +60,8 @@ public enum ChatCleanup {
                 """, arguments: [chatId, seq, now])
         }
         for table in ["message", "outbox", "pendingDecrypt", "pendingApply", "pendingAction",
-                      "historyGap", "member", "senderKeyIn", "notificationShown"] {
+                      "historyGap", "member", "senderKeyIn", "notificationShown",
+                      "chatFolderChat"] {
             try dbc.execute(sql: "DELETE FROM \(table) WHERE chatId = ?", arguments: [chatId])
         }
         try dbc.execute(sql: "DELETE FROM senderKeyOut WHERE chatId = ?", arguments: [chatId])
