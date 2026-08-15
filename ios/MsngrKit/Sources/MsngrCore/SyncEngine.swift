@@ -198,6 +198,10 @@ public actor SyncEngine {
         case .disconnected:
             connected = false
             connectionStream.send(false)
+            // порция оборвалась: следующее подключение начнёт догон
+            // с подтверждённых курсоров в БД
+            catchupPending = []
+            catchupSent = [:]
         case .unauthorized:
             connected = false
             connectionStream.send(false)
@@ -230,16 +234,52 @@ public actor SyncEngine {
         }
     }
 
+    /// Чаты, у которых после последней порции осталась история дальше курсора.
+    private var catchupPending: Set<String> = []
+    /// Курсоры последней запрошенной порции: следующая уходит только с новыми,
+    /// иначе догон крутил бы порции, не двигаясь с места.
+    private var catchupSent: [String: Int] = [:]
+
+    /// Начало догона: весь известный клиенту мир с подтверждённых границ.
     private func sendSyncCursors() async {
         guard connected else { return }
-        let cursors: [String: Int] = (try? await db.read { dbc in
-            var out: [String: Int] = [:]
-            for row in try Row.fetchAll(dbc, sql: "SELECT id, syncedSeq FROM chat") {
-                out[row["id"]] = row["syncedSeq"]
-            }
-            return out
+        let cursors = (try? await db.read { dbc in
+            try HistoryWindow.catchupCursors(dbc)
         }) ?? [:]
+        catchupPending = []
+        catchupSent = cursors
         try? await ws.send(.sync(cursors: cursors))
+    }
+
+    /// Прогресс догона одного чата. Курсор подтверждается уже после того, как
+    /// порция применена (фреймы порции идут до `syncState`), поэтому обрыв
+    /// посреди догона стоит клиенту одной порции, а не всей истории.
+    private func applySyncState(_ f: WSIncoming) async {
+        guard let chatId = f.chatId, let cursor = f.cursor else { return }
+        try? await db.write { dbc in
+            try dbc.execute(sql: "UPDATE chat SET syncCursor = MAX(syncCursor, ?) WHERE id = ?",
+                            arguments: [cursor, chatId])
+        }
+        if f.more == true { catchupPending.insert(chatId) } else { catchupPending.remove(chatId) }
+    }
+
+    /// Конец порции: пока сервер сообщает, что доигрывать есть что, клиент
+    /// просит следующую — с курсоров, подтверждённых в базе. Между порциями
+    /// объект сессии свободен для живого трафика, поэтому цикл догона крутится
+    /// фреймами, а не одним запросом.
+    private func finishCatchupPortion(more: Bool) async {
+        guard more, connected else { return }
+        let pending = catchupPending
+        let cursors = (try? await db.read { dbc -> [String: Int] in
+            let behind = try HistoryWindow.catchupCursors(dbc)
+                .filter { pending.contains($0.key) }
+            // порция кончилась раньше, чем дошла до отставших: спрашиваем те
+            // чаты, чей журнал заведомо длиннее курсора
+            return behind.isEmpty ? try HistoryWindow.catchupCursors(dbc, behindOnly: true) : behind
+        }) ?? [:]
+        guard !cursors.isEmpty, cursors != catchupSent else { return }
+        catchupSent = cursors
+        try? await ws.send(.catchup(cursors: cursors))
     }
 
     // MARK: - Применение входящих фреймов
@@ -290,6 +330,10 @@ public actor SyncEngine {
                 // пользователей дотягиваются, иначе UI показывает «…» до рестарта
                 await fetchMissingUsers(state.members.map(\.userId))
             }
+        case "syncState":
+            await applySyncState(f)
+        case "syncDone":
+            await finishCatchupPortion(more: f.more ?? false)
         case "error":
             await applyServerError(f)
         case "deleted":
@@ -952,9 +996,9 @@ public actor SyncEngine {
     @discardableResult
     public func fillHistoryGap(chatId: String, from: Int, to: Int) async -> Bool {
         guard from <= to else { return true }
-        // one request covers at most 200 seqs — the server truncates a longer
-        // range and the tail would be closed without ever being asked for
-        let upper = min(to, from + 199)
+        // one request covers at most one server page — a longer range comes
+        // back truncated and the tail would be closed without being asked for
+        let upper = min(to, from + HistoryWindow.serverPageSize - 1)
         guard let dtos = try? await api.history(chatId: chatId, fromSeq: from - 1,
                                                 toSeq: upper, limit: upper - from + 1) else { return false }
         var reasons: [Int: String] = [:]   // seq -> why it produced no feed row

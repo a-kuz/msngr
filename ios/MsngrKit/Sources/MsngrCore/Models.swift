@@ -39,6 +39,9 @@ public struct Chat: Codable, Identifiable, Equatable, FetchableRecord, Persistab
     /// последний seq на сервере (из state) и последний локально применённый
     public var lastSeq: Int
     public var syncedSeq: Int
+    /// докуда сервер доиграл журнал чата: подтверждённая порциями граница
+    /// догона, с неё он продолжается после обрыва
+    public var syncCursor: Int = 0
     // локальные атрибуты
     public var unreadCount: Int = 0
     public var pinned: Bool = false
