@@ -84,7 +84,13 @@ public struct SenderKeyReceiver: Codable, Sendable {
     let signingPub: Data
     var skipped: [UInt32: Data] = [:]
 
-    static let maxSkip: UInt32 = 2000
+    /// Iterations one chain may jump over, and skipped keys kept afterwards.
+    /// A member returning after a long silence can be thousands of iterations
+    /// behind the sender's chain; a shorter window leaves all of them
+    /// unreadable. Stored keys are capped so iterations that never arrive
+    /// cannot grow the state without bound.
+    static let maxSkip: UInt32 = 5000
+    static let maxSkippedStored = 5000
 
     public init(distribution: SenderKeyDistribution) {
         self.keyId = distribution.keyId
@@ -117,12 +123,22 @@ public struct SenderKeyReceiver: Codable, Sendable {
             chainKey = next
             iteration = it + 1
             msgKey = mk
+            trimSkipped()
         }
         do {
             let box = try ChaChaPoly.SealedBox(combined: message.ciphertext)
             return try ChaChaPoly.open(box, using: SymmetricKey(data: msgKey))
         } catch {
             throw CryptoError.decryptionFailed
+        }
+    }
+
+    /// Drops the oldest iterations once the store is over the cap: an iteration
+    /// that never arrives would otherwise keep its key forever.
+    private mutating func trimSkipped() {
+        guard skipped.count > Self.maxSkippedStored else { return }
+        for it in skipped.keys.sorted().prefix(skipped.count - Self.maxSkippedStored) {
+            skipped.removeValue(forKey: it)
         }
     }
 }
