@@ -139,7 +139,12 @@
   - ✅ сообщение появляется до сети, статус «часики» (offline-run 1–3)
   - ✅ статусы: отправлено → доставлено → прочитано (media-run, кейс 32)
   - ✅ идемпотентность по clientMsgId (смоук `idempotent resend same seq`)
+  - ✅ ack сразу после присвоения seq, раньше рассылки и пуша (смоук `ack precedes push`, `ack while apns still hanging`)
   - 🟡 статус «не отправлено» после исчерпания попыток (не проверено вживую)
+- Рассылка
+  - ✅ alarm-очередь в ConversationDO: курсор в storage, батчи, повтор до исчерпания (смоук `fanout is queued, not inline`, `queue replays the whole burst`, `queue drains to empty cursor`)
+  - ✅ упавший получатель не рвёт доставку остальным, повтор с backoff, typing не повторяется (смоук `delivery survives a broken recipient`, `failed recipient gets retry`, `typing not retried`)
+  - ✅ порядок фреймов чата сохраняется (смоук `queue keeps frame order`)
 - Офлайн-очередь
   - ✅ текст, фото, голосовое офлайн → доставка после реконнекта (offline-run 1–3)
   - ✅ kill приложения с неотправленным: сообщение на месте и уходит (offline-run 4)
@@ -265,6 +270,7 @@
 
 - Серверная часть
   - ✅ APNs на каждое контентное сообщение, независимо от живого сокета (смоук `push delivered despite live ws`)
+  - ✅ вызов APNs ожидается в обработчике, без waitUntil; отправитель его не ждёт (смоук `push follows its ack`)
   - ✅ нет пуша для служебных фреймов, muted-чата и своего эха (смоук три проверки)
   - ✅ бейдж из серверного кэша unread, пересчёт после прочтения (смоук `push badge=1/2/after read`)
   - ✅ collapse-id = msgId, thread-id = chatId, alert без plaintext (смоук)
@@ -301,7 +307,6 @@
 
 - ⬜ тип чата «канал» с явным маркером и выбором при создании
 - ⬜ без E2EE: plaintext на сервере, история для новых подписчиков
-- ⬜ alarm-очередь рассылки в ConversationDO (курсор, батчи, свежий бюджет subrequests)
 - ⬜ роли: владелец, редакторы, читатели
 - ⬜ серверный поиск по истории канала
 - ⬜ медиа канала через CF Stream / Images
