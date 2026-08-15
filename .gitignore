@@ -1,5 +1,7 @@
 node_modules/
 .wrangler/
+# состояние отдельного стенда: `wrangler dev --persist-to .wrangler-<имя>`
+.wrangler-*/
 *.xcodeproj
 build/
 DerivedData/
