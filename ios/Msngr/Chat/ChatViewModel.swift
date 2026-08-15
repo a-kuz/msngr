@@ -69,15 +69,7 @@ final class ChatViewModel: ObservableObject {
     /// The window covers the oldest message stored for this chat.
     private var atHistoryStart = false
 
-    /// Seq floor of the feed window. The observation reads it on every fetch,
-    /// so messages arriving at the bottom never push the oldest loaded ones out.
-    private final class WindowFloor: @unchecked Sendable {
-        private let lock = NSLock()
-        private var seq: Int?
-        func get() -> Int? { lock.lock(); defer { lock.unlock() }; return seq }
-        func set(_ value: Int?) { lock.lock(); seq = value; lock.unlock() }
-    }
-    private let windowFloor = WindowFloor()
+    private let windowFloor = FeedWindow()
 
     /// One fetch of the chat observation.
     private struct Snapshot {
@@ -160,10 +152,11 @@ final class ChatViewModel: ObservableObject {
         cancellable = ValueObservation
             .tracking { dbc -> Snapshot in
                 let chat = try Chat.fetchOne(dbc, key: chatId)
-                var floor = floorBox.get()
-                if floor == nil {
+                let plan = floorBox.plan()
+                var floor = plan.floor
+                if plan.recompute {
                     floor = try HistoryWindow.newestFloor(dbc, chatId: chatId,
-                                                          limit: HistoryWindow.pageSize)
+                                                          limit: plan.capacity)
                     floorBox.set(floor)
                 }
                 let msgs = try HistoryWindow.messages(dbc, chatId: chatId, floor: floor)
@@ -581,7 +574,11 @@ final class ChatViewModel: ObservableObject {
     }
 
     /// true, когда новейшие сообщения реально на экране (лента у низа).
-    var isViewingBottom = true
+    /// Пока лента у низа, окно скользит вслед за новыми сообщениями; стоит
+    /// пользователю уйти вверх — нижняя граница окна замирает.
+    var isViewingBottom = true {
+        didSet { windowFloor.setAtBottom(isViewingBottom) }
+    }
 
     func markVisibleRead() {
         // не отмечаем прочтение, когда сцена не активна (фон/шторка): экран не виден
@@ -616,6 +613,7 @@ final class ChatViewModel: ObservableObject {
             }
             if let next = next ?? nil, next < floor {
                 windowFloor.set(next)
+                windowFloor.grow(by: HistoryWindow.pageSize)
                 observeChat()
                 return true
             }
@@ -632,6 +630,7 @@ final class ChatViewModel: ObservableObject {
         guard await app.engine.fillHistoryGap(chatId: chatId, from: gap.lowerBound,
                                               to: gap.upperBound) else { return false }
         windowFloor.set(min(floor ?? gap.lowerBound, gap.lowerBound))
+        windowFloor.grow(by: gap.count)
         observeChat()
         return true
     }

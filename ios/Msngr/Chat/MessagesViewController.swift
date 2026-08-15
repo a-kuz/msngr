@@ -157,12 +157,19 @@ final class MessagesViewController: UIViewController {
             .map { IndexPath(item: $0.offset, section: 0) }
         let inserts = newIds.enumerated().filter { oldIndex[$0.element] == nil }
             .map { IndexPath(item: $0.offset, section: 0) }
+        // якорь на то, что человек читает: список инвертирован, вставка нового
+        // сообщения идёт в item 0 и сдвигает под неизменным contentOffset весь
+        // контент выше. Запоминаем верхний видимый элемент и его положение на
+        // экране, чтобы вернуть их после обновления
+        let anchor = readingAnchor()
+
         // если структура изменилась слишком сложно (перестановки) — безопасный reload
         let onlyAppendOrRemove = deletes.count + inserts.count == abs(oldIds.count - newIds.count)
             || (deletes.isEmpty || inserts.isEmpty)
         guard onlyAppendOrRemove, deletes.count + inserts.count < 60 else {
             items = newItems
             collectionView.reloadData()
+            restore(anchor)
             // своё новое сообщение внизу обязано стать видимым и на reload-пути
             if case .message(let m, _, _, _, _, _)? = newItems.first, m.isOutgoing,
                oldIndex[newIds[0]] == nil {
@@ -213,6 +220,7 @@ final class MessagesViewController: UIViewController {
             // вставленной ячейки (cellForItem там nil) — материализуем её сразу
             // и запускаем анимацию появления синхронно, до первого кадра
             collectionView.layoutIfNeeded()
+            if newBottom?.outgoing != true { restore(anchor) }
         }
         // уцелевшие элементы могли сменить содержимое в том же апдейте, где что-то
         // вставилось: у соседа сверху пропадает хвостик и меняется зазор, когда
@@ -314,6 +322,42 @@ final class MessagesViewController: UIViewController {
     func scrollToBottom(animated: Bool = true) {
         collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.contentInset.top), animated: animated)
         if !animated { updateAtBottom(layoutFirst: true) }
+    }
+
+    // MARK: - Удержание позиции чтения
+
+    /// Элемент у верхнего края экрана и его положение относительно него.
+    private struct ReadingAnchor {
+        let id: String
+        let offsetInView: CGFloat
+    }
+
+    /// Якорь берётся, только когда человек читает историю: у низа ленту ведут
+    /// новые сообщения, и удерживать там нечего.
+    private func readingAnchor() -> ReadingAnchor? {
+        guard isViewLoaded, !atBottom else { return nil }
+        let visibleRect = collectionView.bounds.inset(by: collectionView.adjustedContentInset)
+        // список инвертирован: визуальный верх экрана — элемент с наибольшим maxY
+        let top = collectionView.indexPathsForVisibleItems.compactMap { path -> (IndexPath, CGRect)? in
+            guard let attrs = collectionView.layoutAttributesForItem(at: path),
+                  attrs.frame.intersects(visibleRect) else { return nil }
+            return (path, attrs.frame)
+        }.max { $0.1.maxY < $1.1.maxY }
+        guard let top, top.0.item < items.count else { return nil }
+        return ReadingAnchor(id: items[top.0.item].id,
+                             offsetInView: top.1.maxY - collectionView.contentOffset.y)
+    }
+
+    /// Возвращает якорный элемент туда же, где он был до обновления.
+    private func restore(_ anchor: ReadingAnchor?) {
+        guard let anchor, let idx = items.firstIndex(where: { $0.id == anchor.id }) else { return }
+        collectionView.layoutIfNeeded()
+        guard let attrs = collectionView.layoutAttributesForItem(at: IndexPath(item: idx, section: 0))
+        else { return }
+        let target = attrs.frame.maxY - anchor.offsetInView
+        guard abs(target - collectionView.contentOffset.y) > 0.5 else { return }
+        collectionView.setContentOffset(CGPoint(x: collectionView.contentOffset.x, y: target),
+                                        animated: false)
     }
 
     // MARK: - «Лента у низа»
