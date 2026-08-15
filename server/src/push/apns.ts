@@ -50,6 +50,65 @@ export interface PushPayload {
   /// produced. APNs delivers a burst in an arbitrary order, so the device
   /// needs it to tell a fresh count from one that overtook it.
   badgeStamp?: number;
+  /// Author of the message: the device needs both to pick its ciphertext out of
+  /// the envelope and to step the right session.
+  from?: string;
+  fromDevice?: string;
+  /// Server clock of the message, as the socket carries it.
+  ts?: number;
+  /// The E2E envelope, addressed to this one device, as compact JSON. The
+  /// extension decrypts it and writes the message, so a message read in a
+  /// banner is in the chat afterwards even if the socket never comes up. It is
+  /// dropped when the payload would not fit; the message then arrives on the
+  /// next connection.
+  env?: string;
+}
+
+/// APNs refuses a payload over this size, and a refusal is a notification the
+/// device never sees.
+export const APNS_PAYLOAD_LIMIT = 4096;
+
+/// The part of an envelope this device can open: a pairwise envelope carries a
+/// box per recipient device, and the rest of them are dead weight in a payload
+/// with four kilobytes to spend. A sender-key envelope has one ciphertext for
+/// the whole group and travels whole.
+export function envelopeForDevice(body: unknown, address: string): string | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const env = body as { mode?: string; msgs?: Record<string, unknown> };
+  if (env.mode !== "pw") return JSON.stringify(env);
+  const box = env.msgs?.[address];
+  if (!box) return undefined;
+  return JSON.stringify({ ...env, msgs: { [address]: box } });
+}
+
+/// The APNs body of one push. The envelope is the first thing to go when the
+/// payload does not fit: everything else is what orders the burst and counts
+/// the badge.
+export function pushBody(payload: PushPayload): string {
+  const build = (env?: string) =>
+    JSON.stringify({
+      aps: {
+        alert: { title: "Msngr", body: "Новое сообщение" },
+        ...(payload.badge !== undefined ? { badge: payload.badge } : {}),
+        sound: "default",
+        "mutable-content": 1,
+        "thread-id": payload.chatId,
+      },
+      chatId: payload.chatId,
+      msgId: payload.msgId,
+      // seq and sentAt let the extension order a burst of pushes: APNs delivers
+      // them in an arbitrary order, and the banner order is the posting order.
+      seq: payload.seq,
+      sentAt: payload.sentAt,
+      badgeStamp: payload.badgeStamp,
+      from: payload.from,
+      fromDevice: payload.fromDevice,
+      ts: payload.ts,
+      env,
+    });
+  const full = build(payload.env);
+  if (new TextEncoder().encode(full).length <= APNS_PAYLOAD_LIMIT) return full;
+  return build(undefined);
 }
 
 export interface PushResult {
@@ -101,24 +160,9 @@ export async function sendPush(
   const topic = env.APNS_TOPIC ?? (isApple ? null : "ai.enface.Msngr");
   if (!topic) return { ok: false, status: 0, reason: "no_topic" };
 
-  // Текста сообщения в пуше нет (E2EE). mutable-content: NSE на устройстве
-  // подтянет и расшифрует сообщение для превью.
-  const body = JSON.stringify({
-    aps: {
-      alert: { title: "Msngr", body: "Новое сообщение" },
-      ...(payload.badge !== undefined ? { badge: payload.badge } : {}),
-      sound: "default",
-      "mutable-content": 1,
-      "thread-id": payload.chatId,
-    },
-    chatId: payload.chatId,
-    msgId: payload.msgId,
-    // seq and sentAt let the extension order a burst of pushes: APNs delivers
-    // them in an arbitrary order, and the banner order is the posting order.
-    seq: payload.seq,
-    sentAt: payload.sentAt,
-    badgeStamp: payload.badgeStamp,
-  });
+  // The alert text is neutral: the payload carries ciphertext, and the
+  // extension replaces the text with what it decrypts (mutable-content).
+  const body = pushBody(payload);
 
   let forceJwt = false;
   for (let attempt = 0; ; attempt++) {
