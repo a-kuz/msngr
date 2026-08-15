@@ -57,6 +57,10 @@ GET  /api/chats/:id/history       ?fromSeq=&toSeq=&limit=&dir=back
 POST /api/chats/:id/accept        принять message request
 POST /api/chats/:id/members       {add[], remove[]}
 POST /api/chats/:id/leave
+POST /api/chats/:id/delete        удалить чат у себя: группу покидает, переписку
+                                  убирает из своего списка (журнал и участие
+                                  остаются, собеседник ничего не узнаёт); своя
+                                  read-марка при этом уходит в конец журнала
 POST /api/chats/:id/settings      {title?, avatarId?, description?}
 POST /api/chats/:id/admins        {userId, admin:bool}
 POST /api/chats/:id/pin-message   {msgId|null}
