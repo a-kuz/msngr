@@ -327,6 +327,29 @@ app.get("/api/chats/:id/history", async (c) => {
   return new Response(r.body, r);
 });
 
+// Fanout queue of the chat: depth and the head job's delivery cursor.
+app.get("/api/chats/:id/fanout", async (c) => {
+  const { userId } = c.get("auth");
+  const chatId = c.req.param("id");
+  const sr = await convStub(c.env, chatId).fetch("https://do/state");
+  const sj = (await sr.json()) as { ok: boolean; state?: ChatState };
+  if (!sj.ok || !sj.state?.members.some((m) => m.userId === userId))
+    return err("not_member", 403);
+  const r = await convStub(c.env, chatId).fetch("https://do/fanout-state");
+  return new Response(r.body, r);
+});
+
+// Dev test hook: the caller's own session object rejects the next n frame
+// deliveries, which exercises the fanout retry path end to end.
+app.post("/api/dev/fault", async (c) => {
+  const { userId } = c.get("auth");
+  const b = await c.req.json<{ failEvents: number }>();
+  const r = await userStub(c.env, userId).fetch("https://do/dev-fault", {
+    method: "POST", body: JSON.stringify({ failEvents: b.failEvents }),
+  });
+  return new Response(r.body, r);
+});
+
 app.post("/api/chats/:id/members", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{ add?: string[]; remove?: string[] }>();
