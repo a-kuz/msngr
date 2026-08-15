@@ -141,6 +141,15 @@ public actor SyncEngine {
 
     /// Вернулось на экран: presence online + пинок реконнекту и outbox.
     public func appBecameActive() async {
+        // While the app was away the notification service extension wrote
+        // messages of its own into this file, and an observation only hears the
+        // writes of its own process. Coming back to the screen is the moment
+        // the screens are told to look again.
+        try? await db.write { dbc in
+            try dbc.notifyChanges(in: Table("message"))
+            try dbc.notifyChanges(in: Table("chat"))
+            try dbc.notifyChanges(in: Table("badge"))
+        }
         await ws.nudge()
         try? await ws.sendRaw(Data(#"{"t":"fg"}"#.utf8))
         outboxWakeup.continuation.yield()

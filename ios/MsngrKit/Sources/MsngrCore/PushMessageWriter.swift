@@ -95,7 +95,7 @@ public struct PushMessageWriter: Sendable {
                     ?? .undecryptable(reason: "exception")
             }
             switch result {
-            case .content(let payload), .identityChanged(_, .some(let payload)):
+            case .content(let payload):
                 guard !Self.outOfReach.contains(payload.kind) else { return .rollback }
                 try apply(dbc, payload, item: item, envelope: envelope, chat: chat)
                 outcome = .stored
@@ -112,7 +112,10 @@ public struct PushMessageWriter: Sendable {
                                              body: data, now: now)
                 outcome = .deferred
                 return .commit
-            case .senderKeyDistribution, .identityChanged(_, .none):
+            case .senderKeyDistribution, .identityChanged:
+                // A peer whose identity key changed is the app's business: it
+                // is the one that says so in the chat. The step is rolled back
+                // with everything else, so the same envelope reaches it whole.
                 return .rollback
             }
         }
