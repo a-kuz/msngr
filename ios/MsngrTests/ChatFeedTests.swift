@@ -65,7 +65,7 @@ final class ChatFeedTests: XCTestCase {
         let markerIdx = feed.firstIndex { if case .unreadMarker = $0 { return true }; return false }
         XCTAssertNotNil(markerIdx)
         // элемент прямо перед маркером в массиве — сообщение m3 (на экране оно под плашкой)
-        if case .message(let m, _, _, _, _) = feed[markerIdx! - 1] {
+        if case .message(let m, _, _, _, _, _) = feed[markerIdx! - 1] {
             XCTAssertEqual(m.id, "m3")
         } else {
             XCTFail("перед маркером должно быть первое непрочитанное, есть \(feed[markerIdx! - 1])")
@@ -115,7 +115,7 @@ final class ChatFeedTests: XCTestCase {
         XCTAssertTrue(ChatViewModel.buildFeed(msgs, members: [], contentHidden: true).isEmpty)
         let shown = ChatViewModel.buildFeed(msgs, members: [], contentHidden: false)
         XCTAssertEqual(shown.compactMap { item -> String? in
-            if case .message(let m, _, _, _, _) = item { return m.id }
+            if case .message(let m, _, _, _, _, _) = item { return m.id }
             return nil
         }, ["m3", "m2", "m1"])
     }
@@ -125,7 +125,7 @@ final class ChatFeedTests: XCTestCase {
     /// Флаги группировки сообщений ленты в её порядке (index 0 — самое новое).
     private func grouping(_ feed: [ChatFeedItem]) -> [(id: String, tightGap: Bool, showTail: Bool)] {
         feed.compactMap { item in
-            if case .message(let m, let tightGap, let showTail, _, _) = item {
+            if case .message(let m, let tightGap, let showTail, _, _, _) = item {
                 return (m.id, tightGap, showTail)
             }
             return nil
@@ -222,6 +222,51 @@ final class ChatFeedTests: XCTestCase {
         ]
         let g = grouping(ChatViewModel.buildFeed(msgs, members: []))
         XCTAssertEqual(g.map(\.showTail), [true, true, true])
+    }
+
+    // MARK: - Автор цитаты в ленте
+
+    private func replyAuthorNames(_ feed: [ChatFeedItem]) -> [String?] {
+        feed.compactMap { item in
+            if case .message(_, _, _, _, _, let replyAuthorName) = item { return replyAuthorName }
+            return nil
+        }
+    }
+
+    /// Цитата на своё сообщение — «Вы», на чужое — имя участника из members,
+    /// без цитаты — nil.
+    @MainActor
+    func testReplyAuthorNameResolvedFromMembers() {
+        let base: TimeInterval = 1_700_000_000
+        let alice = User(id: "me", username: "me", displayName: "Я")
+        let bob = User(id: "peer", username: "bob", displayName: "Боб")
+        var replyToOwn = msg("m2", sentAt: base + 10, seq: 2)
+        replyToOwn.replyTo = ReplyPreview(msgId: "m1", authorId: "me", text: "своё", kind: "text")
+        var replyToPeer = incoming("m3", sentAt: base + 20, seq: 3)
+        replyToPeer.replyTo = ReplyPreview(msgId: "m1", authorId: "peer", text: "чужое", kind: "text")
+        let plain = msg("m1", sentAt: base, seq: 1)
+
+        let feed = ChatViewModel.buildFeed([replyToPeer, replyToOwn, plain],
+                                           members: [alice, bob], ownId: "me")
+        let names = feed.compactMap { item -> (String, String?)? in
+            if case .message(let m, _, _, _, _, let name) = item { return (m.id, name) }
+            return nil
+        }
+        func name(for id: String) -> String? { names.first { $0.0 == id }?.1 ?? nil }
+        XCTAssertEqual(name(for: "m2"), "Вы")
+        XCTAssertEqual(name(for: "m3"), "Боб")
+        XCTAssertNil(name(for: "m1"), "без replyTo имени цитаты нет")
+    }
+
+    /// Автор цитаты не найден среди участников (вышел из чата) — заглушка «?»,
+    /// а не сырой userId и не краш.
+    @MainActor
+    func testReplyAuthorNameFallsBackForUnknownMember() {
+        let base: TimeInterval = 1_700_000_000
+        var m = msg("m2", sentAt: base + 10, seq: 2)
+        m.replyTo = ReplyPreview(msgId: "m1", authorId: "left-the-chat", text: "текст", kind: "text")
+        let feed = ChatViewModel.buildFeed([m], members: [], ownId: "me")
+        XCTAssertEqual(replyAuthorNames(feed).first ?? nil, "?")
     }
 
     @MainActor
