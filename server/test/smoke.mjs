@@ -923,8 +923,8 @@ cd.send({ t: "send", chatId: dchat2.chatId, clientMsgId: "cm-d1", sentAt: Date.n
 await cd.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-d1");
 await cer.waitFor((f) => f.t === "msg" && f.chatId === dchat2.chatId);
 
-const del = await api(`/api/chats/${dchat2.chatId}/delete`, { token: dana.token, body: {} });
-check("direct chat deleted", del.ok, JSON.stringify(del));
+const delDirect = await api(`/api/chats/${dchat2.chatId}/delete`, { token: dana.token, body: {} });
+check("direct chat deleted", delDirect.ok, JSON.stringify(delDirect));
 const danaList = await api("/api/chats", { token: dana.token });
 check("deleted chat leaves the deleter's list",
   !danaList.chats.some((c2) => c2.state.chatId === dchat2.chatId));
