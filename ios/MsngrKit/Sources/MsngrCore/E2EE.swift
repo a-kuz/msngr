@@ -43,11 +43,19 @@ public final class E2EEManager: @unchecked Sendable {
     public let ownUserId: String
     public let ownDeviceId: String
 
-    public init(store: IdentityStore, api: APIClient, ownUserId: String, ownDeviceId: String) {
+    /// Cross-process exclusion over the crypto state; see `CryptoGate`.
+    let gate: CryptoGate
+    private let incoming: IncomingDecryptor
+
+    public init(store: IdentityStore, api: APIClient, ownUserId: String, ownDeviceId: String,
+                gate: CryptoGate = CryptoGate(url: nil)) {
         self.store = store
         self.api = api
         self.ownUserId = ownUserId
         self.ownDeviceId = ownDeviceId
+        self.gate = gate
+        self.incoming = IncomingDecryptor(store: store, ownUserId: ownUserId,
+                                          ownDeviceId: ownDeviceId, gate: gate)
     }
 
     private func addr(_ userId: String, _ deviceId: String) -> String { "\(userId)/\(deviceId)" }
@@ -179,10 +187,12 @@ public final class E2EEManager: @unchecked Sendable {
             throw E2EEError.noDevices(userId: uid)
         }
         // TOFU по identity-ключам всех устройств получателя (не только первого)
-        for uid in targets where uid != ownUserId {
-            for d in byUser[uid] ?? [] {
-                if case .changed = try store.checkTrust(userId: uid, identitySigning: d.identitySignKey) {
-                    throw E2EEError.identityChanged(userId: uid)
+        try gate.withLock { _ in
+            for uid in targets where uid != ownUserId {
+                for d in byUser[uid] ?? [] {
+                    if case .changed = try store.checkTrust(userId: uid, identitySigning: d.identitySignKey) {
+                        throw E2EEError.identityChanged(userId: uid)
+                    }
                 }
             }
         }
@@ -191,36 +201,58 @@ public final class E2EEManager: @unchecked Sendable {
         // полный prekey-бандл (расходует one-time prekey) — только для юзеров,
         // у которых нашлось устройство без установленной сессии
         var bundlesByUser: [String: [APIClient.PrekeyBundleDTO]] = [:]
+        /// Sessions marked for a rebuild, consumed once and remembered: a second
+        /// pass must not read the mark as absent and encrypt to the old session.
+        var resetting: [String: Bool] = [:]
+        var archived: Set<String> = []
 
-        for uid in targets {
-            // сессия помечена на пересборку (по ней не расшифровывалось): текущую
-            // в архив, это сообщение поднимает новую через X3DH
-            let resetting = (try? store.consumeSessionReset(peerUserId: uid)) ?? false
-            for device in byUser[uid] ?? [] {
-                if uid == ownUserId && device.deviceId == ownDeviceId { continue }
-                let a = addr(uid, device.deviceId)
-                if let onlyDevices, !onlyDevices.contains(a), uid != ownUserId { continue }
-                if resetting {
-                    try? store.archiveCurrentSession(peerUserId: uid, peerDeviceId: device.deviceId)
+        // The pass over the sessions runs behind the gate, so a ratchet step is
+        // never interleaved with the extension's. Asking the server for a prekey
+        // bundle cannot happen there — a lock is not held across a request — so
+        // the pass reports the users whose bundles it lacks, they are fetched,
+        // and the pass runs again for what is left.
+        for _ in 0..<2 {
+            let needBundles = try gate.withLock { _ -> Set<String> in
+                var needed: Set<String> = []
+                for uid in targets {
+                    // сессия помечена на пересборку (по ней не расшифровывалось): текущую
+                    // в архив, это сообщение поднимает новую через X3DH
+                    let isResetting = resetting[uid]
+                        ?? ((try? store.consumeSessionReset(peerUserId: uid)) ?? false)
+                    resetting[uid] = isResetting
+                    for device in byUser[uid] ?? [] {
+                        if uid == ownUserId && device.deviceId == ownDeviceId { continue }
+                        let a = addr(uid, device.deviceId)
+                        if boxes[a] != nil { continue }
+                        if let onlyDevices, !onlyDevices.contains(a), uid != ownUserId { continue }
+                        if isResetting, archived.insert(a).inserted {
+                            try? store.archiveCurrentSession(peerUserId: uid, peerDeviceId: device.deviceId)
+                        }
+                        // существующая сессия → dr, бандл не нужен
+                        if !isResetting,
+                           var session = try store.loadSession(peerUserId: uid, peerDeviceId: device.deviceId) {
+                            let msg = try session.encrypt(plaintext)
+                            try store.saveSession(session, peerUserId: uid, peerDeviceId: device.deviceId,
+                                                  theirIdentityDH: device.identityKey)
+                            boxes[a] = PairwiseBox(type: "dr", c: try JSONEncoder().encode(msg).base64EncodedString())
+                            continue
+                        }
+                        // новой сессии нужен X3DH
+                        guard let bundle = bundlesByUser[uid]?.first(where: { $0.deviceId == device.deviceId })
+                        else {
+                            if bundlesByUser[uid] == nil { needed.insert(uid) }
+                            continue
+                        }
+                        if let box = try newSessionBox(plaintext: plaintext, userId: uid, bundle: bundle) {
+                            boxes[a] = box
+                        }
+                    }
                 }
-                // существующая сессия → dr, бандл не нужен
-                if !resetting,
-                   var session = try store.loadSession(peerUserId: uid, peerDeviceId: device.deviceId) {
-                    let msg = try session.encrypt(plaintext)
-                    try store.saveSession(session, peerUserId: uid, peerDeviceId: device.deviceId,
-                                          theirIdentityDH: device.identityKey)
-                    boxes[a] = PairwiseBox(type: "dr", c: try JSONEncoder().encode(msg).base64EncodedString())
-                    continue
-                }
-                // новой сессии нужен X3DH
-                if bundlesByUser[uid] == nil {
-                    bundlesByUser[uid] = try await api.prekeys(userId: uid).bundles
-                }
-                guard let bundle = bundlesByUser[uid]?.first(where: { $0.deviceId == device.deviceId })
-                else { continue }
-                if let box = try newSessionBox(plaintext: plaintext, userId: uid, bundle: bundle) {
-                    boxes[a] = box
-                }
+                return needed
+            }
+            if needBundles.isEmpty { break }
+            for uid in needBundles {
+                bundlesByUser[uid] = try await api.prekeys(userId: uid).bundles
             }
         }
         var env = Envelope(mode: "pw")
@@ -263,138 +295,15 @@ public final class E2EEManager: @unchecked Sendable {
 
     // MARK: - Входящие
 
+    /// Opening an envelope belongs to `IncomingDecryptor`: it needs the device's
+    /// keys and no network, which is what lets the notification service
+    /// extension do it too.
     public func decrypt(envelopeJSON: JSONValue, chatId: String,
                         fromUserId: String, fromDeviceId: String) throws -> DecryptedIncoming {
-        let env: Envelope
-        do { env = try envelopeJSON.decoded(Envelope.self) }
-        catch { return .undecryptable(reason: "bad_envelope") }
-
-        // an envelope written in a format this build does not know: its fields
-        // may mean something else here, so it is not opened by guesswork. The
-        // envelope is kept as it stands and replayed like any other unreadable
-        // one — a build that knows the format opens it then.
-        guard env.v <= MsngrProtocol.envelopeVersion else {
-            return .undecryptable(reason: MessageRepair.envelopeAheadReason)
-        }
-
-        switch env.mode {
-        case "pw":
-            guard let box = env.msgs?[addr(ownUserId, ownDeviceId)] else {
-                return .undecryptable(reason: "not_addressed")
-            }
-            return try decryptPairwise(box: box, chatId: chatId,
-                                       fromUserId: fromUserId, fromDeviceId: fromDeviceId)
-        case "skm":
-            guard let cB64 = env.c, let c = Data(base64Encoded: cB64),
-                  let keyId = env.keyId, let iteration = env.iteration,
-                  let sigB64 = env.sig, let sig = Data(base64Encoded: sigB64) else {
-                return .undecryptable(reason: "bad_skm")
-            }
-            guard var receiver = try store.loadSenderKeyIn(chatId: chatId, senderUserId: fromUserId, keyId: keyId) else {
-                return .undecryptable(reason: "no_sender_key")
-            }
-            let msg = SenderKeyMessage(keyId: keyId, iteration: iteration, ciphertext: c, signature: sig)
-            let plaintext = try receiver.decrypt(msg)
-            try store.saveSenderKeyIn(chatId: chatId, senderUserId: fromUserId, keyId: keyId, state: receiver)
-            let content = try JSONDecoder().decode(ContentPayload.self, from: plaintext)
-            return .content(content)
-        default:
-            return .undecryptable(reason: "unknown_mode")
-        }
+        try incoming.decrypt(envelopeJSON: envelopeJSON, chatId: chatId,
+                             fromUserId: fromUserId, fromDeviceId: fromDeviceId)
     }
 
-    private func decryptPairwise(box: PairwiseBox, chatId: String,
-                                 fromUserId: String, fromDeviceId: String) throws -> DecryptedIncoming {
-        guard let msgData = Data(base64Encoded: box.c),
-              let ratchetMsg = try? JSONDecoder().decode(RatchetMessage.self, from: msgData) else {
-            return .undecryptable(reason: "bad_box")
-        }
-
-        var trustIssue: String?
-
-        // сначала всегда пробуем известные сессии: активную, затем архивные.
-        // Сообщение не должно теряться из-за рассинхрона состояний.
-        if var existing = try store.loadSession(peerUserId: fromUserId, peerDeviceId: fromDeviceId),
-           let plain = try? existing.decrypt(ratchetMsg) {
-            try store.saveSession(existing, peerUserId: fromUserId, peerDeviceId: fromDeviceId,
-                                  theirIdentityDH: box.ik ?? "")
-            return try handleInner(plain, fromUserId: fromUserId, trustIssue: nil)
-        }
-        var archive = try store.archivedSessions(peerUserId: fromUserId, peerDeviceId: fromDeviceId)
-        for i in archive.indices {
-            if let plain = try? archive[i].decrypt(ratchetMsg) {
-                try store.saveArchivedSessions(archive, peerUserId: fromUserId, peerDeviceId: fromDeviceId)
-                return try handleInner(plain, fromUserId: fromUserId, trustIssue: nil)
-            }
-        }
-
-        if box.type == "pk" {
-            // pk не подошёл ни к одной известной сессии → поднимаем новую responder-сессию,
-            // а текущую убираем в архив (её ещё могут использовать «догоняющие» сообщения).
-            // Так корректно разрешается и одновременная инициация (glare), и рассинхрон.
-            try store.archiveCurrentSession(peerUserId: fromUserId, peerDeviceId: fromDeviceId)
-            guard let ikB64 = box.ik, let ik = Data(base64urlEncoded: ikB64),
-                  let ekB64 = box.ek, let ek = Data(base64urlEncoded: ekB64),
-                  let spkId = box.spkId,
-                  let spkPriv = try store.signedPrekey(id: spkId) else {
-                return .undecryptable(reason: "bad_pk")
-            }
-            if let iskB64 = box.isk {
-                let trust = try store.checkTrust(userId: fromUserId, identitySigning: iskB64)
-                if case .changed = trust { trustIssue = iskB64 }
-            }
-            var otpPriv: Curve25519.KeyAgreement.PrivateKey?
-            if let otpId = box.otpId {
-                otpPriv = try store.oneTimePrekey(id: otpId)
-            }
-            // кандидаты: с one-time prekey и без него. Второй вариант спасает, если ключ
-            // уже был израсходован (повторная выдача бандла, дубль конверта).
-            var candidates: [DoubleRatchetSession] = []
-            let identity = try store.identity()
-            for otp in [otpPriv, nil] as [Curve25519.KeyAgreement.PrivateKey?] {
-                if otpPriv == nil && otp != nil { continue }
-                if let x3dh = try? X3DH.respond(our: identity, ourSignedPreKey: spkPriv,
-                                                ourOneTimePreKey: otp,
-                                                theirIdentityDH: ik, theirEphemeral: ek) {
-                    candidates.append(DoubleRatchetSession.initBob(
-                        sharedSecret: x3dh.sharedSecret, ourRatchetKey: spkPriv, ad: x3dh.associatedData))
-                }
-                if otpPriv == nil { break }
-            }
-            for var candidate in candidates {
-                if let plain = try? candidate.decrypt(ratchetMsg) {
-                    if let otpId = box.otpId { try store.consumeOneTimePrekey(id: otpId) }
-                    try store.saveSession(candidate, peerUserId: fromUserId, peerDeviceId: fromDeviceId,
-                                          theirIdentityDH: box.ik ?? "")
-                    return try handleInner(plain, fromUserId: fromUserId, trustIssue: trustIssue)
-                }
-            }
-            return .undecryptable(reason: "pk_decrypt_failed")
-        }
-
-        // dr-сообщение, к которому не подошла ни активная, ни архивные сессии:
-        // ключ может приехать позже (сообщение обогнало свой pk) — вернём retryable-причину
-        return .undecryptable(reason: "no_session")
-    }
-
-    private func handleInner(_ plaintext: Data, fromUserId: String, trustIssue: String?) throws -> DecryptedIncoming {
-        let inner = try JSONDecoder().decode(InnerMessage.self, from: plaintext)
-        if inner.type == "skd", let skd = inner.skd, let chatId = inner.chatId {
-            // повторная раздача той же цепочки не откатывает уже продвинутое
-            // состояние: сохранённый получатель мог уйти вперёд по итерациям
-            if try store.loadSenderKeyIn(chatId: chatId, senderUserId: fromUserId, keyId: skd.keyId) == nil {
-                let receiver = SenderKeyReceiver(distribution: skd)
-                try store.saveSenderKeyIn(chatId: chatId, senderUserId: fromUserId,
-                                          keyId: skd.keyId, state: receiver)
-            }
-            return .senderKeyDistribution(chatId: chatId, keyId: skd.keyId)
-        }
-        guard let content = inner.content else { return .undecryptable(reason: "empty_inner") }
-        if trustIssue != nil {
-            return .identityChanged(userId: fromUserId, content: content)
-        }
-        return .content(content)
-    }
 }
 
 // MARK: - base64url helpers

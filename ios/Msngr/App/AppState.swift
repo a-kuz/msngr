@@ -157,7 +157,10 @@ final class AppState: ObservableObject {
             try StorageOwnership.stamp(db, userId: s.userId)
             api = APIClient(baseURL: Self.httpBase, token: s.token)
             store = try IdentityStore(db: db, masterKeyProvider: SharedFileMasterKey(location: storage))
-            e2ee = E2EEManager(store: store, api: api, ownUserId: s.userId, ownDeviceId: s.deviceId)
+            // the extension steps the same ratchet from its own process; the
+            // gate is what keeps the two of them out of one step
+            e2ee = E2EEManager(store: store, api: api, ownUserId: s.userId, ownDeviceId: s.deviceId,
+                               gate: CryptoGate.shared(location: storage))
             // pendingDir — в постоянном контейнере: исходники офлайн-вложений
             // должны пережить чистку Caches до выгрузки
             media = MediaManager(api: api,

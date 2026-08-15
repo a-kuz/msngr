@@ -100,6 +100,49 @@ public final class IdentityStore: @unchecked Sendable {
         self.master = try masterKeyProvider.masterKey()
     }
 
+    // MARK: - Transaction the store is asked to join
+
+    /// Runs `body` with every store access made on `dbc` instead of on a
+    /// transaction of the store's own.
+    ///
+    /// The notification service extension decrypts a message and writes it in
+    /// one transaction: the ratchet step and the row it produced commit
+    /// together, so an extension the system kills mid-flight leaves neither a
+    /// stepped session without its message nor a message without its step.
+    /// Reading and writing through the queue from inside that transaction would
+    /// deadlock, so the store is handed the open connection instead.
+    ///
+    /// The binding is per thread: it belongs to the transaction's own thread and
+    /// leaves the store's other callers on their own connections.
+    public func joining<T>(_ dbc: GRDB.Database, _ body: () throws -> T) rethrows -> T {
+        let dictionary = Thread.current.threadDictionary
+        let previous = dictionary[Self.boundKey]
+        dictionary[Self.boundKey] = Box(dbc)
+        defer { dictionary[Self.boundKey] = previous }
+        return try body()
+    }
+
+    private static let boundKey = "MsngrCore.IdentityStore.boundDatabase"
+
+    private final class Box {
+        let dbc: GRDB.Database
+        init(_ dbc: GRDB.Database) { self.dbc = dbc }
+    }
+
+    private var bound: GRDB.Database? {
+        (Thread.current.threadDictionary[Self.boundKey] as? Box)?.dbc
+    }
+
+    private func read<T>(_ body: (GRDB.Database) throws -> T) throws -> T {
+        if let bound { return try body(bound) }
+        return try db.read(body)
+    }
+
+    private func write<T>(_ body: (GRDB.Database) throws -> T) throws -> T {
+        if let bound { return try body(bound) }
+        return try db.write(body)
+    }
+
     private struct StoredIdentity: Codable {
         var dhRaw: Data
         var signingRaw: Data
@@ -112,7 +155,7 @@ public final class IdentityStore: @unchecked Sendable {
     }
 
     private func loadBlob<T: Codable>(_ key: String, as type: T.Type) throws -> T? {
-        try db.read { dbc in
+        try read { dbc in
             guard let row = try KVRow.fetchOne(dbc, key: key),
                   let sealed = Data(base64Encoded: row.value) else { return nil }
             let plain = try StateCrypto.open(sealed, with: master)
@@ -123,7 +166,7 @@ public final class IdentityStore: @unchecked Sendable {
     private func saveBlob<T: Codable>(_ key: String, _ value: T) throws {
         let plain = try JSONEncoder().encode(value)
         let sealed = try StateCrypto.seal(plain, with: master)
-        try db.write { dbc in
+        try write { dbc in
             try KVRow(key: key, value: sealed.base64EncodedString()).save(dbc)
         }
     }
@@ -198,7 +241,7 @@ public final class IdentityStore: @unchecked Sendable {
     // MARK: - Ratchet-сессии
 
     public func loadSession(peerUserId: String, peerDeviceId: String) throws -> DoubleRatchetSession? {
-        try db.read { dbc in
+        try read { dbc in
             guard let row = try Row.fetchOne(
                 dbc,
                 sql: "SELECT state FROM ratchetSession WHERE peerUserId = ? AND peerDeviceId = ?",
@@ -214,7 +257,7 @@ public final class IdentityStore: @unchecked Sendable {
                             peerDeviceId: String, theirIdentityDH: String) throws {
         let plain = try JSONEncoder().encode(session)
         let sealed = try StateCrypto.seal(plain, with: master)
-        try db.write { dbc in
+        try write { dbc in
             try dbc.execute(
                 sql: """
                 INSERT INTO ratchetSession (peerUserId, peerDeviceId, state, theirIdentityDH)
@@ -231,7 +274,7 @@ public final class IdentityStore: @unchecked Sendable {
     private static let maxArchived = 5
 
     public func archivedSessions(peerUserId: String, peerDeviceId: String) throws -> [DoubleRatchetSession] {
-        try db.read { dbc in
+        try read { dbc in
             guard let row = try Row.fetchOne(
                 dbc, sql: "SELECT archived FROM ratchetSession WHERE peerUserId = ? AND peerDeviceId = ?",
                 arguments: [peerUserId, peerDeviceId]),
@@ -245,7 +288,7 @@ public final class IdentityStore: @unchecked Sendable {
                                      peerUserId: String, peerDeviceId: String) throws {
         let trimmed = Array(sessions.suffix(Self.maxArchived))
         let sealed = try StateCrypto.seal(try JSONEncoder().encode(trimmed), with: master)
-        try db.write { dbc in
+        try write { dbc in
             try dbc.execute(
                 sql: "UPDATE ratchetSession SET archived = ? WHERE peerUserId = ? AND peerDeviceId = ?",
                 arguments: [sealed, peerUserId, peerDeviceId])
@@ -256,14 +299,14 @@ public final class IdentityStore: @unchecked Sendable {
     /// Ставится, когда его сообщения не открываются ни активной сессией, ни
     /// архивными: X3DH из свежего бандла — единственный способ сойтись.
     public func requestSessionReset(peerUserId: String) throws {
-        try db.write { dbc in
+        try write { dbc in
             try KVRow(key: "sessionReset:" + peerUserId, value: "1").save(dbc)
         }
     }
 
     /// Снимает пометку и сообщает, была ли она.
     public func consumeSessionReset(peerUserId: String) throws -> Bool {
-        try db.write { dbc in
+        try write { dbc in
             try dbc.execute(sql: "DELETE FROM kv WHERE key = ?", arguments: ["sessionReset:" + peerUserId])
             return dbc.changesCount > 0
         }
@@ -282,7 +325,7 @@ public final class IdentityStore: @unchecked Sendable {
     /// Своя цепочка на чат: состояние, адреса с подтверждённой раздачей и
     /// адреса, которым раздача ушла и подтверждения ещё нет (адрес → момент).
     public func loadSenderKeyOut(chatId: String) throws -> (SenderKeyState, Set<String>, [String: Double])? {
-        try db.read { dbc in
+        try read { dbc in
             guard let row = try Row.fetchOne(
                 dbc, sql: "SELECT state, distributedTo, attemptedAt FROM senderKeyOut WHERE chatId = ?",
                 arguments: [chatId]
@@ -303,7 +346,7 @@ public final class IdentityStore: @unchecked Sendable {
         let sealed = try StateCrypto.seal(plain, with: master)
         let dist = String(data: try JSONEncoder().encode(distributedTo), encoding: .utf8)!
         let attempted = String(data: try JSONEncoder().encode(attemptedAt), encoding: .utf8)!
-        try db.write { dbc in
+        try write { dbc in
             try dbc.execute(
                 sql: """
                 INSERT INTO senderKeyOut (chatId, state, distributedTo, attemptedAt) VALUES (?,?,?,?)
@@ -316,13 +359,13 @@ public final class IdentityStore: @unchecked Sendable {
     }
 
     public func deleteSenderKeyOut(chatId: String) throws {
-        _ = try db.write { dbc in
+        _ = try write { dbc in
             try dbc.execute(sql: "DELETE FROM senderKeyOut WHERE chatId = ?", arguments: [chatId])
         }
     }
 
     public func loadSenderKeyIn(chatId: String, senderUserId: String, keyId: String) throws -> SenderKeyReceiver? {
-        try db.read { dbc in
+        try read { dbc in
             guard let row = try Row.fetchOne(
                 dbc,
                 sql: "SELECT state FROM senderKeyIn WHERE chatId = ? AND senderUserId = ? AND keyId = ?",
@@ -336,7 +379,7 @@ public final class IdentityStore: @unchecked Sendable {
     public func saveSenderKeyIn(chatId: String, senderUserId: String, keyId: String, state: SenderKeyReceiver) throws {
         let plain = try JSONEncoder().encode(state)
         let sealed = try StateCrypto.seal(plain, with: master)
-        try db.write { dbc in
+        try write { dbc in
             try dbc.execute(
                 sql: """
                 INSERT INTO senderKeyIn (chatId, senderUserId, keyId, state) VALUES (?,?,?,?)
@@ -353,7 +396,7 @@ public final class IdentityStore: @unchecked Sendable {
 
     /// Проверка identity-ключа собеседника (TOFU).
     public func checkTrust(userId: String, identitySigning: String) throws -> TrustResult {
-        try db.write { dbc in
+        try write { dbc in
             if let row = try Row.fetchOne(
                 dbc, sql: "SELECT identitySigning FROM trustedIdentity WHERE userId = ?",
                 arguments: [userId]
@@ -376,7 +419,7 @@ public final class IdentityStore: @unchecked Sendable {
 
     /// Пользователь явно принял новый ключ после предупреждения.
     public func acceptChangedKey(userId: String) throws {
-        try db.write { dbc in
+        try write { dbc in
             try dbc.execute(
                 sql: """
                 UPDATE trustedIdentity SET identitySigning = COALESCE(changedPending, identitySigning),
@@ -388,7 +431,7 @@ public final class IdentityStore: @unchecked Sendable {
     }
 
     public func markVerified(userId: String, verified: Bool) throws {
-        try db.write { dbc in
+        try write { dbc in
             try dbc.execute(sql: "UPDATE trustedIdentity SET verified = ? WHERE userId = ?",
                             arguments: [verified, userId])
         }

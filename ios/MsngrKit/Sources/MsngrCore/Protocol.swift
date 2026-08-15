@@ -158,7 +158,7 @@ public struct ChatStateDTO: Decodable {
 }
 
 /// Минимальный произвольный JSON (для body до расшифровки).
-public enum JSONValue: Codable {
+public enum JSONValue: Codable, Sendable {
     case string(String), number(Double), bool(Bool), null
     case array([JSONValue]), object([String: JSONValue])
 

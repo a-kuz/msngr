@@ -22,6 +22,9 @@ public struct StorageLocation: Sendable, Equatable {
     /// Трасса расширения уведомлений: его процесс не виден ни отладчику, ни
     /// консоли приложения.
     public var nseJournalURL: URL { root.appendingPathComponent(NotificationJournal.fileName) }
+    /// The file the crypto gate is locked on: the app and the extension step
+    /// one ratchet, and the lock is what keeps them from stepping it at once.
+    public var cryptoGateURL: URL { root.appendingPathComponent(CryptoGate.fileName) }
 
     /// Содержимое размещения, которое переносится при смене корня. Файл БД —
     /// последний: его наличие в новом размещении означает, что перенос завершён.
