@@ -169,13 +169,22 @@ export class ConversationDO implements DurableObject {
     await this.state.storage.setAlarm(at);
   }
 
+  /// The deadline is dropped as soon as the delivery answers: a timer per
+  /// delivery that outlives it piles up at burst rate, and once the runtime's
+  /// timer budget is gone every delivery in the chat fails at once.
   private async deliver(userId: string, body: string) {
-    const res = await this.userStub(userId).fetch("https://do/event", {
-      method: "POST",
-      body,
-      signal: AbortSignal.timeout(FANOUT_DELIVERY_TIMEOUT_MS),
-    });
-    if (!res.ok) throw new Error(`status ${res.status}`);
+    const abort = new AbortController();
+    const deadline = setTimeout(() => abort.abort(), FANOUT_DELIVERY_TIMEOUT_MS);
+    try {
+      const res = await this.userStub(userId).fetch("https://do/event", {
+        method: "POST",
+        body,
+        signal: abort.signal,
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+    } finally {
+      clearTimeout(deadline);
+    }
   }
 
   /// Walks the job's targets from its cursor. Returns how many deliveries were
