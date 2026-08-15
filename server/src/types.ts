@@ -3,6 +3,7 @@ export interface Env {
   MEDIA: R2Bucket;
   USER_DO: DurableObjectNamespace;
   CONV_DO: DurableObjectNamespace;
+  APNS_DO: DurableObjectNamespace;
   APNS_ENV: string;
   /// Переопределение APNs-эндпоинта (dev-мок, например http://localhost:9871);
   /// не задан — прод/sandbox Apple по apns-env устройства.
@@ -38,6 +39,8 @@ export type ServerFrame =
   | { t: "presence"; userId: string; online: boolean; lastSeen: number }
   | { t: "chat"; chatId: string; event: string; state: ChatState }
   | { t: "deleted"; chatId: string; msgIds: string[]; forAll: boolean; by: string }
+  /// отказ по клиентскому фрейму: error — машиночитаемый код
+  | { t: "error"; error: string; chatId?: string; clientMsgId?: string }
   | { t: "pong" };
 
 export interface ChatMember {
@@ -75,6 +78,9 @@ export interface StoredMsg {
   service?: boolean;
   deleted?: boolean;
   deletedBy?: string;
+  /// userId получателя, который заблокировал автора: этому участнику сообщение
+  /// не рассылается и не отдаётся в истории
+  blockedFor?: string;
 }
 
 export interface AuthCtx {

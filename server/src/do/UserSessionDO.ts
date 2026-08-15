@@ -214,6 +214,24 @@ export class UserSessionDO implements DurableObject {
         return json({ ok: true });
       }
 
+      // токен устройства отозван: рвём его сокеты и убираем его APNs-токен
+      case "/revoke-device": {
+        const b = (await req.json()) as { deviceId: string };
+        for (const ws of this.sockets()) {
+          const att = ws.deserializeAttachment() as SocketAttachment | null;
+          if (att?.deviceId !== b.deviceId) continue;
+          try { ws.close(4401, "revoked"); } catch { /* уже закрыт */ }
+        }
+        const tokens =
+          (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
+        if (b.deviceId in tokens) {
+          delete tokens[b.deviceId];
+          await this.state.storage.put("apns", tokens);
+        }
+        if (this.sockets().length === 0) await this.broadcastPresence(false);
+        return json({ ok: true });
+      }
+
       case "/presence-info": {
         const lastSeen = (await this.state.storage.get<number>("lastSeen")) ?? 0;
         const online = this.presenceFresh();
@@ -269,12 +287,41 @@ export class UserSessionDO implements DurableObject {
   private async pushToDevices(chatId: string, msgId?: string) {
     const tokens =
       (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
-    const devices = Object.values(tokens);
+    const devices = Object.entries(tokens);
     if (!devices.length) return;
     const badge = await this.totalUnread();
+    // каждое устройство обрабатывается независимо: падение одного не отменяет остальные
+    const results = await Promise.all(
+      devices.map(async ([deviceId, t]) => {
+        try {
+          return { deviceId, res: await sendPush(this.env, t.token, t.env, { chatId, msgId, badge }) };
+        } catch (e) {
+          console.log(`apns: отправка на устройство ${deviceId} упала: ${String(e)}`);
+          return { deviceId, res: null };
+        }
+      })
+    );
+    const dead = results.filter((r) => r.res?.dead).map((r) => r.deviceId);
+    if (dead.length) await this.dropPushTokens(dead);
+  }
+
+  /// Токен, на который APNs ответил 410, удаляется и из DO, и из D1.
+  private async dropPushTokens(deviceIds: string[]) {
+    const tokens =
+      (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
+    let changed = false;
+    for (const id of deviceIds) {
+      if (id in tokens) {
+        delete tokens[id];
+        changed = true;
+      }
+    }
+    if (changed) await this.state.storage.put("apns", tokens);
     await Promise.all(
-      devices.map((t) =>
-        sendPush(this.env, t.token, t.env, { chatId, msgId, badge }).catch(() => {})
+      deviceIds.map((id) =>
+        this.env.DB.prepare(
+          "UPDATE devices SET apns_token = NULL, apns_env = NULL WHERE id = ?"
+        ).bind(id).run().catch(() => {})
       )
     );
   }
@@ -332,6 +379,11 @@ export class UserSessionDO implements DurableObject {
             t: "sent", chatId: frame.chatId, clientMsgId: frame.clientMsgId,
             msgId: r.msgId, seq: r.seq!, ts: r.ts!,
           });
+        } else {
+          this.send(ws, {
+            t: "error", error: r.error ?? "send_failed",
+            chatId: frame.chatId, clientMsgId: frame.clientMsgId,
+          });
         }
         return;
       }
@@ -387,12 +439,14 @@ export class UserSessionDO implements DurableObject {
           let cursor = lastSeq;
           for (;;) {
             const res = await this.convStub(chatId).fetch(
-              `https://do/history?fromSeq=${cursor}&limit=${BATCH}`
+              `https://do/history?fromSeq=${cursor}&limit=${BATCH}&userId=${userId}`
             );
-            const r = (await res.json()) as { ok: boolean; msgs?: Array<Record<string, unknown>> };
-            if (!r.ok || !r.msgs?.length) break;
-            for (const m of r.msgs) {
-              cursor = m.seq as number;
+            const r = (await res.json()) as {
+              ok: boolean; msgs?: Array<Record<string, unknown>>;
+              scanned?: number; lastScannedSeq?: number | null;
+            };
+            if (!r.ok || !r.scanned) break;
+            for (const m of r.msgs ?? []) {
               // тумбстоуны уходят deleted-фреймами ниже
               if (m.deleted) continue;
               this.send(ws, {
@@ -403,10 +457,14 @@ export class UserSessionDO implements DurableObject {
                 ...(m.service ? { service: true } : {}),
               });
             }
-            if (r.msgs.length < BATCH) break;
+            // курсор двигается по просмотренным записям, а не по отданным:
+            // страница, целиком отфильтрованная блокировкой, не должна
+            // останавливать доигрывание
+            cursor = r.lastScannedSeq ?? cursor;
+            if (r.scanned < BATCH) break;
           }
           // тумбстоуны и read/delivered-марки, которые случились пока клиент был офлайн
-          const er = await this.convStub(chatId).fetch("https://do/events");
+          const er = await this.convStub(chatId).fetch(`https://do/events?userId=${userId}`);
           const e = (await er.json()) as {
             ok: boolean;
             deleted?: Array<{ msgId: string; by: string }>;

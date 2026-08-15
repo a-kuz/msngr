@@ -28,7 +28,10 @@
   - ✅ хранилище привязано к аккаунту: новая регистрация стирает контейнер до открытия БД, чужая база не наследуется (qa/runs/2026-08-15-user-switch, юниты StorageOwnershipTests)
   - ⬜ логин на новом устройстве (сейчас восстановление = новая регистрация)
   - 🟡 мультидевайс: шифрование на все устройства пользователя есть в коде, входа вторым устройством нет
-  - ⬜ список своих устройств и отзыв доступа
+  - ✅ сервер: список активных устройств, логаут и отзыв конкретного устройства
+    (смоук `sessions lists current device`, `logout ok`, `revoked token rejected on api`,
+    `revoked token rejected on ws upgrade`, `revoke device by id`)
+  - ⬜ клиент: экран своих устройств и кнопка выхода
 - Телефон и контакты
   - 🟡 хэш номера на сервер, discovery по адресной книге (не проверено вживую)
   - 🟡 доступ к контактам по явному тапу, имя из книги приоритетнее (не проверено вживую)
@@ -235,7 +238,15 @@
     созданный чат: проверка блокировок есть только в `POST /api/chats`,
     в `ConversationDO /send` её нет — request-privacy-run)
   - ✅ создание чата с заблокировавшим отклоняется (смоук `blocked direct rejected`)
+  - ✅ блокировка действует и в уже открытом чате: сообщение заблокированного не
+    доставляется и не видно в истории блокирующего (смоук `block: msg not delivered`,
+    `block: hidden from blocker history`, `block: sync skips blocked msg`)
+  - ✅ квитанции и typing в сторону блокирующего не рассылаются (смоук
+    `block: no receipt to blocker`, `block: no typing to blocker`)
+  - ✅ блокирующему на отправку возвращается код `blocked` (смоук `block: blocker gets error code`)
   - 🟡 разблокировка из списка заблокированных (не проверено вживую)
+  - ✅ после разблокировки доставка возобновляется, скрытое остаётся скрытым
+    (смоук `block: delivery resumes after unblock`)
   - ⬜ настройки видимости last seen и «прочитано»
   - ✅ содержимое заявки скрыто до принятия: лента, чат-лист, in-app баннер,
     бейдж (юниты ChatPrivacyTests, ChatFeedTests, request-privacy-run)
@@ -269,6 +280,11 @@
   - ✅ бейдж из серверного кэша unread, пересчёт после прочтения (смоук `push badge=1/2/after read`)
   - ✅ collapse-id = msgId, thread-id = chatId, alert без plaintext (смоук)
   - ✅ dev-путь через мок и `simctl push` без Apple-аккаунта (apns-mock, смоук `dev push unsigned`)
+  - ✅ 410 от APNs удаляет токен устройства из DO и D1 (смоук `dead token: dropped from d1`,
+    `dead token: no push after drop`)
+  - ✅ 429/5xx повторяются с бэкоффом, отказ по одному токену не отменяет остальные
+    (смоук `429 retried once and succeeded`)
+  - ✅ APNs JWT живёт в storage синглтона `ApnsTokenDO`, а не в переменной модуля
 - Клиентская часть
   - ✅ in-app баннер при активном приложении (push-client/inapp-banner)
   - ✅ тап по баннеру открывает чат (push-client/inapp-banner-tap-open-chat)
@@ -362,6 +378,8 @@
 ## Версионирование и совместимость
 
 - ✅ версия схемы БД: мигратор GRDB (appgroup-run, юниты)
+- ✅ миграции D1: `server/migrations/` и штатный раннер wrangler, схема перенесена
+  в `0001_init.sql` (прогон `wrangler d1 migrations apply msngr --local`)
 - 🟡 поле `v` в E2E-конверте (передаётся, но никем не проверяется)
 - ⬜ версия протокола в `hello` и понятная ошибка «обновите приложение»
 - ⬜ версия формата конверта с явной проверкой на клиенте

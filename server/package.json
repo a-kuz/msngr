@@ -4,7 +4,9 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev --port 8787",
-    "deploy": "wrangler deploy",
+    "migrate:local": "wrangler d1 migrations apply msngr --local",
+    "migrate": "wrangler d1 migrations apply msngr --remote",
+    "deploy": "wrangler d1 migrations apply msngr --remote && wrangler deploy",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

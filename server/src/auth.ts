@@ -8,8 +8,9 @@ export async function authenticate(env: Env, req: Request): Promise<AuthCtx | nu
   if (!token) token = new URL(req.url).searchParams.get("token");
   if (!token) return null;
   const hash = await sha256hex(token);
+  // отозванное устройство (logout или отзыв с другого устройства) авторизацию не проходит
   const row = await env.DB.prepare(
-    "SELECT id, user_id FROM devices WHERE token_hash = ?"
+    "SELECT id, user_id FROM devices WHERE token_hash = ? AND revoked_at IS NULL"
   ).bind(hash).first<{ id: string; user_id: string }>();
   if (!row) return null;
   return { userId: row.user_id, deviceId: row.id };
