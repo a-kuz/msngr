@@ -17,11 +17,32 @@ struct ChatListItem: Identifiable, Equatable {
     }
 }
 
+/// Одна выдача наблюдения: весь список чатов и всё, из чего собираются вкладки.
+/// Папки читаются тем же наблюдением, что и чаты, поэтому список и его вкладки
+/// всегда описывают одно и то же состояние БД.
+private struct ChatListSnapshot {
+    var chats: [Chat]
+    var peers: [String: User]
+    var lasts: [String: Message]
+    var folders: [ChatFolder]
+    var pins: [String: [String: ChatFolderPin]]
+}
+
 @MainActor
 final class ChatListModel: ObservableObject {
     @Published var items: [ChatListItem] = []
     @Published var requests: [ChatListItem] = []
     @Published var archived: [ChatListItem] = []
+    /// Вкладки над списком, в порядке пользователя. «Все» вкладкой не является:
+    /// это весь список без папок.
+    @Published var folders: [ChatFolder] = []
+    /// Выбранная вкладка; nil — «Все».
+    @Published var selectedFolderId: String?
+    /// Сколько чатов с непрочитанным в каждой папке; ключ nil-вкладки — "".
+    @Published private(set) var folderUnread: [String: Int] = [:]
+    /// Состав папок: id папки → id чатов. Пересчитывается один раз на выдачу
+    /// наблюдения, а не на каждое переключение вкладки.
+    private var membership: [String: Set<String>] = [:]
     @Published var searchText = ""
     @Published var searchResults: [ChatListItem] = []
     /// true после первой выдачи наблюдения БД — до этого список не «пустой», а грузится
@@ -44,7 +65,7 @@ final class ChatListModel: ObservableObject {
         started = true
         let ownId = app.session?.userId ?? ""
         cancellable = ValueObservation
-            .tracking { dbc -> ([Chat], [String: User], [String: Message]) in
+            .tracking { dbc -> ChatListSnapshot in
                 let chats = try Chat.fetchAll(dbc, sql: "SELECT * FROM chat ORDER BY pinned DESC, lastActivityAt DESC")
                 var peers: [String: User] = [:]
                 var lasts: [String: Message] = [:]
@@ -65,18 +86,22 @@ final class ChatListModel: ObservableObject {
                         lasts[chat.id] = m
                     }
                 }
-                return (chats, peers, lasts)
+                return ChatListSnapshot(chats: chats, peers: peers, lasts: lasts,
+                                        folders: try ChatFolderStore.all(dbc),
+                                        pins: try ChatFolderStore.pins(dbc))
             }
             .publisher(in: db, scheduling: .async(onQueue: .main))
-            .sink(receiveCompletion: { _ in }, receiveValue: { [weak self] chats, peers, lasts in
+            .sink(receiveCompletion: { _ in }, receiveValue: { [weak self] snapshot in
                 guard let self else { return }
-                let all = chats.map { chat in
-                    ChatListItem(chat: chat, peer: peers[chat.id], lastMessage: lasts[chat.id],
-                                 typingText: self.typingLabel(chat.id, peers[chat.id]))
+                let all = snapshot.chats.map { chat in
+                    ChatListItem(chat: chat, peer: snapshot.peers[chat.id], lastMessage: snapshot.lasts[chat.id],
+                                 typingText: self.typingLabel(chat.id, snapshot.peers[chat.id]))
                 }
                 self.requests = all.filter { $0.chat.isRequest }
                 self.archived = all.filter { $0.chat.archived && !$0.chat.isRequest }
                 self.items = all.filter { !$0.chat.archived && !$0.chat.isRequest }
+                self.folders = snapshot.folders
+                self.rebuildMembership(pins: snapshot.pins)
                 self.loaded = true
                 self.updateSearch()
             })
@@ -117,6 +142,124 @@ final class ChatListModel: ObservableObject {
             var it = item
             it.typingText = typingLabel(it.chat.id, it.peer)
             return it
+        }
+    }
+
+    // MARK: - Папки
+
+    /// Раскладывает список по папкам: один проход по чатам на папку за выдачу
+    /// наблюдения. Дальше вкладка переключается по готовому составу.
+    ///
+    /// Папки собираются из `items` — то есть из чатов без архива и без заявок.
+    /// Архив и заявки живут наверху «Всех» и во вкладки не попадают: это
+    /// состояния входящего потока, а не тема переписки, и повтор их в папках
+    /// удваивал бы одно и то же непрочитанное в двух местах.
+    private func rebuildMembership(pins: [String: [String: ChatFolderPin]]) {
+        let candidates = items.map { item in
+            (candidate: ChatFolderCandidate(chatId: item.chat.id,
+                                            isGroup: item.chat.kind == .group,
+                                            hasUnread: item.chat.unreadCount > 0,
+                                            peerId: item.peer?.id),
+             countsUnread: item.chat.unreadCount > 0
+                && !MuteState.isMuted(muted: item.chat.muted, mutedUntil: item.chat.mutedUntil))
+        }
+        var membership: [String: Set<String>] = [:]
+        var unread: [String: Int] = ["": candidates.filter(\.countsUnread).count]
+        for folder in folders {
+            var ids: Set<String> = []
+            var unreadChats = 0
+            for row in candidates
+            where ChatFolderMembership.matches(row.candidate, rules: folder.rules,
+                                               pin: pins[folder.id]?[row.candidate.chatId]) {
+                ids.insert(row.candidate.chatId)
+                if row.countsUnread { unreadChats += 1 }
+            }
+            membership[folder.id] = ids
+            unread[folder.id] = unreadChats
+        }
+        self.membership = membership
+        self.folderUnread = unread
+        if let selected = selectedFolderId, !folders.contains(where: { $0.id == selected }) {
+            selectedFolderId = nil    // папку удалили, пока она была открыта
+        }
+    }
+
+    /// Строки вкладки. Состав папки уже посчитан наблюдением, поэтому
+    /// переключение вкладки — проход по готовому списку, а не запрос в БД.
+    func items(in folderId: String?) -> [ChatListItem] {
+        guard let folderId, let ids = membership[folderId] else { return items }
+        return items.filter { ids.contains($0.id) }
+    }
+
+    /// В какие папки чат положен вручную или попал по правилу.
+    func folders(containing chatId: String) -> Set<String> {
+        Set(membership.filter { $0.value.contains(chatId) }.keys)
+    }
+
+    /// Что сейчас лежит в папке — и по правилу, и вручную.
+    func chatIds(in folder: ChatFolder) -> Set<String> { membership[folder.id] ?? [] }
+
+    /// Сохраняет папку целиком: имя, правила и её состав. Одна транзакция —
+    /// список ни на миг не видит новые правила со старым составом.
+    ///
+    /// Состав задаётся набором чатов, которые должны оказаться в папке. Что
+    /// приносит правило, там не хранится; вручную записываются только
+    /// расхождения: чат, которого правило не даёт, и чат, который правило даёт,
+    /// а пользователь его убрал.
+    func saveFolder(_ folder: ChatFolder?, title: String, rules: ChatFolderRules,
+                    chatIds: Set<String>) {
+        let candidates = items.map { item in
+            ChatFolderCandidate(chatId: item.chat.id,
+                                isGroup: item.chat.kind == .group,
+                                hasUnread: item.chat.unreadCount > 0,
+                                peerId: item.peer?.id)
+        }
+        Task {
+            try? await app.db.write { dbc in
+                let folderId: String
+                if let folder {
+                    try ChatFolderStore.rename(dbc, folderId: folder.id, title: title)
+                    try ChatFolderStore.setRules(dbc, folderId: folder.id, rules: rules)
+                    folderId = folder.id
+                } else {
+                    folderId = try ChatFolderStore.create(dbc, title: title, rules: rules).id
+                }
+                for candidate in candidates {
+                    let byRule = ChatFolderMembership.matches(candidate, rules: rules, pin: nil)
+                    let wanted = chatIds.contains(candidate.chatId)
+                    let pin: ChatFolderPin? = wanted == byRule ? nil
+                        : (wanted ? .included : .excluded)
+                    try ChatFolderStore.setPin(dbc, folderId: folderId,
+                                               chatId: candidate.chatId, pin: pin)
+                }
+            }
+        }
+    }
+
+    func deleteFolder(_ folder: ChatFolder) {
+        Task { try? await app.db.write { dbc in try ChatFolderStore.delete(dbc, folderId: folder.id) } }
+    }
+
+    func reorderFolders(_ ordered: [ChatFolder]) {
+        let ids = ordered.map(\.id)
+        Task { try? await app.db.write { dbc in try ChatFolderStore.reorder(dbc, orderedIds: ids) } }
+    }
+
+    /// Кладёт чат в папку или убирает его оттуда. Убранный из папки по правилу
+    /// чат запоминается исключением, иначе правило вернуло бы его сразу.
+    func setChat(_ chatId: String, inFolder folder: ChatFolder, included: Bool) {
+        guard let item = items.first(where: { $0.id == chatId }) else { return }
+        let candidate = ChatFolderCandidate(chatId: chatId,
+                                            isGroup: item.chat.kind == .group,
+                                            hasUnread: item.chat.unreadCount > 0,
+                                            peerId: item.peer?.id)
+        let matchesRule = ChatFolderMembership.matches(candidate, rules: folder.rules, pin: nil)
+        let pin: ChatFolderPin? = included ? (matchesRule ? nil : .included)
+                                           : (matchesRule ? .excluded : nil)
+        Task {
+            try? await app.db.write { dbc in
+                try ChatFolderStore.setPin(dbc, folderId: folder.id, chatId: chatId, pin: pin)
+            }
         }
     }
 
