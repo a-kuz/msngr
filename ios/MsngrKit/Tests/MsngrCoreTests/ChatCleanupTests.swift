@@ -211,6 +211,59 @@ final class ChatCleanupTests: XCTestCase {
         XCTAssertEqual(gaps, [121...121])
     }
 
+    /// A deleted direct chat keeps its membership on the server, so events
+    /// about it still arrive. A pin or a title does not put it back on the
+    /// list; a message does, and that path goes through the snapshot.
+    func testChatEventDoesNotBringADeletedChatBack() async throws {
+        let db = try AppDatabase.openInMemory()
+        try seedChat(db, lastSeq: 4, syncedSeq: 4)
+        try await db.write { dbc in try ChatCleanup.deleteChat(dbc, chatId: "c1") }
+
+        let engine = try makeEngine(db: db)
+        let json = """
+        {"t":"chat","chatId":"c1","event":"pinned","state":{"chatId":"c1","kind":"direct",
+        "title":null,"avatarId":null,"description":null,"createdBy":"peer","createdAt":1,
+        "members":[{"userId":"me","role":"member","joinedAt":1,"accepted":true},
+        {"userId":"peer","role":"member","joinedAt":1,"accepted":true}],
+        "pinnedMsgId":"m2","lastSeq":4,"readMarks":{},"deliveredMarks":{}}}
+        """
+        await engine.apply(try JSONDecoder().decode(WSIncoming.self, from: Data(json.utf8)))
+
+        let chat = try await db.read { dbc in try Chat.fetchOne(dbc, key: "c1") }
+        XCTAssertNil(chat, "an event about a deleted chat must not recreate it")
+    }
+
+    /// A group this device left and was taken back into is a membership
+    /// change, and that one does bring the chat back.
+    func testMembershipChangeTakesAGroupBackIn() async throws {
+        let db = try AppDatabase.openInMemory()
+        try seedChat(db, lastSeq: 9, syncedSeq: 9)
+        try await db.write { dbc in try ChatCleanup.deleteChat(dbc, chatId: "c1") }
+
+        let engine = try makeEngine(db: db)
+        let json = """
+        {"t":"chat","chatId":"c1","event":"members","state":{"chatId":"c1","kind":"group",
+        "title":"Team","avatarId":null,"description":null,"createdBy":"peer","createdAt":1,
+        "members":[{"userId":"me","role":"member","joinedAt":50,"accepted":true},
+        {"userId":"peer","role":"admin","joinedAt":1,"accepted":true}],
+        "pinnedMsgId":null,"lastSeq":30,"readMarks":{},"deliveredMarks":{}}}
+        """
+        await engine.apply(try JSONDecoder().decode(WSIncoming.self, from: Data(json.utf8)))
+
+        let chat = try await db.read { dbc in try Chat.fetchOne(dbc, key: "c1") }
+        XCTAssertNotNil(chat)
+        XCTAssertEqual(chat?.syncedSeq, 9, "history from before the group was left stays closed")
+    }
+
+    private func makeEngine(db: DatabaseQueue) throws -> SyncEngine {
+        let api = APIClient(baseURL: URL(string: "http://localhost:1")!)
+        let store = try IdentityStore(db: db, masterKeyProvider: StaticMasterKey())
+        let e2ee = E2EEManager(store: store, api: api, ownUserId: "me", ownDeviceId: "dev")
+        return SyncEngine(db: db, api: api, e2ee: e2ee,
+                          wsURL: URL(string: "ws://localhost:1/ws")!,
+                          ownUserId: "me", ownDeviceId: "dev")
+    }
+
     /// A chat this device never deleted starts where it always did.
     func testChatWithoutATombstoneStartsAtZero() throws {
         let db = try AppDatabase.openInMemory()

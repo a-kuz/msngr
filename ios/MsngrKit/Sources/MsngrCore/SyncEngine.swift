@@ -344,6 +344,20 @@ public actor SyncEngine {
             }
         case "chat":
             if let state = f.state {
+                // a direct chat deleted here keeps its membership on the
+                // server, so events about it still reach this device: a title
+                // or a pin must not put the chat back, only a message does.
+                // A membership change is the exception — that is how a group
+                // this device left takes it back in.
+                if f.event != "members" {
+                    let deleted = (try? await db.read { dbc in
+                        try Bool.fetchOne(dbc, sql: """
+                            SELECT NOT EXISTS(SELECT 1 FROM chat WHERE id = ?)
+                              AND EXISTS(SELECT 1 FROM chatTombstone WHERE chatId = ?)
+                            """, arguments: [state.chatId, state.chatId]) ?? false
+                    }) ?? false
+                    if deleted { return }
+                }
                 // старый состав фиксируем ДО перезаписи member-таблицы
                 let previousMembers: [String] = (try? await db.read { dbc in
                     try String.fetchAll(dbc, sql: "SELECT userId FROM member WHERE chatId = ?", arguments: [state.chatId])
