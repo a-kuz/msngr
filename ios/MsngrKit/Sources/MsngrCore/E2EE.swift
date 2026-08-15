@@ -269,6 +269,14 @@ public final class E2EEManager: @unchecked Sendable {
         do { env = try envelopeJSON.decoded(Envelope.self) }
         catch { return .undecryptable(reason: "bad_envelope") }
 
+        // an envelope written in a format this build does not know: its fields
+        // may mean something else here, so it is not opened by guesswork. The
+        // envelope is kept as it stands and replayed like any other unreadable
+        // one — a build that knows the format opens it then.
+        guard env.v <= MsngrProtocol.envelopeVersion else {
+            return .undecryptable(reason: MessageRepair.envelopeAheadReason)
+        }
+
         switch env.mode {
         case "pw":
             guard let box = env.msgs?[addr(ownUserId, ownDeviceId)] else {
