@@ -9,6 +9,11 @@ final class SmokeTests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
+        // forwards a custom stand to the app under test; the test runner process
+        // itself doesn't share its environment with the launched app by default
+        if let server = ProcessInfo.processInfo.environment["MSNGR_SERVER"] {
+            app.launchEnvironment["MSNGR_SERVER"] = server
+        }
         app.launch()
         ensureRegistered()
     }
@@ -19,6 +24,10 @@ final class SmokeTests: XCTestCase {
         if username.waitForExistence(timeout: 3) {
             username.tap()
             username.typeText("ui\(Int(Date().timeIntervalSince1970) % 100_000_000)")
+            // submit stays disabled until a display name (>= 3 chars) is filled too
+            let displayName = app.textFields["reg.displayName"]
+            displayName.tap()
+            displayName.typeText("UI Tester")
             app.buttons["reg.submit"].tap()
         }
         XCTAssertTrue(app.staticTexts["Чаты"].waitForExistence(timeout: 10), "чат-лист не открылся")

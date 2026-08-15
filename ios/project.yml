@@ -13,7 +13,11 @@ schemes:
       targets:
         Msngr: all
     test:
-      targets: [MsngrTests]
+      targets: [MsngrTests, MsngrUITests]
+      environmentVariables:
+        # forwards a custom server stand into MsngrUITests; defaults to the
+        # shared wrangler dev when unset (see SmokeTests.swift)
+        MSNGR_SERVER: "$(MSNGR_SERVER)"
 targets:
   Msngr:
     type: application
