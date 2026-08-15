@@ -21,6 +21,9 @@ const FANOUT_BUDGET = 800;
 const FANOUT_MAX_ATTEMPTS = 3;
 /// Backoff before the 2nd and 3rd pass over the recipients that failed.
 const FANOUT_RETRY_MS = [200, 1000];
+/// A recipient that stops answering must not hold the queue of its chat: the
+/// delivery is given up on and retried like any other failure.
+const FANOUT_DELIVERY_TIMEOUT_MS = 10_000;
 
 interface FanoutJob {
   frame: ServerFrame;
@@ -110,6 +113,7 @@ export class ConversationDO implements DurableObject {
     const res = await this.userStub(userId).fetch("https://do/event", {
       method: "POST",
       body,
+      signal: AbortSignal.timeout(FANOUT_DELIVERY_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`status ${res.status}`);
   }
