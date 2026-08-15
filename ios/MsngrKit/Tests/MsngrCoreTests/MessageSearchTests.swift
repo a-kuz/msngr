@@ -185,6 +185,32 @@ final class MessageSearchTests: XCTestCase {
         XCTAssertEqual(Set(first.hits.map(\.id)).union(second.hits.map(\.id)).count, 6)
     }
 
+    /// The first page costs the same whether the word appears ten times or ten
+    /// thousand: the reader gets a screen, not the whole result.
+    func testFirstPageOverALargeChat() throws {
+        let db = try AppDatabase.openInMemory()
+        try seedChat(db, id: "c1")
+        try db.write { dbc in
+            for i in 1...20_000 {
+                var msg = Message(id: "m\(i)", chatId: "c1", fromUserId: "peer",
+                                  sentAt: Double(i), kind: .text,
+                                  text: "обычная переписка про поездку номер \(i)",
+                                  status: .sent, isOutgoing: false)
+                msg.msgId = "m\(i)"
+                msg.serverTs = Double(i)
+                try msg.save(dbc)
+            }
+        }
+
+        let started = Date()
+        let page = try hits(db, "поездку", limit: 24)
+        let elapsed = Date().timeIntervalSince(started)
+        XCTAssertEqual(page.hits.count, 24)
+        XCTAssertEqual(page.hits.first?.id, "m20000")
+        XCTAssertFalse(page.reachedEnd)
+        XCTAssertLessThan(elapsed, 1.0, "first page took \(elapsed)s")
+    }
+
     // MARK: - Snippet
 
     /// The row shows the line the word was written in, with the word marked.
