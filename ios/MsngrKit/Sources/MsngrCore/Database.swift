@@ -293,6 +293,18 @@ public enum AppDatabase {
                 ON message(chatId, COALESCE(serverTs, sentAt) DESC)
                 """)
         }
+        m.registerMigration("v14-chatTombstone") { db in
+            // How far a deleted chat's journal was already processed. A direct
+            // chat comes back when the peer writes again, and a chat row
+            // starting from zero would send the catch-up after every envelope
+            // the journal still holds — envelopes whose keys the ratchet has
+            // destroyed. The mark seeds the new row's cursors instead.
+            try db.create(table: "chatTombstone") { t in
+                t.column("chatId", .text).primaryKey()
+                t.column("seq", .integer).notNull()
+                t.column("deletedAt", .double).notNull()
+            }
+        }
         return m
     }
 }
