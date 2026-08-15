@@ -275,6 +275,7 @@ struct ChatScreen: View {
             Image(systemName: "bubble.left.and.bubble.right")
                 .font(Theme.glyph(34, max: 48))
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             Text("Напишите первое сообщение")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)

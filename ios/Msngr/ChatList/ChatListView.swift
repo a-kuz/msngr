@@ -119,6 +119,7 @@ struct ChatListView: View {
             Image(systemName: "bubble.left.and.bubble.right.fill")
                 .font(.system(size: 52))
                 .foregroundStyle(Theme.accent.opacity(0.55))
+                .accessibilityHidden(true)
             VStack(spacing: 5) {
                 Text("Нет чатов")
                     .font(.title3.weight(.semibold))
@@ -218,6 +219,7 @@ struct ChatListView: View {
             Image(systemName: "folder")
                 .font(.system(size: 46))
                 .foregroundStyle(Theme.accent.opacity(0.55))
+                .accessibilityHidden(true)
             VStack(spacing: 5) {
                 Text("В папке «\(folder.title)» пусто")
                     .font(.title3.weight(.semibold))

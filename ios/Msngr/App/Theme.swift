@@ -257,6 +257,9 @@ extension Theme {
         /// Oversized tappable glyph: keypad digit, quick-reaction emoji.
         static let largeControl = TextRole(size: 28, relativeTo: .title2, maxSize: 40)
         static let monospacedTag = TextRole(size: 11, relativeTo: .caption2, design: .monospaced, maxSize: 18)
+        /// Label burned into a fixed-size thumbnail: grows barely, or it covers
+        /// the picture it annotates.
+        static let thumbnailCaption = TextRole(size: 11, weight: .medium, relativeTo: .caption2, maxSize: 15)
     }
 
     /// Control glyphs (SF Symbols in buttons) grow with text but stop early:
