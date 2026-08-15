@@ -53,12 +53,18 @@ public enum HistoryWindow {
             """, arguments: [chatId, floor]) ?? false
     }
 
-    /// Window contents, newest first (feed order). Messages without a seq (own,
-    /// not yet acknowledged) belong to the newest page.
+    /// Value a message without a seq (own, not yet acknowledged) sorts by: above
+    /// everything the server has numbered, so it belongs to the newest page.
+    static let unsentOrder = 999_999_999
+
+    /// Window contents, newest first (feed order). The bound is written over
+    /// the same expression the ordering uses, so the whole window is one range
+    /// on `message_on_chat_feedOrder` instead of a scan of the chat.
     public static func messages(_ dbc: GRDB.Database, chatId: String, floor: Int?) throws -> [Message] {
         try Message.fetchAll(dbc, sql: """
-            SELECT * FROM message WHERE chatId = ? AND (seq IS NULL OR seq >= ?)
-            ORDER BY COALESCE(seq, 999999999) DESC, sentAt DESC
+            SELECT * FROM message
+            WHERE chatId = ? AND COALESCE(seq, \(unsentOrder)) >= ?
+            ORDER BY COALESCE(seq, \(unsentOrder)) DESC, sentAt DESC
             """, arguments: [chatId, floor ?? 0])
     }
 
