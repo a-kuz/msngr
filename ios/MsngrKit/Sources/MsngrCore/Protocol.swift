@@ -2,7 +2,11 @@ import Foundation
 
 /// Зеркало серверного протокола (docs/protocol.md).
 public enum WSOutgoing {
+    /// весь известный клиенту мир: чаты, которых нет в курсорах, сервер
+    /// присылает состоянием и доигрывает с нуля
     case sync(cursors: [String: Int])
+    /// следующая порция догона по чатам, которые ещё отстают
+    case catchup(cursors: [String: Int])
     // service: служебный фрейм (skd/reaction/edit/disappearing) — сервер не растит им unread/бейдж
     case send(chatId: String, clientMsgId: String, sentAt: Double, body: Envelope, service: Bool)
     case recv(chatId: String, seqs: [Int])
@@ -16,6 +20,8 @@ public enum WSOutgoing {
         switch self {
         case .sync(let cursors):
             obj = ["t": "sync", "cursors": cursors]
+        case .catchup(let cursors):
+            obj = ["t": "catchup", "cursors": cursors]
         case .send(let chatId, let clientMsgId, let sentAt, let body, let service):
             obj = ["t": "send", "chatId": chatId, "clientMsgId": clientMsgId,
                    "sentAt": sentAt, "body": try body.jsonObject()]
@@ -98,6 +104,11 @@ public struct WSIncoming: Decodable {
     public let service: Bool?
     /// error: машиночитаемый код отказа по нашему фрейму (см. SendFailure)
     public let error: String?
+    /// syncState: seq, по который догон чата дошёл в этой порции
+    public let cursor: Int?
+    /// syncState: у чата есть история дальше курсора;
+    /// syncDone: порция закрыта, но догон не закончен
+    public let more: Bool?
 }
 
 public struct ChatStateDTO: Decodable {

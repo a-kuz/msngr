@@ -11,6 +11,9 @@ import GRDB
 public enum HistoryWindow {
     /// Messages the feed window grows by per page.
     public static let pageSize = 60
+    /// Journal records one server history page returns: Durable Objects read at
+    /// most 128 keys per batch, and a longer range comes back truncated.
+    public static let serverPageSize = 128
     /// Attempts spent on one unreadable seq before the feed shows a placeholder.
     public static let maxGapAttempts = 3
     /// Seqs that never surface in the feed: the envelope was addressed to
@@ -90,6 +93,28 @@ public enum HistoryWindow {
                 """, arguments: [chatId, lower])
         }
         return gaps(known: known, lower: lower, upper: chat.lastSeq)
+    }
+
+    // MARK: - Catch-up cursors
+
+    /// Seq each chat resumes its catch-up from.
+    ///
+    /// The larger of the cursor the server confirmed and the contiguously
+    /// applied prefix: `syncedSeq` stops at the first seq this device will
+    /// never receive — a message held back by a block, a tombstone — while the
+    /// catch-up has to move past it, and the confirmed cursor is what carries
+    /// an interrupted run forward instead of restarting it.
+    /// `behindOnly` narrows the map to chats whose journal is known to hold
+    /// more than the cursor covers.
+    public static func catchupCursors(_ dbc: GRDB.Database,
+                                      behindOnly: Bool = false) throws -> [String: Int] {
+        let condition = behindOnly ? "WHERE MAX(syncedSeq, syncCursor) < lastSeq" : ""
+        var out: [String: Int] = [:]
+        for row in try Row.fetchAll(
+            dbc, sql: "SELECT id, MAX(syncedSeq, syncCursor) AS cursor FROM chat \(condition)") {
+            out[row["id"]] = row["cursor"]
+        }
+        return out
     }
 
     // MARK: - Unreadable seqs
