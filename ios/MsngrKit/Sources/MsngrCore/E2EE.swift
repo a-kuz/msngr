@@ -29,7 +29,9 @@ public enum E2EEError: Error, Equatable {
 /// Итог расшифровки входящего.
 public enum DecryptedIncoming {
     case content(ContentPayload)
-    case senderKeyDistribution          // состояние сохранено, контента нет
+    /// Sender key chain stored; no content. The chat and chain are carried out
+    /// so the recipient can confirm the distribution to its sender.
+    case senderKeyDistribution(chatId: String, keyId: String)
     case undecryptable(reason: String)  // нет сессии/ключа — показываем плейсхолдер
     case identityChanged(userId: String, content: ContentPayload?) // TOFU-предупреждение
 }
@@ -59,11 +61,13 @@ public final class E2EEManager: @unchecked Sendable {
     }
 
     /// группа: sender key; при необходимости — сначала раздача цепочки pairwise.
-    /// Возвращает (skdEnvelope?, skmEnvelope): skd шлётся отдельным сообщением до контента.
+    /// skd шлётся отдельным сообщением до контента под возвращённым `skdId`:
+    /// повтор той же раздачи гасится серверным дедупом, следующий круг раздачи
+    /// (адресат так и не подтвердил) получает свой id и до него доезжает.
     public func encryptGroup(content: ContentPayload, chatId: String,
-                             memberIds: [String]) async throws -> (skd: Envelope?, skm: Envelope) {
-        var (state, distributed) = try store.loadSenderKeyOut(chatId: chatId)
-            ?? (SenderKeyState(), Set<String>())
+                             memberIds: [String]) async throws -> (skd: Envelope?, skdId: String?, skm: Envelope) {
+        var (state, distributed, attempted) = try store.loadSenderKeyOut(chatId: chatId)
+            ?? (SenderKeyState(), Set<String>(), [String: Double]())
 
         // выяснить все адреса устройств участников (кроме своего устройства)
         let byUser = try await deviceMap(userIds: Set(memberIds))
@@ -73,28 +77,82 @@ public final class E2EEManager: @unchecked Sendable {
                 allAddrs.append((uid, d.deviceId))
             }
         }
-        let missing = allAddrs.filter { !distributed.contains(addr($0.userId, $0.deviceId)) }
+        // Раздача считается доставленной только по подтверждению получателя:
+        // неподтверждённая уходит снова, иначе один потерянный конверт делает
+        // нечитаемыми все сообщения этой цепочки.
+        let now = Date().timeIntervalSince1970
+        let missing = allAddrs.filter {
+            let a = addr($0.userId, $0.deviceId)
+            guard !distributed.contains(a) else { return false }
+            return now - (attempted[a] ?? 0) >= MessageRepair.redistributeAfter
+        }
 
         var skdEnvelope: Envelope?
+        var skdId: String?
         if !missing.isEmpty {
             let dist = try state.distribution
             let inner = InnerMessage(skd: dist, chatId: chatId)
             skdEnvelope = try await encryptPairwise(inner: inner,
                                                     recipients: [String](Set(missing.map(\.userId))),
                                                     onlyDevices: Set(missing.map { addr($0.userId, $0.deviceId) }))
-            for m in missing { distributed.insert(addr(m.userId, m.deviceId)) }
+            skdId = Self.skdClientMsgId(chatId: chatId, keyId: state.keyId,
+                                        recipients: missing.map { addr($0.userId, $0.deviceId) },
+                                        round: Int(now))
+            for m in missing { attempted[addr(m.userId, m.deviceId)] = now }
         }
 
         let plaintext = try JSONEncoder().encode(content)
         let skm = try state.encrypt(plaintext)
-        try store.saveSenderKeyOut(chatId: chatId, state: state, distributedTo: distributed)
+        try store.saveSenderKeyOut(chatId: chatId, state: state,
+                                   distributedTo: distributed, attemptedAt: attempted)
 
         var env = Envelope(mode: "skm")
         env.c = skm.ciphertext.base64EncodedString()
         env.keyId = skm.keyId
         env.iteration = skm.iteration
         env.sig = skm.signature.base64EncodedString()
-        return (skdEnvelope, env)
+        return (skdEnvelope, skdId, env)
+    }
+
+    /// Id раздачи: один и тот же для повтора того же круга, разный для нового
+    /// круга и для другого набора адресатов.
+    static func skdClientMsgId(chatId: String, keyId: String, recipients: [String], round: Int) -> String {
+        let digest = SHA256.hash(data: Data(recipients.sorted().joined(separator: ",").utf8))
+            .prefix(8).map { String(format: "%02x", $0) }.joined()
+        return "skd:\(chatId):\(keyId):\(digest):\(round)"
+    }
+
+    /// Получатель подтвердил, что сохранил цепочку: раздавать её ему больше не нужно.
+    public func confirmSenderKey(chatId: String, keyId: String, userId: String, deviceId: String) throws {
+        guard let (state, distributed, attempted) = try store.loadSenderKeyOut(chatId: chatId),
+              state.keyId == keyId else { return }
+        let a = addr(userId, deviceId)
+        guard !distributed.contains(a) else { return }
+        var confirmed = distributed
+        var pending = attempted
+        confirmed.insert(a)
+        pending.removeValue(forKey: a)
+        try store.saveSenderKeyOut(chatId: chatId, state: state,
+                                   distributedTo: confirmed, attemptedAt: pending)
+    }
+
+    /// Участник не смог прочитать групповое сообщение: раздача ему цепочки
+    /// забывается, следующее сообщение в чат раздаст её заново.
+    public func forgetSenderKeyDistribution(chatId: String, userId: String) throws {
+        guard let (state, distributed, attempted) = try store.loadSenderKeyOut(chatId: chatId) else { return }
+        let prefix = userId + "/"
+        let keptDistributed = distributed.filter { !$0.hasPrefix(prefix) }
+        let keptAttempted = attempted.filter { !$0.key.hasPrefix(prefix) }
+        guard keptDistributed.count != distributed.count || keptAttempted.count != attempted.count else { return }
+        try store.saveSenderKeyOut(chatId: chatId, state: state,
+                                   distributedTo: keptDistributed, attemptedAt: keptAttempted)
+    }
+
+    /// Следующее pairwise-сообщение этому собеседнику поднимает сессию заново
+    /// (X3DH), а текущая уходит в архив: расшифровать нечитаемое ей всё равно
+    /// не удалось, а «догоняющие» сообщения архив ещё откроет.
+    public func resetPairwiseSession(with userId: String) throws {
+        try store.requestSessionReset(peerUserId: userId)
     }
 
     /// Ротация sender key (при выходе участника из группы).
@@ -135,12 +193,19 @@ public final class E2EEManager: @unchecked Sendable {
         var bundlesByUser: [String: [APIClient.PrekeyBundleDTO]] = [:]
 
         for uid in targets {
+            // сессия помечена на пересборку (по ней не расшифровывалось): текущую
+            // в архив, это сообщение поднимает новую через X3DH
+            let resetting = (try? store.consumeSessionReset(peerUserId: uid)) ?? false
             for device in byUser[uid] ?? [] {
                 if uid == ownUserId && device.deviceId == ownDeviceId { continue }
                 let a = addr(uid, device.deviceId)
                 if let onlyDevices, !onlyDevices.contains(a), uid != ownUserId { continue }
+                if resetting {
+                    try? store.archiveCurrentSession(peerUserId: uid, peerDeviceId: device.deviceId)
+                }
                 // существующая сессия → dr, бандл не нужен
-                if var session = try store.loadSession(peerUserId: uid, peerDeviceId: device.deviceId) {
+                if !resetting,
+                   var session = try store.loadSession(peerUserId: uid, peerDeviceId: device.deviceId) {
                     let msg = try session.encrypt(plaintext)
                     try store.saveSession(session, peerUserId: uid, peerDeviceId: device.deviceId,
                                           theirIdentityDH: device.identityKey)
@@ -238,7 +303,6 @@ public final class E2EEManager: @unchecked Sendable {
         }
 
         var trustIssue: String?
-        var session: DoubleRatchetSession
 
         // сначала всегда пробуем известные сессии: активную, затем архивные.
         // Сообщение не должно теряться из-за рассинхрона состояний.
@@ -308,10 +372,14 @@ public final class E2EEManager: @unchecked Sendable {
     private func handleInner(_ plaintext: Data, fromUserId: String, trustIssue: String?) throws -> DecryptedIncoming {
         let inner = try JSONDecoder().decode(InnerMessage.self, from: plaintext)
         if inner.type == "skd", let skd = inner.skd, let chatId = inner.chatId {
-            let receiver = SenderKeyReceiver(distribution: skd)
-            try store.saveSenderKeyIn(chatId: chatId, senderUserId: fromUserId,
-                                      keyId: skd.keyId, state: receiver)
-            return .senderKeyDistribution
+            // повторная раздача той же цепочки не откатывает уже продвинутое
+            // состояние: сохранённый получатель мог уйти вперёд по итерациям
+            if try store.loadSenderKeyIn(chatId: chatId, senderUserId: fromUserId, keyId: skd.keyId) == nil {
+                let receiver = SenderKeyReceiver(distribution: skd)
+                try store.saveSenderKeyIn(chatId: chatId, senderUserId: fromUserId,
+                                          keyId: skd.keyId, state: receiver)
+            }
+            return .senderKeyDistribution(chatId: chatId, keyId: skd.keyId)
         }
         guard let content = inner.content else { return .undecryptable(reason: "empty_inner") }
         if trustIssue != nil {

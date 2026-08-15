@@ -229,9 +229,26 @@ public struct ContentPayload: Codable {
     public var album: [MediaInfo]?
     public var replyTo: ReplyPreview?
     public var fwd: ForwardInfo?
-    public var targetMsgId: String?   // edit / reaction
+    public var targetMsgId: String?   // edit / reaction / repairRequest
     public var emoji: String?         // reaction (nil = снять)
     public var ttlSeconds: Int?       // disappearing setting
+    /// Encrypt pairwise to this user alone, whatever kind the chat is. Repair
+    /// traffic concerns two devices, so it never travels on a group chain.
+    public var to: String?
+    /// repairRequest: seq of the message that could not be read, and why.
+    public var repairSeq: Int?
+    public var reason: String?
+    /// repairRequest / repair: which attempt this is. The id built from it keeps
+    /// a repeated request from reaching the sender twice.
+    public var attempt: Int?
+    /// repair: msgId the restored copy belongs to, when it was sent, and the
+    /// original content as JSON. The receiver stores it under that identity, so
+    /// a restored message takes its own place in the feed instead of a new one.
+    public var repairOf: String?
+    public var origSentAt: Double?
+    public var orig: String?
+    /// skdAck: the sender key chain the recipient stored.
+    public var keyId: String?
 
     public init(kind: String) { self.kind = kind }
 }

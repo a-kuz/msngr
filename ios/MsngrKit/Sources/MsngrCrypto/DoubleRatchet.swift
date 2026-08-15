@@ -26,8 +26,14 @@ public struct DoubleRatchetSession: Codable, Sendable {
     var skipped: [String: Data] = [:] // "\(dhPub.base64)/\(n)" -> messageKey
     public var associatedData: Data
 
-    static let maxSkip: UInt32 = 1000
-    static let maxSkippedStored = 2000
+    /// Messages one chain may jump over in a single step, and skipped keys kept
+    /// across steps. Sized for a device that comes back after a long silence:
+    /// the peer's chain can be thousands of messages ahead, and a window that
+    /// ends before it leaves every one of them unreadable. The keys are derived
+    /// and held only while messages are actually missing, so the cost is paid in
+    /// that case alone.
+    static let maxSkip: UInt32 = 5000
+    static let maxSkippedStored = 5000
 
     /// Сессия уже получала входящие (устоялась) — признак того, что повторный
     /// prekey-конверт следует игнорировать (защита от replay/session-reset).

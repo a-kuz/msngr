@@ -237,16 +237,36 @@ pairwise-сообщение, внутри которого лежит `InnerMess
 `ContentPayload` (он же plaintext в `skm`):
 
 ```
-{kind, text?, media?, album?, replyTo?, fwd?, targetMsgId?, emoji?, ttlSeconds?}
+{kind, text?, media?, album?, replyTo?, fwd?, targetMsgId?, emoji?, ttlSeconds?,
+ to?, repairSeq?, reason?, attempt?, repairOf?, origSentAt?, orig?, keyId?}
 ```
 
 - `kind`: `text` | `photo` | `video` | `file` | `voice` | `album` | `contact` |
-  `edit` | `reaction` | `disappearing`;
+  `edit` | `reaction` | `disappearing` | `repairRequest` | `repair` | `skdAck`;
 - `media` / `album` — `MediaInfo`: `type, mediaId, key, hash, size, mime, name?,
   w?, h?, dur?, waveform?, blurhash?, thumbMediaId?, thumbKey?, thumbHash?`;
 - `replyTo` — `{msgId, authorId, text, kind}`, `fwd` — `{fromUserId, fromName}`;
 - `edit` и `reaction` адресуются `targetMsgId`, `emoji: null` снимает реакцию;
-- `disappearing` несёт `ttlSeconds` — новый TTL чата.
+- `disappearing` несёт `ttlSeconds` — новый TTL чата;
+- `to` — адресный фрейм: конверт шифруется pairwise одному участнику, даже в
+  группе. Так едет весь протокол ремонта.
+
+### Ремонт нечитаемого
+
+Идёт сам, без участия пользователя, служебными фреймами (`service: true`).
+
+- `repairRequest` — «не смог прочитать сообщение»: `targetMsgId`, `repairSeq`,
+  `reason` (причина отказа расшифровки), `attempt` (номер попытки), `to` —
+  автор сообщения. `clientMsgId` детерминирован (`rq:<msgId>:<attempt>`):
+  повтор той же попытки гасится дедупом сервера, следующая попытка проходит.
+- `repair` — ответ автора: `repairOf` (исходный msgId), `repairSeq`,
+  `origSentAt` и `orig` — исходный `ContentPayload` строкой JSON. Получатель
+  кладёт его под исходным `msgId`, поэтому в ленте копия занимает место
+  пропавшего сообщения, а не появляется рядом. `clientMsgId` —
+  `rp:<msgId>:<attempt>`.
+- `skdAck` — подтверждение раздачи sender key: `keyId` цепочки. Пока
+  подтверждения нет, отправитель раздаёт цепочку заново; `repairRequest` с
+  `reason: "no_sender_key"` заставляет раздать её этому участнику снова.
 
 Поля `localPath`/`thumbLocalPath` в `MediaInfo` существуют только локально
 (исходник вложения, ещё не выгруженный на сервер) и в конверт не попадают.
@@ -254,11 +274,17 @@ pairwise-сообщение, внутри которого лежит `InnerMess
 ## Доставка и порядок
 
 At-least-once. Порядок — по `seq` внутри чата. Клиент дедуплицирует входящие по
-`msgId`, свои отправки — по `clientMsgId`. Сообщение, пришедшее раньше своего
-ключа (групповое до sender key, `dr` раньше своего `pk`), складывается в
-`pendingDecrypt` и переигрывается, когда ключ приходит. `edit`/`reaction`/
-`deleted`, чья цель ещё не в БД, складываются в `pendingApply` и применяются
-при появлении оригинала.
+`msgId`, свои отправки — по `clientMsgId`. Конверт, который не удалось
+расшифровать, складывается в `pendingDecrypt` целиком — при любой причине: это
+единственная локальная копия. Он переигрывается, когда в чате появляется ключ, и
+проходами при старте движка, на реконнекте и по кругу в фоне; счётчик попыток и
+срок жизни лежат на той же строке. `edit`/`reaction`/`deleted`, чья цель ещё не
+в БД, складываются в `pendingApply` и применяются при появлении оригинала.
+
+Что переигрыванием не берётся, чинится через отправителя (`repairRequest` →
+`repair`). Сам seq записан в `historyGap` с причиной и счётчиком: пагинация
+вверх не ходит за ним на сервер снова, а нейтральная заглушка в ленте
+появляется, только когда попытки ремонта потрачены.
 
 ## Пуши
 

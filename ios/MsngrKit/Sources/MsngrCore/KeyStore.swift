@@ -252,6 +252,23 @@ public final class IdentityStore: @unchecked Sendable {
         }
     }
 
+    /// Пометка «следующее сообщение этому собеседнику начинает сессию заново».
+    /// Ставится, когда его сообщения не открываются ни активной сессией, ни
+    /// архивными: X3DH из свежего бандла — единственный способ сойтись.
+    public func requestSessionReset(peerUserId: String) throws {
+        try db.write { dbc in
+            try KVRow(key: "sessionReset:" + peerUserId, value: "1").save(dbc)
+        }
+    }
+
+    /// Снимает пометку и сообщает, была ли она.
+    public func consumeSessionReset(peerUserId: String) throws -> Bool {
+        try db.write { dbc in
+            try dbc.execute(sql: "DELETE FROM kv WHERE key = ?", arguments: ["sessionReset:" + peerUserId])
+            return dbc.changesCount > 0
+        }
+    }
+
     /// Текущую активную сессию — в архив (перед заменой на новую).
     public func archiveCurrentSession(peerUserId: String, peerDeviceId: String) throws {
         guard let current = try loadSession(peerUserId: peerUserId, peerDeviceId: peerDeviceId) else { return }
@@ -262,31 +279,38 @@ public final class IdentityStore: @unchecked Sendable {
 
     // MARK: - Sender keys
 
-    public func loadSenderKeyOut(chatId: String) throws -> (SenderKeyState, Set<String>)? {
+    /// Своя цепочка на чат: состояние, адреса с подтверждённой раздачей и
+    /// адреса, которым раздача ушла и подтверждения ещё нет (адрес → момент).
+    public func loadSenderKeyOut(chatId: String) throws -> (SenderKeyState, Set<String>, [String: Double])? {
         try db.read { dbc in
             guard let row = try Row.fetchOne(
-                dbc, sql: "SELECT state, distributedTo FROM senderKeyOut WHERE chatId = ?",
+                dbc, sql: "SELECT state, distributedTo, attemptedAt FROM senderKeyOut WHERE chatId = ?",
                 arguments: [chatId]
             ) else { return nil }
             let plain = try StateCrypto.open(row["state"], with: master)
             let state = try JSONDecoder().decode(SenderKeyState.self, from: plain)
             let dist = (try? JSONDecoder().decode(Set<String>.self,
                                                   from: Data((row["distributedTo"] as String).utf8))) ?? []
-            return (state, dist)
+            let attempted = (try? JSONDecoder().decode([String: Double].self,
+                                                       from: Data((row["attemptedAt"] as String).utf8))) ?? [:]
+            return (state, dist, attempted)
         }
     }
 
-    public func saveSenderKeyOut(chatId: String, state: SenderKeyState, distributedTo: Set<String>) throws {
+    public func saveSenderKeyOut(chatId: String, state: SenderKeyState,
+                                 distributedTo: Set<String>, attemptedAt: [String: Double]) throws {
         let plain = try JSONEncoder().encode(state)
         let sealed = try StateCrypto.seal(plain, with: master)
         let dist = String(data: try JSONEncoder().encode(distributedTo), encoding: .utf8)!
+        let attempted = String(data: try JSONEncoder().encode(attemptedAt), encoding: .utf8)!
         try db.write { dbc in
             try dbc.execute(
                 sql: """
-                INSERT INTO senderKeyOut (chatId, state, distributedTo) VALUES (?,?,?)
-                ON CONFLICT(chatId) DO UPDATE SET state = excluded.state, distributedTo = excluded.distributedTo
+                INSERT INTO senderKeyOut (chatId, state, distributedTo, attemptedAt) VALUES (?,?,?,?)
+                ON CONFLICT(chatId) DO UPDATE SET state = excluded.state,
+                  distributedTo = excluded.distributedTo, attemptedAt = excluded.attemptedAt
                 """,
-                arguments: [chatId, sealed, dist]
+                arguments: [chatId, sealed, dist, attempted]
             )
         }
     }
