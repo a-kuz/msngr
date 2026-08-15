@@ -198,6 +198,24 @@ public enum AppDatabase {
                 t.add(column: "mutedUntil", .double)
             }
         }
+
+        m.registerMigration("v8-historyGap") { db in
+            // A seq this device cannot read: the envelope was fetched but stays
+            // undecryptable. Kept with the failure reason and an attempt counter
+            // so repair can ask the sender again; upward pagination treats the
+            // record as closed and stops re-requesting the range from the server.
+            try db.create(table: "historyGap") { t in
+                t.column("chatId", .text).notNull().indexed()
+                t.column("seq", .integer).notNull()
+                t.column("msgId", .text)
+                t.column("fromUserId", .text)
+                t.column("sentAt", .double)
+                t.column("reason", .text).notNull()
+                t.column("attempts", .integer).notNull().defaults(to: 1)
+                t.column("lastTriedAt", .double).notNull()
+                t.primaryKey(["chatId", "seq"])
+            }
+        }
         return m
     }
 }
