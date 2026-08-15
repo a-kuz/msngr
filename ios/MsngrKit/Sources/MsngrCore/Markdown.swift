@@ -54,6 +54,21 @@ public enum MessageMarkdown {
         return blocks
     }
 
+    /// Absolute URLs the text carries, in the order they are written, each one
+    /// once. The same pass the feed draws with, so what the gallery lists and
+    /// what the bubble underlines are the same links.
+    public static func links(in source: String) -> [String] {
+        var out: [String] = []
+        var seen = Set<String>()
+        for block in parse(source) {
+            guard case .paragraph(let spans) = block else { continue }
+            for link in spans.compactMap(\.link) where seen.insert(link).inserted {
+                out.append(link)
+            }
+        }
+        return out
+    }
+
     // MARK: - Блоки кода
 
     private enum Piece {
