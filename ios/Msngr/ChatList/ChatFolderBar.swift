@@ -14,6 +14,12 @@ struct ChatFolderBar: View {
     var onEdit: (ChatFolder) -> Void
 
     @Namespace private var indicator
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    /// Полоса вкладок ведёт свою высоту от шрифта вкладки: на крупном тексте
+    /// название иначе обрезается по нижнему краю.
+    private var tabHeight: CGFloat { typeSize.scaled(39, relativeTo: .subheadline, max: 56) }
+    private var tabBadgeSide: CGFloat { typeSize.scaled(18, relativeTo: .caption1, max: 28) }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -39,7 +45,7 @@ struct ChatFolderBar: View {
                 withAnimation(Theme.springFast) { proxy.scrollTo(new ?? "", anchor: .center) }
             }
         }
-        .frame(height: 40)
+        .frame(height: tabHeight + 1)
         .overlay(alignment: .bottom) {
             Divider()
         }
@@ -54,20 +60,20 @@ struct ChatFolderBar: View {
         } label: {
             HStack(spacing: 5) {
                 Text(title)
-                    .font(.system(size: 15, weight: selected ? .semibold : .regular))
+                    .textRole(selected ? Theme.Text.folderTabActive : Theme.Text.folderTab)
                 if badge > 0 {
                     Text("\(badge)")
-                        .font(.system(size: 12, weight: .semibold))
+                        .textRole(Theme.Text.tabBadge)
                         .foregroundStyle(.white)
                         .padding(.horizontal, 5)
-                        .frame(minWidth: 18, minHeight: 18)
+                        .frame(minWidth: tabBadgeSide, minHeight: tabBadgeSide)
                         .background(selected ? Theme.accent : Color.secondary)
                         .clipShape(Capsule())
                 }
             }
             .foregroundStyle(selected ? Theme.accent : Color.secondary)
             .padding(.horizontal, 12)
-            .frame(height: 39)
+            .frame(height: tabHeight)
             .overlay(alignment: .bottom) {
                 if selected {
                     Capsule()
@@ -88,14 +94,14 @@ struct ChatFolderBar: View {
         Button(action: onManage) {
             HStack(spacing: 4) {
                 Image(systemName: "plus")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(Theme.glyph(13, max: 20).weight(.semibold))
                 if folders.isEmpty {
-                    Text("Папка").font(.system(size: 15))
+                    Text("Папка").textRole(Theme.Text.folderTab)
                 }
             }
             .foregroundStyle(Theme.accent)
             .padding(.horizontal, 12)
-            .frame(height: 39)
+            .frame(height: tabHeight)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("chatlist.folders.manage")

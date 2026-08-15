@@ -231,15 +231,17 @@ extension Theme {
         static let bubbleCode = TextRole(size: 15, relativeTo: .body, design: .monospaced, maxSize: 48)
 
         // Chat header
-        static let headerTitle = TextRole(size: 16, weight: .semibold, relativeTo: .subheadline, maxSize: 21)
-        static let headerSubtitle = TextRole(size: 12, relativeTo: .caption1, maxSize: 15)
+        /// The inline navigation bar keeps its height at every text size, so
+        /// title and subtitle stop well before the accessibility sizes do.
+        static let headerTitle = TextRole(size: 16, weight: .semibold, relativeTo: .subheadline, maxSize: 19)
+        static let headerSubtitle = TextRole(size: 12, relativeTo: .caption1, maxSize: 13)
 
         // Chat list row
         static let rowTitle = TextRole(size: 16, weight: .semibold, relativeTo: .subheadline, maxSize: 30)
         static let rowPreview = TextRole(size: 15, relativeTo: .subheadline, maxSize: 28)
         static let rowTime = TextRole(size: 13, relativeTo: .caption1, maxSize: 20)
         static let rowBadge = TextRole(size: 13, weight: .semibold, relativeTo: .caption1, maxSize: 20)
-        static let rowGlyph = TextRole(size: 12, relativeTo: .caption1, maxSize: 20)
+        static let tabBadge = TextRole(size: 12, weight: .semibold, relativeTo: .caption1, maxSize: 18)
         static let folderTab = TextRole(size: 15, relativeTo: .subheadline, maxSize: 24)
         static let folderTabActive = TextRole(size: 15, weight: .semibold, relativeTo: .subheadline, maxSize: 24)
 
@@ -280,6 +282,13 @@ extension View {
 }
 
 extension DynamicTypeSize {
+    /// Scales a fixed dimension against the size this view is rendering at.
+    func scaled(_ value: CGFloat, relativeTo style: UIFont.TextStyle = .body,
+                max limit: CGFloat) -> CGFloat {
+        min(limit, UIFontMetrics(forTextStyle: style).scaledValue(
+            for: value, compatibleWith: UITraitCollection(preferredContentSizeCategory: contentSizeCategory)))
+    }
+
     var contentSizeCategory: UIContentSizeCategory {
         switch self {
         case .xSmall: return .extraSmall

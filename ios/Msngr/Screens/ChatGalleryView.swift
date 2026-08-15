@@ -162,9 +162,9 @@ struct ChatGalleryView: View {
     private func row(_ entry: GalleryEntry) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon(entry))
-                .font(.system(size: 17))
+                .font(Theme.glyph(17, max: 26))
                 .foregroundStyle(Theme.accent)
-                .frame(width: 38, height: 38)
+                .frame(width: TypeScale.scaled(38, max: 52), height: TypeScale.scaled(38, max: 52))
                 .background(Theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
                 Text(Self.primary(entry))
