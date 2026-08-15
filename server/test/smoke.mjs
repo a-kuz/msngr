@@ -596,6 +596,9 @@ check("push delivered offline", !!push1, JSON.stringify(pushes));
 if (push1) {
   check("push chatId", push1.body.chatId === echat.chatId);
   check("push thread-id", push1.body.aps["thread-id"] === echat.chatId);
+  // порядок показа лавины строится по seq, поэтому он едет в пуше
+  check("push carries seq", push1.body.seq === p1.seq, `seq=${push1.body.seq}`);
+  check("push carries sentAt", typeof push1.body.sentAt === "number");
   // чат ещё заявка: счётчик не выдаёт, сколько сообщений уже написали
   check("push badge=0 before accept", push1.body.aps.badge === 0, `badge=${push1.body.aps.badge}`);
   check("push alert w/o plaintext", push1.body.aps.alert.body === "Новое сообщение"
