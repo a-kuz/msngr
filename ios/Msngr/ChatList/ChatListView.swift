@@ -18,6 +18,9 @@ struct ChatListView: View {
     @State private var path = NavigationPath()
     /// чат, для которого спрошено подтверждение удаления
     @State private var deleteCandidate: ChatListItem?
+    @State private var showFolders = false
+    /// папка, открытая на настройку прямо из списка
+    @State private var editingFolder: ChatFolder?
 
     private var deleteConfirmPresented: Binding<Bool> {
         Binding(get: { deleteCandidate != nil },
@@ -31,20 +34,17 @@ struct ChatListView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            List {
-                if !model.searchText.isEmpty {
-                    searchSection
+            Group {
+                if model.searchText.isEmpty {
+                    VStack(spacing: 0) {
+                        ChatFolderBar(folders: model.folders, unread: model.folderUnread,
+                                      selection: $model.selectedFolderId,
+                                      onManage: { showFolders = true },
+                                      onEdit: { editingFolder = $0 })
+                        folderPages
+                    }
                 } else {
-                    if !model.requests.isEmpty { requestsSection }
-                    if !model.archived.isEmpty { archiveRow }
-                    chatsSection
-                }
-            }
-            .listStyle(.plain)
-            .overlay {
-                if model.loaded, model.searchText.isEmpty,
-                   model.items.isEmpty, model.requests.isEmpty, model.archived.isEmpty {
-                    emptyState
+                    List { searchSection }.listStyle(.plain)
                 }
             }
             // «пришли на список чатов» — по идентификатору списка, а не по
@@ -74,6 +74,12 @@ struct ChatListView: View {
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
+            }
+            .sheet(isPresented: $showFolders) {
+                ChatFoldersView(model: model)
+            }
+            .sheet(item: $editingFolder) { folder in
+                ChatFolderEditorView(model: model, folder: folder)
             }
             .onAppear { model.start() }
             .onChange(of: app.ready) { _, ready in
@@ -133,12 +139,84 @@ struct ChatListView: View {
         .padding(.bottom, 40)
     }
 
-    private var chatsSection: some View {
-        ForEach(model.items) { item in
+    /// Вкладки листаются свайпом: у каждой свой список, соседние страницы
+    /// собираются из уже посчитанного состава папок.
+    private var folderPages: some View {
+        TabView(selection: pageSelection) {
+            page(for: nil).tag("")
+            ForEach(model.folders) { folder in
+                page(for: folder).tag(folder.id)
+            }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+    }
+
+    private var pageSelection: Binding<String> {
+        Binding(get: { model.selectedFolderId ?? "" },
+                set: { model.selectedFolderId = $0.isEmpty ? nil : $0 })
+    }
+
+    private func page(for folder: ChatFolder?) -> some View {
+        let items = model.items(in: folder?.id)
+        return List {
+            // архив и заявки — состояния входящего потока, а не тема
+            // переписки: они остаются наверху «Всех» и в папки не переезжают
+            if folder == nil {
+                if !model.requests.isEmpty { requestsSection }
+                if !model.archived.isEmpty { archiveRow }
+            }
+            chatsSection(items, folder: folder)
+        }
+        .listStyle(.plain)
+        .overlay {
+            if model.loaded, let folder, items.isEmpty {
+                folderEmptyState(folder)
+            } else if model.loaded, folder == nil, items.isEmpty,
+                      model.requests.isEmpty, model.archived.isEmpty {
+                emptyState
+            }
+        }
+    }
+
+    /// Пустая папка: правило пока ничего не приносит — это состояние, и рядом
+    /// лежит то, чем его меняют.
+    private func folderEmptyState(_ folder: ChatFolder) -> some View {
+        VStack(spacing: 14) {
+            Image(systemName: "folder")
+                .font(.system(size: 46))
+                .foregroundStyle(Theme.accent.opacity(0.55))
+            VStack(spacing: 5) {
+                Text("В папке «\(folder.title)» пусто")
+                    .font(.title3.weight(.semibold))
+                Text("Сюда попадут чаты по правилу папки\nи те, что вы добавите сами")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            Button { editingFolder = folder } label: {
+                Text("Настроить папку")
+                    .fontWeight(.semibold)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 4)
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("chatlist.folder.empty.setup")
+        }
+        .padding(.bottom, 40)
+    }
+
+    private func chatsSection(_ items: [ChatListItem], folder: ChatFolder?) -> some View {
+        ForEach(items) { item in
             ChatRow(chatId: item.chat.id) {
                 ChatRowView(item: item, ownUserId: app.session?.userId ?? "")
             }
+            .contextMenu { folderMenu(item) }
             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                if let folder {
+                    Button { model.setChat(item.id, inFolder: folder, included: false) } label: {
+                        Label("Из папки", systemImage: "folder.badge.minus")
+                    }.tint(.teal)
+                }
                 Button { model.toggleArchive(item) } label: {
                     Label("Архив", systemImage: "archivebox.fill")
                 }.tint(.gray)
@@ -160,7 +238,26 @@ struct ChatListView: View {
                 }.tint(.orange)
             }
         }
-        .animation(Theme.springFast, value: model.items.map(\.id))
+        .animation(Theme.springFast, value: items.map(\.id))
+    }
+
+    /// Разложить чат по папкам, не открывая настройки: галочка показывает, где
+    /// он уже лежит — по правилу или руками.
+    @ViewBuilder
+    private func folderMenu(_ item: ChatListItem) -> some View {
+        if model.folders.isEmpty {
+            Button { showFolders = true } label: {
+                Label("Создать папку", systemImage: "folder.badge.plus")
+            }
+        } else {
+            let containing = model.folders(containing: item.id)
+            ForEach(model.folders) { folder in
+                let inside = containing.contains(folder.id)
+                Button { model.setChat(item.id, inFolder: folder, included: !inside) } label: {
+                    Label(folder.title, systemImage: inside ? "checkmark" : "folder")
+                }
+            }
+        }
     }
 
     private var requestsSection: some View {
