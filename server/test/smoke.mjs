@@ -907,6 +907,57 @@ check("queue drains to empty cursor",
 const strangerQ = await api(`/api/chats/${fgrp.chatId}/fanout`, { token: bob.token });
 check("fanout state hidden from non-member", !strangerQ.ok && strangerQ.error === "not_member");
 
+// 18. Удаление чата: переписка уходит из списка удалившего и остаётся у собеседника
+const dana = await api("/api/register", { body: {
+  username: "dana_" + suffix, displayName: "Dana", ...fakeKeys("n") } });
+const erik = await api("/api/register", { body: {
+  username: "erik_" + suffix, displayName: "Erik", ...fakeKeys("r") } });
+const dchat2 = await api("/api/chats", { token: dana.token,
+  body: { kind: "direct", memberIds: [erik.userId] } });
+const cd = new Client("dana", dana.token);
+const cer = new Client("erik", erik.token);
+await cd.connect(); await cer.connect();
+await api(`/api/chats/${dchat2.chatId}/accept`, { token: erik.token, body: {} });
+cd.send({ t: "send", chatId: dchat2.chatId, clientMsgId: "cm-d1", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+await cd.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-d1");
+await cer.waitFor((f) => f.t === "msg" && f.chatId === dchat2.chatId);
+
+const del = await api(`/api/chats/${dchat2.chatId}/delete`, { token: dana.token, body: {} });
+check("direct chat deleted", del.ok, JSON.stringify(del));
+const danaList = await api("/api/chats", { token: dana.token });
+check("deleted chat leaves the deleter's list",
+  !danaList.chats.some((c2) => c2.state.chatId === dchat2.chatId));
+const erikList = await api("/api/chats", { token: erik.token });
+const erikChat = erikList.chats.find((c2) => c2.state.chatId === dchat2.chatId);
+check("peer keeps the chat and its journal", !!erikChat && erikChat.state.lastSeq === 1);
+check("deleter's read mark is at the end of the journal",
+  erikChat?.state.readMarks[dana.userId] === 1, JSON.stringify(erikChat?.state.readMarks));
+
+// собеседник пишет снова — чат возвращается
+const cd2 = new Client("dana2", dana.token);
+await cd2.connect();
+cer.send({ t: "send", chatId: dchat2.chatId, clientMsgId: "cm-e1", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const back = await cd2.waitFor((f) => f.t === "msg" && f.chatId === dchat2.chatId && f.seq === 2);
+check("message into a deleted chat still reaches the deleter", !!back);
+const danaList2 = await api("/api/chats", { token: dana.token });
+check("chat comes back on the next message",
+  danaList2.chats.some((c2) => c2.state.chatId === dchat2.chatId));
+
+// в группе удаление — это выход
+const dgrp = await api("/api/chats", { token: dana.token,
+  body: { kind: "group", memberIds: [erik.userId], title: "Leave me" } });
+const delGrp = await api(`/api/chats/${dgrp.chatId}/delete`, { token: dana.token, body: {} });
+check("group delete leaves the group", delGrp.ok, JSON.stringify(delGrp));
+const grpState = await api("/api/chats", { token: erik.token });
+const leftGrp = grpState.chats.find((c2) => c2.state.chatId === dgrp.chatId);
+check("the others see the member gone",
+  !!leftGrp && !leftGrp.state.members.some((m) => m.userId === dana.userId));
+const notMember = await api(`/api/chats/${dgrp.chatId}/delete`, { token: dana.token, body: {} });
+check("deleting a chat you are not in is refused", !notMember.ok);
+cd.ws.close(); cd2.ws.close(); cer.ws.close();
+
 cmal.ws.close(); ctre.ws.close();
 ca.ws.close(); cb2.ws.close(); cb3.ws.close(); cb4.ws.close(); ca2.ws.close(); ce.ws.close();
 cf.ws.close(); cg.ws.close();
