@@ -255,6 +255,17 @@ public enum AppDatabase {
                 t.column("shownAt", .double).notNull().indexed()
             }
         }
+        m.registerMigration("v11-syncCursor") { db in
+            // How far the server has replayed this chat's journal to us. Catch-up
+            // is pulled portion by portion, and the cursor is stored as each
+            // portion is applied, so a run cut off halfway resumes here.
+            // Separate from syncedSeq: that one stops at the first seq this
+            // device never receives (a message held back by a block, a
+            // tombstone), while the catch-up has to move past it.
+            try db.alter(table: "chat") { t in
+                t.add(column: "syncCursor", .integer).notNull().defaults(to: 0)
+            }
+        }
         return m
     }
 }

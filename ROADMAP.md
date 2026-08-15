@@ -166,7 +166,12 @@
   - ✅ реконнект с backoff и потолком 12 с (юниты ReconnectBackoffTests)
   - 🟡 мгновенный реконнект по возврату сети и из форграунда (в прогоне до фикса ждали 1–2 мин, после фикса не перепроверяли)
   - 🟡 обнаружение мёртвого сокета по таймауту pong (не проверено вживую)
-  - ✅ доигрывание пропущенного по курсорам, включая пачки больше 200 (смоук `sync backfill beyond 200`)
+  - ✅ догон порциями по курсору клиента: одна порция на фрейм, между порциями
+    объект отвечает на живой трафик (смоук `catch-up goes in portions`,
+    `catch-up cursor moves forward`, `live traffic is answered mid catch-up`)
+  - ✅ обрыв посреди догона продолжается с подтверждённого курсора, а не с нуля
+    (смоук `interrupted catch-up resumes from the cursor`, юниты
+    `CatchupCursorTests`, интеграционный `testLongOfflineCatchesUpInPortions`)
   - ✅ доигрывание тумбстоунов и read-марок (смоук `sync replays tombstone`, `sync replays read mark`)
 
 ## Реплай, форвард, правка, удаление

@@ -422,4 +422,94 @@ final class CoreIntegrationTests: XCTestCase {
         await alice.engine.stop()
         await bob.engine.stop()
     }
+
+    /// Устройство вернулось после долгого офлайна: та же база и те же ключи,
+    /// новый сокет. Догон продолжается с курсоров, записанных в базу.
+    static func restarted(_ c: TestClient) async -> SyncEngine {
+        var comps = URLComponents(url: base.appendingPathComponent("ws"), resolvingAgainstBaseURL: false)!
+        comps.scheme = "ws"
+        comps.queryItems = [URLQueryItem(name: "token", value: c.api.token)]
+        let engine = SyncEngine(db: c.db, api: c.api, e2ee: c.e2ee, wsURL: comps.url!,
+                                ownUserId: c.userId, ownDeviceId: c.deviceId)
+        await engine.start()
+        return engine
+    }
+
+    /// Долгий офлайн: накопленное за это время доезжает порциями — все
+    /// сообщения, по одному разу, курсор доходит до конца журнала.
+    func testLongOfflineCatchesUpInPortions() async throws {
+        guard await Self.serverUp() else { throw XCTSkip("wrangler dev не запущен") }
+        let suffix = String(UUID().uuidString.prefix(6)).lowercased().replacingOccurrences(of: "-", with: "x")
+        let alice = try await Self.makeClient(username: "pa_\(suffix)")
+        let bob = try await Self.makeClient(username: "pb_\(suffix)")
+
+        let chatId = try await alice.api.createChat(kind: "direct", memberIds: [bob.userId], title: nil)
+        try await alice.engine.refreshSnapshot()
+        var hello = ContentPayload(kind: "text")
+        hello.text = "здравствуй"
+        try await alice.engine.enqueue(content: hello, chatId: chatId)
+        let opened = try await waitUntil(12) {
+            try await bob.db.read { dbc in
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'здравствуй'",
+                                 arguments: [chatId]) == 1
+            }
+        }
+        XCTAssertTrue(opened, "первое сообщение не дошло")
+        try await bob.api.acceptChat(chatId)
+
+        // Боб офлайн, Алиса пишет 300 сообщений
+        await bob.engine.stop()
+        let total = 300
+        for i in 1...total {
+            var m = ContentPayload(kind: "text")
+            m.text = "офлайн \(i)"
+            try await alice.engine.enqueue(content: m, chatId: chatId)
+        }
+        let allAcked = try await waitUntil(180) {
+            try await alice.db.read { dbc in
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND seq IS NOT NULL",
+                                 arguments: [chatId]) == total + 1
+            }
+        }
+        XCTAssertTrue(allAcked, "не все сообщения получили seq")
+
+        // Боб возвращается: догон крутится порциями, пока не закончится
+        let engine = await Self.restarted(bob)
+        let caughtUp = try await waitUntil(180) {
+            try await bob.db.read { dbc in
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ?",
+                                 arguments: [chatId]) == total + 1
+            }
+        }
+        XCTAssertTrue(caughtUp, "догон не довёз всю историю")
+
+        let state = try await bob.db.read { dbc -> (Int, Int, Int, Int, Int, Int) in
+            let distinct = try Int.fetchOne(dbc, sql: """
+                SELECT COUNT(DISTINCT seq) FROM message WHERE chatId = ? AND seq IS NOT NULL
+                """, arguments: [chatId])!
+            let minSeq = try Int.fetchOne(dbc, sql: "SELECT MIN(seq) FROM message WHERE chatId = ?",
+                                          arguments: [chatId])!
+            let maxSeq = try Int.fetchOne(dbc, sql: "SELECT MAX(seq) FROM message WHERE chatId = ?",
+                                          arguments: [chatId])!
+            let synced = try Int.fetchOne(dbc, sql: "SELECT syncedSeq FROM chat WHERE id = ?",
+                                          arguments: [chatId])!
+            let cursor = try Int.fetchOne(dbc, sql: "SELECT syncCursor FROM chat WHERE id = ?",
+                                          arguments: [chatId])!
+            let unreadable = try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingDecrypt")!
+                + Int.fetchOne(dbc, sql: """
+                    SELECT COUNT(*) FROM historyGap WHERE reason NOT IN ('service','sender_key')
+                    """, arguments: [])!
+            return (distinct, minSeq, maxSeq, synced, cursor, unreadable)
+        }
+        // ни дублей, ни дыр: seq идут подряд от первого до последнего
+        XCTAssertEqual(state.0, total + 1, "порядок или дедуп нарушены")
+        XCTAssertEqual(state.1, 1)
+        XCTAssertEqual(state.2, total + 1)
+        XCTAssertEqual(state.3, total + 1, "непрерывный префикс не дошёл до конца")
+        XCTAssertEqual(state.4, total + 1, "курсор догона не дошёл до конца журнала")
+        XCTAssertEqual(state.5, 0, "после догона остались нечитаемые")
+
+        await alice.engine.stop()
+        await engine.stop()
+    }
 }
