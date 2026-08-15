@@ -568,8 +568,6 @@ final class SystemCell: UICollectionViewCell {
         let t = msg.text ?? ""
         if t.hasPrefix("identity_changed:") {
             label.text = "Код безопасности собеседника изменился"
-        } else if t == "undecryptable" {
-            label.text = "Сообщение не может быть расшифровано на этом устройстве"
         } else {
             label.text = t
         }

@@ -216,6 +216,28 @@ public enum AppDatabase {
                 t.primaryKey(["chatId", "seq"])
             }
         }
+
+        m.registerMigration("v9-repair") { db in
+            // Every envelope this device could not read is kept: it is the only
+            // local copy, and a replay after the session is fixed has nothing to
+            // work from otherwise. The counters drive the sweep — how often a row
+            // is retried, when the sender is asked for a fresh copy, and when the
+            // envelope has outlived any use.
+            try db.alter(table: "pendingDecrypt") { t in
+                t.add(column: "reason", .text)
+                t.add(column: "attempts", .integer).notNull().defaults(to: 0)
+                t.add(column: "firstSeenAt", .double).notNull().defaults(to: 0)
+                t.add(column: "lastTriedAt", .double).notNull().defaults(to: 0)
+                t.add(column: "repairAttempts", .integer).notNull().defaults(to: 0)
+                t.add(column: "repairAskedAt", .double).notNull().defaults(to: 0)
+            }
+            // Sender key distribution is confirmed by the recipient. Until the
+            // confirmation arrives the address stays in `attemptedAt` and the
+            // chain is handed out again once the wait is over.
+            try db.alter(table: "senderKeyOut") { t in
+                t.add(column: "attemptedAt", .text).notNull().defaults(to: "{}")
+            }
+        }
         return m
     }
 }

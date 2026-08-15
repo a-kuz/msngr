@@ -181,12 +181,16 @@ final class CoreIntegrationTests: XCTestCase {
         }
         XCTAssertTrue(bGotReply, "переписка развалилась после встречной инициации")
 
-        // ни одного «нерасшифруемого» на обеих сторонах
+        // ни одного нечитаемого на обеих сторонах: ни отложенного конверта,
+        // ни записи о пропавшем seq
         for (name, c) in [("A", a), ("B", b)] {
             let bad = try await c.db.read { dbc in
-                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE kind = 'system' AND text LIKE 'undecryptable%'") ?? 0
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingDecrypt")! +
+                    Int.fetchOne(dbc, sql: """
+                        SELECT COUNT(*) FROM historyGap WHERE reason NOT IN ('service','sender_key')
+                        """)!
             }
-            XCTAssertEqual(bad, 0, "у \(name) есть нерасшифрованные сообщения")
+            XCTAssertEqual(bad, 0, "у \(name) есть нечитаемые сообщения")
         }
 
         await a.engine.stop()
@@ -320,6 +324,100 @@ final class CoreIntegrationTests: XCTestCase {
             }
         }
         XCTAssertTrue(caught, "offline-сообщения не доехали после reconnect")
+
+        await alice.engine.stop()
+        await bob.engine.stop()
+    }
+
+    /// Состояние сессии у получателя испорчено: ни один конверт отправителя
+    /// больше не открывается. Устройство чинит это само — просит копию, поднимает
+    /// сессию заново и ставит сообщение в ленту под исходным msgId, без дубля.
+    func testCorruptedSessionIsRepairedThroughSender() async throws {
+        guard await Self.serverUp() else {
+            throw XCTSkip("wrangler dev не запущен")
+        }
+        let suffix = String(UUID().uuidString.prefix(6)).lowercased().replacingOccurrences(of: "-", with: "x")
+        let alice = try await Self.makeClient(username: "ra_\(suffix)")
+        let bob = try await Self.makeClient(username: "rb_\(suffix)")
+
+        let chatId = try await alice.api.createChat(kind: "direct", memberIds: [bob.userId], title: nil)
+        try await alice.engine.refreshSnapshot()
+        var first = ContentPayload(kind: "text")
+        first.text = "до поломки"
+        try await alice.engine.enqueue(content: first, chatId: chatId)
+        let gotFirst = try await waitUntil {
+            try await bob.db.read { dbc in
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'до поломки'",
+                                 arguments: [chatId]) == 1
+            }
+        }
+        XCTAssertTrue(gotFirst, "первое сообщение не доехало")
+        // до принятия заявки ремонт молчит: он выдал бы автору, что получатель
+        // на месте. Дальше чат обычный
+        try await bob.api.acceptChat(chatId)
+        try await bob.engine.refreshSnapshot()
+
+        // состояние сессии Боба подменяется мусором: расшифровать нечем
+        try await bob.db.write { dbc in
+            try dbc.execute(sql: "UPDATE ratchetSession SET state = ?, archived = NULL",
+                            arguments: [Data(repeating: 0x7f, count: 48)])
+        }
+
+        var lost = ContentPayload(kind: "text")
+        lost.text = "после поломки"
+        try await alice.engine.enqueue(content: lost, chatId: chatId)
+        let recorded = try await waitUntil {
+            try await bob.db.read { dbc in
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingDecrypt WHERE chatId = ?",
+                                 arguments: [chatId]) == 1
+            }
+        }
+        XCTAssertTrue(recorded, "нечитаемый конверт не сохранён")
+        let keptEnvelope = try await bob.db.read { dbc in
+            (try Row.fetchOne(dbc, sql: "SELECT body FROM pendingDecrypt")?["body"] as Data?) ?? Data()
+        }
+        XCTAssertFalse(keptEnvelope.isEmpty, "конверт сохранён пустым — повторить нечем")
+
+        // срок ожидания ключа выдержан → проход просит копию у отправителя
+        try await bob.db.write { dbc in
+            try dbc.execute(sql: "UPDATE pendingDecrypt SET firstSeenAt = ?, lastTriedAt = 0",
+                            arguments: [Date().timeIntervalSince1970 - MessageRepair.repairGrace - 1])
+        }
+        await bob.engine.sweepUnreadable()
+
+        let repaired = try await waitUntil(15) {
+            try await bob.db.read { dbc in
+                try String.fetchOne(dbc, sql: "SELECT text FROM message WHERE chatId = ? AND text = 'после поломки'",
+                                    arguments: [chatId]) != nil
+            }
+        }
+        XCTAssertTrue(repaired, "сообщение не починилось")
+
+        // ровно одна строка на сообщение и ни одной записи о пропаже
+        let rows = try await bob.db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'после поломки'",
+                             arguments: [chatId])!
+        }
+        XCTAssertEqual(rows, 1, "починенное сообщение продублировалось")
+        let leftovers = try await bob.db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingDecrypt")! +
+                Int.fetchOne(dbc, sql: """
+                    SELECT COUNT(*) FROM historyGap WHERE reason NOT IN ('service','sender_key')
+                    """)!
+        }
+        XCTAssertEqual(leftovers, 0, "после починки остались следы пропажи")
+
+        // сессия поднята заново: следующее сообщение читается без ремонта
+        var after = ContentPayload(kind: "text")
+        after.text = "после починки"
+        try await alice.engine.enqueue(content: after, chatId: chatId)
+        let flows = try await waitUntil(10) {
+            try await bob.db.read { dbc in
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'после починки'",
+                                 arguments: [chatId]) == 1
+            }
+        }
+        XCTAssertTrue(flows, "переписка не восстановилась после ремонта")
 
         await alice.engine.stop()
         await bob.engine.stop()
