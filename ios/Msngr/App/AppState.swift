@@ -118,8 +118,10 @@ final class AppState: ObservableObject {
         // the container survives the account: a database owned by somebody else
         // means the device identity of this session is gone with it, so there is
         // nothing to resume — back to registration on clean storage
-        guard StorageOwnership.decision(owner: StorageOwnership.owner(at: storage.databaseURL),
-                                        expectedUserId: s.userId) == .keep else {
+        // storage without a marker predates it: the session names the owner, so
+        // it is stamped below rather than thrown away
+        if StorageOwnership.decision(owner: StorageOwnership.owner(at: storage.databaseURL),
+                                     expectedUserId: s.userId) == .wipe {
             MsngrLog.session.error("local storage belongs to another account, resetting to registration")
             await resetToRegistration()
             return
