@@ -278,6 +278,21 @@ public enum AppDatabase {
                 t.column("stamp", .integer).notNull().defaults(to: 0)
             }
         }
+        m.registerMigration("v13-feedOrderIndexes") { db in
+            // The two orderings the app reads a chat by. Both sort on an
+            // expression, so without an index on that same expression every
+            // read walks the whole chat and sorts it — and the feed is re-read
+            // on every commit, which turns a burst of incoming messages into
+            // quadratic work.
+            try db.execute(sql: """
+                CREATE INDEX message_on_chat_feedOrder
+                ON message(chatId, COALESCE(seq, 999999999) DESC, sentAt DESC)
+                """)
+            try db.execute(sql: """
+                CREATE INDEX message_on_chat_activity
+                ON message(chatId, COALESCE(serverTs, sentAt) DESC)
+                """)
+        }
         return m
     }
 }

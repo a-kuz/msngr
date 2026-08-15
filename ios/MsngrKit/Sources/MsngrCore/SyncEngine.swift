@@ -208,7 +208,43 @@ public actor SyncEngine {
             sessionRevokedStream.send(())
         case .frame(let data):
             guard let frame = try? JSONDecoder().decode(WSIncoming.self, from: data) else { return }
-            await apply(frame)
+            // frames are queued rather than applied here: the socket hands them
+            // over faster than the database takes them one at a time, and a
+            // queue is what lets a run of messages share a transaction
+            incoming.append(frame)
+            if !applyingIncoming {
+                Task { await self.drainIncoming() }
+            }
+        }
+    }
+
+    /// Frames received and not applied yet, in arrival order.
+    private var incoming: [WSIncoming] = []
+    private var applyingIncoming = false
+
+    /// Messages one transaction takes. Long enough that a burst pays for the
+    /// feed refresh once per group, short enough that the first message of a
+    /// quiet chat still lands immediately — the queue is normally empty and the
+    /// group is one frame.
+    static let incomingBatchSize = 200
+
+    /// Applies what the socket handed over, grouping the runs of message frames.
+    /// Everything else keeps its own turn, so the order frames arrived in is the
+    /// order they are applied in.
+    private func drainIncoming() async {
+        guard !applyingIncoming else { return }
+        applyingIncoming = true
+        defer { applyingIncoming = false }
+        while !incoming.isEmpty {
+            if incoming[0].t == "msg" {
+                var run: [WSIncoming] = []
+                while let next = incoming.first, next.t == "msg", run.count < Self.incomingBatchSize {
+                    run.append(incoming.removeFirst())
+                }
+                await applyIncomingBatch(run)
+            } else {
+                await apply(incoming.removeFirst())
+            }
         }
     }
 
@@ -287,7 +323,7 @@ public actor SyncEngine {
     func apply(_ f: WSIncoming) async {
         switch f.t {
         case "msg":
-            await applyIncomingMessage(f)
+            await applyIncomingBatch([f])
         case "sent":
             await applySentAck(f)
         case "receipt":
@@ -393,94 +429,174 @@ public actor SyncEngine {
         }
     }
 
-    private func applyIncomingMessage(_ f: WSIncoming) async {
-        guard let chatId = f.chatId, let msgId = f.msgId, let seq = f.seq,
-              let from = f.from, let fromDevice = f.fromDevice else { return }
+    /// An incoming message frame with the fields every path below needs.
+    private struct IncomingFrame {
+        let chatId: String, msgId: String, seq: Int
+        let from: String, fromDevice: String
+        let sentAt: Double, ts: Double
+        let body: JSONValue?
+        let isService: Bool
+    }
+
+    /// Applies a run of message frames.
+    ///
+    /// The rows of the run and the cursor moves they cause share one
+    /// transaction, and the delivery receipt for the run is one frame. A burst
+    /// therefore costs the feed one refresh per run instead of one per message,
+    /// which is what the database queue spends its time on.
+    ///
+    /// Plain content is what a run is made of. Anything else — a key
+    /// distribution, a repair, an envelope that did not open — may change what
+    /// the frames after it decrypt to, so it ends the run and is applied on its
+    /// own before the next one starts.
+    private func applyIncomingBatch(_ frames: [WSIncoming]) async {
+        let items: [IncomingFrame] = frames.compactMap { f in
+            guard let chatId = f.chatId, let msgId = f.msgId, let seq = f.seq,
+                  let from = f.from, let fromDevice = f.fromDevice else { return nil }
+            return IncomingFrame(chatId: chatId, msgId: msgId, seq: seq, from: from,
+                                 fromDevice: fromDevice, sentAt: f.sentAt ?? 0, ts: f.ts ?? 0,
+                                 body: f.body, isService: f.service == true)
+        }
+        guard !items.isEmpty else { return }
+        let chatIds = Set(items.map(\.chatId))
 
         // сообщение в неизвестный чат → мы пропустили создание чата, обновляем снапшот
-        let chatKnown = (try? await db.read { dbc in
-            try Bool.fetchOne(dbc, sql: "SELECT EXISTS(SELECT 1 FROM chat WHERE id = ?)", arguments: [chatId])
-        }) ?? false
-        if !chatKnown && !snapshotRefreshInFlight {
+        let knownChats = (try? await db.read { [chatIds] dbc in
+            try String.fetchSet(dbc, sql: """
+                SELECT id FROM chat WHERE id IN (\(databaseQuestionMarks(count: chatIds.count)))
+                """, arguments: StatementArguments([String](chatIds)))
+        }) ?? []
+        if !chatIds.subtracting(knownChats).isEmpty, !snapshotRefreshInFlight {
             snapshotRefreshInFlight = true
             try? await refreshSnapshot()
             snapshotRefreshInFlight = false
         }
         // сообщение от пользователя без профиля в БД (свежий участник) —
         // дотянуть, чтобы имя отправителя отобразилось сразу
-        await fetchMissingUsers([from])
+        await fetchMissingUsers([String](Set(items.map(\.from))))
 
         // моё собственное эхо с другого устройства или ack-путь — дедуп по msgId
-        let exists = (try? await db.read { dbc in
-            try Bool.fetchOne(dbc, sql: "SELECT EXISTS(SELECT 1 FROM message WHERE msgId = ?)", arguments: [msgId])
-        }) ?? false
+        let msgIds = items.map(\.msgId)
+        let stored = (try? await db.read { dbc in
+            try String.fetchSet(dbc, sql: """
+                SELECT msgId FROM message WHERE msgId IN (\(databaseQuestionMarks(count: msgIds.count)))
+                """, arguments: StatementArguments(msgIds))
+        }) ?? []
 
-        if !exists, let body = f.body {
-            let result: DecryptedIncoming
-            if from == ownUserId && fromDevice == ownDeviceId {
-                result = .undecryptable(reason: "own_echo") // своё сообщение уже в БД по clientMsgId
-            } else {
-                result = (try? e2ee.decrypt(envelopeJSON: body, chatId: chatId,
-                                            fromUserId: from, fromDeviceId: fromDevice))
-                    ?? .undecryptable(reason: "exception")
-            }
-            if case .undecryptable(let reason) = result {
-                await recordUnreadable(reason: reason, chatId: chatId, msgId: msgId, seq: seq,
-                                       from: from, fromDevice: fromDevice,
-                                       sentAt: f.sentAt ?? 0, ts: f.ts ?? 0, body: body)
-            } else {
-                await storeIncoming(result, chatId: chatId, msgId: msgId, seq: seq, from: from,
-                                    fromDevice: fromDevice, sentAt: f.sentAt ?? 0, ts: f.ts ?? 0)
-                // получили контент/ключ → пробуем переиграть отложенные этого чата
-                await retryPending(chatId: chatId)
+        var content: [(IncomingFrame, ContentPayload)] = []
+        var cursors: [IncomingFrame] = []
+        var announce: [IncomingFrame] = []
+        /// chats this run put something into: their deferred envelopes get a try
+        var touched: Set<String> = []
+        var replayed: Set<String> = []
+
+        func flush() async {
+            guard !content.isEmpty || !cursors.isEmpty else { return }
+            let rows = content, moves = cursors
+            content = []
+            cursors = []
+            try? await db.write { [ownUserId] dbc in
+                for (item, payload) in rows {
+                    try SyncEngine.applyContent(dbc, payload, chatId: item.chatId, msgId: item.msgId,
+                                                seq: item.seq, from: item.from, sentAt: item.sentAt,
+                                                ts: item.ts, ownUserId: ownUserId)
+                }
+                for item in moves {
+                    try SyncEngine.advanceChat(dbc, chatId: item.chatId, seq: item.seq,
+                                               isOwn: item.from == ownUserId, isService: item.isService)
+                }
             }
         }
 
-        // курсор двигаем только по непрерывному префиксу (иначе потеряем историю в дыре);
-        // lastSeq — серверный максимум; своё сообщение поднимает myReadUpTo;
-        // непрочитанное = lastSeq - myReadUpTo (производное, не ручной инкремент)
-        let isOwn = from == ownUserId
-        let isService = f.service == true
-        try? await db.write { dbc in
-            if isService {
-                // служебный фрейм (skd/reaction/edit): занимает seq, но unread не растит;
-                // в полностью прочитанном чате myReadUpTo поглощает seq, чтобы производный
-                // unread следующих сообщений не считал служебный фрейм непрочитанным
-                try dbc.execute(
-                    sql: """
-                    UPDATE chat SET
-                      lastSeq = MAX(lastSeq, ?),
-                      syncedSeq = CASE WHEN ? = syncedSeq + 1 THEN ? ELSE syncedSeq END,
-                      myReadUpTo = CASE WHEN ? OR myReadUpTo >= ? - 1 THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END
-                    WHERE id = ?
-                    """,
-                    arguments: [seq, seq, seq, isOwn, seq, seq, chatId])
-            } else {
-                try dbc.execute(
-                    sql: """
-                    UPDATE chat SET
-                      lastSeq = MAX(lastSeq, ?),
-                      syncedSeq = CASE WHEN ? = syncedSeq + 1 THEN ? ELSE syncedSeq END,
-                      myReadUpTo = CASE WHEN ? THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END,
-                      unreadCount = MAX(0, MAX(lastSeq, ?) - CASE WHEN ? THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END)
-                    WHERE id = ?
-                    """,
-                    arguments: [seq, seq, seq, isOwn, seq, seq, isOwn, seq, chatId])
+        for item in items {
+            let fresh = !stored.contains(item.msgId)
+            if fresh, let body = item.body {
+                let result: DecryptedIncoming
+                if item.from == ownUserId && item.fromDevice == ownDeviceId {
+                    result = .undecryptable(reason: "own_echo") // своё сообщение уже в БД по clientMsgId
+                } else {
+                    result = (try? e2ee.decrypt(envelopeJSON: body, chatId: item.chatId,
+                                                fromUserId: item.from, fromDeviceId: item.fromDevice))
+                        ?? .undecryptable(reason: "exception")
+                }
+                switch result {
+                case .content(let payload) where !Self.repairKinds.contains(payload.kind):
+                    content.append((item, payload))
+                    touched.insert(item.chatId)
+                case .undecryptable(let reason):
+                    await flush()
+                    await recordUnreadable(reason: reason, chatId: item.chatId, msgId: item.msgId,
+                                           seq: item.seq, from: item.from, fromDevice: item.fromDevice,
+                                           sentAt: item.sentAt, ts: item.ts, body: body)
+                default:
+                    await flush()
+                    await storeIncoming(result, chatId: item.chatId, msgId: item.msgId, seq: item.seq,
+                                        from: item.from, fromDevice: item.fromDevice,
+                                        sentAt: item.sentAt, ts: item.ts)
+                    // получили контент/ключ → пробуем переиграть отложенные этого чата
+                    await retryPending(chatId: item.chatId)
+                    replayed.insert(item.chatId)
+                }
             }
+            // курсор двигаем только по непрерывному префиксу (иначе потеряем историю в дыре);
+            // lastSeq — серверный максимум; своё сообщение поднимает myReadUpTo;
+            // непрочитанное = lastSeq - myReadUpTo (производное, не ручной инкремент)
+            cursors.append(item)
+            if fresh, item.body != nil { announce.append(item) }
         }
-        // recv-ack немедленно, по каждому фрейму (delivered-галочки автору);
+        await flush()
+        // получили контент → пробуем переиграть отложенные этих чатов
+        for chatId in touched where !replayed.contains(chatId) {
+            await retryPending(chatId: chatId)
+        }
+
+        // recv-ack за всю порцию одним фреймом (delivered-галочки автору);
         // по заявке до принятия не шлём: получатель невидим автору
-        let isRequestChat = (try? await db.read { dbc in
-            try Bool.fetchOne(dbc, sql: "SELECT isRequest FROM chat WHERE id = ?", arguments: [chatId]) ?? false
-        }) ?? false
-        if from != ownUserId, !isRequestChat {
-            try? await ws.send(.recv(chatId: chatId, seqs: [seq]))
+        for chatId in chatIds {
+            let seqs = items.filter { $0.chatId == chatId && $0.from != ownUserId }.map(\.seq)
+            guard !seqs.isEmpty else { continue }
+            let isRequestChat = (try? await db.read { dbc in
+                try Bool.fetchOne(dbc, sql: "SELECT isRequest FROM chat WHERE id = ?",
+                                  arguments: [chatId]) ?? false
+            }) ?? false
+            guard !isRequestChat else { continue }
+            try? await ws.send(.recv(chatId: chatId, seqs: seqs))
         }
         // событие для in-app уведомления — после записи в БД (превью уже читается)
-        if !exists, f.body != nil {
+        for item in announce {
             incomingMessageStream.send(IncomingMessage(
-                chatId: chatId, msgId: msgId, fromUserId: from,
-                isService: isService, isOwn: isOwn))
+                chatId: item.chatId, msgId: item.msgId, fromUserId: item.from,
+                isService: item.isService, isOwn: item.from == ownUserId))
+        }
+    }
+
+    /// Moves a chat's cursors for one applied frame.
+    static func advanceChat(_ dbc: GRDB.Database, chatId: String, seq: Int,
+                            isOwn: Bool, isService: Bool) throws {
+        if isService {
+            // служебный фрейм (skd/reaction/edit): занимает seq, но unread не растит;
+            // в полностью прочитанном чате myReadUpTo поглощает seq, чтобы производный
+            // unread следующих сообщений не считал служебный фрейм непрочитанным
+            try dbc.execute(
+                sql: """
+                UPDATE chat SET
+                  lastSeq = MAX(lastSeq, ?),
+                  syncedSeq = CASE WHEN ? = syncedSeq + 1 THEN ? ELSE syncedSeq END,
+                  myReadUpTo = CASE WHEN ? OR myReadUpTo >= ? - 1 THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END
+                WHERE id = ?
+                """,
+                arguments: [seq, seq, seq, isOwn, seq, seq, chatId])
+        } else {
+            try dbc.execute(
+                sql: """
+                UPDATE chat SET
+                  lastSeq = MAX(lastSeq, ?),
+                  syncedSeq = CASE WHEN ? = syncedSeq + 1 THEN ? ELSE syncedSeq END,
+                  myReadUpTo = CASE WHEN ? THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END,
+                  unreadCount = MAX(0, MAX(lastSeq, ?) - CASE WHEN ? THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END)
+                WHERE id = ?
+                """,
+                arguments: [seq, seq, seq, isOwn, seq, seq, isOwn, seq, chatId])
         }
     }
 
@@ -885,53 +1001,60 @@ public actor SyncEngine {
     func applyContent(_ content: ContentPayload, chatId: String, msgId: String,
                       seq: Int, from: String, sentAt: Double, ts: Double) async {
         try? await db.write { [ownUserId] dbc in
-            switch content.kind {
-            case "edit":
-                if let target = content.targetMsgId {
-                    try dbc.execute(
-                        sql: "UPDATE message SET text = ?, edited = 1 WHERE chatId = ? AND (msgId = ? OR id = ?)",
-                        arguments: [content.text, chatId, target, target])
-                    // оригинала ещё нет (ждёт ключа в pendingDecrypt) —
-                    // правка применится при появлении строки
-                    if dbc.changesCount == 0 {
-                        try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetMsgId: target,
-                                                          kind: "edit", fromUserId: from,
-                                                          payload: SyncEngine.payloadJSON(content), seq: seq)
-                    }
+            try SyncEngine.applyContent(dbc, content, chatId: chatId, msgId: msgId, seq: seq,
+                                        from: from, sentAt: sentAt, ts: ts, ownUserId: ownUserId)
+        }
+    }
+
+    static func applyContent(_ dbc: GRDB.Database, _ content: ContentPayload, chatId: String,
+                             msgId: String, seq: Int, from: String, sentAt: Double, ts: Double,
+                             ownUserId: String) throws {
+        switch content.kind {
+        case "edit":
+            if let target = content.targetMsgId {
+                try dbc.execute(
+                    sql: "UPDATE message SET text = ?, edited = 1 WHERE chatId = ? AND (msgId = ? OR id = ?)",
+                    arguments: [content.text, chatId, target, target])
+                // оригинала ещё нет (ждёт ключа в pendingDecrypt) —
+                // правка применится при появлении строки
+                if dbc.changesCount == 0 {
+                    try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetMsgId: target,
+                                                      kind: "edit", fromUserId: from,
+                                                      payload: SyncEngine.payloadJSON(content), seq: seq)
                 }
-            case "reaction":
-                if let target = content.targetMsgId {
-                    let found = try SyncEngine.applyReaction(dbc, chatId: chatId, targetMsgId: target,
-                                                             userId: from, emoji: content.emoji)
-                    if !found {
-                        try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetMsgId: target,
-                                                          kind: "reaction", fromUserId: from,
-                                                          payload: SyncEngine.payloadJSON(content), seq: seq)
-                    }
-                }
-            case "disappearing":
-                try dbc.execute(sql: "UPDATE chat SET ttlSeconds = ? WHERE id = ?",
-                                arguments: [content.ttlSeconds ?? 0, chatId])
-            default:
-                var msg = Message(id: msgId, chatId: chatId, fromUserId: from, sentAt: sentAt,
-                                  kind: MessageKind(rawValue: content.kind) ?? .text,
-                                  text: content.text, status: .sent, isOutgoing: from == ownUserId)
-                msg.msgId = msgId
-                msg.seq = seq
-                msg.serverTs = ts
-                msg.media = content.media
-                msg.album = content.album
-                msg.replyTo = content.replyTo
-                msg.forward = content.fwd
-                let ttl = try Int.fetchOne(dbc, sql: "SELECT ttlSeconds FROM chat WHERE id = ?", arguments: [chatId]) ?? 0
-                if ttl > 0 { msg.expiresAt = Date().timeIntervalSince1970 + Double(ttl) }
-                try msg.save(dbc)
-                // edit/reaction/deleted, пришедшие раньше этого сообщения, лежат в буфере
-                try SyncEngine.applyBuffered(dbc, chatId: chatId, msgId: msgId)
-                // unreadCount пересчитывается в applyIncomingMessage как lastSeq - myReadUpTo
-                try dbc.execute(sql: "UPDATE chat SET lastActivityAt = ? WHERE id = ?",
-                                arguments: [max(ts, sentAt), chatId])
             }
+        case "reaction":
+            if let target = content.targetMsgId {
+                let found = try SyncEngine.applyReaction(dbc, chatId: chatId, targetMsgId: target,
+                                                         userId: from, emoji: content.emoji)
+                if !found {
+                    try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetMsgId: target,
+                                                      kind: "reaction", fromUserId: from,
+                                                      payload: SyncEngine.payloadJSON(content), seq: seq)
+                }
+            }
+        case "disappearing":
+            try dbc.execute(sql: "UPDATE chat SET ttlSeconds = ? WHERE id = ?",
+                            arguments: [content.ttlSeconds ?? 0, chatId])
+        default:
+            var msg = Message(id: msgId, chatId: chatId, fromUserId: from, sentAt: sentAt,
+                              kind: MessageKind(rawValue: content.kind) ?? .text,
+                              text: content.text, status: .sent, isOutgoing: from == ownUserId)
+            msg.msgId = msgId
+            msg.seq = seq
+            msg.serverTs = ts
+            msg.media = content.media
+            msg.album = content.album
+            msg.replyTo = content.replyTo
+            msg.forward = content.fwd
+            let ttl = try Int.fetchOne(dbc, sql: "SELECT ttlSeconds FROM chat WHERE id = ?", arguments: [chatId]) ?? 0
+            if ttl > 0 { msg.expiresAt = Date().timeIntervalSince1970 + Double(ttl) }
+            try msg.save(dbc)
+            // edit/reaction/deleted, пришедшие раньше этого сообщения, лежат в буфере
+            try SyncEngine.applyBuffered(dbc, chatId: chatId, msgId: msgId)
+            // unreadCount пересчитывается в advanceChat как lastSeq - myReadUpTo
+            try dbc.execute(sql: "UPDATE chat SET lastActivityAt = ? WHERE id = ?",
+                            arguments: [max(ts, sentAt), chatId])
         }
     }
 
