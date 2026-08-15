@@ -56,16 +56,13 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
         bubbleView.addSubview(textView)
 
-        nameLabel.font = BubbleLayout.nameFont
         bubbleView.addSubview(nameLabel)
 
-        forwardLabel.font = .italicSystemFont(ofSize: 13)
         forwardLabel.textColor = .secondaryLabel
         bubbleView.addSubview(forwardLabel)
 
         bubbleView.addSubview(replyBar)
 
-        timeLabel.font = BubbleLayout.timeFont
         // время прижато к правому краю своего фрейма: запас ширины из замера
         // не оставляет рваного зазора справа
         timeLabel.textAlignment = .right
@@ -226,6 +223,12 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         self.msg = msg
         self.plan = plan
 
+        // Fonts are applied here rather than in init: a cell sitting in the
+        // reuse pool gets no trait callback when the text size changes.
+        nameLabel.font = BubbleLayout.nameFont
+        forwardLabel.font = BubbleLayout.forwardFont
+        timeLabel.font = BubbleLayout.timeFont
+
         bubbleView.frame = plan.bubbleFrame
         bubbleView.image = BubbleBackground.image(outgoing: plan.isOutgoing, mediaOnly: plan.statusOnMedia)
 
@@ -307,13 +310,18 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         statusBackdrop.isHidden = !plan.statusOnMedia
         if plan.statusOnMedia {
             statusBackdrop.frame = plan.statusFrame.insetBy(dx: -6, dy: -1)
+            statusBackdrop.layer.cornerRadius = statusBackdrop.bounds.height / 2
         }
         var timeFrame = plan.statusFrame
         if plan.isOutgoing {
-            timeFrame.size.width -= 20
+            // ticks occupy the tail of the status frame that the plan reserved
+            let tickW = BubbleLayout.tickWidth
+            let tickH = tickW * 13 / 18
+            timeFrame.size.width -= tickW
             tickView.isHidden = false
-            tickView.frame = CGRect(x: plan.statusFrame.maxX - 19, y: plan.statusFrame.minY + 1,
-                                    width: 18, height: 13)
+            tickView.frame = CGRect(x: plan.statusFrame.maxX - tickW + 1,
+                                    y: plan.statusFrame.midY - tickH / 2,
+                                    width: tickW - 2, height: tickH)
             tickView.image = Self.tickImage(msg.status)
             tickView.tintColor = plan.statusOnMedia ? .white
                 : (msg.status == .read ? UIColor(Theme.outgoingTickRead) : UIColor(Theme.outgoingMeta))
@@ -654,9 +662,7 @@ final class ReplyStripView: UIView {
         super.init(frame: frame)
         bar.backgroundColor = UIColor(Theme.accent)
         bar.layer.cornerRadius = 1.5
-        authorLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         authorLabel.textColor = UIColor(Theme.accent)
-        textLabel.font = .systemFont(ofSize: 13)
         textLabel.textColor = .secondaryLabel
         addSubview(bar)
         addSubview(authorLabel)
@@ -666,6 +672,8 @@ final class ReplyStripView: UIView {
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(author: String, text: String, outgoing: Bool) {
+        authorLabel.font = Theme.Text.replyAuthor.uiFont
+        textLabel.font = Theme.Text.replyText.uiFont
         authorLabel.text = author
         textLabel.text = text
         // на тёмном исходящем баббле акцентные цвета нечитаемы
@@ -676,9 +684,12 @@ final class ReplyStripView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        // the two lines split the strip by their own line heights
+        let authorH = ceil(authorLabel.font.lineHeight)
         bar.frame = CGRect(x: 0, y: 2, width: 3, height: bounds.height - 4)
-        authorLabel.frame = CGRect(x: 9, y: 2, width: bounds.width - 9, height: 16)
-        textLabel.frame = CGRect(x: 9, y: 18, width: bounds.width - 9, height: 16)
+        authorLabel.frame = CGRect(x: 9, y: 2, width: bounds.width - 9, height: authorH)
+        textLabel.frame = CGRect(x: 9, y: 2 + authorH, width: bounds.width - 9,
+                                 height: max(0, bounds.height - 4 - authorH))
     }
 }
 
@@ -689,8 +700,6 @@ final class ReactionCapsuleView: UIControl {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        layer.cornerRadius = 13
-        label.font = .systemFont(ofSize: 14)
         label.textAlignment = .center
         addSubview(label)
         addTarget(self, action: #selector(tapped), for: .touchUpInside)
@@ -700,6 +709,7 @@ final class ReactionCapsuleView: UIControl {
 
     func configure(emoji: String, count: Int, mine: Bool, outgoing: Bool, animateIn: Bool) {
         emojiKey = emoji
+        label.font = Theme.Text.reaction.uiFont
         label.text = count > 1 ? "\(emoji) \(count)" : emoji
         // капсула держится палитры баббла; своя реакция выделена насыщенной заливкой
         if outgoing {
@@ -730,6 +740,7 @@ final class ReactionCapsuleView: UIControl {
     override func layoutSubviews() {
         super.layoutSubviews()
         label.frame = bounds
+        layer.cornerRadius = bounds.height / 2
     }
 
     @objc private func tapped() {
