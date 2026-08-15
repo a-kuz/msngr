@@ -43,6 +43,10 @@ struct ChatInfoView: View {
     @State private var showLeaveConfirm = false
     @State private var avatarItem: PhotosPickerItem?
     @State private var savingSettings = false
+    #if DEBUG
+    @State var seeding = false
+    @State var seedSent = 0
+    #endif
 
     private var isGroup: Bool { model.chat?.kind == .group }
     private var myRole: String? { rolesModel.roles[model.ownUserId] }
@@ -180,6 +184,9 @@ struct ChatInfoView: View {
                     }
                 }
             }
+            #if DEBUG
+            seedSection
+            #endif
         }
         .navigationTitle(isGroup ? "Группа" : "Профиль")
         .navigationBarTitleDisplayMode(.inline)
@@ -404,6 +411,49 @@ struct AddMembersView: View {
         }
     }
 }
+
+#if DEBUG
+/// Test data: sends messages through the regular path (real encryption, outbox,
+/// server), so a large chat exercises the API the same way a person would.
+extension ChatInfoView {
+    var seedSection: some View {
+        Section("Тестовые данные") {
+            ForEach([100, 1_000, 20_000], id: \.self) { count in
+                Button("Отправить \(count) сообщений") { seed(count) }
+                    .disabled(seeding)
+            }
+            if seeding {
+                HStack {
+                    ProgressView()
+                    Text("Отправлено \(seedSent)")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    func seed(_ count: Int) {
+        seeding = true
+        seedSent = 0
+        let chatId = model.chatId
+        Task {
+            for i in 1...count {
+                var content = ContentPayload(kind: "text")
+                content.text = "Test message \(i) of \(count)"
+                try? await app.engine?.enqueue(content: content, chatId: chatId)
+                if i % 50 == 0 {
+                    seedSent = i
+                    // outbox drains on its own; the pause keeps the queue from
+                    // outrunning the socket on large runs
+                    try? await Task.sleep(nanoseconds: 20_000_000)
+                }
+            }
+            seedSent = count
+            seeding = false
+        }
+    }
+}
+#endif
 
 extension String {
     func chunked(_ size: Int) -> [String] {
