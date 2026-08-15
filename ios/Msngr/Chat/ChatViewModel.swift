@@ -7,7 +7,10 @@ import MsngrCore
 /// tightGap — маленький зазор сверху (продолжение серии того же автора выше на экране);
 /// showTail — хвостик баббла (последний в серии, ниже нет своего сообщения).
 enum ChatFeedItem: Identifiable, Equatable {
-    case message(Message, tightGap: Bool, showTail: Bool, showName: Bool, authorName: String?)
+    /// replyAuthorName — имя автора цитируемого сообщения («Вы» для своих),
+    /// nil у сообщений без цитаты.
+    case message(Message, tightGap: Bool, showTail: Bool, showName: Bool, authorName: String?,
+                 replyAuthorName: String? = nil)
     /// id уникален в пределах ленты (label может повторяться при немонотонном sentAt)
     case dateSeparator(id: String, label: String)
     /// плашка «N непрочитанных сообщений» над первым непрочитанным;
@@ -16,7 +19,7 @@ enum ChatFeedItem: Identifiable, Equatable {
 
     var id: String {
         switch self {
-        case .message(let m, _, _, _, _): return m.id
+        case .message(let m, _, _, _, _, _): return m.id
         case .dateSeparator(let id, _): return id
         case .unreadMarker(let id, _): return id
         }
@@ -89,7 +92,7 @@ final class ChatViewModel: ObservableObject {
                 self.peer = users.first { $0.id != ownId }
                 self.updateUnreadMarker(chat: chat, msgs: msgs)
                 self.lastMsgs = msgs
-                self.feed = Self.buildFeed(msgs, members: users, unreadMarker: self.markerFeedParam,
+                self.feed = Self.buildFeed(msgs, members: users, ownId: ownId, unreadMarker: self.markerFeedParam,
                                            contentHidden: self.contentHidden)
                 if let pinId = chat?.pinnedMsgId, !self.contentHidden {
                     self.pinnedMessage = msgs.first { $0.msgId == pinId }
@@ -191,7 +194,7 @@ final class ChatViewModel: ObservableObject {
 
     /// Перестройка ленты из последнего снапшота при изменении состояния плашки.
     private func rebuildFeed() {
-        feed = Self.buildFeed(lastMsgs, members: members, unreadMarker: markerFeedParam,
+        feed = Self.buildFeed(lastMsgs, members: members, ownId: ownUserId, unreadMarker: markerFeedParam,
                               contentHidden: contentHidden)
     }
 
@@ -225,7 +228,7 @@ final class ChatViewModel: ObservableObject {
     /// Группировка бабблов + дата-разделители + плашка непрочитанных
     /// (лента инвертирована). У чата со скрытым содержимым (заявка до принятия)
     /// лента пустая: вместо неё экран показывает карточку заявки.
-    static func buildFeed(_ msgs: [Message], members: [User],
+    static func buildFeed(_ msgs: [Message], members: [User], ownId: String = "",
                           unreadMarker: (anchorSeq: Int, count: Int)? = nil,
                           contentHidden: Bool = false) -> [ChatFeedItem] {
         guard !contentHidden else { return [] }
@@ -233,6 +236,11 @@ final class ChatViewModel: ObservableObject {
         let cal = Calendar.current
         let nameById = Dictionary(uniqueKeysWithValues: members.map { ($0.id, $0.displayName) })
         let isGroupChat = members.count > 2
+
+        // автор цитируемого сообщения: «Вы» для своих, имя из участников иначе
+        func replyAuthorName(_ reply: ReplyPreview) -> String {
+            reply.authorId == ownId ? "Вы" : (nameById[reply.authorId] ?? "?")
+        }
 
         func sameSeries(_ a: Message, _ b: Message) -> Bool {
             a.fromUserId == b.fromUserId && abs(a.sentAt - b.sentAt) < 60
@@ -255,7 +263,8 @@ final class ChatViewModel: ObservableObject {
             let showName = isGroupChat && !msg.isOutgoing && firstInSeries && msg.kind != .system
             out.append(.message(msg, tightGap: tightGap, showTail: showTail,
                                 showName: showName,
-                                authorName: nameById[msg.fromUserId] ?? "?"))
+                                authorName: nameById[msg.fromUserId] ?? "?",
+                                replyAuthorName: msg.replyTo.map(replyAuthorName)))
             let next = older
 
             // плашка непрочитанных — над первым сообщением с seq >= якоря
