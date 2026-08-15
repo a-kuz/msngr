@@ -18,6 +18,10 @@ final class MessageTextView: UIView {
         backgroundColor = .clear
         isOpaque = false
         contentMode = .redraw
+        // TextKit draws the glyphs directly in draw(_:), so without this the
+        // message body is invisible to VoiceOver and UI testing
+        isAccessibilityElement = true
+        accessibilityTraits = .staticText
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -36,6 +40,7 @@ final class MessageTextView: UIView {
         }
         self.codeBackground = codeBackground
         storage.setAttributedString(mutable)
+        accessibilityLabel = mutable.string
         applyContainerWidth()
         setNeedsDisplay()
     }
