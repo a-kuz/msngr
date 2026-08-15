@@ -51,6 +51,9 @@ final class ChatViewModel: ObservableObject {
     /// Режим мультивыбора: чекбоксы у бабблов, панель действий вместо поля ввода.
     @Published var selecting = false
     @Published var selection = MessageSelection()
+    /// Внизу вместо панели действий — подтверждение удаления выбранного.
+    /// Сообщения при этом видны и к выбору можно добавить ещё.
+    @Published var confirmingDelete = false
     /// Сообщение не попало в очередь отправки: показывается алертом, иначе
     /// набранный текст или вложение исчезли бы молча.
     @Published var sendFailure: String?
@@ -501,10 +504,6 @@ final class ChatViewModel: ObservableObject {
         Haptics.medium()
     }
 
-    func delete(_ msg: Message, forAll: Bool) {
-        Task { await app.engine.deleteMessages(chatId: chatId, msgIds: [msg.msgId ?? msg.id], forAll: forAll) }
-    }
-
     // MARK: - Мультивыбор
 
     /// Выбранные сообщения в порядке ленты (сверху — самое новое).
@@ -512,20 +511,26 @@ final class ChatViewModel: ObservableObject {
 
     var canDeleteSelectedForAll: Bool { MessageSelection.canDeleteForAll(selectedMessages) }
 
-    func beginSelection(with msg: Message) {
+    /// confirmingDelete — вход сразу к подтверждению удаления: сообщение
+    /// выбрано, внизу два действия, а не всплывающее меню поверх самого баббла.
+    func beginSelection(with msg: Message, confirmingDelete: Bool = false) {
         selection.clear()
         selection.select(msg)
         selecting = true
+        self.confirmingDelete = confirmingDelete
         Haptics.light()
     }
 
     func toggleSelection(_ msg: Message) {
         selection.toggle(msg)
+        // выбор опустел — подтверждать нечего
+        if selection.isEmpty { confirmingDelete = false }
         Haptics.light()
     }
 
     func endSelection() {
         selecting = false
+        confirmingDelete = false
         selection.clear()
     }
 
