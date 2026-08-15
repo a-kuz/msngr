@@ -30,7 +30,12 @@ final class SmokeTests: XCTestCase {
             displayName.typeText("UI Tester")
             app.buttons["reg.submit"].tap()
         }
-        XCTAssertTrue(app.staticTexts["Чаты"].waitForExistence(timeout: 10), "чат-лист не открылся")
+        // ждём сам список, а не заголовок навигации: заголовка в дереве
+        // доступности нет, пока список пуст и его закрывает пустое состояние.
+        // Регистрация генерирует ключи, на симуляторе это занимает секунды
+        XCTAssertTrue(app.otherElements["chatlist.root"].waitForExistence(timeout: 30)
+                        || app.staticTexts["Чаты"].exists,
+                      "чат-лист не открылся")
     }
 
     /// Открывает чат с akuz: из списка, либо через поиск нового чата.
