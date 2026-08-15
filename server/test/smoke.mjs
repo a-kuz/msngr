@@ -878,6 +878,9 @@ async function fanoutState() {
 await fault(2); // головное задание застревает на двух повторах
 const Q = 6;
 for (let i = 0; i < Q; i++) sendTo(`cm-q${i}`);
+// ack приходит уже после того, как рассылка встала в очередь: без ожидания
+// состояние очереди спрашивается раньше, чем в ней появляется первое задание
+await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === `cm-q${Q - 1}`);
 const qState = await fanoutState();
 check("fanout is queued, not inline", qState.ok && qState.pending > 0, JSON.stringify(qState));
 
