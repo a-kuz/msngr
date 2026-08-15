@@ -1,5 +1,30 @@
 import Foundation
 
+/// Versions this build speaks. Both travel with the data they describe: the
+/// protocol version in the socket upgrade, the envelope version inside every
+/// E2E envelope. Neither promises compatibility (see docs/PROCESS.md) — they
+/// are what turns a mismatch into a state the app can name instead of a
+/// silence or a crash.
+public enum MsngrProtocol {
+    /// Wire protocol of the socket. The server refuses an upgrade below its own
+    /// floor, and the app says it has to be updated.
+    public static let version = 1
+
+    /// Highest E2E envelope format this build can open. An envelope above it is
+    /// unreadable here, and no repair round changes that.
+    public static let envelopeVersion = 1
+
+    /// The socket URL with this build's version on it.
+    public static func versioned(_ url: URL) -> URL {
+        guard var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+        var items = comps.queryItems ?? []
+        items.removeAll { $0.name == "v" }
+        items.append(URLQueryItem(name: "v", value: String(version)))
+        comps.queryItems = items
+        return comps.url ?? url
+    }
+}
+
 /// Зеркало серверного протокола (docs/protocol.md).
 public enum WSOutgoing {
     /// весь известный клиенту мир: чаты, которых нет в курсорах, сервер
@@ -44,7 +69,7 @@ public enum WSOutgoing {
 /// E2E-конверт. pw: per-device ciphertext'ы; skm: sender-key message;
 /// skd вложен в pw (раздача sender key — обычное pairwise-сообщение).
 public struct Envelope: Codable {
-    public var v: Int = 1
+    public var v: Int = MsngrProtocol.envelopeVersion
     public var mode: String            // "pw" | "skm"
     public var msgs: [String: PairwiseBox]?   // "userId/deviceId" -> box
     public var c: String?              // skm ciphertext b64

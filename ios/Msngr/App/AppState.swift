@@ -3,6 +3,18 @@ import GRDB
 import MsngrCore
 import LocalAuthentication
 
+/// What this build has run into that a newer one handles. Both endings look the
+/// same to the user — the app is behind — but only one of them has an action
+/// that changes anything.
+enum OutdatedBuild {
+    /// The server no longer serves this build's protocol version, and the
+    /// reconnect loop has stopped.
+    case protocolRefused
+    /// The database on the device was written by a newer build, so this one
+    /// leaves it closed rather than migrating on top of it.
+    case storageAhead
+}
+
 struct Session: Codable {
     var userId: String
     var deviceId: String
@@ -32,6 +44,8 @@ final class AppState: ObservableObject {
     /// устройство отключено от аккаунта с другого устройства: поверх всего
     /// показывается экран «Сессия завершена»
     @Published var sessionRevoked = false
+    /// this build is behind what it has to work with; the screen states it
+    @Published var outdated: OutdatedBuild?
 
     private(set) var db: DatabaseQueue!
     private(set) var api: APIClient!
@@ -95,6 +109,8 @@ final class AppState: ObservableObject {
     func resetToRegistration() async {
         revokedTask?.cancel()
         revokedTask = nil
+        outdatedTask?.cancel()
+        outdatedTask = nil
         if let engine { await engine.stop() }
         NotificationCoordinator.shared.detach()
         media?.clearCache()
@@ -155,6 +171,7 @@ final class AppState: ObservableObject {
                                 ownUserId: s.userId, ownDeviceId: s.deviceId)
             await engine.start()
             observeSessionRevoked(engine)
+            observeProtocolOutdated(engine)
             ready = true
             objectWillChange.send()
             NotificationCoordinator.shared.attach(db: db, engine: engine, ownUserId: s.userId)
@@ -168,9 +185,37 @@ final class AppState: ObservableObject {
             #else
             UIApplication.shared.registerForRemoteNotifications()
             #endif
+        } catch AppDatabaseError.schemaFromNewerVersion(let applied) {
+            // storage written by a newer build: it is left as it is, and the
+            // screen offers the only thing this build can do about it
+            MsngrLog.session.error(
+                "storage is ahead of this build: \(applied.joined(separator: ","), privacy: .public)")
+            db = nil
+            outdated = .storageAhead
         } catch {
             assertionFailure("bootstrap failed: \(error)")
         }
+    }
+
+    private var outdatedTask: Task<Void, Never>?
+
+    /// The server no longer serves this build's protocol version: there will be
+    /// no reconnect, so the outdated-build screen takes over.
+    private func observeProtocolOutdated(_ engine: SyncEngine) {
+        outdatedTask?.cancel()
+        outdatedTask = Task { [weak self] in
+            for await _ in engine.protocolOutdatedStream.subscribe() {
+                guard let self else { return }
+                self.outdated = .protocolRefused
+            }
+        }
+    }
+
+    /// The one thing this build can do about storage newer than itself: start
+    /// over on clean storage. The user decides, because the data goes.
+    func startOverOnCleanStorage() async {
+        await resetToRegistration()
+        outdated = nil
     }
 
     private var revokedTask: Task<Void, Never>?

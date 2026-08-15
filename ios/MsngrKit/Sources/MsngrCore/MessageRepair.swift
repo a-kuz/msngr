@@ -20,6 +20,15 @@ public enum MessageRepair {
         "pk_decrypt_failed", "empty_inner", "no_ciphertext",
     ]
 
+    /// The envelope is written in a format newer than this build reads.
+    public static let envelopeAheadReason = "envelope_too_new"
+
+    /// Failures a fresh copy cannot fix: the sender would answer in the same
+    /// format this device already cannot read. The envelope is kept and
+    /// replayed instead, so a build that knows the format opens it, and no
+    /// repair attempt is spent asking for what would come back identical.
+    public static let unrepairableReasons: Set<String> = [envelopeAheadReason]
+
     /// Failures that say the pairwise session itself is unusable: the request
     /// for a fresh copy would travel in that same session, so it is sent after
     /// the session is rebuilt from scratch.
@@ -59,6 +68,7 @@ public enum MessageRepair {
     /// previous request is over.
     public static func repairDue(reason: String?, firstSeenAt: Double, repairAttempts: Int,
                                  repairAskedAt: Double, now: Double) -> Bool {
+        if let reason, unrepairableReasons.contains(reason) { return false }
         guard repairAttempts < maxAttempts else { return false }
         let terminal = reason.map { !retryableReasons.contains($0) } ?? false
         guard terminal || now - firstSeenAt >= repairGrace else { return false }
@@ -67,6 +77,8 @@ public enum MessageRepair {
     }
 
     /// True when the envelope is past its lifetime with every attempt spent.
+    /// An envelope no repair can fix spends none, so it is kept: it is the only
+    /// copy this device has, and a build that knows its format opens it.
     public static func expired(firstSeenAt: Double, repairAttempts: Int, now: Double) -> Bool {
         repairAttempts >= maxAttempts && now - firstSeenAt >= envelopeTTL
     }

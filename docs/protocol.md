@@ -7,8 +7,11 @@
 ## Транспорт
 
 - HTTP `/api/*` — регистрация, ключи, профили, чаты, медиа, контакты, блокировки.
-- WS `/ws?token=…` — один сокет на устройство, JSON-фреймы `{t, ...}`.
+- WS `/ws?token=…&v=…` — один сокет на устройство, JSON-фреймы `{t, ...}`.
   Апгрейд авторизуется в Worker, сам сокет держит `UserSessionDO`.
+  `v` is the client's protocol version, read before auth: below the server's
+  floor the upgrade answers `426 client_too_old` with both numbers, and the
+  client stops reconnecting instead of retrying into silence.
 - Auth: токен устройства (`Authorization: Bearer <token>` или `?token=`),
   в D1 хранится SHA-256 токена. Логина как отдельной операции нет: восстановление
   доступа — новая регистрация.
@@ -117,7 +120,7 @@ POST /api/dev/fault               {failEvents} — dev hook: the caller's own se
 ## WS: сервер → клиент
 
 ```
-{t:"hello",   serverTime}
+{t:"hello",   serverTime, protocol, minProtocol}
 {t:"sent",    chatId, clientMsgId, msgId, seq, ts}
 {t:"msg",     chatId, seq, msgId, from, fromDevice, sentAt, ts, body, service?}
 {t:"receipt", chatId, kind:"delivered"|"read", upToSeq, by}
@@ -387,9 +390,24 @@ npm run deploy            # миграции на удалённой базе, �
 Новая миграция — новый файл со следующим номером; ранее применённые файлы не
 редактируются, раннер сверяется с `d1_migrations`.
 
-## Версии
+## Versions
 
-Обратной совместимости нет (см. `docs/PROCESS.md`), но точки для неё заложены:
-`v` в E2E-конверте, версия схемы БД в миграторе GRDB, миграции D1 в
-`server/migrations/`, `migrations` (теги DO) в `wrangler.jsonc`. Версия
-протокола в рукопожатии (`hello`) пока не передаётся.
+There is no backward compatibility (see `docs/PROCESS.md`), but every mismatch
+has a place to be named instead of a silence or a crash.
+
+- Protocol. `server/src/version.ts` holds `PROTOCOL_VERSION` and
+  `MIN_CLIENT_PROTOCOL`; `MsngrProtocol.version` is the client's side of the
+  same number. It travels in the upgrade (`/ws?v=`), and the server states both
+  numbers back in `hello` and in `GET /api/version` (no auth). A client below
+  the floor is refused with `426 client_too_old`, the reconnect loop stops and
+  the app shows that it is out of date.
+- Envelope. `v` in the E2E envelope. An envelope above
+  `MsngrProtocol.envelopeVersion` is kept as it arrived and marked unreadable;
+  no repair is asked for, because a fresh copy would come back in the same
+  format, and the message opens once a build that knows the format runs.
+- Database schema. The GRDB migrator: a file carrying migrations this binary
+  does not register is not opened and not wiped
+  (`AppDatabaseError.schemaFromNewerVersion`, `StorageOwnership.startOver`).
+  Starting over on clean storage is the user's call.
+- Server storage: D1 migrations in `server/migrations/`, DO tags `migrations`
+  in `wrangler.jsonc`.

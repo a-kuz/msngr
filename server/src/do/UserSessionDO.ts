@@ -1,6 +1,7 @@
 import type { Env, ClientFrame, ServerFrame } from "../types";
 import { json, err, nowSec } from "../util";
 import { sendPush } from "../push/apns";
+import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "../version";
 
 /// Presence-TTL: клиент пингует каждые ~12с; тишина дольше — офлайн.
 const PRESENCE_TTL_MS = 35_000;
@@ -132,7 +133,12 @@ export class UserSessionDO implements DurableObject {
       const [client, server] = Object.values(pair);
       this.state.acceptWebSocket(server);
       server.serializeAttachment({ deviceId, lastPing: nowSec() } satisfies SocketAttachment);
-      this.send(server, { t: "hello", serverTime: nowSec() });
+      // the handshake names both bounds: what this server speaks and how far
+      // down it still serves
+      this.send(server, {
+        t: "hello", serverTime: nowSec(),
+        protocol: PROTOCOL_VERSION, minProtocol: MIN_CLIENT_PROTOCOL,
+      });
 
       await this.state.storage.setAlarm(Date.now() + PRESENCE_TTL_MS);
       if (this.sockets().length === 1) {
