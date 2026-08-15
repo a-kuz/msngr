@@ -86,9 +86,7 @@ public enum NotificationBurstStore {
                     """, arguments: [top, top, chatId])
             }
 
-            let badge = try visibleUnread(dbc)
             for i in plan.steps.indices {
-                plan.steps[i].badge = badge
                 guard plan.steps[i].outcome == .show else { continue }
                 let item = plan.steps[i].item
                 guard try claim(dbc, chatId: item.chatId, msgId: item.msgId, seq: item.seq, now: now) else {
@@ -107,17 +105,6 @@ public enum NotificationBurstStore {
                             arguments: [now - claimTTL])
             return plan
         }
-    }
-
-    /// Badge value: the same rule the app applies, a chat waiting to be
-    /// accepted does not tell how much was written into it.
-    public static func visibleUnread(_ dbc: GRDB.Database) throws -> Int {
-        try Row.fetchAll(dbc, sql: "SELECT unreadCount, isRequest, iAccepted FROM chat")
-            .reduce(0) { sum, row in
-                sum + ChatPrivacy.visibleUnread(isRequest: row["isRequest"],
-                                                iAccepted: row["iAccepted"],
-                                                unreadCount: row["unreadCount"])
-            }
     }
 
     /// What the banner of a push says.

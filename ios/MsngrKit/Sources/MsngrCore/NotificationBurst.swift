@@ -83,16 +83,13 @@ public struct BurstStep: Equatable, Sendable {
     /// Filled by the database layer for steps that are shown; nil leaves the
     /// push with the content it arrived with.
     public var content: NotificationContent?
-    /// Unread total the icon carries after the batch.
-    public var badge: Int?
 
     public init(index: Int, item: BurstItem, outcome: BurstOutcome,
-                content: NotificationContent? = nil, badge: Int? = nil) {
+                content: NotificationContent? = nil) {
         self.index = index
         self.item = item
         self.outcome = outcome
         self.content = content
-        self.badge = badge
     }
 }
 

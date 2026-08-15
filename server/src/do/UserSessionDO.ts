@@ -313,12 +313,23 @@ export class UserSessionDO implements DurableObject {
     return total;
   }
 
+  /// Orders the badge numbers this object hands out. The object is the only
+  /// writer of the user's unread total and runs single-threaded, so a counter
+  /// it bumps per push round says exactly which of two counts is the newer one
+  /// — which is all a device needs to ignore a push that overtook another.
+  private async nextBadgeStamp(): Promise<number> {
+    const next = ((await this.state.storage.get<number>("badgeStamp")) ?? 0) + 1;
+    await this.state.storage.put("badgeStamp", next);
+    return next;
+  }
+
   private async pushToDevices(chatId: string, msgId?: string, seq?: number, sentAt?: number) {
     const tokens =
       (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
     const devices = Object.entries(tokens);
     if (!devices.length) return;
     const badge = await this.totalUnread();
+    const badgeStamp = await this.nextBadgeStamp();
     // Every device is handled independently: one failure neither cancels the
     // others nor fails the frame delivery that already went over the socket.
     const results = await Promise.all(
@@ -326,7 +337,8 @@ export class UserSessionDO implements DurableObject {
         try {
           return {
             deviceId,
-            res: await sendPush(this.env, t.token, t.env, { chatId, msgId, seq, sentAt, badge }),
+            res: await sendPush(this.env, t.token, t.env,
+              { chatId, msgId, seq, sentAt, badge, badgeStamp }),
           };
         } catch (e) {
           console.warn(`push to device ${deviceId} for ${chatId} failed: ${String(e)}`);
