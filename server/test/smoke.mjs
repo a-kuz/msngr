@@ -715,6 +715,12 @@ const p3 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p3")
 const push3 = await waitPush(pushFor("eve-sim-udid", p3.msgId));
 check("push badge after read", push3 && push3.body.aps.badge === 1,
   `badge=${push3?.body.aps.badge}`);
+// по badgeStamp клиент отличает свежий счётчик от обогнавшего его старого:
+// номер выдаёт UserSessionDO и он строго растёт
+check("badge stamps grow", push1 && push2 && push3
+  && push1.body.badgeStamp < push2.body.badgeStamp
+  && push2.body.badgeStamp < push3.body.badgeStamp,
+  `${push1?.body.badgeStamp} ${push2?.body.badgeStamp} ${push3?.body.badgeStamp}`);
 
 // (в) service-фрейм пуш не порождает
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p4", sentAt: Date.now(),
@@ -872,6 +878,9 @@ async function fanoutState() {
 await fault(2); // головное задание застревает на двух повторах
 const Q = 6;
 for (let i = 0; i < Q; i++) sendTo(`cm-q${i}`);
+// ack приходит уже после того, как рассылка встала в очередь: без ожидания
+// состояние очереди спрашивается раньше, чем в ней появляется первое задание
+await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === `cm-q${Q - 1}`);
 const qState = await fanoutState();
 check("fanout is queued, not inline", qState.ok && qState.pending > 0, JSON.stringify(qState));
 

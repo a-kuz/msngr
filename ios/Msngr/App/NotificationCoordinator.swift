@@ -11,7 +11,9 @@ import MsngrCore
 /// - в фоне показывает системный пуш (NSE подставляет расшифрованное превью), а
 ///   когда пуш недоступен (симулятор, устройство без токена) — своё локальное
 ///   уведомление по WS-фрейму;
-/// - бейдж на иконке всегда равен сумме unreadCount по чатам из локальной БД;
+/// - бейдж на иконке — счётчик непрочитанного, посчитанный сервером и
+///   приехавший в пуше; приложение сообщает то же число, когда до него дошло
+///   само (см. `BadgeStore`);
 /// - при прочтении чата его доставленные уведомления снимаются из шторки.
 @MainActor
 final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate {
@@ -55,6 +57,9 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         incomingTask?.cancel()
         incomingTask = nil
         badgeCancellable = nil
+        if let db {
+            Task { try? await db.write { dbc in try BadgeStore.applyLocal(dbc, value: 0) } }
+        }
         db = nil
         shownMsgIds.removeAll()
         activeChatId = nil
@@ -174,23 +179,24 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
 
     // MARK: - Бейдж и шторка ↔ unreadCount в БД
 
-    /// Единый источник истины — chat.unreadCount: бейдж — сумма по чатам
-    /// (заявка до принятия в него не входит: счётчик выдал бы, сколько написали);
-    /// прочитанные сообщения снимаются из шторки по msgId.
+    /// Бейдж считает сервер и присылает число в пуше; приложение сообщает то же
+    /// число, когда до него дошло само — прочитан чат, догнан журнал. Оба пути
+    /// пишут его через `BadgeStore`, поэтому пуш, обогнавший другой пуш, не
+    /// вернёт на иконку устаревший счётчик.
+    /// Прочитанные сообщения снимаются из шторки по msgId.
     private func observeUnread(db: DatabaseQueue) {
         badgeCancellable = ValueObservation
-            .tracking { dbc in
-                try Row.fetchAll(dbc, sql: "SELECT unreadCount, isRequest, iAccepted FROM chat")
-                    .reduce(0) { sum, row in
-                        sum + ChatPrivacy.visibleUnread(isRequest: row["isRequest"],
-                                                        iAccepted: row["iAccepted"],
-                                                        unreadCount: row["unreadCount"])
-                    }
-            }
+            .tracking { dbc in try BadgeStore.localUnread(dbc) }
             .publisher(in: db, scheduling: .async(onQueue: .main))
             .sink(receiveCompletion: { _ in }, receiveValue: { [weak self] total in
-                UNUserNotificationCenter.current().setBadgeCount(total)
-                self?.dropReadNotifications()
+                guard let self else { return }
+                Task {
+                    let value = (try? await db.write { dbc in
+                        try BadgeStore.applyLocal(dbc, value: total)
+                    }) ?? total
+                    try? await UNUserNotificationCenter.current().setBadgeCount(value)
+                }
+                self.dropReadNotifications()
             })
     }
 
@@ -261,7 +267,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
             messageInDB: messageInDB,
             messageRead: messageRead,
             muted: muted)
-        guard show else { return [] } // бейдж ведёт локальный наблюдатель БД
+        guard show else { return [] } // бейдж приезжает своим числом в пуше
         if let msgId { shownMsgIds.insert(msgId) }
         return [.banner, .list]
     }
