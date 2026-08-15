@@ -114,7 +114,7 @@ public actor SyncEngine {
         do {
             let remaining = try await api.prekeyCount()
             guard remaining < 20 else { return }
-            let fresh = try e2ee.store.generateMoreOneTime(count: 100 - remaining)
+            let fresh = try e2ee.moreOneTimePrekeys(count: 100 - remaining)
             try await api.uploadPrekeys(fresh.map {
                 .init(id: $0.id, key: $0.key.publicKey.rawRepresentation.base64urlEncodedString())
             })
@@ -1620,7 +1620,7 @@ public actor SyncEngine {
 
     /// Принять новый identity-ключ собеседника и переотправить заблокированные сообщения.
     public func acceptKeyChange(chatId: String, peerUserId: String) async {
-        try? e2ee.store.acceptChangedKey(userId: peerUserId)
+        try? e2ee.acceptChangedIdentity(userId: peerUserId)
         try? await db.write { dbc in
             try dbc.execute(sql: """
                 UPDATE message SET status = 0, failReason = NULL WHERE clientMsgId IN
