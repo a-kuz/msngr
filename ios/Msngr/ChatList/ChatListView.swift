@@ -19,6 +19,8 @@ struct ChatListView: View {
     /// чат, для которого спрошено подтверждение удаления
     @State private var deleteCandidate: ChatListItem?
     @State private var showFolders = false
+    /// куда уезжает список при смене вкладки: вперёд по полосе или назад
+    @State private var slideForward = true
     /// папка, открытая на настройку прямо из списка
     @State private var editingFolder: ChatFolder?
 
@@ -38,7 +40,7 @@ struct ChatListView: View {
                 if model.searchText.isEmpty {
                     VStack(spacing: 0) {
                         ChatFolderBar(folders: model.folders, unread: model.folderUnread,
-                                      selection: $model.selectedFolderId,
+                                      selection: tabSelection,
                                       onManage: { showFolders = true },
                                       onEdit: { editingFolder = $0 })
                         folderPages
@@ -139,21 +141,52 @@ struct ChatListView: View {
         .padding(.bottom, 40)
     }
 
-    /// Вкладки листаются свайпом: у каждой свой список, соседние страницы
-    /// собираются из уже посчитанного состава папок.
+    /// Вкладка листается длинным горизонтальным свайпом. Постраничная
+    /// прокрутка тут не годится: её скролл забирает горизонтальное движение
+    /// себе, и свайп-действия строки (архив, закрепить, удалить) перестают
+    /// открываться. Короткий свайп остаётся строке, длинный — переключает
+    /// вкладку.
     private var folderPages: some View {
-        TabView(selection: pageSelection) {
-            page(for: nil).tag("")
-            ForEach(model.folders) { folder in
-                page(for: folder).tag(folder.id)
-            }
-        }
-        .tabViewStyle(.page(indexDisplayMode: .never))
+        page(for: selectedFolder)
+            .id(model.selectedFolderId ?? "")
+            .transition(.asymmetric(
+                insertion: .move(edge: slideForward ? .trailing : .leading),
+                removal: .move(edge: slideForward ? .leading : .trailing)))
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 120)
+                    .onEnded { value in
+                        guard abs(value.translation.width) > abs(value.translation.height) * 1.5
+                        else { return }
+                        switchTab(by: value.translation.width < 0 ? 1 : -1)
+                    })
     }
 
-    private var pageSelection: Binding<String> {
-        Binding(get: { model.selectedFolderId ?? "" },
-                set: { model.selectedFolderId = $0.isEmpty ? nil : $0 })
+    /// Выбор вкладки тапом: заодно запоминает, в какую сторону едет список.
+    private var tabSelection: Binding<String?> {
+        Binding(get: { model.selectedFolderId },
+                set: { new in
+                    let ids: [String?] = [nil] + model.folders.map { $0.id }
+                    let from = ids.firstIndex(of: model.selectedFolderId) ?? 0
+                    let to = ids.firstIndex(of: new) ?? 0
+                    slideForward = to >= from
+                    model.selectedFolderId = new
+                })
+    }
+
+    private var selectedFolder: ChatFolder? {
+        model.folders.first { $0.id == model.selectedFolderId }
+    }
+
+    /// Соседняя вкладка в сторону свайпа: «Все» стоит первой, дальше папки в
+    /// своём порядке. С краёв листать некуда.
+    private func switchTab(by offset: Int) {
+        let ids: [String?] = [nil] + model.folders.map { $0.id }
+        guard let current = ids.firstIndex(of: model.selectedFolderId) else { return }
+        let next = current + offset
+        guard ids.indices.contains(next) else { return }
+        Haptics.light()
+        slideForward = offset > 0
+        withAnimation(Theme.springFast) { model.selectedFolderId = ids[next] }
     }
 
     private func page(for folder: ChatFolder?) -> some View {
@@ -211,7 +244,9 @@ struct ChatListView: View {
                 ChatRowView(item: item, ownUserId: app.session?.userId ?? "")
             }
             .contextMenu { folderMenu(item) }
-            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            // без полного свайпа: длинное горизонтальное движение по списку
+            // переключает вкладку, и действие по нему было бы случайным
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 if let folder {
                     Button { model.setChat(item.id, inFolder: folder, included: false) } label: {
                         Label("Из папки", systemImage: "folder.badge.minus")
@@ -225,13 +260,13 @@ struct ChatListView: View {
                     Label(muted ? "Вкл. звук" : "Без звука",
                           systemImage: muted ? "bell.fill" : "bell.slash.fill")
                 }.tint(.indigo)
-                // удаление стоит последним: полный свайп архивирует, а не удаляет
+                // удаление стоит последним, дальше от края
                 Button(role: .destructive) { deleteCandidate = item } label: {
                     Label("Удалить", systemImage: "trash.fill")
                 }
                 .accessibilityIdentifier("chatlist.delete")
             }
-            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            .swipeActions(edge: .leading, allowsFullSwipe: false) {
                 Button { model.togglePin(item) } label: {
                     Label(item.chat.pinned ? "Открепить" : "Закрепить",
                           systemImage: item.chat.pinned ? "pin.slash.fill" : "pin.fill")
