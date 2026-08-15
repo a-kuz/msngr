@@ -76,6 +76,10 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
             alreadyShown: shownMsgIds.contains(ev.msgId),
             apnsAvailable: apnsAvailable)
         guard action != .none, let info, let content = info.content else { return }
+        // the claim on the message is what stops the push about it from showing
+        // a second banner; the extension takes the same one
+        guard let db, await NotificationBurstStore.claim(db, chatId: ev.chatId, msgId: ev.msgId,
+                                                         seq: info.seq) else { return }
         shownMsgIds.insert(ev.msgId)
         await show(action, content: content, info: info, chatId: ev.chatId, msgId: ev.msgId)
     }
@@ -116,6 +120,8 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
     struct BannerInfo {
         /// nil — уведомления по этому сообщению быть не должно
         var content: NotificationContent?
+        /// место сообщения в чате; 0 — сообщения ещё нет в БД
+        var seq: Int = 0
         var sender: NotificationContentBuilder.SenderInfo
         var isGroup: Bool
         var chatAvatarId: String?
@@ -127,7 +133,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
     /// Собирает контент уведомления из локальной БД: чат, отправитель, сообщение.
     private func bannerInfo(chatId: String, msgId: String, from: String) async -> BannerInfo? {
         guard let db else { return nil }
-        let showsText = NotificationPreferences.showsMessageText(in: .standard)
+        let showsText = NotificationPreferences.showsMessageText(in: AppGroup.defaults)
         let ownUserId = AppState.shared.session?.userId ?? ""
         return try? await db.read { dbc -> BannerInfo in
             let chat = try Chat.fetchOne(dbc, key: chatId)
@@ -151,14 +157,16 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
                     .map { NotificationContentBuilder.SenderInfo(userId: $0["id"],
                                                                  displayName: $0["name"] ?? "") }
             }
+            let message = try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE msgId = ?",
+                                               arguments: [msgId])
+            info.seq = message?.seq ?? 0
             // заявка до принятия: имя отправителя показываем, содержимое — нет
             if hidden {
                 info.content = NotificationContentBuilder.requestContent(
                     chat: chatInfo, sender: senderInfo)
-            } else if let m = try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE msgId = ?",
-                                                   arguments: [msgId]) {
+            } else if let message {
                 info.content = NotificationContentBuilder.build(
-                    message: m, chat: chatInfo, sender: senderInfo, showsMessageText: showsText)
+                    message: message, chat: chatInfo, sender: senderInfo, showsMessageText: showsText)
             }
             return info
         }
