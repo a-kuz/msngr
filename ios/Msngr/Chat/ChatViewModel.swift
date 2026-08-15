@@ -667,19 +667,54 @@ final class ChatViewModel: ObservableObject {
         lastMsgs.contains { $0.id == msgId || $0.msgId == msgId }
     }
 
-    /// Расширяет окно страницами, пока сообщение не окажется в ленте:
-    /// переход по цитате к оригиналу за пределами окна.
+    /// Доводит сообщение до ленты: переход по цитате, из галереи или из поиска.
+    ///
+    /// Сообщение, которое лежит в базе, забирается одним движением границы окна —
+    /// сколько бы тысяч сообщений ни было между ним и концом переписки. Страницами
+    /// окно расширяется только там, где движению не на что опереться: у сообщения
+    /// нет seq или его строки ещё нет на устройстве.
     func ensureLoaded(msgId: String, maxPages: Int = 12) async -> Bool {
         if isLoaded(msgId: msgId) { return true }
+        if await anchorWindow(to: msgId), await feedContains(msgId: msgId) { return true }
         for _ in 0..<maxPages {
             guard await expandWindow() else { break }
-            // лента приходит из наблюдения БД асинхронно — ждём появления сообщения
-            for _ in 0..<20 {
-                if isLoaded(msgId: msgId) { return true }
-                try? await Task.sleep(nanoseconds: 50_000_000)
-            }
+            if await feedContains(msgId: msgId) { return true }
         }
         return isLoaded(msgId: msgId)
+    }
+
+    /// Ставит границу окна на сообщение, оставляя в окне всё, что новее.
+    /// false — опереться не на что: сообщения нет на устройстве, у него нет seq
+    /// или оно и так внутри окна.
+    private func anchorWindow(to msgId: String) async -> Bool {
+        guard let db = app.db else { return false }
+        let anchor = try? await db.read { [chatId] dbc -> (seq: Int, count: Int)? in
+            guard let seq = try Int.fetchOne(dbc, sql: """
+                SELECT seq FROM message
+                WHERE chatId = ? AND (msgId = ? OR id = ?) AND seq IS NOT NULL
+                """, arguments: [chatId, msgId, msgId]) else { return nil }
+            // своё неотправленное (seq ещё нет) стоит выше всего пронумерованного
+            let count = try Int.fetchOne(dbc, sql: """
+                SELECT COUNT(*) FROM message
+                WHERE chatId = ? AND (seq >= ? OR seq IS NULL)
+                """, arguments: [chatId, seq]) ?? 0
+            return (seq, count)
+        }
+        guard let anchor = anchor ?? nil, anchor.seq < windowFloor.get() ?? Int.max else {
+            return false
+        }
+        windowFloor.anchor(floor: anchor.seq, capacity: anchor.count)
+        observeChat()
+        return true
+    }
+
+    /// Лента приходит из наблюдения БД асинхронно — ждём появления сообщения.
+    private func feedContains(msgId: String, attempts: Int = 20) async -> Bool {
+        for _ in 0..<attempts {
+            if isLoaded(msgId: msgId) { return true }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return false
     }
 }
 
