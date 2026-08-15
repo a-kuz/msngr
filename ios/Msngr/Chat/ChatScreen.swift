@@ -261,6 +261,7 @@ struct ChatScreen: View {
 
     private var messagesList: MessagesView {
         MessagesView(vc: messagesVC, model: model, items: model.feed,
+                     sendTick: model.sendTick,
                      selecting: model.selecting, selectedIds: model.selection.ids,
                      onTapMedia: { (msg: Message, idx: Int, _: UIView) in
                          MediaViewerPresenter.present(message: msg, startIndex: idx)
@@ -666,6 +667,8 @@ struct MessagesView: UIViewControllerRepresentable {
     /// feed передаётся и значением: изменение массива меняет value представляемого
     /// view — SwiftUI гарантированно зовёт updateUIViewController
     let items: [ChatFeedItem]
+    /// счётчик своих отправок: передаётся значением по той же причине, что и feed
+    let sendTick: Int
     /// режим и состав выбора передаются значением по той же причине, что и feed
     let selecting: Bool
     let selectedIds: Set<String>
@@ -723,6 +726,7 @@ struct MessagesView: UIViewControllerRepresentable {
             case .delete: deleteCandidate = msg
             }
         }
+        vc.noteSendTick(sendTick)
         vc.apply(items)
         vc.setSelection(mode: selecting, ids: selectedIds)
     }

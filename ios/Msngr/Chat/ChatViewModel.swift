@@ -54,6 +54,8 @@ final class ChatViewModel: ObservableObject {
     /// Сообщение не попало в очередь отправки: показывается алертом, иначе
     /// набранный текст или вложение исчезли бы молча.
     @Published var sendFailure: String?
+    /// Счётчик своих отправок: каждая ведёт ленту к концу чата.
+    @Published private(set) var sendTick = 0
 
     /// Плашка непрочитанных: состояние живёт от входа в чат, лента
     /// перестраивается при его изменении из последнего снапшота БД.
@@ -422,6 +424,9 @@ final class ChatViewModel: ObservableObject {
     /// потеряно, — о таком сообщаем пользователю.
     func enqueue(_ content: ContentPayload, chatId: String? = nil) {
         let target = chatId ?? self.chatId
+        if Self.movesFeedToEnd(kind: content.kind, target: target, chatId: self.chatId) {
+            returnToBottom()
+        }
         Task { [weak self] in
             do {
                 try await app.engine.enqueue(content: content, chatId: target)
@@ -454,6 +459,24 @@ final class ChatViewModel: ObservableObject {
         saveDraft(nil)
         enqueue(c)
         Haptics.light()
+    }
+
+    /// Отправка, у которой в этом чате появляется свой баббл: только она ведёт
+    /// ленту к концу. Правка, реакция и пересылка в другой чат — нет.
+    nonisolated static func movesFeedToEnd(kind: String, target: String, chatId: String) -> Bool {
+        target == chatId && !SyncEngine.serviceKinds.contains(kind)
+    }
+
+    /// Своя отправка возвращает ленту к концу чата.
+    ///
+    /// Окно ленты, замершее на прочитанной истории, держит ровно `capacity`
+    /// сообщений вверх от своей границы: в чате, где выше границы уже набралось
+    /// столько сообщений, новое исходящее в окно не попадает и на экране не
+    /// появляется вовсе. Поэтому граница окна снова начинает скользить за
+    /// новейшими, а лента получает счётчик отправок, по которому уезжает вниз.
+    private func returnToBottom() {
+        isViewingBottom = true
+        sendTick &+= 1
     }
 
     static func previewText(_ m: Message) -> String {
