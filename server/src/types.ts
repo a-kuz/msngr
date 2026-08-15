@@ -18,7 +18,11 @@ export interface Env {
 
 // --- WS frames: client -> server ---
 export type ClientFrame =
+  // sync: full cursor map of everything the client knows; chats missing from it
+  // are new to the client and get their state replayed
   | { t: "sync"; cursors: Record<string, number> }
+  // catchup: next portion for the chats that are still behind
+  | { t: "catchup"; cursors: Record<string, number> }
   // service: служебный фрейм (skd/reaction/edit и т.п.) — не должен растить unread/бейдж
   | { t: "send"; chatId: string; clientMsgId: string; sentAt: number; body: unknown; service?: boolean }
   | { t: "recv"; chatId: string; seqs: number[] }
@@ -39,6 +43,11 @@ export type ServerFrame =
   | { t: "presence"; userId: string; online: boolean; lastSeen: number }
   | { t: "chat"; chatId: string; event: string; state: ChatState }
   | { t: "deleted"; chatId: string; msgIds: string[]; forAll: boolean; by: string }
+  /// catch-up progress of one chat: cursor to resume from, more — whether the
+  /// chat still has history beyond this portion
+  | { t: "syncState"; chatId: string; cursor: number; more: boolean }
+  /// end of one catch-up portion; more — whether another portion is due
+  | { t: "syncDone"; more: boolean }
   /// отказ по клиентскому фрейму: error — машиночитаемый код
   | { t: "error"; error: string; chatId?: string; clientMsgId?: string }
   | { t: "pong" };

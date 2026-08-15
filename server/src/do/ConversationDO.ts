@@ -25,6 +25,10 @@ const FANOUT_RETRY_MS = [200, 1000];
 /// delivery is given up on and retried like any other failure.
 const FANOUT_DELIVERY_TIMEOUT_MS = 10_000;
 
+/// Journal records one /history page returns. Durable Objects read at most 128
+/// keys per batch, so a larger page would be served by several reads anyway.
+const HISTORY_PAGE = 128;
+
 interface FanoutJob {
   frame: ServerFrame;
   targets: string[];
@@ -369,7 +373,8 @@ export class ConversationDO implements DurableObject {
       case "/history": {
         const fromSeq = Number(url.searchParams.get("fromSeq") ?? "0");
         const toSeq = Number(url.searchParams.get("toSeq") ?? String(meta.lastSeq));
-        const limit = Math.min(Number(url.searchParams.get("limit") ?? "100"), 200);
+        // one page is one storage batch read: 128 keys is the platform limit
+        const limit = Math.min(Number(url.searchParams.get("limit") ?? "100"), HISTORY_PAGE);
         const reverse = url.searchParams.get("dir") === "back";
         // userId — от чьего лица читаем: сообщения, отправленные ему, пока он
         // держал автора в блоке, из выдачи выпадают

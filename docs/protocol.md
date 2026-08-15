@@ -97,7 +97,8 @@ POST /api/dev/fault               {failEvents} — dev hook: the caller's own se
 ## WS: клиент → сервер
 
 ```
-{t:"sync",  cursors:{chatId: lastSeq, ...}}
+{t:"sync",  cursors:{chatId: lastSeq, ...}}    // весь известный клиенту мир
+{t:"catchup", cursors:{chatId: cursor, ...}}   // следующая порция догона
 {t:"send",  chatId, clientMsgId, sentAt, body, service?}   // body — E2E-конверт
 {t:"recv",  chatId, seqs:[...]}                            // → delivered-квитанции автору
 {t:"read",  chatId, upToSeq}
@@ -124,6 +125,8 @@ POST /api/dev/fault               {failEvents} — dev hook: the caller's own se
 {t:"presence",userId, online, lastSeen}
 {t:"chat",    chatId, event:"created"|"members"|"settings"|"pinned"|"sync", state}
 {t:"deleted", chatId, msgIds, forAll, by}
+{t:"syncState", chatId, cursor, more}
+{t:"syncDone", more}
 {t:"error",   error, chatId?, clientMsgId?}
 {t:"pong"}
 ```
@@ -152,22 +155,39 @@ twice (a retried fanout pass), so the client dedupes by `msgId`.
 минутами после сворачивания. Смену статуса рассылает alarm DO, `bg`/`fg`
 переключают его сразу.
 
-## Sync после переподключения
+## Catch-up after a reconnect
 
-Клиент шлёт `sync` с курсорами `chatId → syncedSeq` (последний непрерывно
-применённый seq). Сервер:
+Catch-up is pulled by the client one portion at a time. The cursors live on the
+client, the object serves a portion and goes back to its event loop, so live
+traffic waits for one portion instead of the whole backlog and a connection cut
+short resumes from the last confirmed cursor.
 
-1. по чатам, которых нет в курсорах, шлёт `chat`-фрейм с `event:"sync"` и
-   доигрывает историю с нуля;
-2. по каждому чату тянет `/history` батчами по 200 и шлёт `msg`-фреймы, пока
-   батчи не кончатся (ограничения на одну пачку нет); курсор двигается по
-   `lastScannedSeq`, а не по числу отданных сообщений;
-3. затем шлёт `deleted`-фреймы по тумбстоунам и `receipt`-фреймы по текущим
-   `readMarks`/`deliveredMarks` — то, что случилось, пока клиент был офлайн.
+1. The client sends `sync` with a cursor per chat it knows. Chats missing from
+   the map are new to it: the object replays their state in a `chat` frame with
+   `event: "sync"` and puts them into the portion at cursor 0.
+2. The object reads one `/history` page per chat (at most 128 records, the
+   Durable Objects batch read limit), sends the `msg` frames and answers
+   `{t:"syncState", chatId, cursor, more}`. The cursor moves along scanned
+   records rather than delivered ones, so a page filtered out by a block does
+   not stall the catch-up.
+3. A chat whose page came back short is caught up: its tombstones (`deleted`)
+   and current `readMarks`/`deliveredMarks` (`receipt`) follow — what happened
+   to already delivered messages while the client was offline.
+4. `{t:"syncDone", more}` closes the portion. `more` is true when some chat is
+   still behind, or when the portion ran out of budget before reaching every
+   chat it was asked about: one portion reads at most 128 records over at most
+   32 chats. The client then sends `catchup` with the chats that are still
+   behind — those whose `syncState` said `more`, plus those it got no
+   `syncState` for — and repeats until `more` is false.
 
-Тумбстоуны в истории пропускаются как `msg` и приходят отдельными `deleted`.
-Курсор клиента двигается только по непрерывному префиксу, поэтому дыра в
-доставке не приводит к потере истории.
+The client stores the confirmed cursor per chat, so a catch-up interrupted
+halfway resumes where it stopped instead of starting over. The cursor of the
+next `sync` is the larger of that cursor and `syncedSeq` (the contiguously
+applied prefix): a seq that never reaches this device — a message held back by
+a block, for instance — stalls `syncedSeq` forever, and the catch-up cursor is
+what moves past it.
+
+Tombstones are skipped as `msg` frames in a page and arrive as `deleted`.
 
 ## Блокировки
 
