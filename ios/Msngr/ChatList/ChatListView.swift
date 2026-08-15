@@ -16,6 +16,18 @@ struct ChatListView: View {
     @State private var showNewChat = false
     @State private var showSettings = false
     @State private var path = NavigationPath()
+    /// чат, для которого спрошено подтверждение удаления
+    @State private var deleteCandidate: ChatListItem?
+
+    private var deleteConfirmPresented: Binding<Bool> {
+        Binding(get: { deleteCandidate != nil },
+                set: { if !$0 { deleteCandidate = nil } })
+    }
+
+    private var deleteTitle: String {
+        guard let item = deleteCandidate else { return "" }
+        return item.chat.kind == .group ? "Покинуть группу?" : "Удалить чат «\(item.title)»?"
+    }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -73,6 +85,23 @@ struct ChatListView: View {
                       NotificationCoordinator.shared.activeChatId != chatId else { return }
                 path.append(chatId)
             }
+            // чат удалён из своего же экрана — возвращаемся к списку
+            .onReceive(NotificationCenter.default.publisher(for: .chatDeleted)) { _ in
+                path = NavigationPath()
+            }
+            .confirmationDialog(deleteTitle, isPresented: deleteConfirmPresented,
+                                titleVisibility: .visible) {
+                let isGroup = deleteCandidate?.chat.kind == .group
+                Button(isGroup ? "Покинуть" : "Удалить", role: .destructive) {
+                    if let item = deleteCandidate { model.deleteChat(item) }
+                    deleteCandidate = nil
+                }
+                Button("Отмена", role: .cancel) { deleteCandidate = nil }
+            } message: {
+                Text(deleteCandidate?.chat.kind == .group
+                     ? "Вы выйдете из группы, её сообщения удалятся с этого устройства."
+                     : "Чат и его сообщения удалятся с этого устройства. У собеседника переписка останется.")
+            }
         }
     }
 
@@ -118,6 +147,11 @@ struct ChatListView: View {
                     Label(muted ? "Вкл. звук" : "Без звука",
                           systemImage: muted ? "bell.fill" : "bell.slash.fill")
                 }.tint(.indigo)
+                // удаление стоит последним: полный свайп архивирует, а не удаляет
+                Button(role: .destructive) { deleteCandidate = item } label: {
+                    Label("Удалить", systemImage: "trash.fill")
+                }
+                .accessibilityIdentifier("chatlist.delete")
             }
             .swipeActions(edge: .leading, allowsFullSwipe: true) {
                 Button { model.togglePin(item) } label: {

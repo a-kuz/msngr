@@ -133,6 +133,21 @@ public final class MediaManager: @unchecked Sendable {
         }
     }
 
+    /// Drops the local files of one attachment: the blob, its preview frame and
+    /// any source still waiting to be uploaded. A copy forwarded into another
+    /// chat carries the same mediaId and is downloaded again when it is opened.
+    public func remove(_ info: MediaInfo) {
+        let fm = FileManager.default
+        if !info.mediaId.isEmpty {
+            try? fm.removeItem(at: cacheDir.appendingPathComponent(cacheFileName(info.mediaId, mime: info.mime)))
+        }
+        if let thumb = info.thumbMediaId {
+            try? fm.removeItem(at: cacheDir.appendingPathComponent(cacheFileName(thumb, mime: "image/jpeg")))
+        }
+        if let name = info.localPath { removePending(localName: name) }
+        if let name = info.thumbLocalPath { removePending(localName: name) }
+    }
+
     public func clearCache() {
         let fm = FileManager.default
         guard let items = try? fm.contentsOfDirectory(at: cacheDir, includingPropertiesForKeys: nil) else { return }

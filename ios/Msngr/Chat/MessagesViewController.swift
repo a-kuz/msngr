@@ -124,6 +124,15 @@ final class MessagesViewController: UIViewController {
     func apply(_ newItems: [ChatFeedItem]) {
         let old = items
         guard isViewLoaded else { items = newItems; return }
+        // лента опустела (очистка истории): дифф удалял бы все позиции разом
+        // посреди идущей анимации вставки, и якорь чтения указывал бы в пустоту
+        if newItems.isEmpty {
+            items = []
+            collectionView.layer.removeAllAnimations()
+            collectionView.reloadData()
+            updateAtBottom(layoutFirst: true)
+            return
+        }
         if old.isEmpty {
             items = newItems
             collectionView.reloadData()

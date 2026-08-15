@@ -92,6 +92,15 @@ export class UserSessionDO implements DurableObject {
     return flags;
   }
 
+  /// Puts a chat back on the list with default flags when it is not there.
+  private async relistChat(chatId: string) {
+    const key = "chat:" + chatId;
+    if (await this.state.storage.get<ChatFlags>(key)) return;
+    await this.state.storage.put(key, {
+      pinned: false, muted: false, archived: false, joinedAt: nowSec(),
+    } satisfies ChatFlags);
+  }
+
   private async chatIds(): Promise<string[]> {
     const listed = await this.state.storage.list<ChatFlags>({ prefix: "chat:" });
     return [...listed.keys()].map((k) => k.slice(5));
@@ -157,6 +166,9 @@ export class UserSessionDO implements DurableObject {
         const frame = (await req.json()) as ServerFrame;
         for (const ws of this.sockets()) this.send(ws, frame);
         if (frame.t === "msg" && !frame.service) {
+          // a chat this user deleted comes back on the next message written to
+          // it; a service frame does not bring it back, having nothing to show
+          await this.relistChat(frame.chatId);
           // контентное сообщение меняет unread чата → кэш бейджа устарел
           await this.invalidateUnread(frame.chatId);
           const flags = await this.clearExpiredMute(frame.chatId);
@@ -190,6 +202,9 @@ export class UserSessionDO implements DurableObject {
       case "/chat-removed": {
         const b = (await req.json()) as { chatId: string };
         await this.state.storage.delete("chat:" + b.chatId);
+        // the badge sums the listed chats, and a count left in the cache would
+        // be counted again the day the chat comes back
+        await this.invalidateUnread(b.chatId);
         return json({ ok: true });
       }
 

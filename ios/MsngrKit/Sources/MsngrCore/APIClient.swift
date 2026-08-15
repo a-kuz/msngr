@@ -275,8 +275,11 @@ public final class APIClient: @unchecked Sendable {
     public func acceptChat(_ chatId: String) async throws {
         _ = try await request("api/chats/\(chatId)/accept", method: "POST", jsonBody: [String: String]())
     }
-    public func leaveChat(_ chatId: String) async throws {
-        _ = try await request("api/chats/\(chatId)/leave", method: "POST", jsonBody: [String: String]())
+    /// Takes the chat off this user's list. A group is left, so the others stop
+    /// seeing the member; a direct chat is only forgotten here and the peer
+    /// keeps his own copy.
+    public func deleteChat(_ chatId: String) async throws {
+        _ = try await request("api/chats/\(chatId)/delete", method: "POST", jsonBody: [String: String]())
     }
     public func updateMembers(_ chatId: String, add: [String], remove: [String]) async throws {
         struct Body: Encodable { let add: [String]; let remove: [String] }

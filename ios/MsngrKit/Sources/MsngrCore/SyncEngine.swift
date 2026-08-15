@@ -268,11 +268,14 @@ public actor SyncEngine {
     }
 
     private func applySnapshot(_ snap: APIClient.ChatsSnapshot) async throws {
+        // a chat deleted here while offline is still on the server's list until
+        // the queued request lands
+        let deleting = await chatsBeingDeleted()
         try await db.write { [ownUserId] dbc in
             for u in snap.users {
                 try SyncEngine.upsertUser(dbc, u)
             }
-            for entry in snap.chats {
+            for entry in snap.chats where !deleting.contains(entry.state.chatId) {
                 try SyncEngine.upsertChatState(
                     dbc, entry.state, ownUserId: ownUserId,
                     flags: ChatFlags(pinned: entry.flags.pinned, muted: entry.flags.muted,
@@ -352,6 +355,20 @@ public actor SyncEngine {
             }
         case "chat":
             if let state = f.state {
+                // a direct chat deleted here keeps its membership on the
+                // server, so events about it still reach this device: a title
+                // or a pin must not put the chat back, only a message does.
+                // A membership change is the exception — that is how a group
+                // this device left takes it back in.
+                if f.event != "members" {
+                    let deleted = (try? await db.read { dbc in
+                        try Bool.fetchOne(dbc, sql: """
+                            SELECT NOT EXISTS(SELECT 1 FROM chat WHERE id = ?)
+                              AND EXISTS(SELECT 1 FROM chatTombstone WHERE chatId = ?)
+                            """, arguments: [state.chatId, state.chatId]) ?? false
+                    }) ?? false
+                    if deleted { return }
+                }
                 // старый состав фиксируем ДО перезаписи member-таблицы
                 let previousMembers: [String] = (try? await db.read { dbc in
                     try String.fetchAll(dbc, sql: "SELECT userId FROM member WHERE chatId = ?", arguments: [state.chatId])
@@ -461,7 +478,7 @@ public actor SyncEngine {
     /// the frames after it decrypt to, so it ends the run and is applied on its
     /// own before the next one starts.
     private func applyIncomingBatch(_ frames: [WSIncoming]) async {
-        let items: [IncomingFrame] = frames.compactMap { f in
+        var items: [IncomingFrame] = frames.compactMap { f in
             guard let chatId = f.chatId, let msgId = f.msgId, let seq = f.seq,
                   let from = f.from, let fromDevice = f.fromDevice else { return nil }
             return IncomingFrame(chatId: chatId, msgId: msgId, seq: seq, from: from,
@@ -469,18 +486,30 @@ public actor SyncEngine {
                                  body: f.body, isService: f.service == true)
         }
         guard !items.isEmpty else { return }
-        let chatIds = Set(items.map(\.chatId))
+        var chatIds = Set(items.map(\.chatId))
 
         // сообщение в неизвестный чат → мы пропустили создание чата, обновляем снапшот
-        let knownChats = (try? await db.read { [chatIds] dbc in
-            try String.fetchSet(dbc, sql: """
-                SELECT id FROM chat WHERE id IN (\(databaseQuestionMarks(count: chatIds.count)))
-                """, arguments: StatementArguments([String](chatIds)))
-        }) ?? []
+        func storedChats(_ ids: Set<String>) async -> Set<String> {
+            (try? await db.read { dbc in
+                try String.fetchSet(dbc, sql: """
+                    SELECT id FROM chat WHERE id IN (\(databaseQuestionMarks(count: ids.count)))
+                    """, arguments: StatementArguments([String](ids)))
+            }) ?? []
+        }
+        let knownChats = await storedChats(chatIds)
         if !chatIds.subtracting(knownChats).isEmpty, !snapshotRefreshInFlight {
             snapshotRefreshInFlight = true
             try? await refreshSnapshot()
             snapshotRefreshInFlight = false
+            // the snapshot leaves out a chat this device is deleting; its
+            // frames are dropped rather than written under a chat that has no
+            // row, and the catch-up replays them if the chat ever comes back
+            let present = await storedChats(chatIds)
+            if present.count < chatIds.count {
+                items = items.filter { present.contains($0.chatId) }
+                guard !items.isEmpty else { return }
+                chatIds = Set(items.map(\.chatId))
+            }
         }
         // сообщение от пользователя без профиля в БД (свежий участник) —
         // дотянуть, чтобы имя отправителя отобразилось сразу
@@ -1521,6 +1550,8 @@ public actor SyncEngine {
                     try await ws.send(.delete(chatId: a.chatId, msgIds: p.msgIds, forAll: p.forAll))
                 case "accept":
                     try await api.acceptChat(a.chatId)
+                case "deleteChat":
+                    try await api.deleteChat(a.chatId)
                 default:
                     break // неизвестный тип удаляется ниже
                 }
@@ -1591,6 +1622,53 @@ public actor SyncEngine {
         actionWakeup.continuation.yield()
     }
 
+    /// Empties a chat this device stays in. Nothing leaves the device: the
+    /// ratchet is forward-only, the copy here is the only one this device has,
+    /// and the other side keeps its own.
+    public func clearHistory(chatId: String) async {
+        let attachments = await chatMedia(chatId: chatId)
+        try? await db.write { dbc in
+            try ChatCleanup.clearHistory(dbc, chatId: chatId)
+        }
+        for info in attachments { media?.remove(info) }
+    }
+
+    /// Removes a chat from this device. The server is told through the action
+    /// queue, so the chat goes now and the request survives being offline; the
+    /// snapshot leaves the chat out while that request is pending, otherwise it
+    /// would come straight back.
+    public func deleteChat(chatId: String) async {
+        let attachments = await chatMedia(chatId: chatId)
+        try? await db.write { dbc in
+            try ChatCleanup.deleteChat(dbc, chatId: chatId)
+            try dbc.execute(
+                sql: """
+                INSERT INTO pendingAction (id, type, chatId, payload, createdAt) VALUES (?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET attempts = 0
+                """,
+                arguments: ["deleteChat:\(chatId)", "deleteChat", chatId, "{}",
+                            Date().timeIntervalSince1970])
+        }
+        for info in attachments { media?.remove(info) }
+        actionWakeup.continuation.yield()
+    }
+
+    /// Attachments stored for a chat, so their files go with its rows.
+    private func chatMedia(chatId: String) async -> [MediaInfo] {
+        let msgs = (try? await db.read { dbc in
+            try Message.fetchAll(dbc, sql: "SELECT * FROM message WHERE chatId = ?",
+                                 arguments: [chatId])
+        }) ?? []
+        return msgs.flatMap { ($0.media.map { [$0] } ?? []) + ($0.album ?? []) }
+    }
+
+    /// Chats whose deletion has not reached the server yet.
+    private func chatsBeingDeleted() async -> Set<String> {
+        (try? await db.read { dbc in
+            try String.fetchSet(dbc, sql: "SELECT chatId FROM pendingAction WHERE type = 'deleteChat'")
+        }) ?? []
+    }
+
     public func sendTyping(chatId: String, kind: String?) async {
         try? await ws.send(.typing(chatId: chatId, kind: kind))
     }
@@ -1655,12 +1733,17 @@ public actor SyncEngine {
         let peerRead = s.readMarks.filter { $0.key != ownUserId }.values.max() ?? 0
         let peerDelivered = s.deliveredMarks.filter { $0.key != ownUserId }.values.max() ?? 0
         let myRead = s.readMarks[ownUserId] ?? 0
+        // a chat this device deleted and got back starts at the position its
+        // tombstone kept, so the catch-up resumes instead of replaying a
+        // journal whose keys are gone
+        let resume = try ChatCleanup.tombstoneSeq(dbc, chatId: s.chatId)
         try dbc.execute(
             sql: """
             INSERT INTO chat (id, kind, title, avatarId, chatDescription, createdBy, createdAt,
-                              pinnedMsgId, lastSeq, syncedSeq, myReadUpTo, peerReadUpTo, peerDeliveredUpTo,
-                              lastActivityAt, isRequest, iAccepted, pinned, muted, archived, unreadCount)
-            VALUES (?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?)
+                              pinnedMsgId, lastSeq, syncedSeq, syncCursor, myReadUpTo, peerReadUpTo,
+                              peerDeliveredUpTo, lastActivityAt, isRequest, iAccepted, pinned, muted,
+                              archived, unreadCount)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
               title = excluded.title, avatarId = excluded.avatarId,
               chatDescription = excluded.chatDescription, pinnedMsgId = excluded.pinnedMsgId,
@@ -1675,10 +1758,11 @@ public actor SyncEngine {
               unreadCount = MAX(0, MAX(chat.lastSeq, excluded.lastSeq) - MAX(chat.myReadUpTo, excluded.myReadUpTo))
             """,
             arguments: [s.chatId, s.kind, s.title, s.avatarId, s.description, s.createdBy,
-                        s.createdAt, s.pinnedMsgId, s.lastSeq, myRead, peerRead, peerDelivered,
+                        s.createdAt, s.pinnedMsgId, s.lastSeq, resume, resume,
+                        max(myRead, resume), peerRead, peerDelivered,
                         s.createdAt, isRequest, iAccepted,
                         flags?.pinned ?? false, flags?.muted ?? false, flags?.archived ?? false,
-                        max(0, s.lastSeq - myRead)])
+                        max(0, s.lastSeq - max(myRead, resume))])
         if let flags {
             try dbc.execute(
                 sql: "UPDATE chat SET pinned = ?, muted = ?, mutedUntil = ?, archived = ? WHERE id = ?",
