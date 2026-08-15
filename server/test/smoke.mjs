@@ -4,6 +4,7 @@
 // по умолчанию http://localhost:9871 (.dev.vars), иначе PUSH_PORT=<порт>.
 import http from "node:http";
 import WebSocket from "ws";
+import { shouldArmAlarm } from "../src/util.ts";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:8787";
 const WS_BASE = BASE.replace(/^http/, "ws");
@@ -906,6 +907,19 @@ check("queue drains to empty cursor",
 
 const strangerQ = await api(`/api/chats/${fgrp.chatId}/fanout`, { token: bob.token });
 check("fanout state hidden from non-member", !strangerQ.ok && strangerQ.error === "not_member");
+
+// 24. Arming the fanout alarm: the queue is never left without one.
+// A stored alarm time keeps its value after the alarm has fired, so a job
+// queued around that moment used to see a pending alarm nobody was going to
+// run, and stayed undelivered until the next send into the chat.
+{
+  const now = 1_000_000;
+  check("arms when nothing is pending", shouldArmAlarm(null, now + 1, now));
+  check("arms past an alarm due right now", shouldArmAlarm(now, now + 1, now));
+  check("arms past an alarm that already fired", shouldArmAlarm(now - 5000, now + 1, now));
+  check("skips an earlier alarm still ahead", !shouldArmAlarm(now + 1, now + 200, now));
+  check("arms ahead of a later alarm", shouldArmAlarm(now + 500, now + 1, now));
+}
 
 cmal.ws.close(); ctre.ws.close();
 ca.ws.close(); cb2.ws.close(); cb3.ws.close(); cb4.ws.close(); ca2.ws.close(); ce.ws.close();

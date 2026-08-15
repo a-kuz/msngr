@@ -58,6 +58,19 @@ export function directChatName(a: string, b: string): string {
   return "direct:" + [a, b].sort().join(":");
 }
 
+/// Whether a drain has to be armed for `at` given the alarm the storage
+/// reports as pending.
+///
+/// A pending time that is not in the future promises no drain: an alarm keeps
+/// its stored time after it has fired, and an alarm written for a moment the
+/// running handler has already reached is dropped. Treating either as "someone
+/// is coming" is what leaves queued jobs undelivered, so only an alarm still
+/// ahead of `now` and no later than `at` lets the caller skip.
+export function shouldArmAlarm(pending: number | null, at: number, now: number): boolean {
+  if (pending === null) return true;
+  return !(pending > now && pending <= at);
+}
+
 export const SEQ_PAD = 10;
 export function seqKey(seq: number): string {
   return "msg:" + String(seq).padStart(SEQ_PAD, "0");
