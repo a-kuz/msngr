@@ -147,6 +147,19 @@ struct ChatScreen: View {
         .onReceive(NotificationCenter.default.publisher(for: .forwardRequested)) { note in
             forwardMessage = note.object as? Message
         }
+        // из галереи вложений: экраны поверх ленты закрываются, лента доезжает
+        // до сообщения — догрузив историю, если оно глубже окна
+        .onReceive(NotificationCenter.default.publisher(for: .showMessageInChat)) { note in
+            guard let jump = note.object as? MessageJump, jump.chatId == chatId else { return }
+            showChatInfo = false
+            Task {
+                guard await model.ensureLoaded(msgId: jump.msgId) else {
+                    Haptics.rigid()
+                    return
+                }
+                MessagesView.scrollWhenReady(vc: messagesVC, msgId: jump.msgId)
+            }
+        }
         .alert("Не отправлено", isPresented: sendFailureBinding) {
             Button("Понятно", role: .cancel) { model.sendFailure = nil }
         } message: {
@@ -681,8 +694,9 @@ struct MessagesView: UIViewControllerRepresentable {
     }
 
     /// Догруженная история попадает в список через updateUIViewController —
-    /// скроллим, как только сообщение появилось в ленте.
-    private static func scrollWhenReady(vc: MessagesViewController, msgId: String, attempts: Int = 10) {
+    /// скроллим, как только сообщение появилось в ленте. Тем же путём доезжает
+    /// переход из галереи: там ждать приходится ещё и закрытия экранов поверх.
+    static func scrollWhenReady(vc: MessagesViewController, msgId: String, attempts: Int = 16) {
         if vc.scrollTo(msgId: msgId, highlight: true) { return }
         guard attempts > 0 else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
