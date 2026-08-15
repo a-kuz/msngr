@@ -36,8 +36,10 @@ struct SettingsView: View {
                                 }
                         }
                         VStack(alignment: .leading, spacing: 4) {
+                            // A text field cannot wrap, so its size is capped:
+                            // .headline would truncate the name at large sizes.
                             TextField("Имя", text: $displayName)
-                                .font(.headline)
+                                .textRole(Theme.Text.rowTitle)
                             Text("@\(app.session?.username ?? "")")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
