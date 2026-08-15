@@ -8,29 +8,97 @@ import MsngrCore
 /// batch by seq and answers them one by one.
 private let burstGate = NotificationBurstGate(resolve: { await burstPlan($0) })
 
+/// The envelopes of the pushes this process has seen, by msgId. A handler puts
+/// its envelope here and the window resolves them all in one transaction.
+private let envelopes = PushEnvelopeBox()
+
+private final class PushEnvelopeBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var byMsgId: [String: PushEnvelope] = [:]
+
+    func put(_ envelope: PushEnvelope, msgId: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        byMsgId[msgId] = envelope
+    }
+
+    func take(_ msgIds: [String]) -> [String: PushEnvelope] {
+        lock.lock()
+        defer { lock.unlock() }
+        var out: [String: PushEnvelope] = [:]
+        for id in msgIds {
+            if let e = byMsgId.removeValue(forKey: id) { out[id] = e }
+        }
+        return out
+    }
+}
+
 /// The database of the app group, opened once: a burst enters the extension
 /// many times. The app owns the location, so the extension only reads the
 /// container it prepared.
 /// Trace of what the system actually let this extension do.
 private let journal = NotificationJournal.shared()
 
+private let sharedLocation: StorageLocation? = AppContainer.groupLocation()
+
 private let sharedDatabase: DatabaseQueue? = {
-    guard let url = AppContainer.groupLocation()?.databaseURL,
+    guard let url = sharedLocation?.databaseURL,
           FileManager.default.fileExists(atPath: url.path) else { return nil }
     return try? AppDatabase.open(at: url)
 }()
 
+/// Keys of this device, and who this device is. Without them a push is still
+/// answered — with the neutral text it arrived with.
+private let decryption: (decryptor: IncomingDecryptor, store: IdentityStore, ownUserId: String)? = {
+    struct StoredSession: Decodable { let userId: String; let deviceId: String }
+    guard let location = sharedLocation, let db = sharedDatabase,
+          let data = try? Data(contentsOf: location.sessionURL),
+          let session = try? JSONDecoder().decode(StoredSession.self, from: data),
+          let store = try? IdentityStore(db: db,
+                                         masterKeyProvider: SharedFileMasterKey(location: location))
+    else { return nil }
+    let decryptor = IncomingDecryptor(store: store, ownUserId: session.userId,
+                                      ownDeviceId: session.deviceId,
+                                      gate: CryptoGate.shared(location: location))
+    return (decryptor, store, session.userId)
+}()
+
 /// An empty plan leaves every push with the content it arrived with: a neutral
 /// banner is the right answer when the database cannot be consulted.
+///
+/// The crypto gate is taken around the whole window and released when its
+/// transaction commits: the app steps the same ratchet from its own process,
+/// and only one of them may be inside a step at a time (see `CryptoGate`).
 private func burstPlan(_ items: [BurstItem]) async -> BurstPlan {
     guard let db = sharedDatabase else { return BurstPlan() }
     let showsText = NotificationPreferences.showsMessageText(in: AppGroup.defaults)
-    return (try? NotificationBurstStore.resolve(db: db, items: items,
-                                                showsMessageText: showsText)) ?? BurstPlan()
+    let carried = envelopes.take(items.map(\.msgId))
+    guard let decryption, !carried.isEmpty else {
+        return (try? NotificationBurstStore.resolve(db: db, items: items,
+                                                    showsMessageText: showsText,
+                                                    journal: journal)) ?? BurstPlan()
+    }
+    let gate = CryptoGate.shared(location: sharedLocation!)
+    let plan = try? gate.withLock { ticket -> BurstPlan in
+        let writer = PushMessageWriter(decryptor: decryption.decryptor, store: decryption.store,
+                                       ownUserId: decryption.ownUserId, holding: ticket)
+        return try NotificationBurstStore.resolve(db: db, items: items,
+                                                  showsMessageText: showsText,
+                                                  envelopes: carried, writer: writer,
+                                                  journal: journal)
+    }
+    if plan == nil {
+        journal?.record(.stored, msgId: "", seq: 0, detail: "gate-busy")
+    }
+    return plan ?? (try? NotificationBurstStore.resolve(db: db, items: items,
+                                                        showsMessageText: showsText,
+                                                        journal: journal)) ?? BurstPlan()
 }
 
-/// The push text comes from the message already decrypted by the app and stored
-/// in the shared database; keys are not needed to read it.
+/// The banner says what the message says: the push carries the message itself,
+/// the extension decrypts it and writes it down, and the text is then read from
+/// the row it just wrote. A push whose envelope did not fit, or a message this
+/// device already has, is read from the database as it stands.
 final class NotificationService: UNNotificationServiceExtension {
     private var contentHandler: ((UNNotificationContent) -> Void)?
     private var bestAttempt: UNMutableNotificationContent?
@@ -50,7 +118,10 @@ final class NotificationService: UNNotificationServiceExtension {
             return
         }
         pushedItem = item
-        journal?.record(.received, msgId: item.msgId, seq: item.seq)
+        let envelope = PushEnvelope.fromPush(request.content.userInfo)
+        if let envelope { envelopes.put(envelope, msgId: item.msgId) }
+        journal?.record(.received, msgId: item.msgId, seq: item.seq,
+                        detail: envelope == nil ? "no-envelope" : "envelope")
         let answer = PushAnswer(content: content, handler: contentHandler)
         Task {
             await burstGate.submit(item) { answer.answer($0) }

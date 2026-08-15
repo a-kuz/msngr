@@ -47,8 +47,27 @@ public enum NotificationBurstStore {
     /// entered in parallel sees the finished result and not a half of it.
     public static func resolve(db: DatabaseQueue, items: [BurstItem],
                                showsMessageText: Bool,
+                               envelopes: [String: PushEnvelope] = [:],
+                               writer: PushMessageWriter? = nil,
+                               journal: NotificationJournal? = nil,
                                now: Double = Date().timeIntervalSince1970) throws -> BurstPlan {
         try db.write { dbc -> BurstPlan in
+            // The messages the pushes carry are written first: everything below
+            // — the banner text, the seqs a chat is missing, the count of what
+            // is unread — is read from the database, and this is what puts them
+            // there. One transaction covers the ratchet step and the row it
+            // produced, so an extension the system kills leaves neither behind.
+            if let writer, !envelopes.isEmpty {
+                for item in items.sorted(by: { $0.seq < $1.seq }) {
+                    guard let envelope = envelopes[item.msgId] else { continue }
+                    let outcome = writer.write(dbc, item: item, envelope: envelope, now: now)
+                    journal?.record(.stored, msgId: item.msgId, seq: item.seq,
+                                    detail: outcome.rawValue)
+                }
+                for chatId in Set(items.map(\.chatId)) {
+                    try PushMessageWriter.extendSyncedPrefix(dbc, chatId: chatId)
+                }
+            }
             var state: [String: BurstItemState] = [:]
             var baseline: [String: ChatBurstBaseline] = [:]
             var chats: [String: Chat] = [:]

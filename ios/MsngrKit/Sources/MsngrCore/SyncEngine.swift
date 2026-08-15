@@ -665,6 +665,10 @@ public actor SyncEngine {
                                   from: String, fromDevice: String, sentAt: Double,
                                   ts: Double, body: JSONValue) async {
         guard rawReason != "own_echo" else { return }
+        // The extension may have opened this very envelope from its push and
+        // written the message already; its ratchet step is exactly why this
+        // attempt failed. Nothing is missing, so nothing is recorded.
+        guard await !stored(msgId: msgId) else { return }
         let reason: String
         if rawReason == "not_addressed" {
             // в direct отправитель адресует все устройства обеих сторон, поэтому
@@ -687,20 +691,9 @@ public actor SyncEngine {
         guard let data = try? JSONEncoder().encode(body) else { return }
         let now = Date().timeIntervalSince1970
         let attempts = (try? await db.write { dbc -> Int in
-            try dbc.execute(
-                sql: """
-                INSERT INTO pendingDecrypt (chatId, msgId, seq, fromUserId, fromDevice, sentAt, ts,
-                                            body, reason, attempts, firstSeenAt, lastTriedAt)
-                VALUES (?,?,?,?,?,?,?,?,?,1,?,?)
-                ON CONFLICT(chatId, msgId) DO UPDATE SET
-                  reason = excluded.reason, attempts = pendingDecrypt.attempts + 1,
-                  lastTriedAt = excluded.lastTriedAt
-                """,
-                arguments: [chatId, msgId, seq, from, fromDevice, sentAt, ts, data, reason, now, now])
-            try HistoryWindow.recordGap(dbc, chatId: chatId, seq: seq, reason: reason,
-                                        msgId: msgId, fromUserId: from, sentAt: sentAt, now: now)
-            return try Int.fetchOne(dbc, sql: "SELECT attempts FROM pendingDecrypt WHERE chatId = ? AND msgId = ?",
-                                    arguments: [chatId, msgId]) ?? 1
+            try SyncEngine.deferEnvelope(dbc, reason: reason, chatId: chatId, msgId: msgId, seq: seq,
+                                         from: from, fromDevice: fromDevice, sentAt: sentAt, ts: ts,
+                                         body: data, now: now)
         }) ?? 1
         MsngrLog.repair.error(
             "unreadable chat=\(chatId, privacy: .public) seq=\(seq, privacy: .public) reason=\(reason, privacy: .public) attempts=\(attempts, privacy: .public)")
@@ -711,6 +704,40 @@ public actor SyncEngine {
                                       reason: reason, attempts: attempts, firstSeenAt: now,
                                       lastTriedAt: now, repairAttempts: 0, repairAskedAt: 0)
         await requestRepairIfDue(pending, now: now)
+    }
+
+    /// Whether the feed already holds this message, whoever wrote it.
+    private func stored(msgId: String) async -> Bool {
+        (try? await db.read { dbc in
+            try Bool.fetchOne(dbc, sql: "SELECT EXISTS(SELECT 1 FROM message WHERE msgId = ?)",
+                              arguments: [msgId]) ?? false
+        }) ?? false
+    }
+
+    /// Keeps an envelope this device could not open, and marks the seq it left
+    /// unfilled. Returns how many times this envelope has been tried.
+    ///
+    /// The notification service extension writes here too: an envelope that
+    /// arrived by push and did not open is the only copy the device has until
+    /// the socket replays it, and the sweep in the app works from this table.
+    @discardableResult
+    static func deferEnvelope(_ dbc: GRDB.Database, reason: String, chatId: String, msgId: String,
+                              seq: Int, from: String, fromDevice: String, sentAt: Double,
+                              ts: Double, body: Data, now: Double) throws -> Int {
+        try dbc.execute(
+            sql: """
+            INSERT INTO pendingDecrypt (chatId, msgId, seq, fromUserId, fromDevice, sentAt, ts,
+                                        body, reason, attempts, firstSeenAt, lastTriedAt)
+            VALUES (?,?,?,?,?,?,?,?,?,1,?,?)
+            ON CONFLICT(chatId, msgId) DO UPDATE SET
+              reason = excluded.reason, attempts = pendingDecrypt.attempts + 1,
+              lastTriedAt = excluded.lastTriedAt
+            """,
+            arguments: [chatId, msgId, seq, from, fromDevice, sentAt, ts, body, reason, now, now])
+        try HistoryWindow.recordGap(dbc, chatId: chatId, seq: seq, reason: reason,
+                                    msgId: msgId, fromUserId: from, sentAt: sentAt, now: now)
+        return try Int.fetchOne(dbc, sql: "SELECT attempts FROM pendingDecrypt WHERE chatId = ? AND msgId = ?",
+                                arguments: [chatId, msgId]) ?? 1
     }
 
     private func pendingEnvelopes(chatId: String?) async -> [PendingEnvelope] {
@@ -771,6 +798,19 @@ public actor SyncEngine {
     /// Одна попытка расшифровать сохранённый конверт. Успех уносит его в ленту и
     /// закрывает запись о пропаже, неудача считается попыткой.
     private func replay(_ pending: PendingEnvelope) async -> Bool {
+        // The message may already be in the feed: the notification service
+        // extension opens the same envelope from the push, and the ratchet moved
+        // with it. Trying again would fail for good and set repair going after a
+        // message that is not missing at all.
+        if await stored(msgId: pending.msgId) {
+            try? await db.write { dbc in
+                try dbc.execute(sql: "DELETE FROM pendingDecrypt WHERE chatId = ? AND msgId = ?",
+                                arguments: [pending.chatId, pending.msgId])
+                try dbc.execute(sql: "DELETE FROM historyGap WHERE chatId = ? AND seq = ?",
+                                arguments: [pending.chatId, pending.seq])
+            }
+            return true
+        }
         guard let body = try? JSONDecoder().decode(JSONValue.self, from: pending.body) else {
             await dropExpired(pending)
             return false
