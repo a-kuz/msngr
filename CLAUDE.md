@@ -28,7 +28,7 @@ xcodebuild -project ios/Msngr.xcodeproj -scheme Msngr -destination 'id=<UDID>' b
 xcodebuild -project ios/Msngr.xcodeproj -scheme Msngr -destination 'id=<UDID>' \
   test -only-testing:MsngrTests
 cd ios/MsngrKit && swift test                       # ядро
-cd server && node test/smoke.mjs                    # 63 проверки, нужен wrangler dev
+cd server && node test/smoke.mjs                    # 101 проверка, нужен wrangler dev
 ```
 
 `ios/Msngr.xcodeproj` в `.gitignore` и генерируется из `ios/project.yml`. Руками
