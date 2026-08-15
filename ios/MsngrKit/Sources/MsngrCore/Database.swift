@@ -6,6 +6,9 @@ public enum AppDatabase {
     /// ratchet-состояния дополнительно шифруются ключом из Keychain (см. CryptoStore).
     public static func open(at url: URL) throws -> DatabaseQueue {
         var config = Configuration()
+        // приложение и расширение уведомлений пишут в один файл из разных
+        // процессов: без ожидания чужой транзакции запись падает сразу
+        config.busyMode = .timeout(2)
         config.prepareDatabase { db in
             try db.execute(sql: "PRAGMA journal_mode = WAL")
         }
