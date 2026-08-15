@@ -25,7 +25,12 @@ struct MsngrMacApp: App {
 /// Состояние macOS-клиента: то же ядро (MsngrCore), тот же протокол и E2EE.
 @MainActor
 final class MacAppState: ObservableObject {
-    static let httpBase = URL(string: ProcessInfo.processInfo.environment["MSNGR_SERVER"] ?? "http://localhost:8787")!
+    static let httpBase: URL = {
+        let fallback = URL(string: "http://localhost:8787")!
+        guard let raw = ProcessInfo.processInfo.environment["MSNGR_SERVER"],
+              let url = URL(string: raw), url.scheme != nil else { return fallback }
+        return url
+    }()
 
     @Published var session: Session?
     private(set) var db: DatabaseQueue!
