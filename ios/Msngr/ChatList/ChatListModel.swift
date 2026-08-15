@@ -263,6 +263,14 @@ final class ChatListModel: ObservableObject {
         }
     }
 
+    /// Чат по идентификатору — из списка, архива или заявок. Строке найденного
+    /// сообщения нужно, чьё оно.
+    func item(for chatId: String) -> ChatListItem? {
+        items.first { $0.id == chatId }
+            ?? archived.first { $0.id == chatId }
+            ?? requests.first { $0.id == chatId }
+    }
+
     func updateSearch() {
         guard !searchText.isEmpty else {
             searchResults = []
