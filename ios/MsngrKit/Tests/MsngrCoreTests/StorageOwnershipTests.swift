@@ -44,9 +44,10 @@ final class StorageOwnershipTests: XCTestCase {
         XCTAssertEqual(StorageOwnership.decision(owner: .user("bob"), expectedUserId: "alice"), .wipe)
     }
 
-    /// Database left by a build that did not write the marker: treated as somebody else's.
-    func testMissingMarkerWipesStorage() {
-        XCTAssertEqual(StorageOwnership.decision(owner: .unmarked, expectedUserId: "alice"), .wipe)
+    /// Database left by a build that did not write the marker: the session names
+    /// its owner, so the storage is adopted rather than thrown away.
+    func testMissingMarkerAdoptsStorage() {
+        XCTAssertEqual(StorageOwnership.decision(owner: .unmarked, expectedUserId: "alice"), .adopt)
     }
 
     func testRegistrationAlwaysWipes() {

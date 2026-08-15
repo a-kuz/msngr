@@ -30,6 +30,9 @@ public enum StorageOwnership {
     public enum Decision: Sendable, Equatable {
         case keep
         case wipe
+        /// Storage predates the marker: the session names its owner, so the
+        /// marker is written instead of throwing the history away.
+        case adopt
     }
 
     /// Whether the storage may be reused as is.
@@ -47,7 +50,7 @@ public enum StorageOwnership {
         case .none, .unreadable:
             return .keep
         case .unmarked:
-            return .wipe
+            return .adopt
         case .user(let id):
             return id == expectedUserId ? .keep : .wipe
         }
