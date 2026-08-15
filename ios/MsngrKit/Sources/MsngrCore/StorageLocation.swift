@@ -25,7 +25,6 @@ public struct StorageLocation: Sendable, Equatable {
     public static let movableItems = [
         sessionFileName,
         masterKeyFileName,
-        sessionFileName,
         "media-outgoing",
         "avatars",
         databaseFileName + "-wal",
