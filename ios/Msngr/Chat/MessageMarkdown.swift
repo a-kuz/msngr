@@ -72,19 +72,19 @@ enum MessageMarkdownRenderer {
 
     // MARK: - Шрифты
 
-    static let codeFont = UIFont.monospacedSystemFont(ofSize: BubbleLayout.textFont.pointSize - 2,
-                                                      weight: .regular)
+    static var codeFont: UIFont { Theme.Text.bubbleCode.uiFont }
 
     static func font(for style: MarkdownStyle) -> UIFont {
         if style.contains(.code) { return codeFont }
+        let base = BubbleLayout.textFont
         var traits: UIFontDescriptor.SymbolicTraits = []
         if style.contains(.bold) { traits.insert(.traitBold) }
         if style.contains(.italic) { traits.insert(.traitItalic) }
         guard !traits.isEmpty,
-              let descriptor = BubbleLayout.textFont.fontDescriptor.withSymbolicTraits(traits) else {
-            return BubbleLayout.textFont
+              let descriptor = base.fontDescriptor.withSymbolicTraits(traits) else {
+            return base
         }
-        return UIFont(descriptor: descriptor, size: BubbleLayout.textFont.pointSize)
+        return UIFont(descriptor: descriptor, size: base.pointSize)
     }
 
     private static let codeParagraphStyle: NSParagraphStyle = {

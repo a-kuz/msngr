@@ -33,7 +33,7 @@ private struct SelectableText: UIViewRepresentable {
         tv.isSelectable = true
         tv.isScrollEnabled = true
         tv.backgroundColor = .clear
-        tv.font = .systemFont(ofSize: 17)
+        tv.font = Theme.Text.bubble.uiFont
         tv.textContainerInset = UIEdgeInsets(top: 12, left: 0, bottom: 12, right: 0)
         tv.textContainer.lineFragmentPadding = 0
         tv.dataDetectorTypes = [.link, .phoneNumber]

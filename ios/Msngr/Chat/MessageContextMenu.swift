@@ -31,9 +31,13 @@ final class MessageContextOverlay: UIView {
     private let menuCard = UIView()
     private let menuStack = UIStackView()
 
-    private static let menuWidth: CGFloat = 252
-    private static let rowHeight: CGFloat = 44
-    private static let barHeight: CGFloat = 44
+    private static var menuWidth: CGFloat { TypeScale.scaled(252, max: 340) }
+    private static var rowHeight: CGFloat {
+        max(44, ceil(Theme.Text.menuItem.uiFont.lineHeight) + 18)
+    }
+    private static var barHeight: CGFloat {
+        max(44, ceil(Theme.Text.largeControl.uiFont.lineHeight) + 8)
+    }
     private static let gap: CGFloat = 8
 
     // MARK: - Показ
@@ -155,7 +159,7 @@ final class MessageContextOverlay: UIView {
         for (i, emoji) in Self.quickReactions.enumerated() {
             let btn = UIButton(type: .system)
             btn.setTitle(emoji, for: .normal)
-            btn.titleLabel?.font = .systemFont(ofSize: 28)
+            btn.titleLabel?.font = Theme.Text.largeControl.uiFont
             btn.tag = i
             btn.addTarget(self, action: #selector(reactionTap(_:)), for: .touchUpInside)
             if emoji == myReaction {
@@ -343,7 +347,7 @@ private final class MenuRow: UIControl {
     init(item: MessageContextOverlay.Item) {
         super.init(frame: .zero)
         titleLabel.text = item.title
-        titleLabel.font = .systemFont(ofSize: 17)
+        titleLabel.font = Theme.Text.menuItem.uiFont
         titleLabel.textColor = item.destructive ? .systemRed : .label
         iconView.image = UIImage(systemName: item.icon)
         iconView.tintColor = item.destructive ? .systemRed : .label

@@ -123,6 +123,180 @@ final class ThemeStore: ObservableObject {
 
 extension Notification.Name {
     static let paletteChanged = Notification.Name("paletteChanged")
+    /// Preferred content size category changed: every measured layout is stale.
+    static let typeScaleChanged = Notification.Name("typeScaleChanged")
+}
+
+// MARK: - Type scale
+
+/// One named text role: a base size at the default content size category, the
+/// system style it grows along with, and a ceiling that keeps fixed-height
+/// chrome (navigation bar, list row, badge) from overflowing at accessibility
+/// sizes.
+struct TextRole: Hashable {
+    var size: CGFloat
+    var weight: UIFont.Weight = .regular
+    var relativeTo: UIFont.TextStyle = .body
+    var design: UIFontDescriptor.SystemDesign = .default
+    var italic: Bool = false
+    var maxSize: CGFloat
+
+    var uiFont: UIFont { TypeScale.font(self) }
+    var font: Font { Font(uiFont) }
+    /// Height of one line at the current scale: cells and capsules size from
+    /// this instead of a hardcoded number.
+    var lineHeight: CGFloat { uiFont.lineHeight }
+}
+
+/// Dynamic Type, resolved once per content size category.
+///
+/// Bubble layout is measured away from the view hierarchy (and off the main
+/// thread), so the category is snapshotted here rather than read from
+/// `UITraitCollection.current` at measure time. `start()` keeps the snapshot in
+/// step with the system and tells the app to re-measure.
+enum TypeScale {
+    nonisolated(unsafe) private(set) static var category: UIContentSizeCategory = .large
+    nonisolated(unsafe) private static var cache: [TextRole: UIFont] = [:]
+    private static let lock = NSLock()
+
+    static func start() {
+        category = UIScreen.main.traitCollection.preferredContentSizeCategory
+        NotificationCenter.default.addObserver(
+            forName: UIContentSizeCategory.didChangeNotification, object: nil, queue: .main
+        ) { note in
+            let next = note.userInfo?[UIContentSizeCategory.newValueUserInfoKey] as? UIContentSizeCategory
+                ?? UIScreen.main.traitCollection.preferredContentSizeCategory
+            guard next != category else { return }
+            apply(next)
+        }
+    }
+
+    /// Swaps the scale and invalidates everything measured against the old one.
+    static func apply(_ next: UIContentSizeCategory) {
+        category = next
+        lock.lock()
+        cache.removeAll()
+        lock.unlock()
+        BubbleLayout.clearCache()
+        NotificationCenter.default.post(name: .typeScaleChanged, object: nil)
+    }
+
+    static func font(_ role: TextRole) -> UIFont {
+        lock.lock()
+        if let hit = cache[role] { lock.unlock(); return hit }
+        lock.unlock()
+        let made = resolve(role, category: category)
+        lock.lock()
+        cache[role] = made
+        lock.unlock()
+        return made
+    }
+
+    static func resolve(_ role: TextRole, category: UIContentSizeCategory) -> UIFont {
+        var base = UIFont.systemFont(ofSize: role.size, weight: role.weight)
+        var descriptor = base.fontDescriptor
+        if role.design != .default, let d = descriptor.withDesign(role.design) { descriptor = d }
+        if role.italic, let d = descriptor.withSymbolicTraits(.traitItalic) { descriptor = d }
+        base = UIFont(descriptor: descriptor, size: role.size)
+        return UIFontMetrics(forTextStyle: role.relativeTo)
+            .scaledFont(for: base, maximumPointSize: role.maxSize,
+                        compatibleWith: UITraitCollection(preferredContentSizeCategory: category))
+    }
+
+    /// Scales a fixed dimension (icon box, capsule height, inset) the same way
+    /// the text next to it scales, so the two never drift apart.
+    static func scaled(_ value: CGFloat, relativeTo style: UIFont.TextStyle = .body,
+                       max limit: CGFloat) -> CGFloat {
+        min(limit, UIFontMetrics(forTextStyle: style).scaledValue(
+            for: value, compatibleWith: UITraitCollection(preferredContentSizeCategory: category)))
+    }
+}
+
+extension Theme {
+    /// Every text size in the app. Call sites name a role; nobody spells a
+    /// point size, so changing the scale is one edit here.
+    enum Text {
+        // Feed
+        static let bubble = TextRole(size: 17, relativeTo: .body, maxSize: 53)
+        static let bubbleTime = TextRole(size: 12, relativeTo: .caption1, maxSize: 26)
+        static let bubbleName = TextRole(size: 14, weight: .semibold, relativeTo: .footnote, maxSize: 30)
+        static let bubbleForward = TextRole(size: 13, relativeTo: .footnote, italic: true, maxSize: 28)
+        static let replyAuthor = TextRole(size: 13, weight: .semibold, relativeTo: .footnote, maxSize: 28)
+        static let replyText = TextRole(size: 13, relativeTo: .footnote, maxSize: 28)
+        static let reaction = TextRole(size: 14, relativeTo: .footnote, maxSize: 26)
+        static let feedNote = TextRole(size: 13, weight: .medium, relativeTo: .footnote, maxSize: 26)
+        static let voiceDuration = TextRole(size: 11, relativeTo: .caption2, maxSize: 22)
+        static let fileName = TextRole(size: 15, weight: .medium, relativeTo: .subheadline, maxSize: 32)
+        /// Code spans and blocks inside a bubble: two points under body text.
+        static let bubbleCode = TextRole(size: 15, relativeTo: .body, design: .monospaced, maxSize: 48)
+
+        // Chat header
+        static let headerTitle = TextRole(size: 16, weight: .semibold, relativeTo: .subheadline, maxSize: 21)
+        static let headerSubtitle = TextRole(size: 12, relativeTo: .caption1, maxSize: 15)
+
+        // Chat list row
+        static let rowTitle = TextRole(size: 16, weight: .semibold, relativeTo: .subheadline, maxSize: 30)
+        static let rowPreview = TextRole(size: 15, relativeTo: .subheadline, maxSize: 28)
+        static let rowTime = TextRole(size: 13, relativeTo: .caption1, maxSize: 20)
+        static let rowBadge = TextRole(size: 13, weight: .semibold, relativeTo: .caption1, maxSize: 20)
+        static let rowGlyph = TextRole(size: 12, relativeTo: .caption1, maxSize: 20)
+        static let folderTab = TextRole(size: 15, relativeTo: .subheadline, maxSize: 24)
+        static let folderTabActive = TextRole(size: 15, weight: .semibold, relativeTo: .subheadline, maxSize: 24)
+
+        // Composer
+        static let input = TextRole(size: 17, relativeTo: .body, maxSize: 40)
+        static let recordTimer = TextRole(size: 16, relativeTo: .body, design: .monospaced, maxSize: 28)
+
+        // General chrome
+        static let body = TextRole(size: 16, relativeTo: .body, maxSize: 34)
+        static let caption = TextRole(size: 12, relativeTo: .caption1, maxSize: 22)
+        static let controlTitle = TextRole(size: 17, weight: .semibold, relativeTo: .body, maxSize: 30)
+        static let menuItem = TextRole(size: 17, relativeTo: .body, maxSize: 30)
+        /// Oversized tappable glyph: keypad digit, quick-reaction emoji.
+        static let largeControl = TextRole(size: 28, relativeTo: .title2, maxSize: 40)
+        static let monospacedTag = TextRole(size: 11, relativeTo: .caption2, design: .monospaced, maxSize: 18)
+    }
+
+    /// Control glyphs (SF Symbols in buttons) grow with text but stop early:
+    /// the bar they sit in has a fixed height.
+    static func glyph(_ size: CGFloat, max limit: CGFloat) -> Font {
+        .system(size: TypeScale.scaled(size, max: limit))
+    }
+}
+
+/// Applies a named role and re-resolves it when the reader changes their text
+/// size: reading `dynamicTypeSize` is what makes SwiftUI rebuild the body.
+private struct TextRoleModifier: ViewModifier {
+    @Environment(\.dynamicTypeSize) private var typeSize
+    let role: TextRole
+
+    func body(content: Content) -> some View {
+        content.font(Font(TypeScale.resolve(role, category: typeSize.contentSizeCategory)))
+    }
+}
+
+extension View {
+    func textRole(_ role: TextRole) -> some View { modifier(TextRoleModifier(role: role)) }
+}
+
+extension DynamicTypeSize {
+    var contentSizeCategory: UIContentSizeCategory {
+        switch self {
+        case .xSmall: return .extraSmall
+        case .small: return .small
+        case .medium: return .medium
+        case .large: return .large
+        case .xLarge: return .extraLarge
+        case .xxLarge: return .extraExtraLarge
+        case .xxxLarge: return .extraExtraExtraLarge
+        case .accessibility1: return .accessibilityMedium
+        case .accessibility2: return .accessibilityLarge
+        case .accessibility3: return .accessibilityExtraLarge
+        case .accessibility4: return .accessibilityExtraExtraLarge
+        case .accessibility5: return .accessibilityExtraExtraExtraLarge
+        @unknown default: return .large
+        }
+    }
 }
 
 /// Единая точка стиля: цвета, шрифты, кривые анимаций. Ничего линейного по умолчанию.
