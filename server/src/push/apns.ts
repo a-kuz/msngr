@@ -43,6 +43,8 @@ async function apnsJwt(env: Env, force: boolean): Promise<string | null> {
 export interface PushPayload {
   chatId: string;
   msgId?: string;
+  seq?: number; // позиция сообщения в чате: по ней клиент выстраивает порядок показа
+  sentAt?: number; // время отправки, мс: порядок между чатами
   badge?: number; // суммарный unread пользователя по всем чатам
 }
 
@@ -107,6 +109,10 @@ export async function sendPush(
     },
     chatId: payload.chatId,
     msgId: payload.msgId,
+    // seq and sentAt let the extension order a burst of pushes: APNs delivers
+    // them in an arbitrary order, and the banner order is the posting order.
+    seq: payload.seq,
+    sentAt: payload.sentAt,
   });
 
   let forceJwt = false;

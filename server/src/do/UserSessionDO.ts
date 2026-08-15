@@ -154,7 +154,7 @@ export class UserSessionDO implements DurableObject {
           // timing guarantee. The sender is not waiting on it — his ack left
           // ConversationDO before this delivery was queued.
           if (!muted && !isOwnEcho) {
-            await this.pushToDevices(frame.chatId, frame.msgId);
+            await this.pushToDevices(frame.chatId, frame.msgId, frame.seq, frame.sentAt);
           }
         }
         return json({ ok: true });
@@ -303,7 +303,7 @@ export class UserSessionDO implements DurableObject {
     return total;
   }
 
-  private async pushToDevices(chatId: string, msgId?: string) {
+  private async pushToDevices(chatId: string, msgId?: string, seq?: number, sentAt?: number) {
     const tokens =
       (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
     const devices = Object.entries(tokens);
@@ -314,7 +314,10 @@ export class UserSessionDO implements DurableObject {
     const results = await Promise.all(
       devices.map(async ([deviceId, t]) => {
         try {
-          return { deviceId, res: await sendPush(this.env, t.token, t.env, { chatId, msgId, badge }) };
+          return {
+            deviceId,
+            res: await sendPush(this.env, t.token, t.env, { chatId, msgId, seq, sentAt, badge }),
+          };
         } catch (e) {
           console.warn(`push to device ${deviceId} for ${chatId} failed: ${String(e)}`);
           return { deviceId, res: null };
