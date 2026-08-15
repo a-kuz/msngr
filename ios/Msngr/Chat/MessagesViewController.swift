@@ -19,6 +19,8 @@ final class MessagesViewController: UIViewController {
     var onTapReplyQuote: ((Message) -> Void)?
     /// тап по строке в режиме мультивыбора
     var onToggleSelection: ((Message) -> Void)?
+    /// тап по статус-бару: экран ведёт ленту к началу чата
+    var onScrollToStart: (() -> Void)?
 
     private(set) var collectionView: UICollectionView!
     private var items: [ChatFeedItem] = []
@@ -385,6 +387,20 @@ final class MessagesViewController: UIViewController {
         if !animated { updateAtBottom(layoutFirst: true) }
     }
 
+    /// Начало чата: список перевёрнут, самое старое сообщение лежит последним,
+    /// то есть в конце контента. Дальний конец берём без анимации — прокрутка
+    /// через тысячи ячеек всё равно не читается.
+    func scrollToStart() {
+        guard isViewLoaded, !items.isEmpty else { return }
+        collectionView.layoutIfNeeded()
+        let maxOffset = collectionView.contentSize.height - collectionView.bounds.height
+            + collectionView.contentInset.bottom
+        let target = max(-collectionView.contentInset.top, maxOffset)
+        let far = abs(target - collectionView.contentOffset.y) > collectionView.bounds.height * 3
+        collectionView.setContentOffset(CGPoint(x: 0, y: target), animated: !far)
+        if far { updateAtBottom(layoutFirst: true) }
+    }
+
     // MARK: - Удержание позиции чтения
 
     /// Элемент у верхнего края экрана и его положение относительно него.
@@ -559,6 +575,14 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
                                          replyAuthorName: replyAuthorName)
             return CGSize(width: cv.bounds.width, height: plan.cellHeight)
         }
+    }
+
+    /// Тап по статус-бару. Системная прокрутка «вверх» в перевёрнутом списке
+    /// уехала бы к самым новым сообщениям — начало чата это другой конец,
+    /// и ведёт туда экран сам.
+    func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
+        onScrollToStart?()
+        return false
     }
 
     func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {

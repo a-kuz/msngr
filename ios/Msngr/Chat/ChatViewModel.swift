@@ -647,11 +647,25 @@ final class ChatViewModel: ObservableObject {
         Task { await expandWindow() }
     }
 
+    /// Начало чата: окно растёт страницами, пока не покроет самое старое
+    /// сообщение на устройстве. К серверу здесь не ходим — начало это то, что
+    /// устройство уже хранит.
+    func loadDeviceHistory(maxPages: Int = 500) async {
+        for _ in 0..<maxPages {
+            guard await expandWindow(localOnly: true) else { return }
+        }
+    }
+
+    /// Окно дошло до самого старого сообщения на устройстве.
+    var isAtDeviceStart: Bool { atHistoryStart }
+
     /// Одна страница вверх. Сообщения уже расшифрованы и лежат в базе, поэтому
     /// страница берётся из неё; к серверу уходит только незакрытый разрыв seq —
     /// то, что это устройство ещё не расшифровывало. false — расширять нечего.
+    /// localOnly — расширять только по своей базе: к серверу не ходить и
+    /// «дальше нечего» не запоминать, разрывы остаются на обычную пагинацию.
     @discardableResult
-    private func expandWindow() async -> Bool {
+    private func expandWindow(localOnly: Bool = false) async -> Bool {
         guard chat != nil, !loadingOlder, !reachedStart, let db = app.db else { return false }
         loadingOlder = true
         defer { loadingOlder = false }
@@ -668,6 +682,7 @@ final class ChatViewModel: ObservableObject {
                 return true
             }
         }
+        guard !localOnly else { return false }
         // локальная история исчерпана: с сервера полезно только то, что это
         // устройство ещё не расшифровывало
         let gaps = (try? await db.read { [chatId] dbc in
