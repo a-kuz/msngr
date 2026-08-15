@@ -78,6 +78,8 @@ final class ChatViewModel: ObservableObject {
         let users: [User]
         let unreadableSeqs: [Int]
         let atHistoryStart: Bool
+        /// TOFU: the peer's identity key changed and was not accepted yet.
+        let keyChangePending: Bool
     }
 
     private var cancellable: AnyCancellable?
@@ -159,14 +161,28 @@ final class ChatViewModel: ObservableObject {
                                                           limit: plan.capacity)
                     floorBox.set(floor)
                 }
-                let msgs = try HistoryWindow.messages(dbc, chatId: chatId, floor: floor)
+                // a recomputed floor already sits `capacity` messages below the
+                // newest; a floor that stays put needs the cap spelled out, or
+                // the window grows with the chat
+                let msgs = try HistoryWindow.messages(dbc, chatId: chatId, floor: floor,
+                                                      limit: plan.recompute ? nil : plan.capacity)
                 let users = try User.fetchAll(dbc, sql: """
                     SELECT u.* FROM user u JOIN member m ON m.userId = u.id WHERE m.chatId = ?
                     """, arguments: [chatId])
+                // the pending key change is read here rather than from the main
+                // thread: a read of its own would block on the writer queue,
+                // and during a burst that queue is busy applying messages
+                var keyChangePending = false
+                if chat?.kind == .direct, let peerId = users.first(where: { $0.id != ownId })?.id {
+                    keyChangePending = try Row.fetchOne(
+                        dbc, sql: "SELECT changedPending FROM trustedIdentity WHERE userId = ?",
+                        arguments: [peerId]).map { ($0["changedPending"] as String?) != nil } ?? false
+                }
                 return Snapshot(
                     chat: chat, msgs: msgs, users: users,
                     unreadableSeqs: try HistoryWindow.exhaustedGapSeqs(dbc, chatId: chatId, floor: floor),
-                    atHistoryStart: try !HistoryWindow.hasOlder(dbc, chatId: chatId, floor: floor))
+                    atHistoryStart: try !HistoryWindow.hasOlder(dbc, chatId: chatId, floor: floor),
+                    keyChangePending: keyChangePending)
             }
             .publisher(in: db, scheduling: .async(onQueue: .main))
             .sink(receiveCompletion: { _ in }, receiveValue: { [weak self] snapshot in
@@ -193,8 +209,8 @@ final class ChatViewModel: ObservableObject {
         } else {
             pinnedMessage = nil
         }
+        keyChangePending = snapshot.keyChangePending
         markVisibleRead()
-        refreshKeyChangePending()
     }
 
     func stop() {
@@ -256,15 +272,6 @@ final class ChatViewModel: ObservableObject {
         guard unreadMarker.isActive else { return }
         unreadMarker.dismiss()
         rebuildFeed()
-    }
-
-    /// TOFU: смена identity-ключа собеседника блокирует исходящие до принятия.
-    private func refreshKeyChangePending() {
-        guard chat?.kind == .direct, let peerId = peer?.id, let store = app.store else {
-            keyChangePending = false
-            return
-        }
-        keyChangePending = (try? store.pendingKeyChange(userId: peerId)) ?? false
     }
 
     func acceptKeyChange() {
