@@ -163,6 +163,19 @@ public final class E2EEManager: @unchecked Sendable {
         try store.requestSessionReset(peerUserId: userId)
     }
 
+    /// More one-time prekeys, private halves stored. The extension spends them
+    /// on the other side — a prekey envelope that arrives by push consumes one
+    /// — so the two of them meet over this blob.
+    public func moreOneTimePrekeys(count: Int) throws -> [OneTimePreKey] {
+        try gate.withLock { _ in try store.generateMoreOneTime(count: count) }
+    }
+
+    /// The user accepted a peer's new identity key. The extension writes the
+    /// same row when it opens a prekey envelope.
+    public func acceptChangedIdentity(userId: String) throws {
+        try gate.withLock { _ in try store.acceptChangedKey(userId: userId) }
+    }
+
     /// Ротация sender key (при выходе участника из группы).
     public func rotateSenderKey(chatId: String) throws {
         try store.deleteSenderKeyOut(chatId: chatId)
