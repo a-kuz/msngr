@@ -1339,7 +1339,7 @@ public actor SyncEngine {
     // MARK: - Отправка
 
     /// Виды контента без собственной строки в ленте; шлются с service-флагом.
-    static let serviceKinds: Set<String> = Set(["edit", "reaction", "disappearing"])
+    public static let serviceKinds: Set<String> = Set(["edit", "reaction", "disappearing"])
         .union(SyncEngine.repairKinds)
 
     /// Единственная точка отправки: пишет в БД + outbox, будит воркер. Работает офлайн.
