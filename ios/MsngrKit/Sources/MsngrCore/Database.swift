@@ -238,6 +238,20 @@ public enum AppDatabase {
                 t.add(column: "attemptedAt", .text).notNull().defaults(to: "{}")
             }
         }
+
+        m.registerMigration("v10-notificationShown") { db in
+            // One message gets one banner. The row is the claim on it: the
+            // extension and the app both write it before presenting, and the
+            // insert that wins is the one that presents. Two handlers running
+            // at once, or a push arriving after the app already showed the
+            // message, therefore cannot produce a second banner.
+            try db.create(table: "notificationShown") { t in
+                t.column("msgId", .text).primaryKey()
+                t.column("chatId", .text).notNull()
+                t.column("seq", .integer).notNull().defaults(to: 0)
+                t.column("shownAt", .double).notNull().indexed()
+            }
+        }
         return m
     }
 }
