@@ -1,6 +1,6 @@
 import type { Env, ClientFrame, ServerFrame } from "../types";
 import { json, err, nowSec } from "../util";
-import { sendPush } from "../push/apns";
+import { sendPush, envelopeForDevice } from "../push/apns";
 import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "../version";
 
 /// Presence-TTL: клиент пингует каждые ~12с; тишина дольше — офлайн.
@@ -182,7 +182,7 @@ export class UserSessionDO implements DurableObject {
           // timing guarantee. The sender is not waiting on it — his ack left
           // ConversationDO before this delivery was queued.
           if (!muted && !isOwnEcho) {
-            await this.pushToDevices(frame.chatId, frame.msgId, frame.seq, frame.sentAt);
+            await this.pushToDevices(frame);
           }
         }
         return json({ ok: true });
@@ -344,13 +344,20 @@ export class UserSessionDO implements DurableObject {
     return next;
   }
 
-  private async pushToDevices(chatId: string, msgId?: string, seq?: number, sentAt?: number) {
+  /// The push carries the message itself, addressed to the device it goes to:
+  /// the extension decrypts it and writes it, so the chat holds what the banner
+  /// showed even if the socket never comes up.
+  private async pushToDevices(frame: {
+    chatId: string; msgId?: string; seq?: number; sentAt?: number;
+    from?: string; fromDevice?: string; ts?: number; body?: unknown;
+  }) {
     const tokens =
       (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
     const devices = Object.entries(tokens);
     if (!devices.length) return;
     const badge = await this.totalUnread();
     const badgeStamp = await this.nextBadgeStamp();
+    const userId = await this.getUserId();
     // Every device is handled independently: one failure neither cancels the
     // others nor fails the frame delivery that already went over the socket.
     const results = await Promise.all(
@@ -358,11 +365,15 @@ export class UserSessionDO implements DurableObject {
         try {
           return {
             deviceId,
-            res: await sendPush(this.env, t.token, t.env,
-              { chatId, msgId, seq, sentAt, badge, badgeStamp }),
+            res: await sendPush(this.env, t.token, t.env, {
+              chatId: frame.chatId, msgId: frame.msgId, seq: frame.seq,
+              sentAt: frame.sentAt, badge, badgeStamp,
+              from: frame.from, fromDevice: frame.fromDevice, ts: frame.ts,
+              env: envelopeForDevice(frame.body, `${userId ?? ""}/${deviceId}`),
+            }),
           };
         } catch (e) {
-          console.warn(`push to device ${deviceId} for ${chatId} failed: ${String(e)}`);
+          console.warn(`push to device ${deviceId} for ${frame.chatId} failed: ${String(e)}`);
           return { deviceId, res: null };
         }
       })
