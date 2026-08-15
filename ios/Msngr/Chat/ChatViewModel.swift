@@ -316,11 +316,18 @@ final class ChatViewModel: ObservableObject {
         }
         guard let peer else { return "" }
         if peer.online { return "в сети" }
-        if peer.lastSeen > 0 {
-            return "был(а) " + RelativeDateTimeFormatter.ruShort.localizedString(
-                for: Date(timeIntervalSince1970: peer.lastSeen), relativeTo: Date())
-        }
+        if peer.lastSeen > 0 { return Self.lastSeenText(peer.lastSeen) }
         return ""
+    }
+
+    /// «был(а) …» из отметки времени. Свежая отметка и часы сервера, ушедшие
+    /// вперёд, дают отрицательную разницу — относительный формат превращал её
+    /// в «через 0 сек.», поэтому у недавнего выхода свой текст.
+    static func lastSeenText(_ lastSeen: TimeInterval, now: Date = Date()) -> String {
+        let elapsed = now.timeIntervalSince1970 - lastSeen
+        if elapsed < 60 { return "был(а) только что" }
+        return "был(а) " + RelativeDateTimeFormatter.ruShort.localizedString(
+            for: Date(timeIntervalSince1970: lastSeen), relativeTo: now)
     }
 
     // MARK: - Действия
