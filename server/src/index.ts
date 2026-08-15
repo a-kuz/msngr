@@ -18,8 +18,8 @@ function convStub(env: Env, chatId: string) {
   return env.CONV_DO.get(env.CONV_DO.idFromName(chatId));
 }
 
-// Что говорит этот сервер: версия протокола и нижняя граница поддержки.
-// Без auth: клиент спрашивает её и до регистрации.
+// What this server speaks: its protocol version and the floor it still serves.
+// No auth: a client asks before it has an account.
 app.get("/api/version", (c) =>
   json({ ok: true, protocol: PROTOCOL_VERSION, minProtocol: MIN_CLIENT_PROTOCOL })
 );
@@ -597,8 +597,8 @@ export default {
     if (url.pathname === "/ws") {
       if (req.headers.get("upgrade")?.toLowerCase() !== "websocket")
         return err("expected_websocket", 426);
-      // версия клиента — до авторизации: сокет, который сервер уже не умеет
-      // обслуживать, получает внятный отказ, а не молчаливый разрыв
+      // the client version is read before auth: a socket this server can no
+      // longer serve gets a stated refusal instead of a silent drop
       const clientProtocol = Number(url.searchParams.get("v") ?? "0");
       if (!Number.isFinite(clientProtocol) || clientProtocol < MIN_CLIENT_PROTOCOL) {
         return json(
