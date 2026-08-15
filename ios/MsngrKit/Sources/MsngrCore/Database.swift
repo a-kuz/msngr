@@ -22,7 +22,13 @@ public enum AppDatabase {
         var config = Configuration()
         // приложение и расширение уведомлений пишут в один файл из разных
         // процессов: без ожидания чужой транзакции запись падает сразу
-        config.busyMode = .timeout(2)
+        config.busyMode = .timeout(5)
+        // A write transaction takes its lock at the start rather than upgrading
+        // to it halfway: the extension reads a ratchet session and stores the
+        // stepped one in the same transaction, and an upgrade that finds
+        // another process has committed in between fails outright, where a lock
+        // taken up front waits.
+        config.defaultTransactionKind = .immediate
         config.prepareDatabase { db in
             try db.execute(sql: "PRAGMA journal_mode = WAL")
         }

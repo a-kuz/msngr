@@ -12,6 +12,10 @@ public final class NotificationJournal: @unchecked Sendable {
     public enum Phase: String, Equatable, Sendable {
         /// `didReceive` was entered.
         case received
+        /// The message the push carried was written into the database — or was
+        /// not, and the detail says why. The hardware run reads this line to
+        /// tell a banner that was only shown from one that was also kept.
+        case stored
         /// The content handler was called.
         case answered
         /// The extension ran out of its budget.
