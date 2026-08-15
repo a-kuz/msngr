@@ -62,6 +62,7 @@ struct ChatScreen: View {
                 }
             }
             if !model.selecting { scrollDownButton }
+            headerFade
         }
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
@@ -423,6 +424,26 @@ struct ChatScreen: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.bar)
+    }
+
+    /// Уходящее сообщение растворяется в шапке, а не обрезается об неё: тон фона
+    /// набирается к верхнему краю на высоту шапки.
+    private var headerFade: some View {
+        VStack(spacing: 0) {
+            LinearGradient(stops: [
+                // до нижнего края шапки фон непрозрачен, дальше долгий спад:
+                // короткий градиент режет баббл кромкой вместо растворения
+                .init(color: Theme.chatBackground, location: 0),
+                .init(color: Theme.chatBackground, location: 0.42),
+                .init(color: Theme.chatBackground.opacity(0.75), location: 0.62),
+                .init(color: Theme.chatBackground.opacity(0.3), location: 0.82),
+                .init(color: Theme.chatBackground.opacity(0), location: 1),
+            ], startPoint: .top, endPoint: .bottom)
+                .frame(height: 150)
+            Spacer()
+        }
+        .ignoresSafeArea(edges: .top)
+        .allowsHitTesting(false)
     }
 
     private var scrollDownButton: some View {
