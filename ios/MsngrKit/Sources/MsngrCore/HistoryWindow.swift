@@ -17,10 +17,12 @@ public enum HistoryWindow {
     /// Attempts spent on one unreadable seq before the feed shows a placeholder.
     public static let maxGapAttempts = 3
     /// Seqs that never surface in the feed: the envelope was addressed to
-    /// another device, carries our own content, is a tombstone, or was
-    /// processed without a row of its own (key distribution, edit, reaction).
+    /// another device, carries our own content, is a tombstone, was processed
+    /// without a row of its own (key distribution, edit, reaction), or its
+    /// message was cleared from this device.
     public static let silentGapReasons: Set<String> = [
         "not_addressed", "own_echo", "deleted", "service", "sender_key", "identity_changed",
+        "cleared",
     ]
 
     // MARK: - Window
