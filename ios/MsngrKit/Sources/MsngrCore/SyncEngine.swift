@@ -16,8 +16,8 @@ public actor SyncEngine {
     private var eventTask: Task<Void, Never>?
     private var outboxTask: Task<Void, Never>?
     private var actionTask: Task<Void, Never>?
-    /// периодическое снятие mute с истёкшим сроком
-    private var muteTask: Task<Void, Never>?
+    /// периодические фоновые проходы: снятие истёкшего mute и очередь нечитаемых
+    private var maintenanceTask: Task<Void, Never>?
     private var outboxWakeup = AsyncStream<Void>.makeStream()
     private var actionWakeup = AsyncStream<Void>.makeStream()
     private var connected = false
@@ -86,10 +86,14 @@ public actor SyncEngine {
         Task { try? await self.refreshSnapshot() }
         Task { await self.replenishPrekeysIfNeeded() }
         Task { await self.refreshBlocked() }
-        muteTask?.cancel()
-        muteTask = Task { [weak self] in
+        maintenanceTask?.cancel()
+        maintenanceTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.sweepExpiredMutes()
+                // очередь нечитаемых переигрывается и при старте, и дальше по
+                // кругу: запись, ждущая ключа, иначе ждала бы следующего
+                // удачного фрейма в том же чате — то есть могла не дождаться
+                await self?.sweepUnreadable()
                 try? await Task.sleep(nanoseconds: 30_000_000_000)
             }
         }
@@ -118,7 +122,7 @@ public actor SyncEngine {
         eventTask?.cancel()
         outboxTask?.cancel()
         actionTask?.cancel()
-        muteTask?.cancel()
+        maintenanceTask?.cancel()
         await ws.stop()
         connected = false
     }
@@ -188,6 +192,9 @@ public actor SyncEngine {
             await sendSyncCursors()
             outboxWakeup.continuation.yield()
             actionWakeup.continuation.yield()
+            // связь вернулась: ключи, которых не хватало, могли доехать, а
+            // запросы отправителю — уйти
+            Task { await self.sweepUnreadable() }
         case .disconnected:
             connected = false
             connectionStream.send(false)
@@ -373,17 +380,15 @@ public actor SyncEngine {
                                             fromUserId: from, fromDeviceId: fromDevice))
                     ?? .undecryptable(reason: "exception")
             }
-            // сообщение раньше своего ключа → отложить и переиграть, когда ключ придёт
-            if case .undecryptable(let reason) = result, Self.retryableReasons.contains(reason) {
-                await savePending(chatId: chatId, msgId: msgId, seq: seq, from: from,
-                                  fromDevice: fromDevice, sentAt: f.sentAt ?? 0, ts: f.ts ?? 0, body: body)
+            if case .undecryptable(let reason) = result {
+                await recordUnreadable(reason: reason, chatId: chatId, msgId: msgId, seq: seq,
+                                       from: from, fromDevice: fromDevice,
+                                       sentAt: f.sentAt ?? 0, ts: f.ts ?? 0, body: body)
             } else {
-                await storeIncoming(result, chatId: chatId, msgId: msgId, seq: seq,
-                                    from: from, sentAt: f.sentAt ?? 0, ts: f.ts ?? 0)
+                await storeIncoming(result, chatId: chatId, msgId: msgId, seq: seq, from: from,
+                                    fromDevice: fromDevice, sentAt: f.sentAt ?? 0, ts: f.ts ?? 0)
                 // получили контент/ключ → пробуем переиграть отложенные этого чата
-                if case .undecryptable = result {} else {
-                    await retryPending(chatId: chatId)
-                }
+                await retryPending(chatId: chatId)
             }
         }
 
@@ -435,60 +440,391 @@ public actor SyncEngine {
         }
     }
 
-    /// Причины, при которых расшифровка может удаться позже: групповое сообщение
-    /// до sender-key, dr-сообщение раньше своего pk (reorder), либо брошенное
-    /// исключение ("exception" — транзиентный сбой, например гонка состояния сессии).
-    static let retryableReasons: Set<String> = ["no_sender_key", "no_session", "exception"]
+    // MARK: - Нечитаемые сообщения
 
-    private func savePending(chatId: String, msgId: String, seq: Int, from: String,
-                             fromDevice: String, sentAt: Double, ts: Double, body: JSONValue) async {
+    /// Конверт, который устройство прочитать не смогло, вместе со счётчиками
+    /// его обработки.
+    private struct PendingEnvelope {
+        let chatId: String, msgId: String, seq: Int
+        let from: String, fromDevice: String
+        let sentAt: Double, ts: Double
+        let body: Data
+        let reason: String?
+        let attempts: Int
+        let firstSeenAt: Double, lastTriedAt: Double
+        let repairAttempts: Int, repairAskedAt: Double
+    }
+
+    /// Нечитаемый конверт: сохраняем и записываем его seq.
+    ///
+    /// Конверт хранится при любой причине — локальная база единственная копия,
+    /// и после починки сессии повторять было бы нечего. Запись seq выводит отказ
+    /// из молчания: пагинация перестаёт дёргать сервер за этот диапазон, а лента
+    /// знает, что сообщение потеряно, а не отсутствует.
+    private func recordUnreadable(reason rawReason: String, chatId: String, msgId: String, seq: Int,
+                                  from: String, fromDevice: String, sentAt: Double,
+                                  ts: Double, body: JSONValue) async {
+        guard rawReason != "own_echo" else { return }
+        let reason: String
+        if rawReason == "not_addressed" {
+            // в direct отправитель адресует все устройства обеих сторон, поэтому
+            // отсутствие своего бокса — дефект и чинится; в группе адресные
+            // фреймы (раздача цепочки, ремонт) идут одному участнику по замыслу
+            let kind = (try? await db.read { dbc in
+                try String.fetchOne(dbc, sql: "SELECT kind FROM chat WHERE id = ?", arguments: [chatId])
+            }) ?? nil
+            guard kind == ChatKind.direct.rawValue else {
+                try? await db.write { dbc in
+                    try HistoryWindow.recordGap(dbc, chatId: chatId, seq: seq, reason: rawReason,
+                                                msgId: msgId, fromUserId: from, sentAt: sentAt)
+                }
+                return
+            }
+            reason = "no_ciphertext"
+        } else {
+            reason = rawReason
+        }
         guard let data = try? JSONEncoder().encode(body) else { return }
+        let now = Date().timeIntervalSince1970
+        let attempts = (try? await db.write { dbc -> Int in
+            try dbc.execute(
+                sql: """
+                INSERT INTO pendingDecrypt (chatId, msgId, seq, fromUserId, fromDevice, sentAt, ts,
+                                            body, reason, attempts, firstSeenAt, lastTriedAt)
+                VALUES (?,?,?,?,?,?,?,?,?,1,?,?)
+                ON CONFLICT(chatId, msgId) DO UPDATE SET
+                  reason = excluded.reason, attempts = pendingDecrypt.attempts + 1,
+                  lastTriedAt = excluded.lastTriedAt
+                """,
+                arguments: [chatId, msgId, seq, from, fromDevice, sentAt, ts, data, reason, now, now])
+            try HistoryWindow.recordGap(dbc, chatId: chatId, seq: seq, reason: reason,
+                                        msgId: msgId, fromUserId: from, sentAt: sentAt, now: now)
+            return try Int.fetchOne(dbc, sql: "SELECT attempts FROM pendingDecrypt WHERE chatId = ? AND msgId = ?",
+                                    arguments: [chatId, msgId]) ?? 1
+        }) ?? 1
+        MsngrLog.repair.error(
+            "unreadable chat=\(chatId, privacy: .public) seq=\(seq, privacy: .public) reason=\(reason, privacy: .public) attempts=\(attempts, privacy: .public)")
+        // неустранимая причина сама не пройдёт — просим копию у отправителя сразу
+        guard !MessageRepair.retryableReasons.contains(reason) else { return }
+        let pending = PendingEnvelope(chatId: chatId, msgId: msgId, seq: seq, from: from,
+                                      fromDevice: fromDevice, sentAt: sentAt, ts: ts, body: data,
+                                      reason: reason, attempts: attempts, firstSeenAt: now,
+                                      lastTriedAt: now, repairAttempts: 0, repairAskedAt: 0)
+        await requestRepairIfDue(pending, now: now)
+    }
+
+    private func pendingEnvelopes(chatId: String?) async -> [PendingEnvelope] {
+        let sql = chatId == nil
+            ? "SELECT * FROM pendingDecrypt ORDER BY chatId, seq"
+            : "SELECT * FROM pendingDecrypt WHERE chatId = ? ORDER BY seq"
+        let arguments: StatementArguments = chatId.map { [$0] } ?? []
+        return (try? await db.read { dbc in
+            try Row.fetchAll(dbc, sql: sql, arguments: arguments).map {
+                PendingEnvelope(chatId: $0["chatId"], msgId: $0["msgId"], seq: $0["seq"],
+                                from: $0["fromUserId"], fromDevice: $0["fromDevice"],
+                                sentAt: $0["sentAt"], ts: $0["ts"], body: $0["body"],
+                                reason: $0["reason"], attempts: $0["attempts"],
+                                firstSeenAt: $0["firstSeenAt"], lastTriedAt: $0["lastTriedAt"],
+                                repairAttempts: $0["repairAttempts"], repairAskedAt: $0["repairAskedAt"])
+            }
+        }) ?? []
+    }
+
+    /// Переигрывает отложенные конверты чата немедленно: ключ, который только что
+    /// приехал, открывает всё, что его ждало, поэтому пауза здесь не нужна.
+    /// Раздача sender key разблокирует ещё сообщения, поэтому проход повторяется,
+    /// пока есть прогресс.
+    private func retryPending(chatId: String) async {
+        for _ in 0..<4 {
+            var progress = false
+            for pending in await pendingEnvelopes(chatId: chatId) {
+                if await replay(pending) { progress = true }
+            }
+            if !progress { return }
+        }
+    }
+
+    private var sweeping = false
+
+    /// Проход по всем отложенным конвертам: переиграть то, что могло открыться,
+    /// попросить копию того, что не откроется, забыть отжившее. Идёт при старте
+    /// движка, при реконнекте и по кругу в фоне.
+    public func sweepUnreadable() async {
+        guard !sweeping else { return }
+        sweeping = true
+        defer { sweeping = false }
+        let now = Date().timeIntervalSince1970
+        for pending in await pendingEnvelopes(chatId: nil) {
+            if MessageRepair.expired(firstSeenAt: pending.firstSeenAt,
+                                     repairAttempts: pending.repairAttempts, now: now) {
+                await dropExpired(pending)
+                continue
+            }
+            if MessageRepair.retryDue(lastTriedAt: pending.lastTriedAt, now: now),
+               await replay(pending) {
+                continue
+            }
+            await requestRepairIfDue(pending, now: now)
+        }
+    }
+
+    /// Одна попытка расшифровать сохранённый конверт. Успех уносит его в ленту и
+    /// закрывает запись о пропаже, неудача считается попыткой.
+    private func replay(_ pending: PendingEnvelope) async -> Bool {
+        guard let body = try? JSONDecoder().decode(JSONValue.self, from: pending.body) else {
+            await dropExpired(pending)
+            return false
+        }
+        let result = (try? e2ee.decrypt(envelopeJSON: body, chatId: pending.chatId,
+                                        fromUserId: pending.from, fromDeviceId: pending.fromDevice))
+            ?? .undecryptable(reason: "exception")
+        if case .undecryptable(let reason) = result {
+            try? await db.write { dbc in
+                try dbc.execute(
+                    sql: """
+                    UPDATE pendingDecrypt SET attempts = attempts + 1, reason = ?, lastTriedAt = ?
+                    WHERE chatId = ? AND msgId = ?
+                    """,
+                    arguments: [reason, Date().timeIntervalSince1970, pending.chatId, pending.msgId])
+            }
+            return false
+        }
+        await storeIncoming(result, chatId: pending.chatId, msgId: pending.msgId, seq: pending.seq,
+                            from: pending.from, fromDevice: pending.fromDevice,
+                            sentAt: pending.sentAt, ts: pending.ts)
+        // seq закрыт: строкой ленты — тогда запись о пропаже не нужна вовсе,
+        // иначе молчаливой причиной, чтобы пагинация не пошла за ним снова
+        let settled = Self.settledReason(result)
+        try? await db.write { dbc in
+            try dbc.execute(sql: "DELETE FROM pendingDecrypt WHERE chatId = ? AND msgId = ?",
+                            arguments: [pending.chatId, pending.msgId])
+            if let settled {
+                try HistoryWindow.recordGap(dbc, chatId: pending.chatId, seq: pending.seq, reason: settled)
+            } else {
+                try dbc.execute(sql: "DELETE FROM historyGap WHERE chatId = ? AND seq = ?",
+                                arguments: [pending.chatId, pending.seq])
+            }
+        }
+        MsngrLog.repair.notice(
+            "recovered chat=\(pending.chatId, privacy: .public) seq=\(pending.seq, privacy: .public) after=\(pending.attempts, privacy: .public)")
+        return true
+    }
+
+    /// Молчаливая причина для seq, который обработан, но своей строки в ленте не
+    /// получает; nil — строка есть, запись о пропаже больше не нужна.
+    private static func settledReason(_ result: DecryptedIncoming) -> String? {
+        switch result {
+        case .senderKeyDistribution: return "sender_key"
+        case .identityChanged(_, .none): return "identity_changed"
+        case .content(let content), .identityChanged(_, .some(let content)):
+            return serviceKinds.contains(content.kind) ? "service" : nil
+        case .undecryptable(let reason): return reason
+        }
+    }
+
+    /// Конверт отжил своё: сессии, которой он шифровался, давно нет, и попытки
+    /// ремонта потрачены. Запись о пропавшем seq остаётся.
+    private func dropExpired(_ pending: PendingEnvelope) async {
+        try? await db.write { dbc in
+            try dbc.execute(sql: "DELETE FROM pendingDecrypt WHERE chatId = ? AND msgId = ?",
+                            arguments: [pending.chatId, pending.msgId])
+            try HistoryWindow.recordGap(dbc, chatId: pending.chatId, seq: pending.seq,
+                                        reason: pending.reason ?? "unknown",
+                                        msgId: pending.msgId, fromUserId: pending.from,
+                                        sentAt: pending.sentAt)
+        }
+        MsngrLog.repair.error(
+            "gave up chat=\(pending.chatId, privacy: .public) seq=\(pending.seq, privacy: .public) reason=\(pending.reason ?? "unknown", privacy: .public) attempts=\(pending.attempts, privacy: .public)")
+    }
+
+    /// Просит у отправителя свежую копию сообщения, если по счётчику и паузе
+    /// пора. Пользователя это не касается: запрос уходит сам.
+    private func requestRepairIfDue(_ pending: PendingEnvelope, now: Double) async {
+        guard MessageRepair.repairDue(reason: pending.reason, firstSeenAt: pending.firstSeenAt,
+                                      repairAttempts: pending.repairAttempts,
+                                      repairAskedAt: pending.repairAskedAt, now: now) else { return }
+        // заявка до принятия: автор не должен узнать, что на той стороне
+        // кто-то есть, — конверт ждёт принятия, следующий проход попросит копию
+        let isRequest = (try? await db.read { dbc in
+            try Bool.fetchOne(dbc, sql: "SELECT isRequest FROM chat WHERE id = ?",
+                              arguments: [pending.chatId]) ?? false
+        }) ?? false
+        guard !isRequest else { return }
+        let attempt = pending.repairAttempts + 1
+        // сессия не открыла его конверт — запрос уехал бы в неё же; помечаем её
+        // на пересборку, тогда запрос уйдёт свежим X3DH и ответ придёт в новую
+        if let reason = pending.reason, MessageRepair.sessionReasons.contains(reason) {
+            try? e2ee.resetPairwiseSession(with: pending.from)
+        }
+        var request = ContentPayload(kind: "repairRequest")
+        request.to = pending.from
+        request.targetMsgId = pending.msgId
+        request.repairSeq = pending.seq
+        request.reason = pending.reason
+        request.attempt = attempt
+        try? await enqueue(content: request, chatId: pending.chatId,
+                           clientMsgId: MessageRepair.requestId(msgId: pending.msgId, attempt: attempt))
         try? await db.write { dbc in
             try dbc.execute(
                 sql: """
-                INSERT OR IGNORE INTO pendingDecrypt (chatId, msgId, seq, fromUserId, fromDevice, sentAt, ts, body)
-                VALUES (?,?,?,?,?,?,?,?)
+                UPDATE pendingDecrypt SET repairAttempts = ?, repairAskedAt = ?
+                WHERE chatId = ? AND msgId = ?
                 """,
-                arguments: [chatId, msgId, seq, from, fromDevice, sentAt, ts, data])
+                arguments: [attempt, now, pending.chatId, pending.msgId])
+            // попытка считается и для ленты: нейтральная заглушка появляется,
+            // только когда чинить уже пробовали
+            try HistoryWindow.recordGap(dbc, chatId: pending.chatId, seq: pending.seq,
+                                        reason: pending.reason ?? "unknown",
+                                        msgId: pending.msgId, fromUserId: pending.from,
+                                        sentAt: pending.sentAt, now: now)
         }
+        MsngrLog.repair.notice(
+            "repair asked chat=\(pending.chatId, privacy: .public) seq=\(pending.seq, privacy: .public) reason=\(pending.reason ?? "unknown", privacy: .public) attempt=\(attempt, privacy: .public)")
     }
 
-    private func retryPending(chatId: String) async {
-        struct Pending { let msgId: String; let seq: Int; let from: String; let fromDevice: String
-                         let sentAt: Double; let ts: Double; let body: Data }
-        let items: [Pending] = (try? await db.read { dbc in
-            try Row.fetchAll(dbc, sql: "SELECT * FROM pendingDecrypt WHERE chatId = ? ORDER BY seq", arguments: [chatId])
-                .map { Pending(msgId: $0["msgId"], seq: $0["seq"], from: $0["fromUserId"],
-                               fromDevice: $0["fromDevice"], sentAt: $0["sentAt"], ts: $0["ts"], body: $0["body"]) }
-        }) ?? []
-        guard !items.isEmpty else { return }
-        var madeProgress = false
-        for item in items {
-            guard let body = try? JSONDecoder().decode(JSONValue.self, from: item.body) else { continue }
-            let result = (try? e2ee.decrypt(envelopeJSON: body, chatId: chatId,
-                                            fromUserId: item.from, fromDeviceId: item.fromDevice))
-                ?? .undecryptable(reason: "exception")
-            if case .undecryptable(let reason) = result, Self.retryableReasons.contains(reason) {
-                continue // ключа всё ещё нет
+    // MARK: - Ремонт через отправителя
+
+    /// Виды контента протокола ремонта: адресный запрос копии, копия и
+    /// подтверждение раздачи sender key. Своей строки в ленте не имеют.
+    static let repairKinds: Set<String> = ["repairRequest", "repair", "skdAck"]
+
+    /// Обрабатывает контент протокола ремонта; false — обычный контент.
+    @discardableResult
+    func handleRepairContent(_ content: ContentPayload, chatId: String,
+                             from: String, fromDevice: String) async -> Bool {
+        switch content.kind {
+        case "repairRequest":
+            await answerRepairRequest(content, chatId: chatId, from: from)
+        case "repair":
+            await applyRepair(content, chatId: chatId, from: from)
+        case "skdAck":
+            if let keyId = content.keyId {
+                try? e2ee.confirmSenderKey(chatId: chatId, keyId: keyId,
+                                           userId: from, deviceId: fromDevice)
             }
-            await storeIncoming(result, chatId: chatId, msgId: item.msgId, seq: item.seq,
-                                from: item.from, sentAt: item.sentAt, ts: item.ts)
-            try? await db.write { dbc in
-                try dbc.execute(sql: "DELETE FROM pendingDecrypt WHERE chatId = ? AND msgId = ?",
-                                arguments: [chatId, item.msgId])
-            }
-            madeProgress = true
+        default:
+            return false
         }
-        // распространение sender-key могло разблокировать ещё сообщения
-        if madeProgress { await retryPending(chatId: chatId) }
+        return true
+    }
+
+    /// Собеседник не смог прочитать наше сообщение: перешифровываем его текущей
+    /// сессией и отправляем ему заново. Копия несёт исходный msgId, поэтому в
+    /// его ленте она встаёт на место пропавшего сообщения, а не рядом с ним.
+    private func answerRepairRequest(_ request: ContentPayload, chatId: String, from: String) async {
+        guard let target = request.targetMsgId, from != ownUserId else { return }
+        // группа: цепочка ему не доехала — раздача забывается, следующее
+        // сообщение в чат раздаст её заново
+        if request.reason == "no_sender_key" {
+            try? e2ee.forgetSenderKeyDistribution(chatId: chatId, userId: from)
+        }
+        let row = (try? await db.read { dbc in
+            try Message.fetchOne(
+                dbc, sql: "SELECT * FROM message WHERE chatId = ? AND msgId = ? AND isOutgoing = 1",
+                arguments: [chatId, target])
+        }) ?? nil
+        guard let row, !row.deletedForAll else {
+            MsngrLog.repair.notice(
+                "repair asked for a message we do not hold chat=\(chatId, privacy: .public) msgId=\(target, privacy: .public)")
+            return
+        }
+        // просить копию можно только того, что и так было адресовано просящему:
+        // вступивший позже участник иначе получил бы историю, закрытую для него
+        // сменой цепочки
+        let joinedAt = (try? await db.read { dbc in
+            try Double.fetchOne(dbc, sql: "SELECT joinedAt FROM member WHERE chatId = ? AND userId = ?",
+                                arguments: [chatId, from])
+        }) ?? nil
+        guard let joinedAt, row.sentAt >= joinedAt else {
+            MsngrLog.repair.notice(
+                "repair asked for a message sent before the asker joined chat=\(chatId, privacy: .public) msgId=\(target, privacy: .public)")
+            return
+        }
+        var original = ContentPayload(kind: row.kind.rawValue)
+        original.text = row.text
+        original.media = row.media
+        original.album = row.album
+        original.replyTo = row.replyTo
+        original.fwd = row.forward
+        var reply = ContentPayload(kind: "repair")
+        reply.to = from
+        reply.repairOf = target
+        reply.repairSeq = row.seq ?? request.repairSeq
+        reply.origSentAt = row.sentAt
+        reply.attempt = request.attempt
+        reply.orig = SyncEngine.payloadJSON(original)
+        try? await enqueue(content: reply, chatId: chatId,
+                           clientMsgId: MessageRepair.replyId(msgId: target,
+                                                              attempt: request.attempt ?? 1))
+        MsngrLog.repair.notice(
+            "repair sent chat=\(chatId, privacy: .public) msgId=\(target, privacy: .public) attempt=\(request.attempt ?? 1, privacy: .public)")
+    }
+
+    /// Копия от отправителя: встаёт под исходным msgId и seq, поэтому дубля в
+    /// ленте не появляется, и закрывает запись о пропаже.
+    private func applyRepair(_ repair: ContentPayload, chatId: String, from: String) async {
+        guard let target = repair.repairOf, let json = repair.orig,
+              let original = try? JSONDecoder().decode(ContentPayload.self, from: Data(json.utf8)),
+              let seq = repair.repairSeq, seq > 0 else { return }
+        // копию принимаем только от автора пропавшего сообщения и только на то,
+        // о пропаже чего у нас есть запись: иначе участник чата мог бы записать
+        // свой текст под чужим msgId
+        let author = (try? await db.read { dbc in
+            try String.fetchOne(
+                dbc, sql: "SELECT fromUserId FROM pendingDecrypt WHERE chatId = ? AND msgId = ?",
+                arguments: [chatId, target])
+                ?? String.fetchOne(
+                    dbc, sql: "SELECT fromUserId FROM historyGap WHERE chatId = ? AND seq = ? AND msgId = ?",
+                    arguments: [chatId, seq, target])
+        }) ?? nil
+        guard author == from else {
+            MsngrLog.repair.error(
+                "repair rejected chat=\(chatId, privacy: .public) seq=\(seq, privacy: .public): not from the author of the missing message")
+            return
+        }
+        let sentAt = repair.origSentAt ?? 0
+        await storeHistoric(content: original, chatId: chatId, msgId: target, seq: seq,
+                            from: from, sentAt: sentAt, ts: sentAt)
+        try? await db.write { dbc in
+            try dbc.execute(sql: "DELETE FROM pendingDecrypt WHERE chatId = ? AND msgId = ?",
+                            arguments: [chatId, target])
+            if Self.serviceKinds.contains(original.kind) {
+                try HistoryWindow.recordGap(dbc, chatId: chatId, seq: seq, reason: "service")
+            } else {
+                try dbc.execute(sql: "DELETE FROM historyGap WHERE chatId = ? AND seq = ?",
+                                arguments: [chatId, seq])
+            }
+        }
+        MsngrLog.repair.notice(
+            "repaired chat=\(chatId, privacy: .public) seq=\(seq, privacy: .public)")
+    }
+
+    /// Подтверждение раздачи sender key её отправителю: без него он не узнает,
+    /// что цепочка доехала, и будет раздавать её снова.
+    private func confirmSenderKeyDistribution(chatId: String, keyId: String, to userId: String) async {
+        var ack = ContentPayload(kind: "skdAck")
+        ack.to = userId
+        ack.keyId = keyId
+        // круг подтверждения совпадает с кругом раздачи: повтор той же раздачи
+        // получает новое подтверждение, а не гасится дедупом сервера
+        let round = Int(Date().timeIntervalSince1970 / MessageRepair.redistributeAfter)
+        try? await enqueue(content: ack, chatId: chatId,
+                           clientMsgId: "ska:\(chatId):\(keyId):\(ownDeviceId):\(round)")
     }
 
     private func storeIncoming(_ result: DecryptedIncoming, chatId: String, msgId: String,
-                               seq: Int, from: String, sentAt: Double, ts: Double) async {
+                               seq: Int, from: String, fromDevice: String,
+                               sentAt: Double, ts: Double) async {
         switch result {
-        case .senderKeyDistribution:
-            return // служебное, в ленту не попадает
+        case .senderKeyDistribution(let keyChatId, let keyId):
+            await confirmSenderKeyDistribution(chatId: keyChatId, keyId: keyId, to: from)
         case .content(let content), .identityChanged(_, .some(let content)):
+            if await handleRepairContent(content, chatId: chatId, from: from, fromDevice: fromDevice) {
+                if case .identityChanged(let uid, _) = result {
+                    await insertSystemMessage(chatId: chatId, text: "identity_changed:\(uid)")
+                }
+                return
+            }
             await applyContent(content, chatId: chatId, msgId: msgId, seq: seq,
                                from: from, sentAt: sentAt, ts: ts)
             if case .identityChanged(let uid, _) = result {
@@ -497,15 +833,8 @@ public actor SyncEngine {
         case .identityChanged(let uid, .none):
             await insertSystemMessage(chatId: chatId, text: "identity_changed:\(uid)")
         case .undecryptable(let reason):
-            guard reason != "own_echo" else { return }
-            var msg = Message(id: msgId, chatId: chatId, fromUserId: from, sentAt: sentAt,
-                              kind: .system, text: "undecryptable", status: .sent, isOutgoing: false)
-            msg.msgId = msgId
-            msg.seq = seq
-            msg.serverTs = ts
-            try? await db.write { [msg] dbc in
-                try msg.save(dbc)
-            }
+            MsngrLog.repair.error(
+                "undecryptable reached storage chat=\(chatId, privacy: .public) seq=\(seq, privacy: .public) reason=\(reason, privacy: .public)")
         }
     }
 
@@ -642,9 +971,15 @@ public actor SyncEngine {
                                             fromUserId: m.from, fromDeviceId: m.fromDevice))
                 ?? .undecryptable(reason: "exception")
             switch result {
-            case .senderKeyDistribution:
+            case .senderKeyDistribution(let keyChatId, let keyId):
+                await confirmSenderKeyDistribution(chatId: keyChatId, keyId: keyId, to: m.from)
                 reasons[m.seq] = "sender_key"
             case .content(let content), .identityChanged(_, .some(let content)):
+                if await handleRepairContent(content, chatId: chatId, from: m.from,
+                                             fromDevice: m.fromDevice) {
+                    reasons[m.seq] = "service"
+                    break
+                }
                 await storeHistoric(content: content, chatId: chatId, msgId: m.msgId, seq: m.seq,
                                     from: m.from, sentAt: m.sentAt, ts: m.ts)
                 // edit/reaction/disappearing land on their target instead of
@@ -653,13 +988,11 @@ public actor SyncEngine {
             case .identityChanged(_, .none):
                 reasons[m.seq] = "identity_changed"
             case .undecryptable(let reason):
-                if Self.retryableReasons.contains(reason) {
-                    // the key may still arrive — the envelope waits for a replay
-                    await savePending(chatId: chatId, msgId: m.msgId, seq: m.seq, from: m.from,
-                                      fromDevice: m.fromDevice, sentAt: m.sentAt, ts: m.ts, body: body)
-                } else {
-                    reasons[m.seq] = reason
-                }
+                // the envelope is kept whatever the reason: it is the only local
+                // copy, and repair works from the record it leaves behind
+                await recordUnreadable(reason: reason, chatId: chatId, msgId: m.msgId, seq: m.seq,
+                                       from: m.from, fromDevice: m.fromDevice,
+                                       sentAt: m.sentAt, ts: m.ts, body: body)
             }
             if let reason = reasons[m.seq] {
                 try? await db.write { dbc in
@@ -750,20 +1083,14 @@ public actor SyncEngine {
     // MARK: - Отправка
 
     /// Виды контента без собственной строки в ленте; шлются с service-флагом.
-    static let serviceKinds: Set<String> = ["edit", "reaction", "disappearing"]
-
-    /// Стабильный clientMsgId skd-конверта: одинаков при ретрае той же раздачи
-    /// (дедуп сервера гасит повтор), различен для новой цепочки или новых адресатов.
-    static func skdClientMsgId(chatId: String, keyId: String?, skd: Envelope) -> String {
-        let recipients = skd.msgs?.keys.sorted().joined(separator: ",") ?? ""
-        let digest = SHA256.hash(data: Data(recipients.utf8))
-            .prefix(8).map { String(format: "%02x", $0) }.joined()
-        return "skd:\(chatId):\(keyId ?? ""):\(digest)"
-    }
+    static let serviceKinds: Set<String> = Set(["edit", "reaction", "disappearing"])
+        .union(SyncEngine.repairKinds)
 
     /// Единственная точка отправки: пишет в БД + outbox, будит воркер. Работает офлайн.
-    public func enqueue(content: ContentPayload, chatId: String) async throws {
-        let clientMsgId = UUID().uuidString
+    /// clientMsgId задаётся явно там, где повтор должен схлопнуться серверным
+    /// дедупом (запрос копии, ответ на него, подтверждение раздачи цепочки).
+    public func enqueue(content: ContentPayload, chatId: String,
+                        clientMsgId: String = UUID().uuidString) async throws {
         let now = Date().timeIntervalSince1970
         var msg = Message(id: clientMsgId, chatId: chatId, fromUserId: ownUserId, sentAt: now,
                           kind: MessageKind(rawValue: content.kind) ?? .text,
@@ -866,22 +1193,25 @@ public actor SyncEngine {
             return
         }
 
-        // edit/reaction/disappearing — служебные: сервер не растит ими unread получателей
+        // edit/reaction/disappearing и протокол ремонта — служебные: сервер не
+        // растит ими unread получателей
         let service = Self.serviceKinds.contains(content.kind)
-        if info.kind == "direct" {
+        if let addressee = content.to {
+            // адресный фрейм (запрос копии, копия, подтверждение цепочки): он
+            // касается двух устройств, поэтому едет pairwise и в группе тоже
+            let env = try await e2ee.encryptDirect(content: content, toUserId: addressee)
+            try await ws.send(.send(chatId: item.chatId, clientMsgId: item.clientMsgId,
+                                    sentAt: item.createdAt, body: env, service: service))
+        } else if info.kind == "direct" {
             let peer = info.members.first { $0 != ownUserId } ?? ownUserId
             let env = try await e2ee.encryptDirect(content: content, toUserId: peer)
             try await ws.send(.send(chatId: item.chatId, clientMsgId: item.clientMsgId,
                                     sentAt: item.createdAt, body: env, service: service))
         } else {
-            let (skd, skm) = try await e2ee.encryptGroup(content: content, chatId: item.chatId,
-                                                         memberIds: info.members)
-            if let skd {
-                // clientMsgId детерминирован по (chatId, keyId, адресаты): ретрай той же
-                // раздачи гасится серверным дедупом, раздача новым устройствам проходит
-                try await ws.send(.send(chatId: item.chatId,
-                                        clientMsgId: Self.skdClientMsgId(chatId: item.chatId,
-                                                                         keyId: skm.keyId, skd: skd),
+            let (skd, skdId, skm) = try await e2ee.encryptGroup(content: content, chatId: item.chatId,
+                                                                memberIds: info.members)
+            if let skd, let skdId {
+                try await ws.send(.send(chatId: item.chatId, clientMsgId: skdId,
                                         sentAt: item.createdAt, body: skd, service: true))
             }
             try await ws.send(.send(chatId: item.chatId, clientMsgId: item.clientMsgId,
