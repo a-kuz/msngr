@@ -25,6 +25,13 @@ struct MsngrApp: App {
                         .transition(.opacity)
                         .zIndex(8)
                 }
+                // сборка отстала от сервера или от собственного хранилища
+                if let reason = app.outdated {
+                    AppOutdatedView(reason: reason)
+                        .environmentObject(app)
+                        .transition(.opacity)
+                        .zIndex(8)
+                }
                 // пин-код: оверлей поверх всего
                 if app.isLocked {
                     LockScreenView()

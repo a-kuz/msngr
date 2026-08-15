@@ -7,6 +7,9 @@ public enum WSEvent: Sendable {
     case disconnected
     /// токен устройства больше не действует (отозван); переподключение прекращено
     case unauthorized
+    /// The server no longer serves this build's protocol version. Reconnecting
+    /// changes nothing, so the loop stops and the app states that it is behind.
+    case outdated
 }
 
 /// WebSocket-клиент: авто-reconnect с экспоненциальным backoff,
@@ -29,8 +32,10 @@ public actor WSClient {
     private let pathMonitor = NWPathMonitor()
     private var lastPathStatus: NWPath.Status = .satisfied
 
+    /// The upgrade always carries this build's protocol version: a server that
+    /// can no longer serve it answers before the socket opens into silence.
     public init(url: URL) {
-        self.url = url
+        self.url = MsngrProtocol.versioned(url)
         self.session = URLSession(configuration: .default)
     }
 
@@ -117,8 +122,10 @@ public actor WSClient {
             }
             receiveLoop(t)
         case .failure:
-            if Self.isRevoked(task: t) {
-                sessionRevoked()
+            if Self.isOutdated(task: t) {
+                stopForGood(.outdated)
+            } else if Self.isRevoked(task: t) {
+                stopForGood(.unauthorized)
             } else {
                 socketDied()
             }
@@ -128,6 +135,14 @@ public actor WSClient {
     /// Код закрытия при отзыве устройства.
     static let revokedCloseCode = 4401
 
+    /// Upgrade status the server answers a client below its floor with
+    /// (`client_too_old`).
+    static let outdatedStatus = 426
+
+    private static func isOutdated(task: URLSessionWebSocketTask) -> Bool {
+        (task.response as? HTTPURLResponse)?.statusCode == outdatedStatus
+    }
+
     /// Отзыв токена сервер сообщает двумя способами: живой сокет закрывается
     /// кодом 4401, а следующая попытка апгрейда `/ws` не проходит авторизацию
     /// и отдаёт 401. Оба означают, что реконнект бессмысленен.
@@ -136,9 +151,9 @@ public actor WSClient {
         return (task.response as? HTTPURLResponse)?.statusCode == 401
     }
 
-    /// Устройство отключено от аккаунта: цикл переподключений останавливается,
-    /// дальше решает приложение (экран «Сессия завершена»).
-    private func sessionRevoked() {
+    /// A refusal no retry cures (a revoked device, a version the server dropped):
+    /// the reconnect loop stops and the app decides what to show.
+    private func stopForGood(_ reason: WSEvent) {
         shouldRun = false
         reconnectTask?.cancel()
         pingTimer?.cancel()
@@ -147,7 +162,7 @@ public actor WSClient {
         let wasConnected = isConnected
         setDisconnected()
         if wasConnected { continuation?.yield(.disconnected) }
-        continuation?.yield(.unauthorized)
+        continuation?.yield(reason)
     }
 
     private func handleTextFrame(_ s: String) {
