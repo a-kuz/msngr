@@ -142,12 +142,15 @@ final class ChatListModel: ObservableObject {
         }
     }
 
+    /// Свайп мьютит бессрочно; срок выбирается в профиле чата.
     func toggleMute(_ item: ChatListItem) {
+        let muted = !MuteState.isMuted(muted: item.chat.muted, mutedUntil: item.chat.mutedUntil)
         Task {
             try? await app.db.write { dbc in
-                try dbc.execute(sql: "UPDATE chat SET muted = NOT muted WHERE id = ?", arguments: [item.chat.id])
+                try dbc.execute(sql: "UPDATE chat SET muted = ?, mutedUntil = NULL WHERE id = ?",
+                                arguments: [muted, item.chat.id])
             }
-            try? await app.api.setChatFlags(item.chat.id, muted: !item.chat.muted)
+            try? await app.api.setChatFlags(item.chat.id, muted: muted)
         }
     }
 
@@ -172,7 +175,7 @@ final class ChatListModel: ObservableObject {
     func blockRequest(_ item: ChatListItem) {
         guard let peer = item.peer else { return }
         Task {
-            try? await app.api.setBlocked(peer.id, blocked: true)
+            try? await app.engine.setBlocked(userId: peer.id, blocked: true)
             try? await app.db.write { dbc in
                 try dbc.execute(sql: "DELETE FROM chat WHERE id = ?", arguments: [item.chat.id])
                 try dbc.execute(sql: "DELETE FROM message WHERE chatId = ?", arguments: [item.chat.id])

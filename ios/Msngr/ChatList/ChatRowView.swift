@@ -17,10 +17,11 @@ struct ChatRowView: View {
                     Text(item.title)
                         .font(.system(size: 16, weight: .semibold))
                         .lineLimit(1)
-                    if item.chat.muted {
+                    if muted {
                         Image(systemName: "speaker.slash.fill")
                             .font(.system(size: 11))
                             .foregroundStyle(.tertiary)
+                            .accessibilityIdentifier("chatRow.muted")
                     }
                     Spacer(minLength: 4)
                     // галочки своего последнего сообщения
@@ -44,7 +45,7 @@ struct ChatRowView: View {
                             .foregroundStyle(.white)
                             .padding(.horizontal, 7)
                             .frame(minWidth: 21, minHeight: 21)
-                            .background(item.chat.muted ? Color.gray : Theme.accent)
+                            .background(muted ? Color.gray : Theme.accent)
                             .clipShape(Capsule())
                             .transition(.scale.combined(with: .opacity))
                     } else if item.chat.pinned {
@@ -61,6 +62,11 @@ struct ChatRowView: View {
 
     /// Заявка до принятия: ни превью, ни счётчика, ни галочек.
     private var contentHidden: Bool { ChatPrivacy.hidesContent(item.chat) }
+
+    /// Mute со сроком: после срока иконка гаснет, не дожидаясь снятия флага.
+    private var muted: Bool {
+        MuteState.isMuted(muted: item.chat.muted, mutedUntil: item.chat.mutedUntil)
+    }
 
     private var visibleUnread: Int {
         ChatPrivacy.visibleUnread(isRequest: item.chat.isRequest, iAccepted: item.chat.iAccepted,

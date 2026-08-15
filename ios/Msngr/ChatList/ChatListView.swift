@@ -110,8 +110,9 @@ struct ChatListView: View {
                     Label("Архив", systemImage: "archivebox.fill")
                 }.tint(.gray)
                 Button { model.toggleMute(item) } label: {
-                    Label(item.chat.muted ? "Вкл. звук" : "Без звука",
-                          systemImage: item.chat.muted ? "bell.fill" : "bell.slash.fill")
+                    let muted = MuteState.isMuted(muted: item.chat.muted, mutedUntil: item.chat.mutedUntil)
+                    Label(muted ? "Вкл. звук" : "Без звука",
+                          systemImage: muted ? "bell.fill" : "bell.slash.fill")
                 }.tint(.indigo)
             }
             .swipeActions(edge: .leading, allowsFullSwipe: true) {
