@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Env, AuthCtx, ChatState } from "./types";
 import { authenticate } from "./auth";
 import { ulid, newToken, sha256hex, json, err, directChatName, b64url } from "./util";
+import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "./version";
 
 export { UserSessionDO } from "./do/UserSessionDO";
 export { ConversationDO } from "./do/ConversationDO";
@@ -16,6 +17,12 @@ function userStub(env: Env, userId: string) {
 function convStub(env: Env, chatId: string) {
   return env.CONV_DO.get(env.CONV_DO.idFromName(chatId));
 }
+
+// Что говорит этот сервер: версия протокола и нижняя граница поддержки.
+// Без auth: клиент спрашивает её и до регистрации.
+app.get("/api/version", (c) =>
+  json({ ok: true, protocol: PROTOCOL_VERSION, minProtocol: MIN_CLIENT_PROTOCOL })
+);
 
 // --- регистрация (без auth) ---
 app.post("/api/register", async (c) => {
@@ -590,6 +597,20 @@ export default {
     if (url.pathname === "/ws") {
       if (req.headers.get("upgrade")?.toLowerCase() !== "websocket")
         return err("expected_websocket", 426);
+      // версия клиента — до авторизации: сокет, который сервер уже не умеет
+      // обслуживать, получает внятный отказ, а не молчаливый разрыв
+      const clientProtocol = Number(url.searchParams.get("v") ?? "0");
+      if (!Number.isFinite(clientProtocol) || clientProtocol < MIN_CLIENT_PROTOCOL) {
+        return json(
+          {
+            ok: false,
+            error: "client_too_old",
+            protocol: PROTOCOL_VERSION,
+            minProtocol: MIN_CLIENT_PROTOCOL,
+          },
+          426
+        );
+      }
       const auth = await authenticate(env, req);
       if (!auth) return err("unauthorized", 401);
       const stub = env.USER_DO.get(env.USER_DO.idFromName(auth.userId));
