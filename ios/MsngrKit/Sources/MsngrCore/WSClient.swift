@@ -5,6 +5,8 @@ public enum WSEvent: Sendable {
     case connected
     case frame(Data)
     case disconnected
+    /// токен устройства больше не действует (отозван); переподключение прекращено
+    case unauthorized
 }
 
 /// WebSocket-клиент: авто-reconnect с экспоненциальным backoff,
@@ -115,8 +117,37 @@ public actor WSClient {
             }
             receiveLoop(t)
         case .failure:
-            socketDied()
+            if Self.isRevoked(task: t) {
+                sessionRevoked()
+            } else {
+                socketDied()
+            }
         }
+    }
+
+    /// Код закрытия при отзыве устройства.
+    static let revokedCloseCode = 4401
+
+    /// Отзыв токена сервер сообщает двумя способами: живой сокет закрывается
+    /// кодом 4401, а следующая попытка апгрейда `/ws` не проходит авторизацию
+    /// и отдаёт 401. Оба означают, что реконнект бессмысленен.
+    private static func isRevoked(task: URLSessionWebSocketTask) -> Bool {
+        if task.closeCode.rawValue == revokedCloseCode { return true }
+        return (task.response as? HTTPURLResponse)?.statusCode == 401
+    }
+
+    /// Устройство отключено от аккаунта: цикл переподключений останавливается,
+    /// дальше решает приложение (экран «Сессия завершена»).
+    private func sessionRevoked() {
+        shouldRun = false
+        reconnectTask?.cancel()
+        pingTimer?.cancel()
+        task?.cancel()
+        task = nil
+        let wasConnected = isConnected
+        setDisconnected()
+        if wasConnected { continuation?.yield(.disconnected) }
+        continuation?.yield(.unauthorized)
     }
 
     private func handleTextFrame(_ s: String) {

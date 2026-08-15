@@ -165,4 +165,19 @@ final class StorageMigrationTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: new.sessionURL), payload)
         XCTAssertFalse(fm.fileExists(atPath: old.sessionURL.path))
     }
+
+    /// Логаут: данные размещения стёрты, само размещение годится для новой регистрации.
+    func testWipeRemovesDataAndKeepsLocationUsable() throws {
+        try seed(old, userId: "alice")
+        try Data(#"{"token":"t"}"#.utf8).write(to: old.sessionURL)
+
+        AppContainer.wipe(old, fileManager: fm)
+
+        XCTAssertFalse(fm.fileExists(atPath: old.sessionURL.path))
+        XCTAssertFalse(fm.fileExists(atPath: old.databaseURL.path))
+        XCTAssertFalse(fm.fileExists(atPath: old.masterKeyURL.path))
+        XCTAssertFalse(fm.fileExists(atPath: old.pendingMediaDir.path))
+        XCTAssertTrue(fm.fileExists(atPath: old.root.path))
+        XCTAssertEqual(try storedUserIds(old), [], "новая БД открывается пустой")
+    }
 }

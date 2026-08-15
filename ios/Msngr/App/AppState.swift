@@ -22,6 +22,9 @@ final class AppState: ObservableObject {
     @Published var obscured = false
     /// true, когда db/engine инициализированы (bootstrap завершён)
     @Published var ready = false
+    /// устройство отключено от аккаунта с другого устройства: поверх всего
+    /// показывается экран «Сессия завершена»
+    @Published var sessionRevoked = false
 
     private(set) var db: DatabaseQueue!
     private(set) var api: APIClient!
@@ -72,6 +75,38 @@ final class AppState: ObservableObject {
     /// переезжает содержимое Application Support.
     static let storage: StorageLocation = AppContainer.resolve()
 
+    /// Выход из аккаунта: сервер отзывает токен устройства, локально стираются
+    /// сессия, БД и ключи. Ответ сервера не блокирует выход — токен всё равно
+    /// остаётся только у нас, а данные уходят.
+    func logout() async {
+        try? await api?.logout()
+        await resetToRegistration()
+    }
+
+    /// Возврат к чистому листу без перезапуска: движок остановлен, ссылки на БД
+    /// отпущены, файлы хранилища и локальные настройки сессии стёрты.
+    func resetToRegistration() async {
+        revokedTask?.cancel()
+        revokedTask = nil
+        if let engine { await engine.stop() }
+        NotificationCoordinator.shared.detach()
+        media?.clearCache()
+        engine = nil
+        e2ee = nil
+        store = nil
+        media = nil
+        api = nil
+        db = nil
+        ready = false
+        session = nil
+        OwnUser.id = ""
+        UserDefaults(suiteName: AppGroup.identifier)?.removeObject(forKey: "ownUserId")
+        PinStore.removePin()
+        PinStore.setBiometricsEnabled(false)
+        isLocked = false
+        AppContainer.wipe(Self.storage)
+    }
+
 
     private func bootstrap(_ s: Session) async {
         OwnUser.id = s.userId
@@ -95,6 +130,7 @@ final class AppState: ObservableObject {
             engine = SyncEngine(db: db, api: api, e2ee: e2ee, media: media, wsURL: comps.url!,
                                 ownUserId: s.userId, ownDeviceId: s.deviceId)
             await engine.start()
+            observeSessionRevoked(engine)
             ready = true
             objectWillChange.send()
             NotificationCoordinator.shared.attach(db: db, engine: engine, ownUserId: s.userId)
@@ -111,6 +147,27 @@ final class AppState: ObservableObject {
         } catch {
             assertionFailure("bootstrap failed: \(error)")
         }
+    }
+
+    private var revokedTask: Task<Void, Never>?
+
+    /// Сервер отключил устройство от аккаунта: переподключаться некуда,
+    /// показываем экран завершённой сессии.
+    private func observeSessionRevoked(_ engine: SyncEngine) {
+        revokedTask?.cancel()
+        revokedTask = Task { [weak self] in
+            for await _ in engine.sessionRevokedStream.subscribe() {
+                guard let self else { return }
+                self.sessionRevoked = true
+            }
+        }
+    }
+
+    /// Уход с экрана «Сессия завершена»: локальные данные отозванного
+    /// устройства стираются, пользователь возвращается к регистрации.
+    func finishRevokedSession() async {
+        await resetToRegistration()
+        sessionRevoked = false
     }
 
     func registerPushToken(_ token: String) async {

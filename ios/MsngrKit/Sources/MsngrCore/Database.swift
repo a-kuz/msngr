@@ -184,6 +184,13 @@ public enum AppDatabase {
                 t.primaryKey(["chatId", "targetMsgId", "kind", "fromUserId"])
             }
         }
+        m.registerMigration("v6-failReason") { db in
+            // причина, по которой исходящее осталось неотправленным (коды в SendFailure):
+            // UI объясняет отказ вместо вечного «отправляется»
+            try db.alter(table: "message") { t in
+                t.add(column: "failReason", .text)
+            }
+        }
         return m
     }
 }
@@ -212,6 +219,7 @@ extension Message {
         isOutgoing = row["isOutgoing"]
         reactions = (row["reactions"] as String?).flatMap { try? dec.decode([String: [String]].self, from: Data($0.utf8)) } ?? [:]
         expiresAt = row["expiresAt"]
+        failReason = row["failReason"]
     }
 
     public func encode(to container: inout PersistenceContainer) throws {
@@ -240,5 +248,6 @@ extension Message {
         container["isOutgoing"] = isOutgoing
         container["reactions"] = js(reactions) ?? "{}"
         container["expiresAt"] = expiresAt
+        container["failReason"] = failReason
     }
 }
