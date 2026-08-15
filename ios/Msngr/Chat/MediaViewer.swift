@@ -94,18 +94,20 @@ struct MediaViewerView: View {
                         onDismiss()
                     } label: {
                         Image(systemName: "xmark")
-                            .font(.system(size: 17, weight: .semibold))
+                            .font(Theme.glyph(17, max: 24).weight(.semibold))
                             .foregroundStyle(.white)
-                            .frame(width: 40, height: 40)
+                            .frame(width: TypeScale.scaled(40, max: 54),
+                                   height: TypeScale.scaled(40, max: 54))
                             .background(.black.opacity(0.4), in: Circle())
                     }
                     Spacer()
                     if let url = cachedURL {
                         ShareLink(item: url) {
                             Image(systemName: "square.and.arrow.up")
-                                .font(.system(size: 17, weight: .semibold))
+                                .font(Theme.glyph(17, max: 24).weight(.semibold))
                                 .foregroundStyle(.white)
-                                .frame(width: 40, height: 40)
+                                .frame(width: TypeScale.scaled(40, max: 54),
+                                       height: TypeScale.scaled(40, max: 54))
                                 .background(.black.opacity(0.4), in: Circle())
                         }
                     }
