@@ -322,6 +322,33 @@ public enum AppDatabase {
                 t.column("deletedAt", .double).notNull()
             }
         }
+        m.registerMigration("v15-chatFolder") { db in
+            // Tabs above the chat list. A folder keeps its rules and the chats
+            // the user placed by hand; the chats themselves stay where they
+            // are, so dropping a folder costs nothing but its own rows. Device
+            // local for now — see ChatFolders.swift for what a later sync would
+            // need.
+            try db.create(table: "chatFolder") { t in
+                t.column("id", .text).primaryKey()
+                t.column("title", .text).notNull()
+                t.column("position", .integer).notNull().defaults(to: 0)
+                t.column("ruleDirect", .boolean).notNull().defaults(to: false)
+                t.column("ruleGroups", .boolean).notNull().defaults(to: false)
+                t.column("ruleUnread", .boolean).notNull().defaults(to: false)
+                t.column("updatedAt", .double).notNull().defaults(to: 0)
+            }
+            try db.create(table: "chatFolderChat") { t in
+                t.column("folderId", .text).notNull()
+                t.column("chatId", .text).notNull()
+                t.column("mode", .text).notNull()   // included | excluded
+                t.primaryKey(["folderId", "chatId"])
+            }
+            try db.create(table: "chatFolderPeer") { t in
+                t.column("folderId", .text).notNull()
+                t.column("userId", .text).notNull()
+                t.primaryKey(["folderId", "userId"])
+            }
+        }
         return m
     }
 }
