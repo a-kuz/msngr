@@ -355,6 +355,17 @@ public enum AppDatabase {
                 t.primaryKey(["folderId", "userId"])
             }
         }
+        m.registerMigration("v16-galleryIndexes") { db in
+            // The chat's attachments, by kind, in feed order. The gallery reads
+            // one kind at a time and pages from the newest down, so the index
+            // turns each page into a seek and a short walk; without it every
+            // page sorts the whole chat to find the few messages carrying an
+            // attachment.
+            try db.execute(sql: """
+                CREATE INDEX message_on_chat_kindOrder
+                ON message(chatId, kind, COALESCE(seq, 999999999) DESC, sentAt DESC)
+                """)
+        }
         return m
     }
 }
