@@ -25,6 +25,10 @@ public enum StorageOwnership {
         /// Database without an owner marker.
         case unmarked
         case user(String)
+        /// Database carrying migrations this build does not know: a newer build
+        /// wrote it. Who owns it is no longer the question — this binary cannot
+        /// read it at all.
+        case schemaAhead
     }
 
     public enum Decision: Sendable, Equatable {
@@ -33,6 +37,12 @@ public enum StorageOwnership {
         /// Storage predates the marker: the session names its owner, so the
         /// marker is written instead of throwing the history away.
         case adopt
+        /// The file is ahead of this build. Opening it would corrupt it and
+        /// wiping it would destroy data a newer build still reads, so neither
+        /// happens on its own: the app states it is out of date and the clean
+        /// start is the user's call. This is where a real downgrade path goes
+        /// once there is one to write.
+        case startOver
     }
 
     /// Whether the storage may be reused as is.
@@ -45,6 +55,8 @@ public enum StorageOwnership {
     /// is unreadable until the first unlock, and a launch in that state must
     /// fail loudly instead of destroying the account's data.
     public static func decision(owner: Owner, expectedUserId: String?) -> Decision {
+        // registration never inherits local data, and a file it cannot read is
+        // no reason to refuse a brand-new account the storage
         guard let expectedUserId else { return .wipe }
         switch owner {
         case .none, .unreadable:
@@ -53,8 +65,14 @@ public enum StorageOwnership {
             return .adopt
         case .user(let id):
             return id == expectedUserId ? .keep : .wipe
+        case .schemaAhead:
+            return .startOver
         }
     }
+
+    /// Leaves the read that found the file ahead of this build; the owner
+    /// marker of a database this binary cannot read means nothing.
+    private struct SchemaAhead: Error {}
 
     /// Reads the owner marker without creating or migrating the database.
     public static func owner(at databaseURL: URL, fileManager: FileManager = .default) -> Owner {
@@ -62,12 +80,16 @@ public enum StorageOwnership {
         do {
             let queue = try DatabaseQueue(path: databaseURL.path)
             defer { try? queue.close() }
+            let migrator = AppDatabase.migrator
             let marker: String? = try queue.read { db in
+                guard try migrator.unknownMigrations(db).isEmpty else { throw SchemaAhead() }
                 guard try db.tableExists("kv") else { return nil }
                 return try String.fetchOne(db, sql: "SELECT value FROM kv WHERE key = ?", arguments: [markerKey])
             }
             guard let marker, !marker.isEmpty else { return .unmarked }
             return .user(marker)
+        } catch is SchemaAhead {
+            return .schemaAhead
         } catch {
             MsngrLog.storage.error("cannot read storage owner at \(databaseURL.path): \(error)")
             return .unreadable
@@ -78,6 +100,9 @@ public enum StorageOwnership {
     /// account. The wipe has to precede the open: registration generates the
     /// device identity into this very database, and clearing the location
     /// afterwards would destroy the fresh keys.
+    ///
+    /// A file ahead of this build is left untouched and the open throws
+    /// `AppDatabaseError.schemaFromNewerVersion`.
     public static func openOwned(at location: StorageLocation,
                                  expectedUserId: String?,
                                  fileManager: FileManager = .default,

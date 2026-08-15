@@ -1,9 +1,23 @@
 import Foundation
 import GRDB
 
+/// Why a database this build was handed cannot be opened.
+public enum AppDatabaseError: Error {
+    /// The file carries migrations this binary does not know: a newer build
+    /// wrote it, and its tables no longer mean here what they mean there.
+    /// Migrating on top of that, or reading it as if it were ours, is how data
+    /// gets corrupted, so the file stays closed and the app says so. There is no
+    /// downgrade path (see docs/PROCESS.md): the way out is a newer build, or
+    /// starting over on clean storage.
+    case schemaFromNewerVersion(applied: [String])
+}
+
 public enum AppDatabase {
     /// Открывает (и мигрирует) БД. Файл шифруется на уровне FS (Data Protection),
     /// ratchet-состояния дополнительно шифруются ключом из Keychain (см. CryptoStore).
+    ///
+    /// Throws `AppDatabaseError.schemaFromNewerVersion` when the file is ahead
+    /// of this build.
     public static func open(at url: URL) throws -> DatabaseQueue {
         var config = Configuration()
         // приложение и расширение уведомлений пишут в один файл из разных
@@ -13,7 +27,10 @@ public enum AppDatabase {
             try db.execute(sql: "PRAGMA journal_mode = WAL")
         }
         let dbQueue = try DatabaseQueue(path: url.path, configuration: config)
-        try migrator.migrate(dbQueue)
+        let m = migrator
+        let ahead = try dbQueue.read { db in try m.unknownMigrations(db) }
+        guard ahead.isEmpty else { throw AppDatabaseError.schemaFromNewerVersion(applied: ahead) }
+        try m.migrate(dbQueue)
         return dbQueue
     }
 
@@ -294,6 +311,17 @@ public enum AppDatabase {
                 """)
         }
         return m
+    }
+}
+
+extension DatabaseMigrator {
+    /// Migrations the file has applied that this migrator does not register:
+    /// how far the storage is ahead of the binary reading it. Empty for a fresh
+    /// file and for one this build can migrate forward.
+    func unknownMigrations(_ db: Database) throws -> [String] {
+        guard try hasBeenSuperseded(db) else { return [] }
+        let known = Set(migrations)
+        return try appliedIdentifiers(db).subtracting(known).sorted()
     }
 }
 
