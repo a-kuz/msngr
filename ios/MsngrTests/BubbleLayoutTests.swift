@@ -393,4 +393,46 @@ final class BubbleLayoutTests: XCTestCase {
             assertReactionsInsideBubble(p)
         }
     }
+
+    // MARK: - Dynamic Type
+
+    /// The reader's text size drives the whole bubble: at an accessibility size
+    /// the same message is taller, and its time line grows with it. A plan
+    /// measured at the old size must not survive the change.
+    func testBubbleGrowsWithTextSize() {
+        let msg = outgoing("Привет, как дела?")
+        let measure = { (category: UIContentSizeCategory) -> BubbleLayoutPlan in
+            TypeScale.apply(category)
+            return BubbleLayout.plan(for: msg, width: self.width, tightGap: false,
+                                     showTail: true, showName: false, authorName: nil)
+        }
+        defer { TypeScale.apply(.large) }
+
+        let small = measure(.extraSmall)
+        let large = measure(.large)
+        let huge = measure(.accessibilityExtraExtraExtraLarge)
+
+        XCTAssertGreaterThan(large.cellHeight, small.cellHeight)
+        XCTAssertGreaterThan(huge.cellHeight, large.cellHeight)
+        XCTAssertGreaterThan(huge.statusFrame.height, large.statusFrame.height)
+        XCTAssertGreaterThan(huge.statusWidth, large.statusWidth)
+        // the bubble still has to hold what it measured
+        for p in [small, large, huge] {
+            let tf = try! XCTUnwrap(p.textFrame)
+            XCTAssertLessThanOrEqual(tf.maxY, p.bubbleFrame.height)
+            XCTAssertLessThanOrEqual(p.statusFrame.maxX, p.bubbleFrame.width)
+        }
+    }
+
+    /// Reaction capsules stay inside the bubble at every text size — a stale
+    /// chip height is exactly what makes them hang out of it.
+    func testReactionsStayInsideBubbleAtEverySize() {
+        defer { TypeScale.apply(.large) }
+        for category in [UIContentSizeCategory.extraSmall, .large,
+                         .accessibilityExtraExtraExtraLarge] {
+            TypeScale.apply(category)
+            let p = mediaPlan(.voice, ["😂": ["u1", "u2"], "🔥": ["u3"], "❤️": ["u4", "u5"]])
+            assertReactionsInsideBubble(p)
+        }
+    }
 }
