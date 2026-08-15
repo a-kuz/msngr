@@ -290,6 +290,7 @@ struct ChatGalleryView: View {
                 Image(systemName: Self.emptyIcon(tab))
                     .font(.system(size: 32))
                     .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
                 Text(Self.emptyText(tab))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -352,14 +353,15 @@ private struct GalleryThumbView: View {
                 Image(systemName: entry.kind == .video ? "film" : "photo")
                     .font(.system(size: 20))
                     .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
             }
             if entry.kind == .video {
                 VStack {
                     Spacer()
                     HStack(spacing: 3) {
-                        Image(systemName: "play.fill").font(.system(size: 9))
+                        Image(systemName: "play.fill").font(Theme.glyph(9, max: 13))
                         if let dur = entry.media?.dur {
-                            Text(Self.duration(dur)).font(.system(size: 11, weight: .medium))
+                            Text(Self.duration(dur)).textRole(Theme.Text.thumbnailCaption)
                         }
                         Spacer()
                     }

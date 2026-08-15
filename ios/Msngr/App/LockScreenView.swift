@@ -13,6 +13,7 @@ struct LockScreenView: View {
                 Image(systemName: "lock.fill")
                     .font(.system(size: 34))
                     .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
                 Text("Введите код-пароль")
                     .font(.headline)
                 HStack(spacing: 18) {
@@ -87,10 +88,11 @@ struct PinPad: View {
                                     } else {
                                         Color.clear
                                     }
-                                default: Text(key).font(.system(size: 28, weight: .regular))
+                                default: Text(key).textRole(Theme.Text.largeControl)
                                 }
                             }
-                            .frame(width: 74, height: 74)
+                            .frame(width: TypeScale.scaled(74, relativeTo: .title2, max: 88),
+                                   height: TypeScale.scaled(74, relativeTo: .title2, max: 88))
                             .background(key == "face" || key == "del" ? Color.clear : Color.primary.opacity(0.06))
                             .clipShape(Circle())
                         }
@@ -119,6 +121,7 @@ struct PrivacyShieldView: View {
         Rectangle()
             .fill(.ultraThinMaterial)
             .ignoresSafeArea()
-            .overlay(Image(systemName: "message.fill").font(.system(size: 44)).foregroundStyle(.secondary))
+            .overlay(Image(systemName: "message.fill").font(.system(size: 44))
+                .foregroundStyle(.secondary).accessibilityHidden(true))
     }
 }

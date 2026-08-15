@@ -25,10 +25,13 @@ struct SettingsView: View {
                             AvatarView(name: me?.displayName ?? "", avatarId: me?.avatarId)
                                 .frame(width: 66, height: 66)
                                 .overlay(alignment: .bottomTrailing) {
+                                    // Badge geometry belongs to the fixed-size
+                                    // avatar it sits on, not to the type scale.
                                     Image(systemName: "camera.fill")
                                         .font(.system(size: 11))
                                         .foregroundStyle(.white)
                                         .frame(width: 22, height: 22)
+                                        .accessibilityHidden(true)
                                         .background(Theme.accent, in: Circle())
                                 }
                         }
@@ -228,7 +231,7 @@ struct PaletteCard: View {
                 .overlay(alignment: .topTrailing) {
                     if selected {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 16))
+                            .font(Theme.glyph(16, max: 24))
                             .foregroundStyle(.white, palette.accent)
                             .padding(4)
                     }
