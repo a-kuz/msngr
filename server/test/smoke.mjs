@@ -4,6 +4,7 @@
 // по умолчанию http://localhost:9871 (.dev.vars), иначе PUSH_PORT=<порт>.
 import http from "node:http";
 import WebSocket from "ws";
+import { shouldArmAlarm } from "../src/util.ts";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:8787";
 const WS_BASE = BASE.replace(/^http/, "ws");
@@ -931,6 +932,7 @@ for (let i = 0; i < Q; i++) sendTo(`cm-q${i}`);
 await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === `cm-q${Q - 1}`);
 const qState = await fanoutState();
 check("fanout is queued, not inline", qState.ok && qState.pending > 0, JSON.stringify(qState));
+check("a queued job reports its wait", typeof qState.oldestMs === "number", JSON.stringify(qState));
 
 const qLast = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === `cm-q${Q - 1}`, 10000);
 check("burst acked", !!qLast);
@@ -951,9 +953,54 @@ for (let i = 0; i < 60; i++) {
 }
 check("queue drains to empty cursor",
   !!drained && drained.pending === 0 && drained.cursor === 0, JSON.stringify(drained));
+check("drained queue reports no waiting job", drained?.oldestMs === null, JSON.stringify(drained));
 
 const strangerQ = await api(`/api/chats/${fgrp.chatId}/fanout`, { token: bob.token });
 check("fanout state hidden from non-member", !strangerQ.ok && strangerQ.error === "not_member");
+
+// 23b. A burst with a second sender landing inside its drain: a job queued
+// while the alarm is running has to be picked up by that drain. Whenever the
+// queue holds jobs, a drain must be coming for them — a job left unarmed stops
+// the chat without closing anyone's socket.
+{
+  const N = 120;
+  const mark = ctre.mark();
+  const markM = cmal.mark();
+  for (let i = 0; i < N; i++) sendTo(`cm-b${i}`);
+  setTimeout(() => ctre.send({
+    t: "send", chatId: fgrp.chatId, clientMsgId: "cm-b-trailer", sentAt: Date.now(),
+    body: { v: 1, mode: "pw", msgs: {} },
+  }), 5);
+  // a stalled queue shows as the head job's age growing without bound; it is
+  // read that way because `armed` is briefly false between the runtime taking
+  // the alarm and the drain starting
+  let oldest = 0;
+  let st = null;
+  for (let i = 0; i < 200; i++) {
+    st = await fanoutState();
+    oldest = Math.max(oldest, st.oldestMs ?? 0);
+    if (st.pending === 0 && ctre.frames.slice(mark).filter((f) => f.t === "msg").length >= N + 1) break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  const gotT = ctre.frames.slice(mark).filter((f) => f.t === "msg" && f.chatId === fgrp.chatId).length;
+  const gotM = cmal.frames.slice(markM).filter((f) => f.t === "msg" && f.chatId === fgrp.chatId).length;
+  check("burst reaches every member", gotT >= N + 1 && gotM >= N + 1, `${gotT}/${gotM} of ${N + 1}`);
+  check("burst leaves the queue empty", st?.pending === 0, JSON.stringify(st));
+  check("no job waits out the burst", oldest < 5000, `oldest=${oldest}ms`);
+}
+
+// 24. Arming the fanout alarm: the queue is never left without one.
+// A stored alarm time keeps its value after the alarm has fired, so a job
+// queued around that moment used to see a pending alarm nobody was going to
+// run, and stayed undelivered until the next send into the chat.
+{
+  const now = 1_000_000;
+  check("arms when nothing is pending", shouldArmAlarm(null, now + 1, now));
+  check("arms past an alarm due right now", shouldArmAlarm(now, now + 1, now));
+  check("arms past an alarm that already fired", shouldArmAlarm(now - 5000, now + 1, now));
+  check("skips an earlier alarm still ahead", !shouldArmAlarm(now + 1, now + 200, now));
+  check("arms ahead of a later alarm", shouldArmAlarm(now + 500, now + 1, now));
+}
 
 cmal.ws.close(); ctre.ws.close();
 ca.ws.close(); cb2.ws.close(); cb3.ws.close(); cb4.ws.close(); ca2.ws.close(); ce.ws.close();
