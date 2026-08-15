@@ -172,6 +172,12 @@ final class ChatListModel: ObservableObject {
         }
     }
 
+    /// Удаление чата со списка: у группы это выход из неё, у переписки —
+    /// удаление своей копии. Собеседник свою сохраняет.
+    func deleteChat(_ item: ChatListItem) {
+        Task { await app.engine.deleteChat(chatId: item.chat.id) }
+    }
+
     func blockRequest(_ item: ChatListItem) {
         guard let peer = item.peer else { return }
         Task {

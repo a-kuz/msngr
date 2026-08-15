@@ -542,6 +542,26 @@ final class ChatViewModel: ObservableObject {
         Task { await app.engine.acceptChatRequest(chatId: chatId) }
     }
 
+    /// Очистка истории: сообщения этого чата уходят с устройства, чат остаётся.
+    /// Окно ленты начинается заново — его нижняя граница указывала на seq,
+    /// строки которого больше нет.
+    func clearHistory() {
+        Task { [chatId] in
+            await app.engine.clearHistory(chatId: chatId)
+            windowFloor.set(nil)
+            reachedStart = false
+            unreadMarker.dismiss()
+            observeChat()
+        }
+    }
+
+    /// Удаление чата: экран закрывается, чат уходит с устройства.
+    func deleteChat() {
+        stop()
+        NotificationCenter.default.post(name: .chatDeleted, object: chatId)
+        Task { [chatId] in await app.engine.deleteChat(chatId: chatId) }
+    }
+
     /// Отклонение заявки: отправитель в блок, чат и его сообщения удаляются локально.
     func blockRequest() {
         guard let peerId = peer?.id else { return }
@@ -661,6 +681,11 @@ final class ChatViewModel: ObservableObject {
         }
         return isLoaded(msgId: msgId)
     }
+}
+
+extension Notification.Name {
+    /// Чат удалён с устройства: список чатов закрывает его экран.
+    static let chatDeleted = Notification.Name("chatDeleted")
 }
 
 extension RelativeDateTimeFormatter {
