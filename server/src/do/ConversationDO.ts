@@ -1,5 +1,5 @@
 import type { Env, ChatState, ChatMember, StoredMsg, ServerFrame } from "../types";
-import { ulid, json, err, seqKey, nowSec } from "../util";
+import { ulid, json, err, seqKey, nowSec, shouldArmAlarm } from "../util";
 
 /// Fanout queue. A frame is never delivered on the sender's critical path: it
 /// is appended as a job and drained by the alarm loop, so /send answers as soon
@@ -67,6 +67,10 @@ interface Meta {
 export class ConversationDO implements DurableObject {
   private meta: Meta | null = null;
   private members: Map<string, ChatMember> | null = null;
+  /// True while alarm() walks the fanout queue.
+  private draining = false;
+  /// A job was queued while the drain was running and has to be picked up by it.
+  private queuedWhileDraining = false;
   /// кто из пары direct-чата кого заблокировал (множество блокирующих);
   /// источник правды — таблица blocks в D1, сюда читается лениво и
   /// сбрасывается фреймом /block-changed
@@ -138,10 +142,22 @@ export class ConversationDO implements DurableObject {
     await this.scheduleFanout(0);
   }
 
+  /// Arms the drain. A job queued while `alarm()` is draining is handed to that
+  /// loop instead of to a new alarm: an alarm written for a moment the running
+  /// handler has already reached is dropped by the runtime, and the queue would
+  /// then hold jobs nobody comes back for.
   private async scheduleFanout(delayMs: number) {
-    const at = Date.now() + delayMs;
+    if (delayMs === 0 && this.draining) {
+      this.queuedWhileDraining = true;
+      return;
+    }
+    // strictly in the future, so the write is never mistaken for the alarm that
+    // is running right now
+    const now = Date.now();
+    const at = now + Math.max(delayMs, 1);
     const pending = await this.state.storage.getAlarm();
-    if (pending === null || pending > at) await this.state.storage.setAlarm(at);
+    if (!shouldArmAlarm(pending, at, now)) return;
+    await this.state.storage.setAlarm(at);
   }
 
   private async deliver(userId: string, body: string) {
@@ -210,32 +226,52 @@ export class ConversationDO implements DurableObject {
   /// recipient in the order the chat produced them.
   async alarm() {
     await this.loadMeta();
+    this.draining = true;
     let budget = FANOUT_BUDGET;
-    for (;;) {
-      const listed = await this.state.storage.list<FanoutJob>({
-        prefix: FANOUT_PREFIX,
-        limit: 1,
-      });
-      const head = [...listed.entries()][0];
-      if (!head) return;
-      if (budget <= 0) {
-        await this.scheduleFanout(0);
-        return;
+    // delay of the alarm this drain leaves behind, armed once draining is over
+    let next: number | undefined;
+    try {
+      for (;;) {
+        const listed = await this.state.storage.list<FanoutJob>({
+          prefix: FANOUT_PREFIX,
+          limit: 1,
+        });
+        const head = [...listed.entries()][0];
+        if (!head) {
+          // a job queued during this drain arrived after the listing above:
+          // walk the queue once more instead of ending on a stale empty read
+          if (this.queuedWhileDraining) {
+            this.queuedWhileDraining = false;
+            continue;
+          }
+          return;
+        }
+        if (budget <= 0) {
+          next = 0;
+          return;
+        }
+        const [key, job] = head;
+        // a job waiting out its backoff also holds back the ones behind it:
+        // recipients must see frames in the order the chat produced them
+        const wait = (job.after ?? 0) - Date.now();
+        if (wait > 0) {
+          next = wait;
+          return;
+        }
+        const { spent, retryMs } = await this.runFanoutJob(key, job, budget);
+        budget -= spent;
+        if (retryMs !== undefined) {
+          next = retryMs;
+          return;
+        }
       }
-      const [key, job] = head;
-      // a job waiting out its backoff also holds back the ones behind it:
-      // recipients must see frames in the order the chat produced them
-      const wait = (job.after ?? 0) - Date.now();
-      if (wait > 0) {
-        await this.scheduleFanout(wait);
-        return;
+    } finally {
+      this.draining = false;
+      if (this.queuedWhileDraining) {
+        this.queuedWhileDraining = false;
+        next ??= 0;
       }
-      const { spent, retryMs } = await this.runFanoutJob(key, job, budget);
-      budget -= spent;
-      if (retryMs !== undefined) {
-        await this.scheduleFanout(retryMs);
-        return;
-      }
+      if (next !== undefined) await this.scheduleFanout(next);
     }
   }
 
