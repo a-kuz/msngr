@@ -35,6 +35,10 @@ struct ChatListView: View {
                     emptyState
                 }
             }
+            // «пришли на список чатов» — по идентификатору списка, а не по
+            // заголовку: заголовок навигации в дерево доступности не попадает,
+            // когда список пуст и его закрывает overlay
+            .accessibilityIdentifier("chatlist.root")
             .navigationTitle("Чаты")
             .searchable(text: $model.searchText, prompt: "Поиск")
             .onChange(of: model.searchText) { _, _ in model.updateSearch() }

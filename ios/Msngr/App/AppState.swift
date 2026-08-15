@@ -14,8 +14,15 @@ struct Session: Codable {
 final class AppState: ObservableObject {
     static let shared = AppState()
 
-    // Конфиг сервера: для локальной разработки — wrangler dev.
-    static let httpBase = URL(string: ProcessInfo.processInfo.environment["MSNGR_SERVER"] ?? "http://localhost:8787")!
+    // Конфиг сервера: для локальной разработки — wrangler dev. Схема сборки
+    // подставляет в MSNGR_SERVER пустую строку, когда стенд не задан, поэтому
+    // адрес берётся из переменной только когда он разбирается в URL
+    static let httpBase: URL = {
+        let fallback = URL(string: "http://localhost:8787")!
+        guard let raw = ProcessInfo.processInfo.environment["MSNGR_SERVER"],
+              let url = URL(string: raw), url.scheme != nil else { return fallback }
+        return url
+    }()
 
     @Published var session: Session?
     @Published var isLocked = false
