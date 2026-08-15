@@ -17,9 +17,8 @@ const WS_BASE = BASE.replace(/^http/, "ws");
 const COUNT = Number(process.argv[2] ?? 500);
 const FAULT = Number(process.argv[3] ?? 0);
 const ROUNDS = Number(process.argv[4] ?? 1);
-/// No frame for this long with the round unfinished counts as a stall. The
-/// queue is idle between rounds, so the wait is only over frames the round
-/// itself produced.
+/// No frame for this long with the round unfinished ends the wait and is
+/// reported: the round can still finish, so it is an idle gap, not a verdict.
 const IDLE_STALL_MS = 4_000;
 /// How long the queue is given to reach an empty cursor after the round landed.
 const DRAIN_MS = 4_000;
@@ -30,6 +29,16 @@ const GAP_MS = Number(process.env.GAP_MS ?? 60);
 const TRAILER_MS = Number(process.env.TRAILER_MS ?? 12);
 
 async function api(path, { token, body, method } = {}) {
+  try {
+    return await apiOnce(path, { token, body, method });
+  } catch (e) {
+    // a chat busy draining answers late: the object handles the request only
+    // once the drain lets go of it
+    return { ok: false, error: String(e?.cause?.code ?? e?.message ?? e) };
+  }
+}
+
+async function apiOnce(path, { token, body, method } = {}) {
   const r = await fetch(BASE + path, {
     method: method ?? (body !== undefined ? "POST" : "GET"),
     headers: {
@@ -136,7 +145,7 @@ for (let round = 1; round <= ROUNDS; round++) {
     `b=${cb.msgs - baseB} c=${cc.msgs - baseC} pending=${q?.pending} oldestMs=${q?.oldestMs} ` +
     `sendRate=${(COUNT / sendSec).toFixed(0)}/s total=${totalSec.toFixed(1)}s ` +
     `socketOpen=${ca.ws.readyState === WebSocket.OPEN}` +
-    (stalled ? ` STALLED at ${JSON.stringify(stalled)}` : "")
+    (stalled ? ` idle ${IDLE_STALL_MS}ms at ${JSON.stringify(stalled)}` : "")
   );
   if (GAP_MS > 0) await new Promise((r) => setTimeout(r, Math.random() * GAP_MS));
 }
