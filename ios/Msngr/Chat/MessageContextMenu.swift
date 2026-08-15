@@ -15,6 +15,10 @@ final class MessageContextOverlay: UIView {
     static let quickReactions = ["❤️", "👍", "🔥", "😂", "😮", "😢"]
 
     private let blurView = UIVisualEffectView(effect: nil)
+    /// Тон фона поверх размытия: гасит просвечивающие бабблы, к выделенному
+    /// сообщению сходит на нет через маску-градиент.
+    private let scrim = UIView()
+    private let scrimMask = CAGradientLayer()
     private let snapshot: UIView
     private let originFrame: CGRect
     private let isOutgoing: Bool
@@ -63,6 +67,13 @@ final class MessageContextOverlay: UIView {
 
         blurView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         addSubview(blurView)
+        // одного размытия мало: лента это тёмные бабблы на светлом фоне, и они
+        // остаются читаемыми пятнами. Тон фона поверх гасит их до ровного поля,
+        // а к выделенному сообщению сходит на нет, чтобы оно осталось в фокусе
+        scrim.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        scrim.backgroundColor = UIColor(Theme.palette.chatBackground)
+        scrim.alpha = 0
+        addSubview(scrim)
         let tap = UITapGestureRecognizer(target: self, action: #selector(backgroundTap(_:)))
         // иначе жест отменяет тачи кнопок меню и реакций — ни одна не нажимается
         tap.cancelsTouchesInView = false
@@ -80,6 +91,17 @@ final class MessageContextOverlay: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         blurView.frame = bounds
+        scrim.frame = bounds
+        // градиент строится вокруг сообщения: у него тон прозрачен, к краям
+        // экрана набирает полную плотность
+        let focus = snapshot.frame.midY / max(bounds.height, 1)
+        scrimMask.frame = bounds
+        scrimMask.colors = [UIColor.white.cgColor, UIColor.white.withAlphaComponent(0).cgColor,
+                            UIColor.white.cgColor]
+        scrimMask.locations = [0,
+                               NSNumber(value: Float(min(max(focus, 0.05), 0.95))),
+                               1]
+        scrim.layer.mask = scrimMask
     }
 
     // MARK: - Геометрия
@@ -260,8 +282,9 @@ final class MessageContextOverlay: UIView {
         menuCard.alpha = 0
         for btn in emojiButtons { btn.transform = CGAffineTransform(scaleX: 0.01, y: 0.01) }
 
-        UIView.animate(withDuration: 0.25) {
+        UIView.animate(withDuration: 0.3) {
             self.blurView.effect = UIBlurEffect(style: .systemUltraThinMaterial)
+            self.scrim.alpha = 0.82
         }
         UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.4) {
             self.snapshot.frame = target
@@ -297,6 +320,7 @@ final class MessageContextOverlay: UIView {
         }
         UIView.animate(withDuration: 0.28, delay: 0.05, options: []) {
             self.blurView.effect = nil
+            self.scrim.alpha = 0
         } completion: { _ in
             self.removeFromSuperview()
         }

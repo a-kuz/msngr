@@ -64,7 +64,7 @@ struct ChatScreen: View {
             if !model.selecting { scrollDownButton }
         }
         .navigationBarTitleDisplayMode(.inline)
-        .navigationBarBackButtonHidden(model.selecting)
+        .navigationBarBackButtonHidden(true)
         .toolbar {
             if model.selecting {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -81,6 +81,19 @@ struct ChatScreen: View {
                         .accessibilityIdentifier("chat.selection.count")
                 }
             } else {
+                // своя кнопка вместо системной: возврат — главное действие шапки,
+                // и оно должно читаться раньше остальных её элементов
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(Theme.accent)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Назад")
+                    .accessibilityIdentifier("chat.back")
+                }
                 ToolbarItem(placement: .principal) { header }
             }
         }

@@ -67,6 +67,17 @@ final class MessagesViewController: UIViewController {
                                                name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // шапка чата рисует свою кнопку возврата, а системная скрыта — вместе с
+        // ней навигация отключает и жест «свайп назад». Возвращаем его, сняв
+        // делегата, который его и глушит
+        if let pop = navigationController?.interactivePopGestureRecognizer {
+            pop.delegate = nil
+            pop.isEnabled = true
+        }
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         if width != view.bounds.width {
