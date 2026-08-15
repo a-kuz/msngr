@@ -376,6 +376,34 @@ app.post("/api/chats/:id/leave", async (c) => {
   return new Response(r.body, r);
 });
 
+// Deleting a chat is the caller's own act. A group is left, because the others
+// have to stop seeing the member. A direct chat keeps its journal and its
+// membership: the peer keeps his copy and is told nothing, and the chat only
+// leaves this user's list. His read mark moves to the end first — messages he
+// has just thrown away must not sit in his badge — and the chat comes back on
+// the next message the peer sends.
+app.post("/api/chats/:id/delete", async (c) => {
+  const { userId } = c.get("auth");
+  const chatId = c.req.param("id");
+  const sr = await convStub(c.env, chatId).fetch("https://do/state");
+  const sj = (await sr.json()) as { ok: boolean; state?: ChatState };
+  if (!sj.ok || !sj.state?.members.some((m) => m.userId === userId))
+    return err("not_member", 403);
+  if (sj.state.kind === "group") {
+    const r = await convStub(c.env, chatId).fetch("https://do/leave", {
+      method: "POST", body: JSON.stringify({ userId }),
+    });
+    return new Response(r.body, r);
+  }
+  await convStub(c.env, chatId).fetch("https://do/read", {
+    method: "POST", body: JSON.stringify({ userId, upToSeq: sj.state.lastSeq }),
+  });
+  const r = await userStub(c.env, userId).fetch("https://do/chat-removed", {
+    method: "POST", body: JSON.stringify({ chatId }),
+  });
+  return new Response(r.body, r);
+});
+
 app.post("/api/chats/:id/settings", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json();
