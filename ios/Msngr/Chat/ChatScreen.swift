@@ -707,6 +707,20 @@ struct MessagesView: UIViewControllerRepresentable {
         vc.onToggleSelection = { [weak model] msg in
             withAnimation(Theme.springFast) { model?.toggleSelection(msg) }
         }
+        // тап по статус-бару: к началу чата, догрузив всё, что хранит устройство
+        vc.onScrollToStart = { [weak model, weak vc] in
+            guard let model, let vc else { return }
+            Haptics.light()
+            Task {
+                await model.loadDeviceHistory()
+                // окно приходит из наблюдения БД — ждём, пока лента его получит
+                for _ in 0..<20 {
+                    if model.isAtDeviceStart { break }
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+                vc.scrollToStart()
+            }
+        }
         return vc
     }
 
