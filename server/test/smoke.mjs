@@ -777,6 +777,36 @@ ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p4", sentAt: Date.n
 const p4 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p4");
 check("no push for service", !(await waitPush(pushFor("eve-sim-udid", p4.msgId), 1200)));
 
+// (в2) The push carries the message itself, addressed to the device it goes to:
+// the extension decrypts it and writes it, so a chat opened offline holds what
+// the banner said. A pairwise envelope is trimmed to this device's own box.
+const eveAddr = `${eve.userId}/${eve.deviceId}`;
+ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p8", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {
+    [eveAddr]: { type: "dr", c: "Zm9yLWV2ZQ==" },
+    "someone/else": { type: "dr", c: "Zm9yLXNvbWVvbmUtZWxzZQ==" },
+  } } });
+const p8 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p8");
+const push8 = await waitPush(pushFor("eve-sim-udid", p8.msgId));
+check("push carries the envelope", !!push8?.body.env, JSON.stringify(push8?.body));
+if (push8?.body.env) {
+  const env = JSON.parse(push8.body.env);
+  check("envelope trimmed to this device",
+    Object.keys(env.msgs ?? {}).join() === eveAddr, JSON.stringify(env.msgs));
+  check("push carries the sender", push8.body.from === alice.userId
+    && typeof push8.body.fromDevice === "string" && typeof push8.body.ts === "number",
+    JSON.stringify({ from: push8.body.from, fromDevice: push8.body.fromDevice }));
+}
+
+// (в3) Больше четырёх килобайт APNs не принимает: конверт уезжает, остальное
+// доезжает — сообщение придёт следующим соединением
+ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p9", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: { [eveAddr]: { type: "dr", c: "A".repeat(5000) } } } });
+const p9 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p9");
+const push9 = await waitPush(pushFor("eve-sim-udid", p9.msgId));
+check("oversized envelope is dropped from the push",
+  !!push9 && push9.body.env === undefined && push9.body.msgId === p9.msgId);
+
 // (г) muted-чат пуш не порождает
 await api(`/api/chats/${echat.chatId}/flags`, { token: eve.token, body: { muted: true } });
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p5", sentAt: Date.now(),
