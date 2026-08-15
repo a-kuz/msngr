@@ -40,8 +40,8 @@ function fakeKeys(n) {
   };
 }
 
-/// Версия протокола, которой представляется клиент в апгрейде: смоук ходит
-/// той же дверью, что и приложение.
+/// Protocol version the client states in the upgrade: the smoke goes through
+/// the same door as the app.
 const PROTOCOL = 1;
 
 class Client {
@@ -154,7 +154,7 @@ await ca.connect(); await cb.connect();
 const hello = await ca.waitFor((f) => f.t === "hello");
 check("ws hello", !!hello);
 
-// 4a. Рукопожатие: версия протокола
+// 4a. Handshake: protocol version
 const ver = await api("/api/version");
 check("version endpoint", ver.ok && ver.protocol >= ver.minProtocol, JSON.stringify(ver));
 check("hello states both versions",
@@ -162,7 +162,8 @@ check("hello states both versions",
   JSON.stringify(hello));
 check("smoke speaks a supported version", PROTOCOL >= ver.minProtocol);
 
-/// Апгрейд, который сервер не принял: ws отдаёт HTTP-ответ вместо сокета.
+/// An upgrade the server did not accept: ws hands back an HTTP response
+/// instead of a socket.
 function upgrade(token, query) {
   return new Promise((resolve) => {
     const ws = new WebSocket(`${WS_BASE}/ws?token=${token}${query}`);
@@ -174,7 +175,7 @@ function upgrade(token, query) {
       res.on("data", (d) => (body += d));
       res.on("end", () => {
         let parsed = null;
-        try { parsed = JSON.parse(body); } catch { /* не json — отдадим как есть */ }
+        try { parsed = JSON.parse(body); } catch { /* not json: hand the body back as it came */ }
         resolve({ status: res.statusCode, body: parsed ?? body });
       });
     });

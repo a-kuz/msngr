@@ -133,8 +133,8 @@ export class UserSessionDO implements DurableObject {
       const [client, server] = Object.values(pair);
       this.state.acceptWebSocket(server);
       server.serializeAttachment({ deviceId, lastPing: nowSec() } satisfies SocketAttachment);
-      // рукопожатие называет обе границы: клиент видит, что сервер понимает
-      // и до какой версии он опустится
+      // the handshake names both bounds: what this server speaks and how far
+      // down it still serves
       this.send(server, {
         t: "hello", serverTime: nowSec(),
         protocol: PROTOCOL_VERSION, minProtocol: MIN_CLIENT_PROTOCOL,
