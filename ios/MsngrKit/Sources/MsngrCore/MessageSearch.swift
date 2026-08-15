@@ -10,20 +10,17 @@ public struct MessageSearchHit: Identifiable, Equatable, Sendable {
     /// while the message is still on its way out.
     public var messageId: String
     public var fromUserId: String
-    public var isOutgoing: Bool
     public var kind: MessageKind
     /// Ordering key of the hit: server time when the message has one.
     public var sortedAt: Double
     public var snippet: MessageSearchSnippet
 
     public init(id: String, chatId: String, messageId: String, fromUserId: String,
-                isOutgoing: Bool, kind: MessageKind, sortedAt: Double,
-                snippet: MessageSearchSnippet) {
+                kind: MessageKind, sortedAt: Double, snippet: MessageSearchSnippet) {
         self.id = id
         self.chatId = chatId
         self.messageId = messageId
         self.fromUserId = fromUserId
-        self.isOutgoing = isOutgoing
         self.kind = kind
         self.sortedAt = sortedAt
         self.snippet = snippet
@@ -113,7 +110,7 @@ public enum MessageSearch {
         arguments.append(limit + 1)
         let rows = try Row.fetchAll(dbc, sql: """
             SELECT message.id, message.msgId, message.chatId, message.fromUserId,
-                   message.isOutgoing, message.kind,
+                   message.kind,
                    COALESCE(message.serverTs, message.sentAt) AS sortedAt,
                    snippet(messageFts, ?, ?, '…', -1, 12) AS snip
             FROM message
@@ -137,7 +134,6 @@ public enum MessageSearch {
                                 chatId: row["chatId"],
                                 messageId: msgId ?? id,
                                 fromUserId: row["fromUserId"],
-                                isOutgoing: row["isOutgoing"],
                                 kind: MessageKind(rawValue: row["kind"]) ?? .text,
                                 sortedAt: row["sortedAt"],
                                 snippet: snippet(from: row["snip"] ?? ""))

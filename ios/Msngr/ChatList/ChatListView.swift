@@ -12,6 +12,7 @@ struct RootView: View {
 struct ChatListView: View {
     @EnvironmentObject var app: AppState
     @StateObject private var model = ChatListModel()
+    @StateObject private var search = ChatSearchModel()
     @ObservedObject private var theme = ThemeStore.shared
     @State private var showNewChat = false
     @State private var showSettings = false
@@ -46,7 +47,10 @@ struct ChatListView: View {
                         folderPages
                     }
                 } else {
-                    List { searchSection }.listStyle(.plain)
+                    ChatSearchResults(list: model, search: search,
+                                      ownUserId: app.session?.userId ?? "",
+                                      onOpenMessage: openMessage,
+                                      onOpenPerson: openPerson)
                 }
             }
             // «пришли на список чатов» — по идентификатору списка, а не по
@@ -55,7 +59,11 @@ struct ChatListView: View {
             .accessibilityIdentifier("chatlist.root")
             .navigationTitle("Чаты")
             .searchable(text: $model.searchText, prompt: "Поиск")
-            .onChange(of: model.searchText) { _, _ in model.updateSearch() }
+            // чаты фильтруются на месте, сообщения и люди ищутся своим темпом
+            .onChange(of: model.searchText) { _, text in
+                model.updateSearch()
+                search.update(text)
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
@@ -330,11 +338,18 @@ struct ChatListView: View {
         }
     }
 
-    private var searchSection: some View {
-        ForEach(model.searchResults) { item in
-            ChatRow(chatId: item.chat.id) {
-                ChatRowView(item: item, ownUserId: app.session?.userId ?? "")
-            }
+    /// Найденное сообщение: чат открывается и доезжает до него, а не встаёт у
+    /// нижнего края ленты.
+    private func openMessage(_ hit: MessageSearchHit) {
+        MessageJump.request(chatId: hit.chatId, msgId: hit.messageId)
+        path.append(hit.chatId)
+    }
+
+    /// Найденный человек: переписка с ним либо уже есть, либо заводится.
+    private func openPerson(_ user: APIClient.UserDTO) {
+        Task {
+            guard let chatId = await DirectChat.open(userId: user.id) else { return }
+            path.append(chatId)
         }
     }
 }

@@ -104,6 +104,9 @@ struct ChatScreen: View {
             // набранный текст остаётся в @State и не должен затираться
             if text.isEmpty { text = model.chat?.draft ?? "" }
             NotificationCoordinator.shared.activeChatId = chatId
+            // из поиска чат открывается ради конкретного сообщения: запрос ждал,
+            // пока экран появится
+            if let request = MessageJump.take(chatId: chatId) { jump(to: request.msgId) }
         }
         // chat грузится асинхронно: в onAppear он ещё nil — черновик заливаем,
         // когда чат реально появился (и только в пустое поле)
@@ -164,15 +167,9 @@ struct ChatScreen: View {
         // из галереи вложений: экраны поверх ленты закрываются, лента доезжает
         // до сообщения — догрузив историю, если оно глубже окна
         .onReceive(NotificationCenter.default.publisher(for: .showMessageInChat)) { note in
-            guard let jump = note.object as? MessageJump, jump.chatId == chatId else { return }
-            showChatInfo = false
-            Task {
-                guard await model.ensureLoaded(msgId: jump.msgId) else {
-                    Haptics.rigid()
-                    return
-                }
-                MessagesView.scrollWhenReady(vc: messagesVC, msgId: jump.msgId)
-            }
+            guard let request = note.object as? MessageJump, request.chatId == chatId else { return }
+            _ = MessageJump.take(chatId: chatId)
+            jump(to: request.msgId)
         }
         .alert("Не отправлено", isPresented: sendFailureBinding) {
             Button("Понятно", role: .cancel) { model.sendFailure = nil }
@@ -331,6 +328,19 @@ struct ChatScreen: View {
             t.removeLast()
         }
         return t + "…"
+    }
+
+    /// Довозит ленту до сообщения: экраны поверх неё закрываются, история
+    /// догружается, если сообщение глубже окна.
+    private func jump(to msgId: String) {
+        showChatInfo = false
+        Task {
+            guard await model.ensureLoaded(msgId: msgId) else {
+                Haptics.rigid()
+                return
+            }
+            MessagesView.scrollWhenReady(vc: messagesVC, msgId: msgId)
+        }
     }
 
     private func pinnedBar(_ msg: Message) -> some View {
