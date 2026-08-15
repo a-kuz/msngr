@@ -386,7 +386,6 @@ struct MacBubble: View {
     private var systemText: String {
         let t = message.text ?? ""
         if t.hasPrefix("identity_changed:") { return "Код безопасности изменился" }
-        if t == "undecryptable" { return "Не удалось расшифровать" }
         return t
     }
 

@@ -11,4 +11,7 @@ public enum MsngrLog {
     public static let session = Logger(subsystem: subsystem, category: "session")
     /// Очередь отправки: постановка сообщения и исходники вложений.
     public static let outbox = Logger(subsystem: subsystem, category: "outbox")
+    /// Нечитаемые сообщения: причина отказа, счётчик попыток, запрос отправителю
+    /// и его результат. Нечитаемое — дефект, поэтому оно не остаётся молчаливым.
+    public static let repair = Logger(subsystem: subsystem, category: "repair")
 }
