@@ -1,6 +1,50 @@
 import type { Env, ChatState, ChatMember, StoredMsg, ServerFrame } from "../types";
 import { ulid, json, err, seqKey, nowSec } from "../util";
 
+/// Fanout queue. A frame is never delivered on the sender's critical path: it
+/// is appended as a job and drained by the alarm loop, so /send answers as soon
+/// as the message owns a seq. Jobs are FIFO, which keeps frame order per chat.
+///
+/// Every job carries its own delivery cursor over the target list and the
+/// cursor is written after each batch, so a drain cut short (eviction, crash,
+/// alarm retry) resumes from the last persisted position and redelivers at most
+/// one batch. Redelivery is safe: clients dedupe messages by msgId, read and
+/// delivered marks are monotonic, chat/presence frames are snapshots.
+const FANOUT_PREFIX = "fq:";
+/// Deliveries issued in parallel per storage write of the cursor.
+const FANOUT_BATCH = 32;
+/// Subrequests one alarm invocation is allowed to spend before rescheduling
+/// itself; the platform ceiling is 1000 per invocation and the next alarm gets
+/// a fresh budget, so audience size is not capped by it.
+const FANOUT_BUDGET = 800;
+/// Delivery passes over a job, including the first one.
+const FANOUT_MAX_ATTEMPTS = 3;
+/// Backoff before the 2nd and 3rd pass over the recipients that failed.
+const FANOUT_RETRY_MS = [200, 1000];
+
+interface FanoutJob {
+  frame: ServerFrame;
+  targets: string[];
+  /// how many targets of this pass are already delivered
+  pos: number;
+  /// 0 for the first pass
+  attempt: number;
+  /// targets of the current pass that failed
+  failed: string[];
+  /// backoff deadline before a retry pass (ms since epoch)
+  after?: number;
+}
+
+function fanoutKey(id: number): string {
+  return FANOUT_PREFIX + String(id).padStart(16, "0");
+}
+
+/// Retrying typing makes no sense: it is superseded by the next typing frame
+/// and stops mattering within seconds. Everything else is worth another pass.
+function fanoutRetryable(frame: ServerFrame): boolean {
+  return frame.t !== "typing";
+}
+
 interface Meta {
   chatId: string;
   kind: "direct" | "group";
@@ -42,17 +86,133 @@ export class ConversationDO implements DurableObject {
     opts?: { except?: string; only?: string[]; skip?: string[] }
   ) {
     const members = await this.loadMembers();
-    const targets = opts?.only ?? [...members.keys()];
-    const body = JSON.stringify(frame);
-    await Promise.all(
-      targets
-        .filter((u) => u !== opts?.except && !opts?.skip?.includes(u) && members.has(u))
-        .map((u) =>
-          this.userStub(u)
-            .fetch("https://do/event", { method: "POST", body })
-            .catch(() => {})
-        )
+    const targets = (opts?.only ?? [...members.keys()]).filter(
+      (u) => u !== opts?.except && !opts?.skip?.includes(u) && members.has(u)
     );
+    await this.enqueueFanout(frame, targets);
+  }
+
+  private async enqueueFanout(frame: ServerFrame, targets: string[]) {
+    if (!targets.length) return;
+    const id = (await this.state.storage.get<number>("fqNext")) ?? 1;
+    const job: FanoutJob = { frame, targets, pos: 0, attempt: 0, failed: [] };
+    await this.state.storage.put({ [fanoutKey(id)]: job, fqNext: id + 1 });
+    await this.scheduleFanout(0);
+  }
+
+  private async scheduleFanout(delayMs: number) {
+    const at = Date.now() + delayMs;
+    const pending = await this.state.storage.getAlarm();
+    if (pending === null || pending > at) await this.state.storage.setAlarm(at);
+  }
+
+  private async deliver(userId: string, body: string) {
+    const res = await this.userStub(userId).fetch("https://do/event", {
+      method: "POST",
+      body,
+    });
+    if (!res.ok) throw new Error(`status ${res.status}`);
+  }
+
+  /// Walks the job's targets from its cursor. Returns how many deliveries were
+  /// spent and, when the job stays queued for another pass, how long to wait.
+  private async runFanoutJob(
+    key: string,
+    job: FanoutJob,
+    budget: number
+  ): Promise<{ spent: number; retryMs?: number }> {
+    const chatId = this.meta?.chatId ?? "";
+    // dev: artificial network latency before delivering a job (DEV_WS_LATENCY_MS)
+    const latency = Number(this.env.DEV_WS_LATENCY_MS ?? 0);
+    if (latency > 0 && job.pos === 0) await new Promise((r) => setTimeout(r, latency));
+
+    const body = JSON.stringify(job.frame);
+    let spent = 0;
+    while (job.pos < job.targets.length && spent < budget) {
+      const batch = job.targets.slice(job.pos, job.pos + FANOUT_BATCH);
+      // one failing recipient must not stop the batch or the ones behind it
+      const results = await Promise.allSettled(batch.map((u) => this.deliver(u, body)));
+      results.forEach((r, i) => {
+        if (r.status !== "rejected") return;
+        job.failed.push(batch[i]);
+        console.warn(
+          `fanout: ${job.frame.t} to ${batch[i]} in ${chatId} failed ` +
+            `(attempt ${job.attempt + 1}): ${r.reason}`
+        );
+      });
+      job.pos += batch.length;
+      spent += batch.length;
+      await this.state.storage.put(key, job);
+    }
+    // budget spent mid-job: the cursor is stored, the next alarm continues
+    if (job.pos < job.targets.length) return { spent };
+
+    if (job.failed.length) {
+      const attempt = job.attempt + 1;
+      if (fanoutRetryable(job.frame) && attempt < FANOUT_MAX_ATTEMPTS) {
+        const retryMs = FANOUT_RETRY_MS[Math.min(attempt - 1, FANOUT_RETRY_MS.length - 1)];
+        const retry: FanoutJob = {
+          frame: job.frame, targets: job.failed, pos: 0, attempt, failed: [],
+          after: Date.now() + retryMs,
+        };
+        await this.state.storage.put(key, retry);
+        return { spent, retryMs };
+      }
+      console.error(
+        `fanout: dropping ${job.frame.t} in ${chatId} for ${job.failed.join(", ")} ` +
+          `after ${attempt} attempt(s)`
+      );
+    }
+    await this.state.storage.delete(key);
+    return { spent };
+  }
+
+  /// Drains the fanout queue. Kept head-of-line so that frames reach a
+  /// recipient in the order the chat produced them.
+  async alarm() {
+    await this.loadMeta();
+    let budget = FANOUT_BUDGET;
+    for (;;) {
+      const listed = await this.state.storage.list<FanoutJob>({
+        prefix: FANOUT_PREFIX,
+        limit: 1,
+      });
+      const head = [...listed.entries()][0];
+      if (!head) return;
+      if (budget <= 0) {
+        await this.scheduleFanout(0);
+        return;
+      }
+      const [key, job] = head;
+      // a job waiting out its backoff also holds back the ones behind it:
+      // recipients must see frames in the order the chat produced them
+      const wait = (job.after ?? 0) - Date.now();
+      if (wait > 0) {
+        await this.scheduleFanout(wait);
+        return;
+      }
+      const { spent, retryMs } = await this.runFanoutJob(key, job, budget);
+      budget -= spent;
+      if (retryMs !== undefined) {
+        await this.scheduleFanout(retryMs);
+        return;
+      }
+    }
+  }
+
+  /// Queue depth (counted up to a page) and the head job's cursor.
+  private async fanoutState() {
+    const listed = await this.state.storage.list<FanoutJob>({
+      prefix: FANOUT_PREFIX,
+      limit: 128,
+    });
+    const head = [...listed.values()][0];
+    return {
+      pending: listed.size,
+      cursor: head ? head.pos : 0,
+      targets: head ? head.targets.length : 0,
+      attempt: head ? head.attempt : 0,
+    };
   }
 
   /// Участники direct-чата, которым сообщение не доставляется из-за блокировки
@@ -102,16 +262,21 @@ export class ConversationDO implements DurableObject {
 
   private async notifyUserDOsChatList(userIds: string[], removed = false) {
     const meta = (await this.loadMeta())!;
-    await Promise.all(
-      userIds.map((u) =>
-        this.userStub(u)
-          .fetch(`https://do/${removed ? "chat-removed" : "chat-added"}`, {
-            method: "POST",
-            body: JSON.stringify({ chatId: meta.chatId }),
-          })
-          .catch(() => {})
-      )
+    const path = removed ? "chat-removed" : "chat-added";
+    const results = await Promise.allSettled(
+      userIds.map(async (u) => {
+        const res = await this.userStub(u).fetch(`https://do/${path}`, {
+          method: "POST",
+          body: JSON.stringify({ chatId: meta.chatId }),
+        });
+        if (!res.ok) throw new Error(`status ${res.status}`);
+      })
     );
+    results.forEach((r, i) => {
+      if (r.status === "rejected") {
+        console.warn(`${path} for ${userIds[i]} in ${meta.chatId} failed: ${r.reason}`);
+      }
+    });
   }
 
   async fetch(req: Request): Promise<Response> {
@@ -155,6 +320,9 @@ export class ConversationDO implements DurableObject {
     switch (path) {
       case "/state":
         return json({ ok: true, state: await this.chatState() });
+
+      case "/fanout-state":
+        return json({ ok: true, ...(await this.fanoutState()) });
 
       case "/history": {
         const fromSeq = Number(url.searchParams.get("fromSeq") ?? "0");
@@ -222,10 +390,6 @@ export class ConversationDO implements DurableObject {
           [dupeKey]: { msgId: msg.msgId, seq, ts: msg.ts },
         });
 
-        // dev: искусственная сетевая задержка перед fanout (DEV_WS_LATENCY_MS)
-        const latency = Number(this.env.DEV_WS_LATENCY_MS ?? 0);
-        if (latency > 0) await new Promise((r) => setTimeout(r, latency));
-
         const frame: ServerFrame = {
           t: "msg", chatId: meta.chatId, seq, msgId: msg.msgId,
           from: msg.from, fromDevice: msg.fromDevice,
@@ -242,9 +406,10 @@ export class ConversationDO implements DurableObject {
           for (const u of blocked) marks[u] = Math.max(marks[u] ?? 0, seq);
           await this.state.storage.put("readMarks", marks);
         }
-        await this.fanout(frame, { except: b.from, skip: blocked });
-        // эхо на другие устройства автора идёт через его же UserDO
-        await this.fanout(frame, { only: [b.from] });
+        // ack answers the sender as soon as the message owns a seq; delivery
+        // (and the APNs call behind it) runs in the alarm queue afterwards.
+        // Author's own devices are targets too: the echo goes through his UserDO.
+        await this.fanout(frame, { skip: blocked });
         return json({ ok: true, msgId: msg.msgId, seq, ts: msg.ts });
       }
 
@@ -383,13 +548,9 @@ export class ConversationDO implements DurableObject {
         if (b.remove.length) {
           // удалённым тоже сообщаем финальное состояние, чтобы клиент убрал чат
           const state = await this.chatState();
-          await Promise.all(
-            b.remove.map((u) =>
-              this.userStub(u).fetch("https://do/event", {
-                method: "POST",
-                body: JSON.stringify({ t: "chat", chatId: meta.chatId, event: "members", state }),
-              }).catch(() => {})
-            )
+          await this.enqueueFanout(
+            { t: "chat", chatId: meta.chatId, event: "members", state },
+            b.remove
           );
         }
         return json({ ok: true });
