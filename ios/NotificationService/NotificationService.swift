@@ -49,7 +49,14 @@ private let sharedDatabase: DatabaseQueue? = {
 
 /// Keys of this device, and who this device is. Without them a push is still
 /// answered — with the neutral text it arrived with.
-private let decryption: (decryptor: IncomingDecryptor, store: IdentityStore, ownUserId: String)? = {
+private struct Decryption {
+    let decryptor: IncomingDecryptor
+    let store: IdentityStore
+    let ownUserId: String
+    let gate: CryptoGate
+}
+
+private let decryption: Decryption? = {
     struct StoredSession: Decodable { let userId: String; let deviceId: String }
     guard let location = sharedLocation, let db = sharedDatabase,
           let data = try? Data(contentsOf: location.sessionURL),
@@ -57,10 +64,10 @@ private let decryption: (decryptor: IncomingDecryptor, store: IdentityStore, own
           let store = try? IdentityStore(db: db,
                                          masterKeyProvider: SharedFileMasterKey(location: location))
     else { return nil }
-    let decryptor = IncomingDecryptor(store: store, ownUserId: session.userId,
-                                      ownDeviceId: session.deviceId,
-                                      gate: CryptoGate.shared(location: location))
-    return (decryptor, store, session.userId)
+    let gate = CryptoGate.shared(location: location)
+    return Decryption(decryptor: IncomingDecryptor(store: store, ownUserId: session.userId,
+                                                   ownDeviceId: session.deviceId, gate: gate),
+                      store: store, ownUserId: session.userId, gate: gate)
 }()
 
 /// An empty plan leaves every push with the content it arrived with: a neutral
@@ -78,8 +85,7 @@ private func burstPlan(_ items: [BurstItem]) async -> BurstPlan {
                                                     showsMessageText: showsText,
                                                     journal: journal)) ?? BurstPlan()
     }
-    let gate = CryptoGate.shared(location: sharedLocation!)
-    let plan = try? gate.withLock { ticket -> BurstPlan in
+    let plan = try? decryption.gate.withLock { ticket -> BurstPlan in
         let writer = PushMessageWriter(decryptor: decryption.decryptor, store: decryption.store,
                                        ownUserId: decryption.ownUserId, holding: ticket)
         return try NotificationBurstStore.resolve(db: db, items: items,
