@@ -141,7 +141,7 @@ function pump() {
 
 /// One `xcrun simctl push`. Resolves when the child is gone — the pool counts
 /// live processes, so it must not release the slot before that.
-function run({ token, rawBody, chatId, delay }) {
+function run({ token, rawBody, chatId, delay, badge }) {
   return new Promise((resolve) => {
     const file = path.join(tmpdir(), `apns-mock-${randomUUID()}.json`);
     let settled = false;
@@ -164,7 +164,11 @@ function run({ token, rawBody, chatId, delay }) {
           log(`simctl push failed (${code}) token=${token.slice(0, 8)}…`, stderr.trim());
         } else {
           stats.delivered++;
-          if (LOG) log(`push token=${token.slice(0, 8)}… chat=${chatId} delay=${delay}ms`);
+          // the badge and its stamp are logged at the moment of delivery: the
+          // random delay reorders a burst, and the order the simulator sees is
+          // the one that decides what lands on the icon
+          if (LOG) log(`push token=${token.slice(0, 8)}… chat=${chatId} ` +
+            `badge=${badge.value} stamp=${badge.stamp} delay=${delay}ms`);
         }
         done();
       });
@@ -181,7 +185,7 @@ function run({ token, rawBody, chatId, delay }) {
   });
 }
 
-function deliver(token, rawBody, chatId) {
+function deliver(token, rawBody, chatId, badge) {
   stats.accepted++;
   const delay = Math.round(MIN_DELAY + Math.random() * (MAX_DELAY - MIN_DELAY));
   if (Math.random() < DROP_RATE) {
@@ -189,7 +193,7 @@ function deliver(token, rawBody, chatId) {
     log(`DROP token=${token.slice(0, 8)}… chat=${chatId} droppedRate=${stats.droppedRate}`);
     return;
   }
-  setTimeout(() => enqueue({ token, rawBody, chatId, delay }), delay);
+  setTimeout(() => enqueue({ token, rawBody, chatId, delay, badge }), delay);
 }
 
 const server = http.createServer((req, res) => {
@@ -224,7 +228,8 @@ const server = http.createServer((req, res) => {
     }
     res.writeHead(200, { "apns-id": randomUUID() });
     res.end();
-    deliver(token, body, parsed.chatId ?? "?");
+    deliver(token, body, parsed.chatId ?? "?",
+      { value: parsed.aps?.badge ?? "?", stamp: parsed.badgeStamp ?? "?" });
   });
 });
 
