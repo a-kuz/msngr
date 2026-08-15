@@ -65,7 +65,10 @@ POST /api/chats/:id/admins        {userId, admin:bool}
 POST /api/chats/:id/pin-message   {msgId|null}
 POST /api/chats/:id/flags         {pinned?, muted?, mutedUntil?, archived?} — локальные
                                   для пользователя; mutedUntil — секунды, null = бессрочно
-GET  /api/chats/:id/fanout        fanout queue of the chat → {pending, cursor, targets, attempt}
+GET  /api/chats/:id/fanout        fanout queue of the chat →
+                                  {pending, cursor, targets, attempt, oldestMs, armed};
+                                  oldestMs is the head job's wait, armed says a drain
+                                  is coming — a queue standing still is oldestMs growing
 POST /api/chats/:id/invite        → {code, link:"msngr://join/<code>"}
 POST /api/join/:code              → {chatId}
 POST /api/media                   raw body (ciphertext) → {mediaId, size}
