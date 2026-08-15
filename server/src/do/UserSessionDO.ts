@@ -6,6 +6,16 @@ import { sendPush } from "../push/apns";
 const PRESENCE_TTL_MS = 35_000;
 const PRESENCE_TTL = PRESENCE_TTL_MS / 1000;
 
+/// Journal records one chat is read for in a single catch-up portion. Equals
+/// the Durable Objects batch read limit: one storage page, one subrequest.
+const SYNC_PAGE = 128;
+/// Records a whole portion reads across every chat it touches, so a long chat
+/// list cannot turn one portion into a pass over the user's whole history.
+const SYNC_BUDGET = 128;
+/// Chats a portion touches, whatever their backlog: the object returns to the
+/// event loop after this many, and the client asks for the rest.
+const SYNC_CHATS = 32;
+
 interface ChatFlags {
   pinned: boolean;
   muted: boolean;
@@ -350,6 +360,91 @@ export class UserSessionDO implements DurableObject {
     );
   }
 
+  // --- Catch-up after a reconnect ---
+
+  /// Serves one catch-up portion and closes it with `syncDone`.
+  ///
+  /// The client owns the cursors: the object answers with a single portion,
+  /// tells where each chat now stands, and returns to the event loop. Live
+  /// traffic waits for one portion, not for the whole backlog, and a client
+  /// that drops in the middle resumes from the cursor it last confirmed.
+  private async serveCatchup(ws: WebSocket, userId: string, cursors: Record<string, number>) {
+    let budget = SYNC_BUDGET;
+    let chats = SYNC_CHATS;
+    // a chat left untouched keeps its cursor and gets no syncState: the client
+    // sees it stayed behind and asks for it in the next portion
+    let pending = false;
+    for (const [chatId, from] of Object.entries(cursors)) {
+      if (budget <= 0 || chats <= 0) {
+        pending = true;
+        continue;
+      }
+      chats--;
+      const limit = Math.min(SYNC_PAGE, budget);
+      const res = await this.convStub(chatId).fetch(
+        `https://do/history?fromSeq=${from}&limit=${limit}&userId=${userId}`
+      );
+      const r = (await res.json()) as {
+        ok: boolean; msgs?: Array<Record<string, unknown>>;
+        scanned?: number; lastScannedSeq?: number | null;
+      };
+      if (!r.ok) {
+        // чата больше нет — клиенту нечего догонять, курсор остаётся на месте
+        this.send(ws, { t: "syncState", chatId, cursor: from, more: false });
+        continue;
+      }
+      for (const m of r.msgs ?? []) {
+        // тумбстоуны уходят deleted-фреймами ниже
+        if (m.deleted) continue;
+        this.send(ws, {
+          t: "msg", chatId,
+          seq: m.seq as number, msgId: m.msgId as string,
+          from: m.from as string, fromDevice: m.fromDevice as string,
+          sentAt: m.sentAt as number, ts: m.ts as number, body: m.body,
+          ...(m.service ? { service: true } : {}),
+        });
+      }
+      const scanned = r.scanned ?? 0;
+      budget -= scanned;
+      // курсор двигается по просмотренным записям, а не по отданным:
+      // страница, целиком отфильтрованная блокировкой, не должна
+      // останавливать доигрывание
+      const cursor = scanned ? r.lastScannedSeq ?? from : from;
+      // a full page means the journal may hold more; a short one means the
+      // range ended, so the chat is caught up and gets its tail
+      const more = scanned >= limit;
+      this.send(ws, { t: "syncState", chatId, cursor, more });
+      if (more) {
+        pending = true;
+        continue;
+      }
+      await this.sendChatTail(ws, userId, chatId);
+    }
+    this.send(ws, { t: "syncDone", more: pending });
+  }
+
+  /// Tombstones and read/delivered marks of a chat the client has caught up
+  /// with: what happened to already delivered messages while it was offline.
+  private async sendChatTail(ws: WebSocket, userId: string, chatId: string) {
+    const er = await this.convStub(chatId).fetch(`https://do/events?userId=${userId}`);
+    const e = (await er.json()) as {
+      ok: boolean;
+      deleted?: Array<{ msgId: string; by: string }>;
+      readMarks?: Record<string, number>;
+      deliveredMarks?: Record<string, number>;
+    };
+    if (!e.ok) return;
+    for (const d of e.deleted ?? []) {
+      this.send(ws, { t: "deleted", chatId, msgIds: [d.msgId], forAll: true, by: d.by });
+    }
+    for (const [by, upToSeq] of Object.entries(e.deliveredMarks ?? {})) {
+      if (by !== userId) this.send(ws, { t: "receipt", chatId, kind: "delivered", upToSeq, by });
+    }
+    for (const [by, upToSeq] of Object.entries(e.readMarks ?? {})) {
+      if (by !== userId) this.send(ws, { t: "receipt", chatId, kind: "read", upToSeq, by });
+    }
+  }
+
   // --- WebSocket hibernation handlers ---
 
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer) {
@@ -442,71 +537,26 @@ export class UserSessionDO implements DurableObject {
         });
         return;
 
-      case "sync": {
-        // чаты, о которых клиент ещё не знает (создан/добавлен, пока был офлайн):
-        // прислать state и историю с нуля
-        const known = new Set(Object.keys(frame.cursors));
-        const listed = await this.state.storage.list<unknown>({ prefix: "chat:" });
-        for (const key of listed.keys()) {
-          const chatId = key.slice(5);
-          if (known.has(chatId)) continue;
-          const sr = await this.convStub(chatId).fetch("https://do/state");
-          const sj = (await sr.json()) as { ok: boolean; state?: unknown };
-          if (sj.ok && sj.state) {
-            this.send(ws, { t: "chat", chatId, event: "sync", state: sj.state } as ServerFrame);
-            frame.cursors[chatId] = 0; // и доиграть историю ниже
-          }
-        }
-        // доигрывание пропущенных сообщений по курсорам клиента — батчами до исчерпания
-        const BATCH = 200;
-        for (const [chatId, lastSeq] of Object.entries(frame.cursors)) {
-          let cursor = lastSeq;
-          for (;;) {
-            const res = await this.convStub(chatId).fetch(
-              `https://do/history?fromSeq=${cursor}&limit=${BATCH}&userId=${userId}`
-            );
-            const r = (await res.json()) as {
-              ok: boolean; msgs?: Array<Record<string, unknown>>;
-              scanned?: number; lastScannedSeq?: number | null;
-            };
-            if (!r.ok || !r.scanned) break;
-            for (const m of r.msgs ?? []) {
-              // тумбстоуны уходят deleted-фреймами ниже
-              if (m.deleted) continue;
-              this.send(ws, {
-                t: "msg", chatId,
-                seq: m.seq as number, msgId: m.msgId as string,
-                from: m.from as string, fromDevice: m.fromDevice as string,
-                sentAt: m.sentAt as number, ts: m.ts as number, body: m.body,
-                ...(m.service ? { service: true } : {}),
-              });
-            }
-            // курсор двигается по просмотренным записям, а не по отданным:
-            // страница, целиком отфильтрованная блокировкой, не должна
-            // останавливать доигрывание
-            cursor = r.lastScannedSeq ?? cursor;
-            if (r.scanned < BATCH) break;
-          }
-          // тумбстоуны и read/delivered-марки, которые случились пока клиент был офлайн
-          const er = await this.convStub(chatId).fetch(`https://do/events?userId=${userId}`);
-          const e = (await er.json()) as {
-            ok: boolean;
-            deleted?: Array<{ msgId: string; by: string }>;
-            readMarks?: Record<string, number>;
-            deliveredMarks?: Record<string, number>;
-          };
-          if (e.ok) {
-            for (const d of e.deleted ?? []) {
-              this.send(ws, { t: "deleted", chatId, msgIds: [d.msgId], forAll: true, by: d.by });
-            }
-            for (const [by, upToSeq] of Object.entries(e.deliveredMarks ?? {})) {
-              if (by !== userId) this.send(ws, { t: "receipt", chatId, kind: "delivered", upToSeq, by });
-            }
-            for (const [by, upToSeq] of Object.entries(e.readMarks ?? {})) {
-              if (by !== userId) this.send(ws, { t: "receipt", chatId, kind: "read", upToSeq, by });
+      case "sync":
+      case "catchup": {
+        const cursors: Record<string, number> = { ...frame.cursors };
+        if (frame.t === "sync") {
+          // чаты, о которых клиент ещё не знает (создан/добавлен, пока был офлайн):
+          // прислать state и историю с нуля
+          const known = new Set(Object.keys(frame.cursors));
+          const listed = await this.state.storage.list<unknown>({ prefix: "chat:" });
+          for (const key of listed.keys()) {
+            const chatId = key.slice(5);
+            if (known.has(chatId)) continue;
+            const sr = await this.convStub(chatId).fetch("https://do/state");
+            const sj = (await sr.json()) as { ok: boolean; state?: unknown };
+            if (sj.ok && sj.state) {
+              this.send(ws, { t: "chat", chatId, event: "sync", state: sj.state } as ServerFrame);
+              cursors[chatId] = 0; // и доиграть историю ниже
             }
           }
         }
+        await this.serveCatchup(ws, userId, cursors);
         return;
       }
     }

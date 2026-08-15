@@ -66,6 +66,48 @@ class Client {
     }
     return null;
   }
+  /// Позиция в ленте фреймов: с неё ищет waitAfter, ею режется срез раунда.
+  mark() { return this.frames.length; }
+  async waitAfter(mark, pred, ms = 4000) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      const f = this.frames.slice(mark).find(pred);
+      if (f) return f;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return null;
+  }
+}
+
+/// Догон порциями, как его крутит клиент: sync → msg-фреймы, syncState по
+/// чатам, syncDone; дальше catchup по тем, кто ещё отстал, пока more не станет
+/// false. Возвращает раунды со срезом syncState каждого.
+async function catchUp(client, cursors, { rounds = 200, ms = 30000 } = {}) {
+  let asked = { ...cursors };
+  let t = "sync";
+  const portions = [];
+  for (let i = 0; i < rounds; i++) {
+    const mark = client.mark();
+    client.send({ t, cursors: asked });
+    const done = await client.waitAfter(mark, (f) => f.t === "syncDone", ms);
+    if (!done) return { done: false, portions };
+    portions.push({
+      states: client.frames.slice(mark).filter((f) => f.t === "syncState"),
+      more: done.more,
+      asked,
+    });
+    if (!done.more) return { done: true, portions };
+    const next = {};
+    for (const [chatId, from] of Object.entries(asked)) {
+      const st = portions[portions.length - 1].states.find((s) => s.chatId === chatId);
+      if (!st) next[chatId] = from;        // до чата порция не дошла
+      else if (st.more) next[chatId] = st.cursor;
+    }
+    if (!Object.keys(next).length) return { done: true, portions };
+    asked = next;
+    t = "catchup";
+  }
+  return { done: false, portions };
 }
 
 const suffix = Math.random().toString(36).slice(2, 8);
@@ -387,7 +429,7 @@ const syncRead = await cb3.waitFor((f) =>
   f.t === "receipt" && f.kind === "read" && f.by === alice.userId && f.upToSeq === 2);
 check("sync replays read mark", !!syncRead);
 
-// 19. Sync не обрезается на 200: догоняет батчами до исчерпания
+// 19. Догон порциями: курсор двигается, «есть ещё» гаснет, ничего не теряется
 const N = 210;
 for (let i = 0; i < N; i++) {
   ca.send({ t: "send", chatId: grp.chatId, clientMsgId: `cm-bulk-${i}`, sentAt: Date.now(),
@@ -397,10 +439,51 @@ const lastBulk = await ca.waitFor((f) => f.t === "sent" && f.clientMsgId === `cm
 check("bulk send acked", !!lastBulk);
 const cb4 = new Client("bob4", bob.token);
 await cb4.connect();
-cb4.send({ t: "sync", cursors: { [grp.chatId]: 1 } });
-await cb4.waitFor((f) => f.t === "msg" && f.chatId === grp.chatId && f.seq === lastBulk.seq, 30000);
+const walk = await catchUp(cb4, { [grp.chatId]: 1 });
+check("catch-up finishes", walk.done, JSON.stringify(walk.portions.map((p) => p.more)));
 const bulkGot = cb4.frames.filter((f) => f.t === "msg" && f.chatId === grp.chatId && f.seq > 1);
-check("sync backfill beyond 200", bulkGot.length === N, `got ${bulkGot.length}`);
+check("catch-up backfills the whole backlog", bulkGot.length === N, `got ${bulkGot.length}`);
+const grpStates = walk.portions.map((p) => p.states.find((s) => s.chatId === grp.chatId));
+check("catch-up goes in portions", walk.portions.length > 1 && grpStates.every(Boolean),
+  `${walk.portions.length} portion(s)`);
+check("catch-up cursor moves forward",
+  grpStates.every((s, i) => i === 0 || s.cursor > grpStates[i - 1].cursor),
+  JSON.stringify(grpStates.map((s) => s?.cursor)));
+check("catch-up portion is bounded",
+  cb4.frames.filter((f) => f.t === "msg" && f.chatId === grp.chatId
+    && f.at <= grpStates[0].at).length <= 128);
+check("catch-up ends with no more",
+  grpStates.slice(0, -1).every((s) => s.more) && grpStates[grpStates.length - 1].more === false);
+
+// 19a. Между порциями объект отвечает на всё остальное: ping, посланный сразу
+// за sync, получает pong до того, как догон дойдёт до конца
+const cb5 = new Client("bob5", bob.token);
+await cb5.connect();
+cb5.send({ t: "sync", cursors: { [grp.chatId]: 1 } });
+cb5.send({ t: "ping" });
+const pongMid = await cb5.waitFor((f) => f.t === "pong", 15000);
+const deliveredByPong = cb5.frames.filter(
+  (f) => f.t === "msg" && f.chatId === grp.chatId && f.at <= pongMid?.at).length;
+check("live traffic is answered mid catch-up", !!pongMid && deliveredByPong < N,
+  `${deliveredByPong} of ${N} delivered by the pong`);
+
+// 19b. Обрыв посреди догона: следующее подключение продолжает с курсора,
+// а не с нуля
+const cb6 = new Client("bob6", bob.token);
+await cb6.connect();
+cb6.send({ t: "sync", cursors: { [grp.chatId]: 1 } });
+const firstState = await cb6.waitAfter(0, (f) => f.t === "syncState" && f.chatId === grp.chatId, 15000);
+check("interrupted catch-up has a confirmed cursor", !!firstState && firstState.more);
+cb6.ws.close();
+await new Promise((r) => setTimeout(r, 300));
+const cb7 = new Client("bob7", bob.token);
+await cb7.connect();
+const resumed = await catchUp(cb7, { [grp.chatId]: firstState.cursor });
+const resumedMsgs = cb7.frames.filter((f) => f.t === "msg" && f.chatId === grp.chatId);
+check("interrupted catch-up resumes from the cursor",
+  resumed.done && !resumedMsgs.some((f) => f.seq <= firstState.cursor)
+  && resumedMsgs.some((f) => f.seq === lastBulk.seq),
+  `${resumedMsgs.length} msg(s) after seq ${firstState.cursor}`);
 
 // 20. Блокировка внутри существующего чата
 const henry = await api("/api/register", { body: {
