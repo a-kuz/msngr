@@ -304,6 +304,8 @@ final class MessagesViewController: UIViewController {
             return l1 == l2
         case let (.unreadMarker(_, c1), .unreadMarker(_, c2)):
             return c1 == c2
+        case (.unreadable, .unreadable), (.historyStart, .historyStart):
+            return true
         default:
             return false
         }
@@ -406,6 +408,14 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "unread", for: indexPath) as! UnreadMarkerCell
             cell.configure(count: count)
             return cell
+        case .unreadable:
+            let cell = cv.dequeueReusableCell(withReuseIdentifier: "system", for: indexPath) as! SystemCell
+            cell.configure(text: "Сообщение ещё не загружено")
+            return cell
+        case .historyStart:
+            let cell = cv.dequeueReusableCell(withReuseIdentifier: "system", for: indexPath) as! SystemCell
+            cell.configure(text: "История начинается здесь")
+            return cell
         case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName):
             if msg.kind == .system {
                 let cell = cv.dequeueReusableCell(withReuseIdentifier: "system", for: indexPath) as! SystemCell
@@ -433,6 +443,8 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             return CGSize(width: cv.bounds.width, height: 32)
         case .unreadMarker:
             return CGSize(width: cv.bounds.width, height: 36)
+        case .unreadable, .historyStart:
+            return CGSize(width: cv.bounds.width, height: 30)
         case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName):
             if msg.kind == .system {
                 return CGSize(width: cv.bounds.width, height: 30)
@@ -561,5 +573,9 @@ final class SystemCell: UICollectionViewCell {
         } else {
             label.text = t
         }
+    }
+
+    func configure(text: String) {
+        label.text = text
     }
 }
