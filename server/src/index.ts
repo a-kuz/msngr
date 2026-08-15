@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Env, AuthCtx, ChatState } from "./types";
 import { authenticate } from "./auth";
 import { ulid, newToken, sha256hex, json, err, directChatName, b64url } from "./util";
+import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "./version";
 
 export { UserSessionDO } from "./do/UserSessionDO";
 export { ConversationDO } from "./do/ConversationDO";
@@ -16,6 +17,12 @@ function userStub(env: Env, userId: string) {
 function convStub(env: Env, chatId: string) {
   return env.CONV_DO.get(env.CONV_DO.idFromName(chatId));
 }
+
+// What this server speaks: its protocol version and the floor it still serves.
+// No auth: a client asks before it has an account.
+app.get("/api/version", (c) =>
+  json({ ok: true, protocol: PROTOCOL_VERSION, minProtocol: MIN_CLIENT_PROTOCOL })
+);
 
 // --- регистрация (без auth) ---
 app.post("/api/register", async (c) => {
@@ -590,6 +597,20 @@ export default {
     if (url.pathname === "/ws") {
       if (req.headers.get("upgrade")?.toLowerCase() !== "websocket")
         return err("expected_websocket", 426);
+      // the client version is read before auth: a socket this server can no
+      // longer serve gets a stated refusal instead of a silent drop
+      const clientProtocol = Number(url.searchParams.get("v") ?? "0");
+      if (!Number.isFinite(clientProtocol) || clientProtocol < MIN_CLIENT_PROTOCOL) {
+        return json(
+          {
+            ok: false,
+            error: "client_too_old",
+            protocol: PROTOCOL_VERSION,
+            minProtocol: MIN_CLIENT_PROTOCOL,
+          },
+          426
+        );
+      }
       const auth = await authenticate(env, req);
       if (!auth) return err("unauthorized", 401);
       const stub = env.USER_DO.get(env.USER_DO.idFromName(auth.userId));

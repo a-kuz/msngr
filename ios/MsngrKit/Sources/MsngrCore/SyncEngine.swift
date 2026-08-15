@@ -30,6 +30,11 @@ public actor SyncEngine {
     /// устройство отключено от аккаунта (токен отозван): переподключений больше
     /// не будет, приложению остаётся увести пользователя на регистрацию
     public nonisolated let sessionRevokedStream = Broadcast<Void>()
+    /// The server no longer serves this build's protocol version. Reconnecting
+    /// changes nothing, so the app states that it has to be updated. The
+    /// refusal comes on the first upgrade, before the app has subscribed, so
+    /// the stream replays it to whoever subscribes next.
+    public nonisolated let protocolOutdatedStream = Broadcast<Void>(replayLast: true)
 
     /// Новое сообщение, принятое по WS (msg-фрейм, не повтор): для in-app уведомлений.
     public struct IncomingMessage: Sendable {
@@ -206,6 +211,12 @@ public actor SyncEngine {
             connected = false
             connectionStream.send(false)
             sessionRevokedStream.send(())
+        case .outdated:
+            connected = false
+            connectionStream.send(false)
+            MsngrLog.session.error(
+                "server refused protocol v\(MsngrProtocol.version, privacy: .public): this build is out of date")
+            protocolOutdatedStream.send(())
         case .frame(let data):
             guard let frame = try? JSONDecoder().decode(WSIncoming.self, from: data) else { return }
             // frames are queued rather than applied here: the socket hands them
