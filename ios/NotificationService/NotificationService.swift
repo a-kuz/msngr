@@ -11,6 +11,9 @@ private let burstGate = NotificationBurstGate(resolve: { await burstPlan($0) })
 /// The database of the app group, opened once: a burst enters the extension
 /// many times. The app owns the location, so the extension only reads the
 /// container it prepared.
+/// Trace of what the system actually let this extension do.
+private let journal = NotificationJournal.shared()
+
 private let sharedDatabase: DatabaseQueue? = {
     guard let url = AppContainer.groupLocation()?.databaseURL,
           FileManager.default.fileExists(atPath: url.path) else { return nil }
@@ -31,6 +34,7 @@ private func burstPlan(_ items: [BurstItem]) async -> BurstPlan {
 final class NotificationService: UNNotificationServiceExtension {
     private var contentHandler: ((UNNotificationContent) -> Void)?
     private var bestAttempt: UNMutableNotificationContent?
+    private var pushedItem: BurstItem?
 
     override func didReceive(_ request: UNNotificationRequest,
                              withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void) {
@@ -40,9 +44,12 @@ final class NotificationService: UNNotificationServiceExtension {
         bestAttempt = content
 
         guard let item = Self.item(from: request.content.userInfo) else {
+            journal?.record(.received, msgId: "", seq: 0, detail: "no-item")
             contentHandler(content)
             return
         }
+        pushedItem = item
+        journal?.record(.received, msgId: item.msgId, seq: item.seq)
         let answer = PushAnswer(content: content, handler: contentHandler)
         Task {
             await burstGate.submit(item) { answer.answer($0) }
@@ -50,6 +57,7 @@ final class NotificationService: UNNotificationServiceExtension {
     }
 
     override func serviceExtensionTimeWillExpire() {
+        journal?.record(.expired, msgId: pushedItem?.msgId ?? "", seq: pushedItem?.seq ?? 0)
         // out of time: close the window, and answer with what this handler has
         // — a push left unanswered is delivered by the system as it arrived
         Task { await burstGate.flushNow() }
@@ -82,6 +90,7 @@ private final class PushAnswer: @unchecked Sendable {
     func answer(_ step: BurstStep) {
         switch step.outcome {
         case .show:
+            journal?.record(.answered, msgId: step.item.msgId, seq: step.item.seq, detail: "show")
             if let built = step.content {
                 content.title = built.title
                 content.subtitle = built.subtitle ?? ""
@@ -90,7 +99,9 @@ private final class PushAnswer: @unchecked Sendable {
             }
             if let badge = step.badge { content.badge = NSNumber(value: badge) }
             handler(content)
-        case .skip:
+        case .skip(let reason):
+            journal?.record(.answered, msgId: step.item.msgId, seq: step.item.seq,
+                            detail: "skip:" + reason.rawValue)
             // content without an alert is not presented: this message already
             // has its banner, or is not to be announced at all
             handler(UNMutableNotificationContent())

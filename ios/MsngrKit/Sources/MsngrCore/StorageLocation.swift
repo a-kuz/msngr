@@ -19,12 +19,16 @@ public struct StorageLocation: Sendable, Equatable {
     public var avatarsDir: URL { root.appendingPathComponent("avatars") }
     /// Исходники вложений, приложенных офлайн: переживают чистку Caches.
     public var pendingMediaDir: URL { root.appendingPathComponent("media-outgoing") }
+    /// Трасса расширения уведомлений: его процесс не виден ни отладчику, ни
+    /// консоли приложения.
+    public var nseJournalURL: URL { root.appendingPathComponent(NotificationJournal.fileName) }
 
     /// Содержимое размещения, которое переносится при смене корня. Файл БД —
     /// последний: его наличие в новом размещении означает, что перенос завершён.
     public static let movableItems = [
         sessionFileName,
         masterKeyFileName,
+        NotificationJournal.fileName,
         "media-outgoing",
         "avatars",
         databaseFileName + "-wal",
