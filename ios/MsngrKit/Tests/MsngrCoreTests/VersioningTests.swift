@@ -24,6 +24,29 @@ final class VersioningTests: XCTestCase {
         XCTAssertEqual(items.filter { $0.name == "v" }.map(\.value), [String(MsngrProtocol.version)])
     }
 
+    /// The server refuses the very first upgrade, which happens while the
+    /// engine starts and before the app subscribes. A refusal that arrived
+    /// first must still reach the screen.
+    func testProtocolRefusalReachesALateSubscriber() async throws {
+        let engine = try makeEngine(db: try AppDatabase.openInMemory())
+        engine.protocolOutdatedStream.send(())
+
+        let delivered = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                for await _ in engine.protocolOutdatedStream.subscribe() { return true }
+                return false
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                return false
+            }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+        XCTAssertTrue(delivered, "the refusal was dropped: the app keeps showing a connecting state")
+    }
+
     // MARK: - Envelope format version
 
     private func makeEngine(db: DatabaseQueue) throws -> SyncEngine {
