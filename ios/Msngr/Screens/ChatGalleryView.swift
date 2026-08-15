@@ -146,15 +146,12 @@ struct ChatGalleryView: View {
 
     private func list(_ items: [GalleryEntry]) -> some View {
         List(items) { entry in
-            Button {
-                open(entry)
-            } label: {
-                row(entry)
-            }
-            .buttonStyle(.plain)
-            .listRowBackground(Color.clear)
-            .contextMenu { menu(entry) }
-            .onAppear { model.loadMoreIfNeeded(model.tab, at: entry) }
+            row(entry)
+                .contentShape(Rectangle())
+                .onTapGesture { open(entry) }
+                .listRowBackground(Color.clear)
+                .contextMenu { menu(entry) }
+                .onAppear { model.loadMoreIfNeeded(model.tab, at: entry) }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
