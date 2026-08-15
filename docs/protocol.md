@@ -62,6 +62,7 @@ POST /api/chats/:id/admins        {userId, admin:bool}
 POST /api/chats/:id/pin-message   {msgId|null}
 POST /api/chats/:id/flags         {pinned?, muted?, mutedUntil?, archived?} — локальные
                                   для пользователя; mutedUntil — секунды, null = бессрочно
+GET  /api/chats/:id/fanout        fanout queue of the chat → {pending, cursor, targets, attempt}
 POST /api/chats/:id/invite        → {code, link:"msngr://join/<code>"}
 POST /api/join/:code              → {chatId}
 POST /api/media                   raw body (ciphertext) → {mediaId, size}
@@ -71,6 +72,8 @@ POST /api/phone                   {phoneHash|null}
 POST /api/contacts/discover       {hashes[]} → {matches[]}  (до 5000 хэшей, чанками по 100)
 POST /api/block                   {userId, blocked}
 GET  /api/blocked                 → {blocked:[userId]}
+POST /api/dev/fault               {failEvents} — dev hook: the caller's own session
+                                  object rejects that many frame deliveries
 ```
 
 Права: удалять участников и менять настройки группы может только админ; добавить
@@ -133,6 +136,13 @@ GET  /api/blocked                 → {blocked:[userId]}
 accepted), `title`, `avatarId`, `description`, `pinnedMsgId`, `lastSeq`,
 `readMarks`, `deliveredMarks`. Профили участников фрейм не несёт: клиент
 дотягивает недостающих через `GET /api/users/:id`.
+
+## Delivery order
+
+`sent` leaves as soon as the message owns a `seq` and is written, before any
+recipient sees the frame and before APNs is called. Frames of one chat reach a
+recipient in the order the chat produced them; a `msg` frame can be delivered
+twice (a retried fanout pass), so the client dedupes by `msgId`.
 
 ## Presence
 

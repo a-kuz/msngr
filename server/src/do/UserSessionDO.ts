@@ -34,6 +34,8 @@ interface SocketAttachment {
 // Один DO на пользователя: все WS его устройств, чат-лист, presence, пуши.
 export class UserSessionDO implements DurableObject {
   private userId: string | null = null;
+  /// Dev test hook (/dev-fault): how many frame deliveries to reject next.
+  private devFailEvents = 0;
 
   constructor(private state: DurableObjectState, private env: Env) {}
 
@@ -90,16 +92,20 @@ export class UserSessionDO implements DurableObject {
     const lastSeen = nowSec();
     await this.state.storage.put("lastSeen", lastSeen);
     const ids = await this.chatIds();
-    await Promise.all(
-      ids.map((chatId) =>
-        this.convStub(chatId)
-          .fetch("https://do/presence", {
-            method: "POST",
-            body: JSON.stringify({ userId, online, lastSeen }),
-          })
-          .catch(() => {})
-      )
+    const results = await Promise.allSettled(
+      ids.map(async (chatId) => {
+        const res = await this.convStub(chatId).fetch("https://do/presence", {
+          method: "POST",
+          body: JSON.stringify({ userId, online, lastSeen }),
+        });
+        if (!res.ok) throw new Error(`status ${res.status}`);
+      })
     );
+    results.forEach((r, i) => {
+      if (r.status === "rejected") {
+        console.warn(`presence of ${userId} in ${ids[i]} failed: ${r.reason}`);
+      }
+    });
   }
 
   async fetch(req: Request): Promise<Response> {
@@ -121,13 +127,17 @@ export class UserSessionDO implements DurableObject {
       await this.state.storage.setAlarm(Date.now() + PRESENCE_TTL_MS);
       if (this.sockets().length === 1) {
         // первое устройство онлайн
-        this.state.waitUntil(this.broadcastPresence(true));
+        await this.broadcastPresence(true);
       }
       return new Response(null, { status: 101, webSocket: client });
     }
 
     switch (path) {
       case "/event": {
+        if (this.devFailEvents > 0) {
+          this.devFailEvents--;
+          return err("dev_fault", 500);
+        }
         const frame = (await req.json()) as ServerFrame;
         for (const ws of this.sockets()) this.send(ws, frame);
         if (frame.t === "msg" && !frame.service) {
@@ -139,9 +149,12 @@ export class UserSessionDO implements DurableObject {
           const isOwnEcho = userId !== null && frame.from === userId;
           // APNs уходит всегда и сразу, независимо от live-сокетов:
           // доставка по WS не гарантирована, дубль гасит клиент
-          // (willPresent по chatId/msgId)
+          // (willPresent по chatId/msgId).
+          // The call is awaited here rather than deferred: waitUntil gives no
+          // timing guarantee. The sender is not waiting on it — his ack left
+          // ConversationDO before this delivery was queued.
           if (!muted && !isOwnEcho) {
-            this.state.waitUntil(this.pushToDevices(frame.chatId, frame.msgId));
+            await this.pushToDevices(frame.chatId, frame.msgId);
           }
         }
         return json({ ok: true });
@@ -232,6 +245,12 @@ export class UserSessionDO implements DurableObject {
         return json({ ok: true });
       }
 
+      case "/dev-fault": {
+        const b = (await req.json()) as { failEvents?: number };
+        this.devFailEvents = Math.max(0, Math.floor(b.failEvents ?? 0));
+        return json({ ok: true, failEvents: this.devFailEvents });
+      }
+
       case "/presence-info": {
         const lastSeen = (await this.state.storage.get<number>("lastSeen")) ?? 0;
         const online = this.presenceFresh();
@@ -290,13 +309,14 @@ export class UserSessionDO implements DurableObject {
     const devices = Object.entries(tokens);
     if (!devices.length) return;
     const badge = await this.totalUnread();
-    // каждое устройство обрабатывается независимо: падение одного не отменяет остальные
+    // Every device is handled independently: one failure neither cancels the
+    // others nor fails the frame delivery that already went over the socket.
     const results = await Promise.all(
       devices.map(async ([deviceId, t]) => {
         try {
           return { deviceId, res: await sendPush(this.env, t.token, t.env, { chatId, msgId, badge }) };
         } catch (e) {
-          console.log(`apns: отправка на устройство ${deviceId} упала: ${String(e)}`);
+          console.warn(`push to device ${deviceId} for ${chatId} failed: ${String(e)}`);
           return { deviceId, res: null };
         }
       })
@@ -305,7 +325,7 @@ export class UserSessionDO implements DurableObject {
     if (dead.length) await this.dropPushTokens(dead);
   }
 
-  /// Токен, на который APNs ответил 410, удаляется и из DO, и из D1.
+  /// A token APNs answered 410 for is removed from both the DO and D1.
   private async dropPushTokens(deviceIds: string[]) {
     const tokens =
       (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
@@ -321,7 +341,8 @@ export class UserSessionDO implements DurableObject {
       deviceIds.map((id) =>
         this.env.DB.prepare(
           "UPDATE devices SET apns_token = NULL, apns_env = NULL WHERE id = ?"
-        ).bind(id).run().catch(() => {})
+        ).bind(id).run().catch((e: unknown) =>
+          console.warn(`clearing apns token of ${id} failed: ${String(e)}`))
       )
     );
   }
@@ -348,19 +369,19 @@ export class UserSessionDO implements DurableObject {
         ws.serializeAttachment({ ...att, lastPing: nowSec() } satisfies SocketAttachment);
         this.send(ws, { t: "pong" });
         await this.state.storage.setAlarm(Date.now() + PRESENCE_TTL_MS);
-        if (!wasFresh) this.state.waitUntil(this.broadcastPresence(true));
+        if (!wasFresh) await this.broadcastPresence(true);
         return;
       }
 
       case "bg":
         ws.serializeAttachment({ ...att, lastPing: 0 } satisfies SocketAttachment);
-        this.state.waitUntil(this.broadcastPresence(false));
+        await this.broadcastPresence(false);
         return;
 
       case "fg": {
         ws.serializeAttachment({ ...att, lastPing: nowSec() } satisfies SocketAttachment);
         await this.state.storage.setAlarm(Date.now() + PRESENCE_TTL_MS);
-        this.state.waitUntil(this.broadcastPresence(true));
+        await this.broadcastPresence(true);
         return;
       }
 
