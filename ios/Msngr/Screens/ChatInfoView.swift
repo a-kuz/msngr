@@ -32,6 +32,7 @@ final class ChatRolesModel: ObservableObject {
 struct ChatInfoView: View {
     @ObservedObject var model: ChatViewModel
     @EnvironmentObject var app: AppState
+    @Environment(\.dismiss) private var dismiss
     @StateObject private var rolesModel = ChatRolesModel()
     @State private var showAddMembers = false
     @State private var inviteLink: String?
@@ -41,6 +42,7 @@ struct ChatInfoView: View {
     @State private var showMuteOptions = false
     @State private var showBlockConfirm = false
     @State private var showLeaveConfirm = false
+    @State private var showClearConfirm = false
     @State private var avatarItem: PhotosPickerItem?
     @State private var savingSettings = false
     #if DEBUG
@@ -173,17 +175,8 @@ struct ChatInfoView: View {
                               systemImage: "link")
                     }
                 }
-                if ChatPermissions.canLeave(kind: kind, role: myRole) {
-                    Section {
-                        Button(role: .destructive) {
-                            showLeaveConfirm = true
-                        } label: {
-                            Label("Покинуть группу", systemImage: "rectangle.portrait.and.arrow.right")
-                        }
-                        .accessibilityIdentifier("chatInfo.leave")
-                    }
-                }
             }
+            destructiveSection
             #if DEBUG
             seedSection
             #endif
@@ -221,9 +214,19 @@ struct ChatInfoView: View {
                  ? "Собеседник снова сможет писать вам."
                  : "Собеседник не сможет писать вам, а его сообщения не будут доставляться.")
         }
-        .confirmationDialog("Покинуть группу?", isPresented: $showLeaveConfirm, titleVisibility: .visible) {
-            Button("Покинуть", role: .destructive) { leaveGroup() }
+        .confirmationDialog(deleteConfirmTitle, isPresented: $showLeaveConfirm, titleVisibility: .visible) {
+            Button(isGroup ? "Покинуть" : "Удалить", role: .destructive) { deleteChat() }
             Button("Отмена", role: .cancel) {}
+        } message: {
+            Text(deleteConfirmMessage)
+        }
+        .confirmationDialog("Очистить историю?", isPresented: $showClearConfirm, titleVisibility: .visible) {
+            Button("Очистить", role: .destructive) { model.clearHistory() }
+            Button("Отмена", role: .cancel) {}
+        } message: {
+            Text(isGroup
+                 ? "Сообщения этого чата удалятся с этого устройства. У остальных участников они останутся."
+                 : "Сообщения этого чата удалятся с этого устройства. У собеседника они останутся.")
         }
         .onChange(of: avatarItem) { _, item in
             guard let item else { return }
@@ -296,6 +299,40 @@ struct ChatInfoView: View {
         }
     }
 
+    /// Очистка и удаление: оба действия необратимы, поэтому стоят отдельно и
+    /// спрашивают подтверждение с тем же текстом, что и блокировка, — что
+    /// именно уйдёт и что останется у собеседника.
+    @ViewBuilder
+    private var destructiveSection: some View {
+        Section {
+            Button(role: .destructive) {
+                showClearConfirm = true
+            } label: {
+                Label("Очистить историю", systemImage: "eraser")
+            }
+            .accessibilityIdentifier("chatInfo.clearHistory")
+            if !isGroup || ChatPermissions.canLeave(kind: kind, role: myRole) {
+                Button(role: .destructive) {
+                    showLeaveConfirm = true
+                } label: {
+                    Label(isGroup ? "Покинуть группу" : "Удалить чат",
+                          systemImage: isGroup ? "rectangle.portrait.and.arrow.right" : "trash")
+                }
+                .accessibilityIdentifier(isGroup ? "chatInfo.leave" : "chatInfo.deleteChat")
+            }
+        }
+    }
+
+    private var deleteConfirmTitle: String {
+        isGroup ? "Покинуть группу?" : "Удалить чат?"
+    }
+
+    private var deleteConfirmMessage: String {
+        isGroup
+            ? "Вы выйдете из группы, её сообщения удалятся с этого устройства."
+            : "Чат и его сообщения удалятся с этого устройства. У собеседника переписка останется. Если он напишет снова, чат появится заново."
+    }
+
     private var titleChanged: Bool {
         editTitle != (model.chat?.title ?? "")
             && !editTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -334,13 +371,9 @@ struct ChatInfoView: View {
         Task { try? await app.engine.setBlocked(userId: peer.id, blocked: blocked) }
     }
 
-    private func leaveGroup() {
-        Task {
-            try? await app.api.leaveChat(model.chatId)
-            try? await app.db.write { [id = model.chatId] dbc in
-                try dbc.execute(sql: "DELETE FROM chat WHERE id = ?", arguments: [id])
-            }
-        }
+    private func deleteChat() {
+        model.deleteChat()
+        dismiss()
     }
 
     private func computeSafetyNumber(_ peer: User) {
