@@ -161,7 +161,11 @@ final class ChatViewModel: ObservableObject {
                                                           limit: plan.capacity)
                     floorBox.set(floor)
                 }
-                let msgs = try HistoryWindow.messages(dbc, chatId: chatId, floor: floor)
+                // a recomputed floor already sits `capacity` messages below the
+                // newest; a floor that stays put needs the cap spelled out, or
+                // the window grows with the chat
+                let msgs = try HistoryWindow.messages(dbc, chatId: chatId, floor: floor,
+                                                      limit: plan.recompute ? nil : plan.capacity)
                 let users = try User.fetchAll(dbc, sql: """
                     SELECT u.* FROM user u JOIN member m ON m.userId = u.id WHERE m.chatId = ?
                     """, arguments: [chatId])

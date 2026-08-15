@@ -60,12 +60,28 @@ public enum HistoryWindow {
     /// Window contents, newest first (feed order). The bound is written over
     /// the same expression the ordering uses, so the whole window is one range
     /// on `message_on_chat_feedOrder` instead of a scan of the chat.
-    public static func messages(_ dbc: GRDB.Database, chatId: String, floor: Int?) throws -> [Message] {
-        try Message.fetchAll(dbc, sql: """
-            SELECT * FROM message
-            WHERE chatId = ? AND COALESCE(seq, \(unsentOrder)) >= ?
+    ///
+    /// `limit` caps the window from above, counting up from the floor. A floor
+    /// that stays put while the reader looks at older messages would otherwise
+    /// let the window grow by a row per arriving message, and the window is
+    /// re-read on every commit.
+    public static func messages(_ dbc: GRDB.Database, chatId: String, floor: Int?,
+                                limit: Int? = nil) throws -> [Message] {
+        guard let limit else {
+            return try Message.fetchAll(dbc, sql: """
+                SELECT * FROM message
+                WHERE chatId = ? AND COALESCE(seq, \(unsentOrder)) >= ?
+                ORDER BY COALESCE(seq, \(unsentOrder)) DESC, sentAt DESC
+                """, arguments: [chatId, floor ?? 0])
+        }
+        return try Message.fetchAll(dbc, sql: """
+            SELECT * FROM (
+              SELECT * FROM message
+              WHERE chatId = ? AND COALESCE(seq, \(unsentOrder)) >= ?
+              ORDER BY COALESCE(seq, \(unsentOrder)) ASC, sentAt ASC
+              LIMIT ?)
             ORDER BY COALESCE(seq, \(unsentOrder)) DESC, sentAt DESC
-            """, arguments: [chatId, floor ?? 0])
+            """, arguments: [chatId, floor ?? 0, limit])
     }
 
     // MARK: - Seq gaps
