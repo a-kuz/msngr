@@ -23,6 +23,7 @@ public struct StorageLocation: Sendable, Equatable {
     /// Содержимое размещения, которое переносится при смене корня. Файл БД —
     /// последний: его наличие в новом размещении означает, что перенос завершён.
     public static let movableItems = [
+        sessionFileName,
         masterKeyFileName,
         sessionFileName,
         "media-outgoing",
@@ -90,6 +91,18 @@ public enum AppContainer {
             guard fileManager.fileExists(atPath: url.path) else { continue }
             applyProtection(at: url, fileManager: fileManager)
         }
+    }
+
+    /// Стирает данные размещения: БД, мастер-ключ, аватары, исходники вложений.
+    /// Каталоги остаются пустыми и готовыми к работе, поэтому после логаута
+    /// приложение регистрируется заново без перезапуска.
+    public static func wipe(_ location: StorageLocation, fileManager: FileManager = .default) {
+        for name in StorageLocation.movableItems {
+            try? fileManager.removeItem(at: location.root.appendingPathComponent(name))
+        }
+        // каталоги пересоздаются под новую регистрацию; отказ здесь означает
+        // недоступное размещение — тогда следующая запись сессии сообщит об этом
+        try? prepare(location, fileManager: fileManager)
     }
 
     static func applyProtection(at url: URL, fileManager: FileManager) {

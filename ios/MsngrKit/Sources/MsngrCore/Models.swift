@@ -176,6 +176,8 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
     /// reactions: emoji -> [userId]
     public var reactions: [String: [String]] = [:]
     public var expiresAt: Double?      // disappearing
+    /// причина отказа при status == .failed (коды в SendFailure)
+    public var failReason: String?
 
     public init(id: String, chatId: String, fromUserId: String, sentAt: Double,
                 kind: MessageKind, text: String?, status: MessageStatus, isOutgoing: Bool) {
@@ -193,7 +195,7 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
     enum CodingKeys: String, CodingKey {
         case id, msgId, chatId, seq, clientMsgId, fromUserId, sentAt, serverTs,
              kind, text, media, album, replyTo, forward, edited, deletedForAll,
-             status, isOutgoing, reactions, expiresAt
+             status, isOutgoing, reactions, expiresAt, failReason
     }
 }
 

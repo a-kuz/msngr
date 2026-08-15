@@ -18,6 +18,13 @@ struct MsngrApp: App {
                     RegisterView()
                         .environmentObject(app)
                 }
+                // отозванное устройство: тупик поверх всего, кроме пин-кода
+                if app.sessionRevoked {
+                    SessionEndedView()
+                        .environmentObject(app)
+                        .transition(.opacity)
+                        .zIndex(8)
+                }
                 // пин-код: оверлей поверх всего
                 if app.isLocked {
                     LockScreenView()
