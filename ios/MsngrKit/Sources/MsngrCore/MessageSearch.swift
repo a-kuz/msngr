@@ -91,11 +91,23 @@ public enum MessageSearch {
         guard let match = ftsQuery(query) else {
             return MessageSearchPage(hits: [], cursor: nil, reachedEnd: true)
         }
-        let filter = self.filter(match: match, chatId: chatId, after: after)
-        // the snippet markers are read before the predicate, and one row over the
-        // page tells whether anything older matches
-        let arguments: [DatabaseValueConvertible] = [openMark, closeMark]
-            + filter.arguments + [limit + 1]
+        var conditions = ["messageFts MATCH ?", "message.deletedForAll = 0",
+                          "message.kind != 'system'",
+                          "NOT (chat.isRequest = 1 AND chat.iAccepted = 0)"]
+        var arguments: [DatabaseValueConvertible] = [openMark, closeMark, match]
+        if let chatId {
+            conditions.append("message.chatId = ?")
+            arguments.append(chatId)
+        }
+        if let after {
+            conditions.append("""
+                (COALESCE(message.serverTs, message.sentAt) < ?
+                 OR (COALESCE(message.serverTs, message.sentAt) = ? AND message.id < ?))
+                """)
+            arguments += [after.order, after.order, after.id]
+        }
+        // one row over the page tells whether anything older matches
+        arguments.append(limit + 1)
         let rows = try Row.fetchAll(dbc, sql: """
             SELECT message.id, message.msgId, message.chatId, message.fromUserId,
                    message.kind,
@@ -104,7 +116,7 @@ public enum MessageSearch {
             FROM message
             JOIN messageFts ON messageFts.rowid = message.rowid
             JOIN chat ON chat.id = message.chatId
-            WHERE \(filter.sql)
+            WHERE \(conditions.joined(separator: " AND "))
             ORDER BY sortedAt DESC, message.id DESC
             LIMIT ?
             """, arguments: StatementArguments(arguments))
@@ -117,40 +129,29 @@ public enum MessageSearch {
 
     /// How many messages the query matches. The reader walking matches one by one
     /// is told where they stand in the whole result, which a page cannot say.
+    ///
+    /// The matches come out of a subquery instead of a join: with the index joined
+    /// in, a count with no `LIMIT` to stop it walks the messages and asks the index
+    /// about each one, which on a chat of twenty thousand takes nineteen seconds
+    /// against ten milliseconds here (measured in `swift test` on an in-memory
+    /// database of that size).
     public static func count(_ dbc: GRDB.Database, query: String,
                              chatId: String? = nil) throws -> Int {
         guard let match = ftsQuery(query) else { return 0 }
-        let filter = self.filter(match: match, chatId: chatId, after: nil)
-        return try Int.fetchOne(dbc, sql: """
-            SELECT COUNT(*)
-            FROM message
-            JOIN messageFts ON messageFts.rowid = message.rowid
-            JOIN chat ON chat.id = message.chatId
-            WHERE \(filter.sql)
-            """, arguments: StatementArguments(filter.arguments)) ?? 0
-    }
-
-    /// What a match has to satisfy: the full-text expression, the messages that are
-    /// part of the conversation at all, the chat when the search is scoped to one,
-    /// and the place a page continues from.
-    private static func filter(match: String, chatId: String?,
-                               after: MessageSearchCursor?) -> (sql: String, arguments: [DatabaseValueConvertible]) {
-        var conditions = ["messageFts MATCH ?", "message.deletedForAll = 0",
-                          "message.kind != 'system'",
+        var conditions = ["message.rowid IN (SELECT rowid FROM messageFts WHERE messageFts MATCH ?)",
+                          "message.deletedForAll = 0", "message.kind != 'system'",
                           "NOT (chat.isRequest = 1 AND chat.iAccepted = 0)"]
         var arguments: [DatabaseValueConvertible] = [match]
         if let chatId {
             conditions.append("message.chatId = ?")
             arguments.append(chatId)
         }
-        if let after {
-            conditions.append("""
-                (COALESCE(message.serverTs, message.sentAt) < ?
-                 OR (COALESCE(message.serverTs, message.sentAt) = ? AND message.id < ?))
-                """)
-            arguments += [after.order, after.order, after.id]
-        }
-        return (conditions.joined(separator: " AND "), arguments)
+        return try Int.fetchOne(dbc, sql: """
+            SELECT COUNT(*)
+            FROM message
+            JOIN chat ON chat.id = message.chatId
+            WHERE \(conditions.joined(separator: " AND "))
+            """, arguments: StatementArguments(arguments)) ?? 0
     }
 
     private static func hit(from row: Row) -> MessageSearchHit {

@@ -209,6 +209,15 @@ final class MessageSearchTests: XCTestCase {
         XCTAssertEqual(page.hits.first?.id, "m20000")
         XCTAssertFalse(page.reachedEnd)
         XCTAssertLessThan(elapsed, 1.0, "first page took \(elapsed)s")
+
+        // counting every match is what the bar under the feed waits for, and it
+        // waits on the reader's screen: joined to the index instead of reading it
+        // through a subquery, this same count took nineteen seconds
+        let countStarted = Date()
+        let total = try db.read { dbc in try MessageSearch.count(dbc, query: "trip", chatId: "c1") }
+        let counting = Date().timeIntervalSince(countStarted)
+        XCTAssertEqual(total, 20_000)
+        XCTAssertLessThan(counting, 1.0, "counting took \(counting)s")
     }
 
     // MARK: - Counting
