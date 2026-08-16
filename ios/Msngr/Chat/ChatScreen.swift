@@ -45,6 +45,7 @@ struct ChatScreen: View {
                 if model.contentHidden {
                     requestCard
                 } else {
+                    if searching { searchHeader }
                     if let pinned = model.pinnedMessage, !searching {
                         pinnedBar(pinned)
                     }
@@ -79,10 +80,15 @@ struct ChatScreen: View {
                 }
             }
             if !model.selecting { scrollDownButton }
-            headerFade
+            // the fade dissolves bubbles running under the navigation bar; while
+            // searching the bar is gone and the field stands in its own row
+            if !searching { headerFade }
         }
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
+        // the search field lives in the screen itself: focus does not reach a text
+        // field hosted by the navigation bar, and the keyboard has to come up with it
+        .toolbar(searching ? .hidden : .visible, for: .navigationBar)
         .toolbar {
             if model.selecting {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -98,17 +104,7 @@ struct ChatScreen: View {
                         .textRole(Theme.Text.headerTitle)
                         .accessibilityIdentifier("chat.selection.count")
                 }
-            } else if searching {
-                // the field takes the whole bar: with nothing on its leading side
-                // there is room for a query of a real length
-                ToolbarItem(placement: .principal) {
-                    ChatSearchField(text: $search.query, focused: $searchFocused)
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Отмена") { closeSearch() }
-                        .accessibilityIdentifier("chat.search.cancel")
-                }
-            } else {
+            } else if !searching {
                 // own button instead of the system one: going back is the header's
                 // primary action and has to read before anything else in it
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -375,6 +371,20 @@ struct ChatScreen: View {
 
     // MARK: - Search inside the chat
 
+    /// The header while the chat is being searched: the field takes the row it
+    /// can, with only «Отмена» beside it.
+    private var searchHeader: some View {
+        HStack(spacing: 8) {
+            ChatSearchField(text: $search.query, focused: $searchFocused)
+            Button("Отмена") { closeSearch() }
+                .textRole(Theme.Text.body)
+                .tint(Theme.accent)
+                .accessibilityIdentifier("chat.search.cancel")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
     private var searchResults: some View {
         ChatSearchResultsList(session: search, members: model.members,
                               ownUserId: model.ownUserId) { hit in
@@ -391,7 +401,6 @@ struct ChatScreen: View {
         searchReturn = messagesVC.topVisibleMessageId()
         searchMoved = false
         withAnimation(Theme.springFast) { searching = true }
-        searchFocused = true
     }
 
     /// Leaving search: the query goes, and the feed returns to the message the
