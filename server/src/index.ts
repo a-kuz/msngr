@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Env, AuthCtx, ChatState } from "./types";
 import { authenticate } from "./auth";
-import { ulid, newToken, sha256hex, json, err, directChatName, b64url } from "./util";
+import { ulid, newToken, sha256hex, json, err, directChatName, b64url, provisionCode } from "./util";
 import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "./version";
 
 export { UserSessionDO } from "./do/UserSessionDO";
@@ -67,6 +67,141 @@ app.post("/api/register", async (c) => {
   return json({ ok: true, userId, deviceId, token });
 });
 
+// --- linking a new device (the session's own token, not a device token) ---
+//
+// A device with no account cannot authenticate, so these four routes are
+// registered above the device-auth middleware and carry `x-provision-token`
+// instead: the secret the server handed to this one device when it opened the
+// session. The code in the user's hands only names the session; the token is
+// what makes the claim this device's to make.
+
+/// Life of a provisioning session, seconds. Long enough to read a code off one
+/// screen and type it on another, short enough that a guessed code has almost
+/// nothing to hit.
+const PROVISION_TTL = 120;
+
+interface ProvisionRow {
+  id: string; token_hash: string; ephemeral_key: string;
+  device_name: string | null; platform: string | null;
+  expires_at: number; approved_by: string | null; envelope: string | null;
+  claimed_at: number | null;
+}
+
+/// The session named by the path, once its token matches and it is still alive.
+async function provisionSession(
+  env: Env, req: Request, id: string
+): Promise<{ row: ProvisionRow } | { error: Response }> {
+  const token = req.headers.get("x-provision-token");
+  if (!token) return { error: err("unauthorized", 401) };
+  const row = await env.DB.prepare(
+    "SELECT * FROM provision_sessions WHERE id = ?"
+  ).bind(id).first<ProvisionRow>();
+  if (!row) return { error: err("provision_not_found", 404) };
+  if (row.token_hash !== (await sha256hex(token))) return { error: err("unauthorized", 401) };
+  if (row.expires_at <= Date.now()) return { error: err("provision_expired", 410) };
+  return { row };
+}
+
+app.post("/api/provision/start", async (c) => {
+  const b = await c.req.json<{
+    ephemeralKey: string; device?: { name?: string; platform?: string };
+  }>();
+  if (!b.ephemeralKey) return err("bad_keys");
+  const now = Date.now();
+  // a code is only meaningful while its session lives, and the spent rows are
+  // what a fresh code has to stay unique against
+  await c.env.DB.prepare("DELETE FROM provision_sessions WHERE expires_at <= ?")
+    .bind(now).run();
+  const id = ulid(now);
+  const token = newToken();
+  const tokenHash = await sha256hex(token);
+  // the code is unique among live sessions; a collision costs one more draw
+  for (let attempt = 0; ; attempt++) {
+    const code = provisionCode();
+    try {
+      await c.env.DB.prepare(
+        `INSERT INTO provision_sessions
+         (id, code, token_hash, ephemeral_key, device_name, platform, created_at, expires_at)
+         VALUES (?,?,?,?,?,?,?,?)`
+      ).bind(
+        id, code, tokenHash, b.ephemeralKey,
+        b.device?.name ?? null, b.device?.platform ?? null, now, now + PROVISION_TTL * 1000
+      ).run();
+      return json({
+        ok: true, provisionId: id, code, provisionToken: token, expiresIn: PROVISION_TTL,
+      });
+    } catch (e) {
+      if (attempt >= 4 || !String(e).includes("UNIQUE")) throw e;
+    }
+  }
+});
+
+// Polled by the device being linked until its owner approves on the other one.
+app.get("/api/provision/:id", async (c) => {
+  const s = await provisionSession(c.env, c.req.raw, c.req.param("id"));
+  if ("error" in s) return s.error;
+  if (s.row.claimed_at) return err("provision_claimed", 409);
+  if (!s.row.envelope) return json({ ok: true, status: "pending" });
+  return json({ ok: true, status: "approved", envelope: s.row.envelope });
+});
+
+// The device takes the account: its row, its identity keys and its prekeys go
+// in together, and the session is spent.
+app.post("/api/provision/:id/claim", async (c) => {
+  const s = await provisionSession(c.env, c.req.raw, c.req.param("id"));
+  if ("error" in s) return s.error;
+  if (s.row.claimed_at) return err("provision_claimed", 409);
+  if (!s.row.approved_by || !s.row.envelope) return err("provision_not_approved", 409);
+  const b = await c.req.json<{
+    identityKey: string; identitySignKey: string;
+    signedPrekey: { id: number; key: string; sig: string };
+    oneTimePrekeys: Array<{ id: number; key: string }>;
+    device?: { name?: string };
+  }>();
+  if (!b.identityKey || !b.signedPrekey?.key) return err("bad_keys");
+
+  const userId = s.row.approved_by;
+  // The identity belongs to the account, not to the device: a device that does
+  // not present the account's own keys is not one this account authorised.
+  const known = await c.env.DB.prepare(
+    "SELECT identity_key, identity_sign_key FROM identity_keys WHERE user_id = ?"
+  ).bind(userId).all<{ identity_key: string; identity_sign_key: string }>();
+  if (!known.results.length) return err("account_has_no_devices", 409);
+  const matches = known.results.every(
+    (k) => k.identity_key === b.identityKey && k.identity_sign_key === b.identitySignKey
+  );
+  if (!matches) return err("identity_mismatch", 409);
+
+  const now = Date.now();
+  const deviceId = ulid(now);
+  const token = newToken();
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      "INSERT INTO devices (id, user_id, name, token_hash, created_at) VALUES (?,?,?,?,?)"
+    ).bind(deviceId, userId, b.device?.name ?? s.row.device_name, await sha256hex(token), now),
+    c.env.DB.prepare(
+      "INSERT INTO identity_keys (device_id, user_id, identity_key, identity_sign_key, signed_prekey_id, signed_prekey, signed_prekey_sig) VALUES (?,?,?,?,?,?,?)"
+    ).bind(deviceId, userId, b.identityKey, b.identitySignKey,
+           b.signedPrekey.id, b.signedPrekey.key, b.signedPrekey.sig),
+    ...(b.oneTimePrekeys ?? []).slice(0, 200).map((k) =>
+      c.env.DB.prepare(
+        "INSERT INTO one_time_prekeys (device_id, key_id, key) VALUES (?,?,?)"
+      ).bind(deviceId, k.id, k.key)
+    ),
+    c.env.DB.prepare(
+      "UPDATE provision_sessions SET claimed_at = ?, envelope = NULL WHERE id = ? AND claimed_at IS NULL"
+    ).bind(now, s.row.id),
+  ]);
+  return json({ ok: true, userId, deviceId, token });
+});
+
+app.post("/api/provision/:id/cancel", async (c) => {
+  const s = await provisionSession(c.env, c.req.raw, c.req.param("id"));
+  if ("error" in s) return s.error;
+  await c.env.DB.prepare("DELETE FROM provision_sessions WHERE id = ?").bind(s.row.id).run();
+  return json({ ok: true });
+});
+
 // --- всё остальное под auth ---
 app.use("/api/*", async (c, next) => {
   const auth = await authenticate(c.env, c.req.raw);
@@ -86,10 +221,20 @@ app.get("/api/me", async (c) => {
 // --- активные устройства и отзыв токена ---
 
 // Отзывает токен устройства: закрывает его сокеты и гасит его APNs-токен.
+//
+// Its keys go with it. A sender reads the recipient's device list fresh on every
+// message, so dropping the identity row is what actually stops the traffic: the
+// peer's next send no longer builds a box for this device, and its prekeys stop
+// being handed out for sessions nobody will ever open.
 async function revokeDevice(env: Env, userId: string, deviceId: string) {
-  await env.DB.prepare(
-    "UPDATE devices SET revoked_at = ?, apns_token = NULL, apns_env = NULL WHERE id = ? AND user_id = ?"
-  ).bind(Date.now(), deviceId, userId).run();
+  await env.DB.batch([
+    env.DB.prepare(
+      "UPDATE devices SET revoked_at = ?, apns_token = NULL, apns_env = NULL WHERE id = ? AND user_id = ?"
+    ).bind(Date.now(), deviceId, userId),
+    env.DB.prepare("DELETE FROM identity_keys WHERE device_id = ? AND user_id = ?")
+      .bind(deviceId, userId),
+    env.DB.prepare("DELETE FROM one_time_prekeys WHERE device_id = ?").bind(deviceId),
+  ]);
   await userStub(env, userId).fetch("https://do/revoke-device", {
     method: "POST",
     body: JSON.stringify({ deviceId }),
@@ -134,6 +279,52 @@ app.post("/api/sessions/:deviceId/revoke", async (c) => {
   ).bind(target, userId).first();
   if (!row) return err("device_not_found", 404);
   await revokeDevice(c.env, userId, target);
+  return json({ ok: true });
+});
+
+// The code a device being linked shows, resolved to what has to be approved.
+// Nothing here commits the account: it answers who is asking, so the owner can
+// look at the name before letting it in.
+app.post("/api/provision/lookup", async (c) => {
+  const b = await c.req.json<{ code: string }>();
+  const code = (b.code ?? "").trim().toUpperCase().replace(/[^0-9A-Z]/g, "");
+  if (!code) return err("provision_not_found", 404);
+  const row = await c.env.DB.prepare(
+    "SELECT id, ephemeral_key, device_name, platform, expires_at, approved_by, claimed_at FROM provision_sessions WHERE code = ?"
+  ).bind(code).first<{
+    id: string; ephemeral_key: string; device_name: string | null;
+    platform: string | null; expires_at: number;
+    approved_by: string | null; claimed_at: number | null;
+  }>();
+  if (!row) return err("provision_not_found", 404);
+  if (row.expires_at <= Date.now()) return err("provision_expired", 410);
+  if (row.claimed_at || row.approved_by) return err("provision_claimed", 409);
+  return json({
+    ok: true, provisionId: row.id, ephemeralKey: row.ephemeral_key,
+    device: { name: row.device_name, platform: row.platform },
+    expiresIn: Math.max(0, Math.round((row.expires_at - Date.now()) / 1000)),
+  });
+});
+
+// The owner said yes: the sealed account bundle is parked for the one device
+// that holds the session's ephemeral private key.
+app.post("/api/provision/:id/approve", async (c) => {
+  const { userId } = c.get("auth");
+  const b = await c.req.json<{ envelope: string }>();
+  if (!b.envelope) return err("bad_envelope");
+  const row = await c.env.DB.prepare(
+    "SELECT id, expires_at, approved_by, claimed_at FROM provision_sessions WHERE id = ?"
+  ).bind(c.req.param("id")).first<{
+    id: string; expires_at: number; approved_by: string | null; claimed_at: number | null;
+  }>();
+  if (!row) return err("provision_not_found", 404);
+  if (row.expires_at <= Date.now()) return err("provision_expired", 410);
+  if (row.claimed_at || row.approved_by) return err("provision_claimed", 409);
+  const res = await c.env.DB.prepare(
+    `UPDATE provision_sessions SET approved_by = ?, approved_at = ?, envelope = ?
+     WHERE id = ? AND approved_by IS NULL AND claimed_at IS NULL`
+  ).bind(userId, Date.now(), b.envelope, row.id).run();
+  if (!res.meta.changes) return err("provision_claimed", 409);
   return json({ ok: true });
 });
 
