@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// Верхний in-app баннер о новом сообщении (как в Telegram): отдельный UIWindow
-/// поверх всего UI, тап — переход в чат, свайп вверх — скрыть, автоскрытие 3.5 с.
-/// Окно занимает только полосу баннера — касания остального экрана идут в приложение.
+/// Top in-app banner for a new message: a separate UIWindow above the rest of
+/// the UI, tap opens the chat, swipe up hides it, auto-hides after 3.5 s.
+/// The window covers only the banner strip, so touches elsewhere on the screen
+/// still reach the app.
 @MainActor
 enum InAppBannerPresenter {
     private static var window: UIWindow?
@@ -10,7 +11,7 @@ enum InAppBannerPresenter {
 
     static func show(title: String, subtitle: String? = nil, body: String,
                      avatar: URL? = nil, chatId: String) {
-        // новый баннер замещает предыдущий без анимации ухода
+        // a new banner replaces the previous one without the dismiss animation
         if window != nil { teardown() }
         guard let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
@@ -63,8 +64,8 @@ enum InAppBannerPresenter {
     }
 }
 
-/// Содержимое баннера: аватар и имя отправителя, название группы и превью
-/// расшифрованного текста — то же, что видно в системном уведомлении.
+/// Banner contents: sender avatar and name, group title and a preview of the
+/// decrypted text, the same as a system notification shows.
 struct InAppBannerView: View {
     let title: String
     let subtitle: String?
@@ -135,7 +136,7 @@ struct InAppBannerView: View {
     }
 }
 
-/// Аватар из локального файла; файла нет — инициалы.
+/// Avatar from a local file, initials when there is no file.
 struct BannerAvatar: View {
     let name: String
     let file: URL?

@@ -1,18 +1,18 @@
 import SwiftUI
 
-/// Палитра приложения: согласованный набор всех цветовых ролей.
-/// Выбор пользователя хранится в UserDefaults("palette") — см. `ThemeStore`.
+/// App palette: one coherent set of every colour role.
+/// The user's choice is kept in UserDefaults("palette"), see `ThemeStore`.
 enum Palette: String, CaseIterable, Identifiable {
-    /// Нейтральный светлый фон, синий исходящий, серый входящий.
+    /// Neutral light background, blue outgoing, grey incoming.
     case imessage
-    /// Белый фон с лёгким тоном, мятно-шалфейный исходящий, синий акцент.
+    /// White background with a faint tint, mint-sage outgoing, blue accent.
     case telegram
-    /// Кремовый фон, индиго исходящий, оранжевый акцент.
+    /// Cream background, indigo outgoing, orange accent.
     case graphite
 
     var id: String { rawValue }
 
-    /// Название пресета в настройках.
+    /// Preset name shown in settings.
     var title: String {
         switch self {
         case .imessage: return "iMessage"
@@ -21,7 +21,6 @@ enum Palette: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Фон ленты сообщений.
     var chatBackground: Color {
         switch self {
         case .imessage: return Color(light: Color(red: 0.96, green: 0.96, blue: 0.97),
@@ -33,7 +32,6 @@ enum Palette: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Баббл исходящего сообщения.
     var outgoingBubble: Color {
         switch self {
         case .imessage: return Color(light: Color(red: 0.17, green: 0.48, blue: 0.92),
@@ -45,7 +43,6 @@ enum Palette: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Баббл входящего сообщения.
     var incomingBubble: Color {
         switch self {
         case .imessage: return Color(light: Color(red: 0.91, green: 0.91, blue: 0.93),
@@ -55,7 +52,7 @@ enum Palette: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Акцент: кнопки, ссылки, реплаи, элементы управления.
+    /// Accent: buttons, links, replies, controls.
     var accent: Color {
         switch self {
         case .imessage: return Color(red: 0.17, green: 0.48, blue: 0.92)
@@ -64,7 +61,7 @@ enum Palette: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Галочка «прочитано» вне баббла (список чатов).
+    /// Read tick outside a bubble (chat list).
     var readTick: Color {
         switch self {
         case .imessage: return Color(red: 0.17, green: 0.48, blue: 0.92)
@@ -73,7 +70,6 @@ enum Palette: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Основной текст на исходящем баббле.
     var outgoingText: Color {
         switch self {
         case .imessage: return .white
@@ -82,7 +78,7 @@ enum Palette: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Время и непрочитанные галочки на исходящем баббле.
+    /// Timestamp and unread ticks on an outgoing bubble.
     var outgoingMeta: Color {
         switch self {
         case .imessage: return Color.white.opacity(0.75)
@@ -92,7 +88,7 @@ enum Palette: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Галочка «прочитано» на исходящем баббле.
+    /// Read tick on an outgoing bubble.
     var outgoingTickRead: Color {
         switch self {
         case .imessage: return .white
@@ -102,8 +98,9 @@ enum Palette: String, CaseIterable, Identifiable {
     }
 }
 
-/// Выбор палитры: персистентный (UserDefaults "palette"), наблюдаемый из SwiftUI.
-/// Смена палитры сбрасывает кэш картинок бабблов и рассылается всем открытым экранам.
+/// Palette selection: persisted in UserDefaults "palette", observable from SwiftUI.
+/// Switching the palette clears the bubble image cache and is broadcast to every
+/// open screen.
 final class ThemeStore: ObservableObject {
     static let shared = ThemeStore()
 
@@ -311,12 +308,12 @@ extension DynamicTypeSize {
     }
 }
 
-/// Единая точка стиля: цвета, шрифты, кривые анимаций. Ничего линейного по умолчанию.
+/// Single point of style: colours, fonts, animation curves. Nothing linear by default.
 enum Theme {
-    /// Текущая палитра — выбранная пользователем в настройках.
+    /// The palette the user picked in settings.
     static var palette: Palette { ThemeStore.shared.palette }
 
-    // Роли цветов
+    // Colour roles
     static var chatBackground: Color { palette.chatBackground }
     static var outgoingBubble: Color { palette.outgoingBubble }
     static var incomingBubble: Color { palette.incomingBubble }
@@ -326,7 +323,7 @@ enum Theme {
     static var outgoingMeta: Color { palette.outgoingMeta }
     static var outgoingTickRead: Color { palette.outgoingTickRead }
 
-    // Анимации: единые spring-константы
+    // Animations: one set of spring constants
     static let springFast = Animation.spring(response: 0.35, dampingFraction: 0.82)
     static let spring = Animation.spring(response: 0.45, dampingFraction: 0.84)
     static let springSlow = Animation.spring(response: 0.55, dampingFraction: 0.86)
@@ -343,9 +340,9 @@ extension Color {
     }
 }
 
-/// Детерминированный хэш для выбора цвета аватара/имени.
-/// Swift рандомизирует hashValue между запусками, из-за чего цвета «прыгали»
-/// после каждого перезапуска приложения.
+/// Deterministic hash for picking an avatar or name colour.
+/// Swift randomises hashValue between launches, so a name would land on a
+/// different colour after every restart of the app.
 enum StableHash {
     static func index(_ string: String, modulo: Int) -> Int {
         var hash: UInt64 = 0xcbf29ce484222325 // FNV-1a

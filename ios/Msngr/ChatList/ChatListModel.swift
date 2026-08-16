@@ -3,10 +3,10 @@ import Combine
 import GRDB
 import MsngrCore
 
-/// Строка чат-листа: чат + производные данные для отображения.
+/// Chat list row: the chat plus the data derived for display.
 struct ChatListItem: Identifiable, Equatable {
     var chat: Chat
-    var peer: User?          // для direct
+    var peer: User?          // direct chats only
     var lastMessage: Message?
     var typingText: String?  // "печатает…"
     var id: String { chat.id }
@@ -17,9 +17,9 @@ struct ChatListItem: Identifiable, Equatable {
     }
 }
 
-/// Одна выдача наблюдения: весь список чатов и всё, из чего собираются вкладки.
-/// Папки читаются тем же наблюдением, что и чаты, поэтому список и его вкладки
-/// всегда описывают одно и то же состояние БД.
+/// One observation result: the whole chat list and everything the tabs are
+/// built from. Folders are read by the same observation as the chats, so the
+/// list and its tabs always describe the same database state.
 private struct ChatListSnapshot {
     var chats: [Chat]
     var peers: [String: User]
@@ -33,34 +33,34 @@ final class ChatListModel: ObservableObject {
     @Published var items: [ChatListItem] = []
     @Published var requests: [ChatListItem] = []
     @Published var archived: [ChatListItem] = []
-    /// Вкладки над списком, в порядке пользователя. «Все» вкладкой не является:
-    /// это весь список без папок.
+    /// Tabs above the list, in the user's order. «Все» is not a folder: it is
+    /// the whole list.
     @Published var folders: [ChatFolder] = []
-    /// Выбранная вкладка; nil — «Все».
+    /// Selected tab; nil stands for «Все».
     @Published var selectedFolderId: String?
-    /// Сколько чатов с непрочитанным в каждой папке; ключ nil-вкладки — "".
+    /// How many chats have unread in each folder; the nil tab is keyed by "".
     @Published private(set) var folderUnread: [String: Int] = [:]
-    /// Состав папок: id папки → id чатов. Пересчитывается один раз на выдачу
-    /// наблюдения, а не на каждое переключение вкладки.
+    /// Folder contents: folder id to chat ids. Recomputed once per observation
+    /// result, not on every tab switch.
     private var membership: [String: Set<String>] = [:]
     @Published var searchText = ""
     @Published var searchResults: [ChatListItem] = []
-    /// true после первой выдачи наблюдения БД — до этого список не «пустой», а грузится
+    /// true after the first database observation result; before that the list is loading, not empty
     @Published var loaded = false
 
     private var cancellable: AnyCancellable?
     private var typing: [String: (userId: String, until: Date)] = [:]
     private var typingTask: Task<Void, Never>?
-    /// Таймеры снятия «печатает…» по чатам: без них индикатор гаснет только
-    /// при следующем событии (ленивое истечение) и может залипнуть.
+    /// Per-chat timers that clear «печатает…»: without them the indicator only
+    /// goes out on the next event (lazy expiry) and can stay stuck.
     private var typingClearTasks: [String: Task<Void, Never>] = [:]
     private let app = AppState.shared
 
     private var started = false
 
     func start() {
-        // db создаётся асинхронно в bootstrap; при холодном старте он может быть
-        // ещё не готов — тогда ждём готовности, иначе список останется пустым
+        // db is created asynchronously in bootstrap and may not be there yet on
+        // a cold start; then we wait for readiness, or the list stays empty
         guard !started, let db = app.db else { return }
         started = true
         let ownId = app.session?.userId ?? ""
@@ -106,7 +106,7 @@ final class ChatListModel: ObservableObject {
                 self.updateSearch()
             })
 
-        // typing из engine
+        // typing from the engine
         typingTask?.cancel()
         typingTask = Task { [weak self] in
             guard let engine = self?.app.engine else { return }
@@ -145,15 +145,14 @@ final class ChatListModel: ObservableObject {
         }
     }
 
-    // MARK: - Папки
+    // MARK: - Folders
 
-    /// Раскладывает список по папкам: один проход по чатам на папку за выдачу
-    /// наблюдения. Дальше вкладка переключается по готовому составу.
+    /// Spreads the list over the folders: one pass through the chats per folder
+    /// per observation result. After that a tab switch works off ready contents.
     ///
-    /// Папки собираются из `items` — то есть из чатов без архива и без заявок.
-    /// Архив и заявки живут наверху «Всех» и во вкладки не попадают: это
-    /// состояния входящего потока, а не тема переписки, и повтор их в папках
-    /// удваивал бы одно и то же непрочитанное в двух местах.
+    /// Folders are built from `items`, so archived chats and requests stay out
+    /// of them: counting them in a folder as well would show the same unread
+    /// twice.
     private func rebuildMembership(pins: [String: [String: ChatFolderPin]]) {
         let candidates = items.map { item in
             (candidate: ChatFolderCandidate(chatId: item.chat.id,
@@ -180,32 +179,33 @@ final class ChatListModel: ObservableObject {
         self.membership = membership
         self.folderUnread = unread
         if let selected = selectedFolderId, !folders.contains(where: { $0.id == selected }) {
-            selectedFolderId = nil    // папку удалили, пока она была открыта
+            selectedFolderId = nil    // the folder was deleted while it was open
         }
     }
 
-    /// Строки вкладки. Состав папки уже посчитан наблюдением, поэтому
-    /// переключение вкладки — проход по готовому списку, а не запрос в БД.
+    /// Rows of a tab. The folder contents are already computed by the
+    /// observation, so switching a tab walks a ready list instead of hitting
+    /// the database.
     func items(in folderId: String?) -> [ChatListItem] {
         guard let folderId, let ids = membership[folderId] else { return items }
         return items.filter { ids.contains($0.id) }
     }
 
-    /// В какие папки чат положен вручную или попал по правилу.
+    /// Which folders the chat was put into by hand or landed in by rule.
     func folders(containing chatId: String) -> Set<String> {
         Set(membership.filter { $0.value.contains(chatId) }.keys)
     }
 
-    /// Что сейчас лежит в папке — и по правилу, и вручную.
+    /// What is in the folder right now, both by rule and by hand.
     func chatIds(in folder: ChatFolder) -> Set<String> { membership[folder.id] ?? [] }
 
-    /// Сохраняет папку целиком: имя, правила и её состав. Одна транзакция —
-    /// список ни на миг не видит новые правила со старым составом.
+    /// Saves the folder as a whole: name, rules and contents. One transaction,
+    /// so the list never sees the new rules with the old contents.
     ///
-    /// Состав задаётся набором чатов, которые должны оказаться в папке. Что
-    /// приносит правило, там не хранится; вручную записываются только
-    /// расхождения: чат, которого правило не даёт, и чат, который правило даёт,
-    /// а пользователь его убрал.
+    /// The contents come in as the set of chats that should end up in the
+    /// folder. What the rule brings in is not stored; only the divergences are
+    /// written down: a chat the rule doesn't give, and a chat the rule gives
+    /// but the user took out.
     func saveFolder(_ folder: ChatFolder?, title: String, rules: ChatFolderRules,
                     chatIds: Set<String>) {
         let candidates = items.map { item in
@@ -245,8 +245,9 @@ final class ChatListModel: ObservableObject {
         Task { try? await app.db.write { dbc in try ChatFolderStore.reorder(dbc, orderedIds: ids) } }
     }
 
-    /// Кладёт чат в папку или убирает его оттуда. Убранный из папки по правилу
-    /// чат запоминается исключением, иначе правило вернуло бы его сразу.
+    /// Puts the chat into a folder or takes it out. A chat taken out of a
+    /// folder it matches by rule is remembered as an exclusion, otherwise the
+    /// rule would bring it right back.
     func setChat(_ chatId: String, inFolder folder: ChatFolder, included: Bool) {
         guard let item = items.first(where: { $0.id == chatId }) else { return }
         let candidate = ChatFolderCandidate(chatId: chatId,
@@ -263,8 +264,8 @@ final class ChatListModel: ObservableObject {
         }
     }
 
-    /// Чат по идентификатору — из списка, архива или заявок. Строке найденного
-    /// сообщения нужно, чьё оно.
+    /// Chat by id, taken from the list, the archive or the requests. A search
+    /// hit row needs to know whose message it is.
     func item(for chatId: String) -> ChatListItem? {
         items.first { $0.id == chatId }
             ?? archived.first { $0.id == chatId }
@@ -282,7 +283,7 @@ final class ChatListModel: ObservableObject {
         }
     }
 
-    // MARK: - Действия
+    // MARK: - Actions
 
     func togglePin(_ item: ChatListItem) {
         Task {
@@ -293,7 +294,7 @@ final class ChatListModel: ObservableObject {
         }
     }
 
-    /// Свайп мьютит бессрочно; срок выбирается в профиле чата.
+    /// A swipe mutes indefinitely; the duration is picked in the chat profile.
     func toggleMute(_ item: ChatListItem) {
         let muted = !MuteState.isMuted(muted: item.chat.muted, mutedUntil: item.chat.mutedUntil)
         Task {
@@ -323,8 +324,6 @@ final class ChatListModel: ObservableObject {
         }
     }
 
-    /// Удаление чата со списка: у группы это выход из неё, у переписки —
-    /// удаление своей копии. Собеседник свою сохраняет.
     func deleteChat(_ item: ChatListItem) {
         Task { await app.engine.deleteChat(chatId: item.chat.id) }
     }

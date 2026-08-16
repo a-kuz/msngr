@@ -1,24 +1,23 @@
 import Foundation
 
-/// Чистая логика «показывать ли уведомление». Сервер шлёт APNs-пуш немедленно
-/// на каждое контентное сообщение, даже при живом WS, поэтому при активном
-/// приложении одно сообщение приходит дважды: WS-фрейм и системный пуш через
-/// ~150–500 мс. Дедуп между ними — здесь.
+/// Pure "show a notification or not" logic. With the app active the same
+/// message lands twice: the WS frame, and the system push some 150-500 ms
+/// later. Deduplication between the two lives here.
 enum NotificationDecision {
-    /// Реакция на контентное сообщение, принятое по WS.
+    /// What to do about a content message received over WS.
     enum WSAction: Equatable {
-        /// ничего не показывать
         case none
-        /// верхний in-app баннер (только активное приложение, чат не открыт)
+        /// top in-app banner; app active and the chat not open
         case inAppBanner
-        /// системный баннер, который приложение постит само
+        /// system banner the app posts itself
         case localNotification
     }
 
-    /// Сообщение пришло по WS.
-    /// В фоне баннер показывает системный APNs-пуш, локальная нотификация дала
-    /// бы дубль. Когда пуш прийти не может (симулятор, устройство без
-    /// зарегистрированного токена), а WS ещё жив — баннер постит приложение.
+    /// A message arrived over WS.
+    /// In the background the system APNs push shows the banner and a local
+    /// notification would duplicate it. When no push can arrive (simulator, a
+    /// device with no registered token) and WS is still alive, the app posts
+    /// the banner itself.
     static func forIncomingWS(appActive: Bool, chatOpen: Bool, isOwn: Bool,
                               isService: Bool, muted: Bool, alreadyShown: Bool,
                               apnsAvailable: Bool = true) -> WSAction {
@@ -27,13 +26,13 @@ enum NotificationDecision {
         return chatOpen ? .none : .inAppBanner
     }
 
-    /// Показывать ли уведомление, о котором система спросила делегата (willPresent).
-    /// - isLocal: уведомление поставило само приложение по WS-фрейму. Оно уже
-    ///   прошло все проверки при постановке, а его msgId лежит в alreadyShown,
-    ///   и общий дедуп погасил бы его же.
-    /// - messageInDB: сообщение уже принято по WS (строка в БД) — баннер был бы дублем
-    /// - alreadyShown: для этого msgId уже показан in-app баннер или системный пуш
-    /// - messageRead: сообщение уже прочитано (seq <= myReadUpTo)
+    /// Whether to present a notification the system asked the delegate about (willPresent).
+    /// - isLocal: the app posted this notification itself from a WS frame. It
+    ///   passed every check when it was posted and its msgId is in alreadyShown,
+    ///   so the common dedup would suppress the app's own banner.
+    /// - messageInDB: the message already arrived over WS (a row in the DB), the banner would be a duplicate
+    /// - alreadyShown: an in-app banner or a system push has already been shown for this msgId
+    /// - messageRead: the message is already read (seq <= myReadUpTo)
     static func shouldPresentSystemPush(isLocal: Bool = false,
                                         chatOpen: Bool, alreadyShown: Bool,
                                         messageInDB: Bool, messageRead: Bool,

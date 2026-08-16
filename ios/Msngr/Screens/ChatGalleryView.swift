@@ -3,11 +3,11 @@ import SafariServices
 import GRDB
 import MsngrCore
 
-/// Вложения чата: сетка медиа, списки файлов, голосовых и ссылок.
+/// Chat attachments: a media grid plus lists of files, voice messages and links.
 ///
-/// Страницы читаются по запросу и складываются в массив — наблюдения за базой
-/// здесь нет намеренно: любое изменение чата перечитывало бы всю набранную
-/// историю целиком. Экран открывается заново — набирается заново.
+/// Pages are read on demand and appended to an array. There is deliberately no
+/// database observation here: any change in the chat would re-read the whole
+/// history collected so far. Reopening the screen collects it again.
 @MainActor
 final class ChatGalleryModel: ObservableObject {
     let chatId: String
@@ -15,8 +15,8 @@ final class ChatGalleryModel: ObservableObject {
         didSet { load(tab) }
     }
     @Published private(set) var entries: [GalleryTab: [GalleryEntry]] = [:]
-    /// Вкладки, у которых первая страница уже прочитана: до этого пусто —
-    /// состояние загрузки, а не «ничего нет».
+    /// Tabs whose first page has been read; before that an empty tab means
+    /// loading rather than "nothing here".
     @Published private(set) var opened: Set<GalleryTab> = []
 
     private var cursors: [GalleryTab: GalleryCursor] = [:]
@@ -29,7 +29,7 @@ final class ChatGalleryModel: ObservableObject {
 
     func items(_ tab: GalleryTab) -> [GalleryEntry] { entries[tab] ?? [] }
 
-    /// Догрузка на подходе к концу списка: вызывается ячейками у нижнего края.
+    /// Loads more as the end of the list comes near; called by the cells at the bottom.
     func loadMoreIfNeeded(_ tab: GalleryTab, at entry: GalleryEntry) {
         let items = items(tab)
         guard let index = items.firstIndex(where: { $0.id == entry.id }),
@@ -37,8 +37,8 @@ final class ChatGalleryModel: ObservableObject {
         load(tab)
     }
 
-    /// Следующая страница вкладки. Повторный вызов во время чтения и вызов на
-    /// исчерпанной вкладке ничего не делают.
+    /// The tab's next page. A repeated call while a read is in flight, or a
+    /// call on an exhausted tab, does nothing.
     func load(_ tab: GalleryTab) {
         guard !loading.contains(tab), !finished.contains(tab),
               let db = AppState.shared.db else { return }
@@ -59,8 +59,8 @@ final class ChatGalleryModel: ObservableObject {
         }
     }
 
-    /// Сообщение, которому принадлежит запись: просмотрщик и переход в ленту
-    /// работают с ним, а не с записью галереи.
+    /// The message an entry belongs to: the viewer and the jump into the feed
+    /// work with the message, not with the gallery entry.
     func message(_ entry: GalleryEntry) async -> Message? {
         guard let db = AppState.shared.db else { return nil }
         return try? await db.read { [chatId] dbc in
@@ -74,7 +74,7 @@ final class ChatGalleryModel: ObservableObject {
 struct ChatGalleryView: View {
     let chatId: String
     @StateObject private var model: ChatGalleryModel
-    /// Строка голосового показывает, играет ли оно сейчас.
+    /// The voice row shows whether it is playing right now.
     @ObservedObject private var voice = VoicePlayer.shared
 
     init(chatId: String) {
@@ -115,7 +115,7 @@ struct ChatGalleryView: View {
         }
     }
 
-    // MARK: - Медиа
+    // MARK: - Media
 
     private var columns: [GridItem] {
         Array(repeating: GridItem(.flexible(), spacing: 2), count: 3)
@@ -142,7 +142,7 @@ struct ChatGalleryView: View {
         }
     }
 
-    // MARK: - Списки
+    // MARK: - Lists
 
     private func list(_ items: [GalleryEntry]) -> some View {
         List(items) { entry in
@@ -227,7 +227,7 @@ struct ChatGalleryView: View {
         return fmt.string(from: Date(timeIntervalSince1970: sentAt))
     }
 
-    // MARK: - Действия
+    // MARK: - Actions
 
     @ViewBuilder
     private func menu(_ entry: GalleryEntry) -> some View {
@@ -245,8 +245,8 @@ struct ChatGalleryView: View {
         }
     }
 
-    /// Открытие записи: фото и видео — в просмотрщике, файл — в QuickLook,
-    /// голосовое играет на месте, ссылка открывается во встроенном браузере.
+    /// Opening an entry: photos and video go to the viewer, a file to QuickLook,
+    /// a voice message plays in place, a link opens in the built-in browser.
     private func open(_ entry: GalleryEntry) {
         if let link = entry.link, let url = URL(string: link) {
             WebPresenter.present(url)
@@ -274,14 +274,14 @@ struct ChatGalleryView: View {
         }
     }
 
-    /// Переход к сообщению: экран галереи и инфо о чате закрываются, лента
-    /// доезжает до баббла (догрузив историю, если он глубже окна).
+    /// Jump to the message: the gallery and the chat info close, and the feed
+    /// scrolls to the bubble, loading history if it sits deeper than the window.
     private func showInChat(_ entry: GalleryEntry) {
         Haptics.light()
         MessageJump.request(chatId: chatId, msgId: entry.messageId)
     }
 
-    // MARK: - Пустые вкладки
+    // MARK: - Empty tabs
 
     private func emptyState(_ tab: GalleryTab, ready: Bool) -> some View {
         VStack(spacing: 8) {
@@ -331,7 +331,7 @@ struct ChatGalleryView: View {
     }
 }
 
-/// Квадрат сетки: blurhash сразу, потом картинка из кэша или скачанная.
+/// A grid square: the blurhash first, then the picture from the cache or downloaded.
 private struct GalleryThumbView: View {
     let entry: GalleryEntry
     let side: CGFloat
@@ -379,8 +379,9 @@ private struct GalleryThumbView: View {
         return UIImage.fromRGBA(px, width: 32, height: 32)
     }
 
-    /// У видео превью — отдельный блоб; у фото картинка сама. Уже показанное в
-    /// ленте лежит в кэше, остальное скачивается по мере прокрутки.
+    /// A video keeps its preview in a separate blob; a photo is its own preview.
+    /// Whatever the feed has already shown is in the cache, the rest downloads
+    /// as the grid scrolls.
     private func load() async {
         guard let media = entry.media, let mm = AppState.shared.media else { return }
         let source: MediaInfo = {
@@ -406,7 +407,7 @@ private struct GalleryThumbView: View {
     }
 }
 
-/// Ссылка открывается во встроенном браузере: приложение остаётся на экране.
+/// A link opens in the built-in browser, so the app stays on screen.
 @MainActor
 enum WebPresenter {
     static func present(_ url: URL) {

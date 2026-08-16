@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Экран пин-кода: точки, цифровая клавиатура, FaceID, shake при ошибке.
+/// Passcode screen: dots, keypad, Face ID, shake on a wrong code.
 struct LockScreenView: View {
     @EnvironmentObject var app: AppState
     @State private var entered = ""
@@ -115,7 +115,7 @@ struct ShakeEffect: GeometryEffect {
     }
 }
 
-/// Блюр контента в app switcher.
+/// Blurs the content in the app switcher.
 struct PrivacyShieldView: View {
     var body: some View {
         Rectangle()

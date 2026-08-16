@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Устройство отключили от аккаунта с другого устройства. Переподключаться
-/// некуда, поэтому вместо бесконечного «подключение…» показывается тупик
-/// с единственным выходом — регистрацией заново.
+/// The device was cut off from the account from another device. There is
+/// nothing left to reconnect to, so instead of an endless «Подключение…»
+/// the screen shows a dead end whose only way out is registering again.
 struct SessionEndedView: View {
     @EnvironmentObject var app: AppState
     @State private var busy = false
