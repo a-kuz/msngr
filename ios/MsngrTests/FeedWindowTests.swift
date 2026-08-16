@@ -24,6 +24,25 @@ final class FeedWindowTests: XCTestCase {
         XCTAssertTrue(window.plan().recompute)
     }
 
+    /// Переход к сообщению глубже окна: граница встаёт на него, а вместимость
+    /// растягивается так, что новейшее сообщение остаётся в окне — иначе из
+    /// точки перехода не было бы дороги вниз.
+    func testAnchorPutsTheFloorOnTheMessageAndKeepsTheNewestInside() {
+        let window = FeedWindow(capacity: 60)
+        window.set(1_900)
+        window.anchor(floor: 5, capacity: 1_996)
+        XCTAssertEqual(window.plan().floor, 5)
+        XCTAssertEqual(window.plan().capacity, 1_996)
+    }
+
+    /// Вместимость только растёт: переход к соседнему сообщению не сжимает
+    /// окно, набранное листанием.
+    func testAnchorNeverShrinksTheWindow() {
+        let window = FeedWindow(capacity: 600)
+        window.anchor(floor: 10, capacity: 20)
+        XCTAssertEqual(window.plan().capacity, 600)
+    }
+
     func testPagingUpRaisesTheCeiling() {
         let window = FeedWindow(capacity: 60)
         window.grow(by: 60)

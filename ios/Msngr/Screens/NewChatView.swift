@@ -143,8 +143,7 @@ struct NewChatView: View {
     }
 
     private func openDirect(_ userId: String) async {
-        guard let chatId = try? await app.api.createChat(kind: "direct", memberIds: [userId], title: nil) else { return }
-        try? await app.engine.refreshSnapshot()
+        guard let chatId = await DirectChat.open(userId: userId) else { return }
         onOpen(chatId)
     }
 
