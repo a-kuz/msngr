@@ -641,9 +641,9 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
         }
     }
 
-    /// Тап по статус-бару. Системная прокрутка «вверх» в перевёрнутом списке
-    /// уехала бы к самым новым сообщениям — начало чата это другой конец,
-    /// и ведёт туда экран сам.
+    /// A status bar tap. The system's own "scroll to top" would land on the newest
+    /// messages in an inverted feed, so the screen takes the tap over and goes to the
+    /// beginning of the conversation itself.
     func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
         onScrollToStart?()
         return false
