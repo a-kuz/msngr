@@ -124,8 +124,9 @@ that happened 22 times: 4 967 ms of SQL, 2 020 ms of feed building, 2 724 ms of
 collection view updates, 19 621 bubble measurements, eight frames over 250 ms.
 
 The capacity never shrinks. `FeedWindow.anchor` takes `max(capacity, count)` and
-nothing lowers it again: after the jump the reader can scroll back to the bottom
-and the window still holds the whole conversation. That is the state the owner's
+nothing lowers it again: the window measured 19 620 rows 0.9 s after the jump and
+the same 19 620 rows ninety seconds later, with a scroll back to the bottom and a
+send in between. That is the state the owner's
 "three frames instead of an animation" is measured in — typing five characters
 draws a 1 127 ms frame, and the send after it draws an 846 ms one, with five
 frames over 250 ms around it.
