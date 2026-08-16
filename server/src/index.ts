@@ -799,6 +799,28 @@ app.get("/api/blocked", async (c) => {
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    if (!env.PERF_LOG) return handle(req, env, ctx);
+    const t0 = Date.now();
+    const res = await handle(req, env, ctx);
+    // 101 has no body to read, and reading one would consume the socket
+    let size = 0;
+    let out = res;
+    if (res.status !== 101 && res.body) {
+      const body = await res.clone().arrayBuffer();
+      size = body.byteLength;
+      out = new Response(body, res);
+    }
+    const u = new URL(req.url);
+    console.log(`HTTP ${JSON.stringify({
+      method: req.method, path: u.pathname, query: u.search.slice(1),
+      status: res.status, down: size, ms: Date.now() - t0,
+    })}`);
+    return out;
+  },
+};
+
+async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  {
     const url = new URL(req.url);
 
     // WS: authenticated here, the upgrade itself is done by UserSessionDO
@@ -833,5 +855,5 @@ export default {
     }
 
     return app.fetch(req, env, ctx);
-  },
-};
+  }
+}

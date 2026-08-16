@@ -1,5 +1,8 @@
 import type { Env, ChatState, ChatMember, StoredMsg, ServerFrame } from "../types";
 import { ulid, json, err, seqKey, nowSec, shouldArmAlarm } from "../util";
+import {
+  newCounters, snapshot, diff, logPerf, wrapState, wrapDB, wrapStub, type PerfCounters,
+} from "../perf";
 
 /// Fanout queue. A frame is never delivered on the sender's critical path: it
 /// is appended as a job and drained by the alarm loop, so /send answers as soon
@@ -83,7 +86,16 @@ export class ConversationDO implements DurableObject {
   /// /block-changed.
   private blockers: Set<string> | null = null;
 
-  constructor(private state: DurableObjectState, private env: Env) {}
+  /// dev measurement (PERF_LOG); never installed otherwise
+  private perf: PerfCounters | null = null;
+
+  constructor(private state: DurableObjectState, private env: Env) {
+    if (env.PERF_LOG) {
+      this.perf = newCounters();
+      this.state = wrapState(state, this.perf);
+      this.env = { ...env, DB: wrapDB(env.DB, this.perf) };
+    }
+  }
 
   private async loadMeta(): Promise<Meta | null> {
     if (!this.meta) this.meta = (await this.state.storage.get<Meta>("meta")) ?? null;
@@ -100,7 +112,8 @@ export class ConversationDO implements DurableObject {
   }
 
   private userStub(userId: string) {
-    return this.env.USER_DO.get(this.env.USER_DO.idFromName(userId));
+    const stub = this.env.USER_DO.get(this.env.USER_DO.idFromName(userId));
+    return this.perf ? wrapStub(stub, this.perf) : stub;
   }
 
   /// Block state of a direct chat as seen from member `me`. Null for groups and for
@@ -243,6 +256,18 @@ export class ConversationDO implements DurableObject {
   /// Drains the fanout queue. Kept head-of-line so that frames reach a
   /// recipient in the order the chat produced them.
   async alarm() {
+    if (!this.perf) return this.drainAlarm();
+    const before = snapshot(this.perf);
+    const t0 = Date.now();
+    try {
+      return await this.drainAlarm();
+    } finally {
+      logPerf("conv", "alarm", Date.now() - t0, diff(this.perf, before), snapshot(this.perf),
+              { chatId: this.meta?.chatId });
+    }
+  }
+
+  private async drainAlarm() {
     // marked before the first await: from the moment the runtime consumed the
     // alarm, this drain is what the queue is waiting for
     this.draining = true;
@@ -401,6 +426,18 @@ export class ConversationDO implements DurableObject {
   }
 
   async fetch(req: Request): Promise<Response> {
+    if (!this.perf) return this.handle(req);
+    const before = snapshot(this.perf);
+    const t0 = Date.now();
+    try {
+      return await this.handle(req);
+    } finally {
+      logPerf("conv", new URL(req.url).pathname, Date.now() - t0, diff(this.perf, before),
+              snapshot(this.perf), { chatId: this.meta?.chatId, lastSeq: this.meta?.lastSeq });
+    }
+  }
+
+  private async handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const path = url.pathname;
 
