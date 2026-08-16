@@ -8,6 +8,10 @@ struct MsngrApp: App {
     @StateObject private var theme = ThemeStore.shared
     @Environment(\.scenePhase) private var scenePhase
 
+    init() {
+        TypeScale.start()
+    }
+
     var body: some Scene {
         WindowGroup {
             ZStack {

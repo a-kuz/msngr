@@ -65,6 +65,26 @@ final class MessagesViewController: UIViewController {
         view.addSubview(collectionView)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardChanged(_:)),
                                                name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(typeScaleChanged),
+                                               name: .typeScaleChanged, object: nil)
+    }
+
+    /// Reader changed their text size: every cached plan was measured against
+    /// the old font, so the feed re-measures from scratch and puts the message
+    /// the reader was looking at back where it was.
+    @objc private func typeScaleChanged() {
+        guard isViewLoaded else { return }
+        let anchor = readingAnchor()
+        BubbleLayout.clearCache()
+        collectionView.collectionViewLayout.invalidateLayout()
+        collectionView.reloadData()
+        collectionView.layoutIfNeeded()
+        if anchor != nil {
+            restore(anchor)
+        } else {
+            collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.contentInset.top), animated: false)
+        }
+        updateAtBottom(layoutFirst: true)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -474,11 +494,11 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             return cell
         case .unreadable:
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "system", for: indexPath) as! SystemCell
-            cell.configure(text: "Сообщение ещё не загружено")
+            cell.configure(text: SystemCell.unreadableText)
             return cell
         case .historyStart:
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "system", for: indexPath) as! SystemCell
-            cell.configure(text: "История начинается здесь")
+            cell.configure(text: SystemCell.historyStartText)
             return cell
         case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName):
             if msg.kind == .system {
@@ -502,16 +522,26 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
 
     func collectionView(_ cv: UICollectionView, layout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
+        // The auxiliary rows are sized by their own font, so nothing clips when
+        // the reader turns the text up.
         switch items[indexPath.item] {
-        case .dateSeparator:
-            return CGSize(width: cv.bounds.width, height: 32)
-        case .unreadMarker:
-            return CGSize(width: cv.bounds.width, height: 36)
-        case .unreadable, .historyStart:
-            return CGSize(width: cv.bounds.width, height: 30)
+        case .dateSeparator(_, let label):
+            return CGSize(width: cv.bounds.width,
+                          height: FeedNote.height(label, width: cv.bounds.width, padding: 20) + 10)
+        case .unreadMarker(_, let count):
+            return CGSize(width: cv.bounds.width,
+                          height: FeedNote.height(UnreadMarkerCell.title(count: count),
+                                                  width: cv.bounds.width, padding: 12) + 14)
+        case .unreadable:
+            return CGSize(width: cv.bounds.width,
+                          height: FeedNote.height(SystemCell.unreadableText, width: cv.bounds.width) + 12)
+        case .historyStart:
+            return CGSize(width: cv.bounds.width,
+                          height: FeedNote.height(SystemCell.historyStartText, width: cv.bounds.width) + 12)
         case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName):
             if msg.kind == .system {
-                return CGSize(width: cv.bounds.width, height: 30)
+                return CGSize(width: cv.bounds.width,
+                              height: FeedNote.height(SystemCell.text(for: msg), width: cv.bounds.width) + 12)
             }
             let plan = BubbleLayout.plan(for: msg, width: cv.bounds.width, tightGap: tightGap,
                                          showTail: showTail, showName: showName, authorName: authorName,
@@ -536,6 +566,23 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
 
 // MARK: - Вспомогательные ячейки
 
+/// Text rows between bubbles (date capsule, unread band, system note) all share
+/// one role, so one measurement serves the layout and the cells.
+enum FeedNote {
+    static var font: UIFont { Theme.Text.feedNote.uiFont }
+
+    /// Height the text needs at this width, wrapping onto as many lines as the
+    /// current text size demands.
+    static func height(_ text: String, width: CGFloat, padding: CGFloat = 32) -> CGFloat {
+        let available = max(40, width - 2 * padding)
+        let box = (text as NSString).boundingRect(
+            with: CGSize(width: available, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font], context: nil)
+        return ceil(box.height) + 6
+    }
+}
+
 final class DateSeparatorCell: UICollectionViewCell {
     private let label = UILabel()
     private let capsule = UIView()
@@ -544,9 +591,9 @@ final class DateSeparatorCell: UICollectionViewCell {
         super.init(frame: frame)
         contentView.transform = CGAffineTransform(scaleX: 1, y: -1)
         capsule.backgroundColor = UIColor.black.withAlphaComponent(0.18)
-        capsule.layer.cornerRadius = 11
-        label.font = .systemFont(ofSize: 13, weight: .medium)
         label.textColor = .white
+        label.numberOfLines = 0
+        label.textAlignment = .center
         contentView.addSubview(capsule)
         capsule.addSubview(label)
     }
@@ -554,11 +601,16 @@ final class DateSeparatorCell: UICollectionViewCell {
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(_ text: String) {
+        label.font = FeedNote.font
         label.text = text
-        label.sizeToFit()
-        let w = label.bounds.width + 20
-        capsule.frame = CGRect(x: (contentView.bounds.width - w) / 2, y: 5, width: w, height: 22)
-        label.frame = CGRect(x: 10, y: 0, width: label.bounds.width, height: 22)
+        let inset: CGFloat = 10
+        let maxW = max(40, contentView.bounds.width - 40)
+        let size = label.sizeThatFits(CGSize(width: maxW, height: .greatestFiniteMagnitude))
+        let w = min(maxW, size.width) + 2 * inset
+        let h = contentView.bounds.height - 10
+        capsule.frame = CGRect(x: (contentView.bounds.width - w) / 2, y: 5, width: w, height: max(0, h))
+        capsule.layer.cornerRadius = capsule.bounds.height / 2
+        label.frame = capsule.bounds.insetBy(dx: inset, dy: 0)
     }
 
     override func layoutSubviews() {
@@ -578,20 +630,31 @@ final class UnreadMarkerCell: UICollectionViewCell {
         contentView.transform = CGAffineTransform(scaleX: 1, y: -1)
         band.backgroundColor = .tertiarySystemFill
         band.autoresizingMask = [.flexibleWidth]
-        label.font = .systemFont(ofSize: 13, weight: .medium)
         label.textColor = .secondaryLabel
         label.textAlignment = .center
+        label.numberOfLines = 0
         label.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         contentView.addSubview(band)
         band.addSubview(label)
-        band.frame = CGRect(x: 0, y: 5, width: contentView.bounds.width, height: 26)
-        label.frame = band.bounds
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(count: Int) {
+        label.font = FeedNote.font
         label.text = Self.title(count: count)
+        layoutBand()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        layoutBand()
+    }
+
+    private func layoutBand() {
+        band.frame = CGRect(x: 0, y: 5, width: contentView.bounds.width,
+                            height: max(0, contentView.bounds.height - 10))
+        label.frame = band.bounds.insetBy(dx: 12, dy: 0)
     }
 
     /// «1 непрочитанное сообщение / 2 непрочитанных сообщения / 5 непрочитанных сообщений»
@@ -618,26 +681,35 @@ final class SystemCell: UICollectionViewCell {
     override init(frame: CGRect) {
         super.init(frame: frame)
         contentView.transform = CGAffineTransform(scaleX: 1, y: -1)
-        label.font = .systemFont(ofSize: 13)
         label.textColor = .secondaryLabel
         label.textAlignment = .center
+        label.numberOfLines = 0
         label.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        label.frame = contentView.bounds
         contentView.addSubview(label)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(_ msg: Message) {
+    static let unreadableText = "Сообщение ещё не загружено"
+    static let historyStartText = "История начинается здесь"
+
+    static func text(for msg: Message) -> String {
         let t = msg.text ?? ""
-        if t.hasPrefix("identity_changed:") {
-            label.text = "Код безопасности собеседника изменился"
-        } else {
-            label.text = t
-        }
+        return t.hasPrefix("identity_changed:") ? "Код безопасности собеседника изменился" : t
+    }
+
+    func configure(_ msg: Message) {
+        configure(text: Self.text(for: msg))
     }
 
     func configure(text: String) {
+        label.font = FeedNote.font
         label.text = text
+        label.frame = contentView.bounds.insetBy(dx: 32, dy: 0)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        label.frame = contentView.bounds.insetBy(dx: 32, dy: 0)
     }
 }

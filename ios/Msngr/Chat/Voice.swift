@@ -217,9 +217,7 @@ final class VoiceMessageView: UIView {
         playButton.setImage(UIImage(systemName: "play.circle.fill"), for: .normal)
         playButton.tintColor = UIColor(Theme.accent)
         playButton.addTarget(self, action: #selector(togglePlay), for: .touchUpInside)
-        durationLabel.font = .systemFont(ofSize: 11)
         durationLabel.textColor = .secondaryLabel
-        fileName.font = .systemFont(ofSize: 15, weight: .medium)
         fileIcon.tintColor = UIColor(Theme.accent)
         addSubview(playButton)
         addSubview(waveform)
@@ -245,6 +243,8 @@ final class VoiceMessageView: UIView {
 
     func configure(msg: Message, outgoing: Bool) {
         self.msg = msg
+        durationLabel.font = Theme.Text.voiceDuration.uiFont
+        fileName.font = Theme.Text.fileName.uiFont
         // на тёмном исходящем баббле акцентные цвета нечитаемы
         let tint = outgoing ? UIColor(Theme.outgoingText) : UIColor(Theme.accent)
         playButton.tintColor = tint

@@ -78,7 +78,7 @@ struct ChatScreen: View {
                 }
                 ToolbarItem(placement: .principal) {
                     Text(MessageSelection.title(count: model.selection.count))
-                        .font(.system(size: 16, weight: .semibold))
+                        .textRole(Theme.Text.headerTitle)
                         .accessibilityIdentifier("chat.selection.count")
                 }
             } else {
@@ -87,7 +87,7 @@ struct ChatScreen: View {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button { dismiss() } label: {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 22, weight: .semibold))
+                            .font(Theme.glyph(22, max: 28).weight(.semibold))
                             .foregroundStyle(Theme.accent)
                             .frame(width: 44, height: 44)
                             .contentShape(Rectangle())
@@ -243,7 +243,7 @@ struct ChatScreen: View {
                                  action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 3) {
-                Image(systemName: icon).font(.system(size: 20))
+                Image(systemName: icon).font(Theme.glyph(20, max: 28))
                 Text(title).font(.caption2)
             }
             .frame(maxWidth: .infinity)
@@ -270,8 +270,9 @@ struct ChatScreen: View {
     private var emptyChatHint: some View {
         VStack(spacing: 8) {
             Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: 34))
+                .font(Theme.glyph(34, max: 48))
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             Text("Напишите первое сообщение")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -299,14 +300,13 @@ struct ChatScreen: View {
                     // короткое имя обрезается («4455…»). Текст держит идеальную ширину
                     // (fixedSize), а реально длинные строки заранее укорачиваются
                     // с многоточием под доступную ширину навбара
-                    Text(Self.fitted(model.headerTitle,
-                                     font: .systemFont(ofSize: 16, weight: .semibold)))
-                        .font(.system(size: 16, weight: .semibold))
+                    Text(Self.fitted(model.headerTitle, font: Theme.Text.headerTitle.uiFont))
+                        .textRole(Theme.Text.headerTitle)
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
-                    Text(Self.fitted(model.headerSubtitle, font: .systemFont(ofSize: 12)))
-                        .font(.system(size: 12))
+                    Text(Self.fitted(model.headerSubtitle, font: Theme.Text.headerSubtitle.uiFont))
+                        .textRole(Theme.Text.headerSubtitle)
                         .foregroundStyle(model.headerSubtitle.contains("печатает") || model.headerSubtitle == "в сети"
                                          ? Theme.accent : .secondary)
                         .lineLimit(1)
@@ -477,9 +477,10 @@ struct ChatScreen: View {
                 } label: {
                     ZStack(alignment: .topTrailing) {
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 17, weight: .semibold))
+                            .font(Theme.glyph(17, max: 24).weight(.semibold))
                             .foregroundStyle(.secondary)
-                            .frame(width: 40, height: 40)
+                            .frame(width: TypeScale.scaled(40, max: 54),
+                                   height: TypeScale.scaled(40, max: 54))
                             .background(.regularMaterial, in: Circle())
                             .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
                         if let unread = model.chat?.unreadCount, unread > 0 {
