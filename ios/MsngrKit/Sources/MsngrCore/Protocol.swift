@@ -25,14 +25,14 @@ public enum MsngrProtocol {
     }
 }
 
-/// Зеркало серверного протокола (docs/protocol.md).
+/// Mirror of the server protocol (docs/protocol.md).
 public enum WSOutgoing {
-    /// весь известный клиенту мир: чаты, которых нет в курсорах, сервер
-    /// присылает состоянием и доигрывает с нуля
+    /// Everything the client knows about: any chat missing from the cursors is sent
+    /// as state and replayed from scratch.
     case sync(cursors: [String: Int])
-    /// следующая порция догона по чатам, которые ещё отстают
+    /// The next batch for the chats that are still behind.
     case catchup(cursors: [String: Int])
-    // service: служебный фрейм (skd/reaction/edit/disappearing) — сервер не растит им unread/бейдж
+    // service: a service frame (skd/reaction/edit/disappearing)
     case send(chatId: String, clientMsgId: String, sentAt: Double, body: Envelope, service: Bool)
     case recv(chatId: String, seqs: [Int])
     case read(chatId: String, upToSeq: Int)
@@ -66,8 +66,8 @@ public enum WSOutgoing {
     }
 }
 
-/// E2E-конверт. pw: per-device ciphertext'ы; skm: sender-key message;
-/// skd вложен в pw (раздача sender key — обычное pairwise-сообщение).
+/// E2E envelope. pw carries per-device ciphertexts, skm a sender-key message;
+/// skd travels inside pw, since distributing a sender key is an ordinary pairwise message.
 public struct Envelope: Codable {
     public var v: Int = MsngrProtocol.envelopeVersion
     public var mode: String            // "pw" | "skm"
@@ -84,16 +84,16 @@ public struct Envelope: Codable {
     }
 }
 
-/// Одно pairwise-сообщение: pk (prekey, первое) или dr (ratchet).
+/// A single pairwise message: pk (prekey, the first one) or dr (ratchet).
 public struct PairwiseBox: Codable {
     public var type: String   // "pk" | "dr"
     public var c: String      // b64 RatchetMessage(header+ciphertext) JSON
-    // для pk:
-    public var ik: String?    // наш identity DH pub b64
-    public var isk: String?   // наш identity signing pub b64
-    public var ek: String?    // ephemeral pub b64
-    public var spkId: UInt32? // какой signed prekey использован
-    public var otpId: UInt32? // какой one-time prekey использован
+    // pk only:
+    public var ik: String?    // our identity DH pub, b64
+    public var isk: String?   // our identity signing pub, b64
+    public var ek: String?    // ephemeral pub, b64
+    public var spkId: UInt32? // which signed prekey was used
+    public var otpId: UInt32? // which one-time prekey was used
 
     public init(type: String, c: String) {
         self.type = type
@@ -103,7 +103,7 @@ public struct PairwiseBox: Codable {
 
 public struct WSIncoming: Decodable {
     public let t: String
-    // общие поля (опциональны по типам)
+    // Shared fields; which ones are present depends on the frame type.
     public let chatId: String?
     public let clientMsgId: String?
     public let msgId: String?
@@ -125,14 +125,14 @@ public struct WSIncoming: Decodable {
     public let msgIds: [String]?
     public let forAll: Bool?
     public let serverTime: Double?
-    /// msg: служебный фрейм (skd/reaction/edit) — не растит unread
+    /// msg: a service frame (skd/reaction/edit)
     public let service: Bool?
-    /// error: машиночитаемый код отказа по нашему фрейму (см. SendFailure)
+    /// error: machine-readable rejection code for a frame we sent (see SendFailure)
     public let error: String?
-    /// syncState: seq, по который догон чата дошёл в этой порции
+    /// syncState: the seq this batch of catch-up reached for the chat
     public let cursor: Int?
-    /// syncState: у чата есть история дальше курсора;
-    /// syncDone: порция закрыта, но догон не закончен
+    /// syncState: the chat has history beyond the cursor;
+    /// syncDone: the batch is closed but the catch-up is not finished
     public let more: Bool?
 }
 
@@ -157,7 +157,7 @@ public struct ChatStateDTO: Decodable {
     public let deliveredMarks: [String: Int]
 }
 
-/// Минимальный произвольный JSON (для body до расшифровки).
+/// Minimal arbitrary JSON, used for a body that has not been decrypted yet.
 public enum JSONValue: Codable, Sendable {
     case string(String), number(Double), bool(Bool), null
     case array([JSONValue]), object([String: JSONValue])

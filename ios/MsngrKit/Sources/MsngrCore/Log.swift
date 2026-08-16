@@ -1,17 +1,17 @@
 import OSLog
 
-/// Каналы логирования ядра. Пишем сюда то, что иначе потерялось бы молча:
-/// отказ записи на диск, недоступное размещение данных.
+/// Core log channels. Everything that would otherwise fail silently goes here:
+/// a refused disk write, an unreachable data location.
 public enum MsngrLog {
     public static let subsystem = "ai.enface.msngr"
 
-    /// Хранилище: размещение данных, создание каталогов, перенос в контейнер группы.
+    /// Storage: data location, directory creation, migration into the group container.
     public static let storage = Logger(subsystem: subsystem, category: "storage")
-    /// Сессия: сохранение и чтение session.json.
+    /// Session: writing and reading session.json.
     public static let session = Logger(subsystem: subsystem, category: "session")
-    /// Очередь отправки: постановка сообщения и исходники вложений.
+    /// Send queue: enqueued messages and attachment originals.
     public static let outbox = Logger(subsystem: subsystem, category: "outbox")
-    /// Нечитаемые сообщения: причина отказа, счётчик попыток, запрос отправителю
-    /// и его результат. Нечитаемое — дефект, поэтому оно не остаётся молчаливым.
+    /// Undecryptable messages: the reason, the attempt counter, the request sent to the
+    /// sender and its outcome. An undecryptable message is a defect, so it never stays silent.
     public static let repair = Logger(subsystem: subsystem, category: "repair")
 }

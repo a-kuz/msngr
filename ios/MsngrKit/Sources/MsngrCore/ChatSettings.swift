@@ -1,6 +1,6 @@
 import Foundation
 
-/// Срок, на который выключают звук чата.
+/// How long a chat stays muted.
 public enum MuteOption: String, CaseIterable, Sendable {
     case hour, eightHours, week, forever
 
@@ -22,13 +22,13 @@ public enum MuteOption: String, CaseIterable, Sendable {
         }
     }
 
-    /// Момент снятия mute; nil — бессрочно.
+    /// When the mute lifts; nil means never.
     public func until(from now: Double = Date().timeIntervalSince1970) -> Double? {
         seconds.map { now + $0 }
     }
 }
 
-/// Mute со сроком. `mutedUntil == nil` при `muted == true` — бессрочный mute.
+/// Mute with an expiry. `mutedUntil == nil` together with `muted == true` means muted forever.
 public enum MuteState {
     public static func isMuted(muted: Bool, mutedUntil: Double?,
                                now: Double = Date().timeIntervalSince1970) -> Bool {
@@ -37,14 +37,15 @@ public enum MuteState {
         return mutedUntil > now
     }
 
-    /// Срок вышел — флаг пора снять (в БД и на сервере).
+    /// The expiry has passed, so the flag should be cleared in the database and on the server.
     public static func isExpired(muted: Bool, mutedUntil: Double?,
                                  now: Double = Date().timeIntervalSince1970) -> Bool {
         guard muted, let mutedUntil else { return false }
         return mutedUntil <= now
     }
 
-    /// «до 14:30» / «до 21 августа» для строки в профиле чата; nil — бессрочно или не замьючен.
+    /// "до 14:30" / "до 21 августа" for the row in the chat profile; nil when muted
+    /// forever or not muted at all.
     public static func untilLabel(muted: Bool, mutedUntil: Double?,
                                   now: Double = Date().timeIntervalSince1970) -> String? {
         guard isMuted(muted: muted, mutedUntil: mutedUntil, now: now), let mutedUntil else { return nil }
@@ -56,33 +57,33 @@ public enum MuteState {
     }
 }
 
-/// Права участника чата — зеркало проверок сервера (`ConversationDO`).
+/// What a chat member is allowed to do; mirrors the server's checks in `ConversationDO`.
 public enum ChatPermissions {
     public static let adminRole = "admin"
 
-    /// Название, аватар и описание: в группе — только админ, в direct — любой участник.
+    /// Title, avatar and description: admins only in a group, any member in a direct chat.
     public static func canEditSettings(kind: ChatKind, role: String?) -> Bool {
         guard let role else { return false }
         return kind == .direct || role == adminRole
     }
 
-    /// Удалять участников может только админ группы.
+    /// Only a group admin can remove members.
     public static func canRemoveMembers(kind: ChatKind, role: String?) -> Bool {
         kind == .group && role == adminRole
     }
 
-    /// Добавить может админ; не-админ — только самого себя.
+    /// An admin can add anyone; a non-admin can only add themselves.
     public static func canAddMembers(kind: ChatKind, role: String?, onlySelf: Bool = false) -> Bool {
         guard kind == .group, role != nil else { return false }
         return role == adminRole || onlySelf
     }
 
-    /// Назначать и снимать админов может только админ.
+    /// Only an admin can grant and revoke admin rights.
     public static func canManageAdmins(kind: ChatKind, role: String?) -> Bool {
         kind == .group && role == adminRole
     }
 
-    /// Покинуть группу может любой её участник.
+    /// Any member of a group can leave it.
     public static func canLeave(kind: ChatKind, role: String?) -> Bool {
         kind == .group && role != nil
     }

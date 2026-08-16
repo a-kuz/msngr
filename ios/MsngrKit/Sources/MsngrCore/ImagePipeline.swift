@@ -2,14 +2,14 @@ import Foundation
 import CoreGraphics
 import ImageIO
 
-/// Обёртка CGImage для NSCache (требует class-тип).
+/// CGImage wrapper for NSCache, which only stores class types.
 private final class ImageBox {
     let image: CGImage
     init(_ image: CGImage) { self.image = image }
 }
 
-/// Конвейер изображений: даунсемплинг + forced decode вне главного потока, кэш в памяти.
-/// На memory warning вызывающая сторона дергает clearMemory().
+/// Image pipeline: downsampling and forced decode off the main thread, with an in-memory cache.
+/// On a memory warning the caller is expected to call clearMemory().
 public final class ImagePipeline: @unchecked Sendable {
     public static let shared = ImagePipeline()
 
@@ -21,8 +21,8 @@ public final class ImagePipeline: @unchecked Sendable {
         cache.totalCostLimit = 64 * 1024 * 1024
     }
 
-    /// Декодирует изображение с даунсемплингом до targetPixelSize (пиксели) вне главного потока.
-    /// Результат — готовый к отрисовке CGImage, кэшируется в память.
+    /// Decodes the image off the main thread, downsampled to targetPixelSize (in pixels).
+    /// The result is a CGImage ready to draw and is kept in the memory cache.
     public func image(at url: URL, targetPixelSize: CGSize) async -> CGImage? {
         let key = Self.key(url, targetPixelSize)
         if let boxed = cache.object(forKey: key as NSString) {
@@ -50,12 +50,12 @@ public final class ImagePipeline: @unchecked Sendable {
         return image
     }
 
-    /// Синхронно из памяти, если уже декодировано (мгновенный показ при reuse ячейки).
+    /// Synchronous hit from memory if the image is already decoded, so a reused cell
+    /// can show it in the same frame.
     public func cachedImage(at url: URL, targetPixelSize: CGSize) -> CGImage? {
         cache.object(forKey: Self.key(url, targetPixelSize) as NSString)?.image
     }
 
-    /// Фоновый прогрев кэша с низким приоритетом.
     public func prefetch(urls: [(URL, CGSize)]) {
         for (url, size) in urls {
             Task(priority: .utility) { [weak self] in
@@ -72,8 +72,9 @@ public final class ImagePipeline: @unchecked Sendable {
         "\(url.path)|\(Int(max(targetPixelSize.width, targetPixelSize.height)))"
     }
 
-    /// Даунсемплинг через ImageIO: декод сразу в уменьшенный размер, без загрузки полного кадра.
-    /// kCGImageSourceShouldCacheImmediately — forced decode без offscreen-рендера.
+    /// Downsampling through ImageIO: decodes straight to the reduced size without ever
+    /// materialising the full frame. kCGImageSourceShouldCacheImmediately forces the decode
+    /// here rather than during an offscreen render pass.
     private static func decode(url: URL, targetPixelSize: CGSize) -> CGImage? {
         let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions) else { return nil }
@@ -88,10 +89,11 @@ public final class ImagePipeline: @unchecked Sendable {
     }
 }
 
-/// Подготовка изображений к отправке и вспомогательные преобразования.
+/// Preparing images for sending, plus the conversions that go with it.
 public enum ImageProcessor {
-    /// Даунскейл + JPEG для отправки: длинная сторона до maxDimension, качество 0.8.
-    /// Возвращает (jpegData, размер в пикселях). Вход — данные любого поддерживаемого формата.
+    /// Downscale and re-encode as JPEG for sending: long side capped at maxDimension,
+    /// quality 0.8. Returns the JPEG data and the pixel size. Input may be any format
+    /// ImageIO can read.
     public static func prepareForSending(_ data: Data, maxDimension: CGFloat = 1280) -> (data: Data, size: CGSize)? {
         guard let image = downsample(data, maxDimension: maxDimension) else { return nil }
         let output = NSMutableData()
@@ -102,7 +104,7 @@ public enum ImageProcessor {
         return (output as Data, CGSize(width: image.width, height: image.height))
     }
 
-    /// RGBA8-пиксели уменьшенной копии (для BlurHash-энкода), длинная сторона ~32px.
+    /// RGBA8 pixels of a shrunken copy with a long side of about 32px, for BlurHash encoding.
     public static func rgbaPixels(_ data: Data, maxDimension: CGFloat = 32) -> (pixels: [UInt8], width: Int, height: Int)? {
         guard let image = downsample(data, maxDimension: maxDimension) else { return nil }
         let width = image.width
