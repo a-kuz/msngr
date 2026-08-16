@@ -1,7 +1,7 @@
 import XCTest
 @testable import MsngrCore
 
-/// Матрица содержимого уведомления: вид контента × тип чата × настройка приватности.
+/// Notification content matrix: content kind x chat type x privacy setting.
 final class NotificationContentTests: XCTestCase {
 
     private let direct = NotificationContentBuilder.ChatInfo(chatId: "c1", isGroup: false, title: nil)
@@ -46,7 +46,7 @@ final class NotificationContentTests: XCTestCase {
         XCTAssertEqual(c?.title, "Msngr")
     }
 
-    // MARK: - Группа
+    // MARK: - Group
 
     func testGroupKeepsSenderInTitleAndGroupInSubtitle() {
         let c = build(payload("text", text: "всем привет"), chat: group)
@@ -61,7 +61,7 @@ final class NotificationContentTests: XCTestCase {
         XCTAssertEqual(build(payload("text", text: "x"), chat: noName)?.subtitle, "Группа")
     }
 
-    // MARK: - Медиа
+    // MARK: - Media
 
     func testMediaPlaceholders() {
         XCTAssertEqual(build(payload("photo"))?.body, "📷 Фото")
@@ -86,11 +86,11 @@ final class NotificationContentTests: XCTestCase {
         XCTAssertEqual(build(payload("sticker"))?.body, "Новое сообщение")
     }
 
-    // MARK: - Молчаливые виды
+    // MARK: - Silent kinds
 
     func testServiceKindsProduceNoNotification() {
         for kind in ["edit", "reaction", "disappearing", "system", "deleted"] {
-            XCTAssertNil(build(payload(kind, text: "что-то")), "ожидалось молчание для \(kind)")
+            XCTAssertNil(build(payload(kind, text: "что-то")), "expected silence for \(kind)")
         }
     }
 
@@ -98,7 +98,7 @@ final class NotificationContentTests: XCTestCase {
         XCTAssertNil(build(payload("text", text: "было"), isDeleted: true))
     }
 
-    // MARK: - Приватность
+    // MARK: - Privacy
 
     func testHiddenTextKeepsNamesAndDropsContent() {
         let c = build(payload("text", text: "секрет"), chat: group, showsText: false)
@@ -120,7 +120,7 @@ final class NotificationContentTests: XCTestCase {
         XCTAssertTrue(NotificationPreferences.showsMessageText(in: defaults))
     }
 
-    // MARK: - Обрезка
+    // MARK: - Truncation
 
     func testShortTextIsUntouched() {
         XCTAssertEqual(NotificationContentBuilder.truncate("коротко"), "коротко")
@@ -135,7 +135,7 @@ final class NotificationContentTests: XCTestCase {
         let cut = NotificationContentBuilder.truncate(text)
         XCTAssertTrue(cut.hasSuffix("…"))
         XCTAssertLessThanOrEqual(cut.count, NotificationContentBuilder.textLimit + 1)
-        XCTAssertTrue(cut.dropLast().hasSuffix("слово"), "обрезано посреди слова: \(cut)")
+        XCTAssertTrue(cut.dropLast().hasSuffix("слово"), "cut in the middle of a word: \(cut)")
         XCTAssertTrue(text.hasPrefix(String(cut.dropLast())))
     }
 

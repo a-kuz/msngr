@@ -2,8 +2,9 @@ import XCTest
 import GRDB
 @testable import MsngrCore
 
-/// Служебные фреймы и буфер edit/reaction/deleted без оригинала.
-/// Сервер не нужен — движок создаётся с недоступным адресом.
+/// Service frames, and the buffer that holds edit/reaction/deleted arriving
+/// before their original. No server needed, the engine is built against an
+/// address nothing listens on.
 final class ServiceFrameTests: XCTestCase {
     private func makeEngine(db: DatabaseQueue) throws -> SyncEngine {
         let api = APIClient(baseURL: URL(string: "http://localhost:1")!)
@@ -23,8 +24,8 @@ final class ServiceFrameTests: XCTestCase {
         return try JSONDecoder().decode(WSIncoming.self, from: Data(json.utf8))
     }
 
-    /// msg с service=true двигает lastSeq/syncedSeq, но unreadCount не растёт;
-    /// следующее обычное сообщение считается без учёта служебного seq.
+    /// A msg with service=true moves lastSeq/syncedSeq without growing
+    /// unreadCount; the next ordinary message is counted ignoring the service seq.
     func testServiceFrameDoesNotGrowUnread() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
@@ -39,9 +40,9 @@ final class ServiceFrameTests: XCTestCase {
         XCTAssertEqual(row["lastSeq"] as Int, 1)
         XCTAssertEqual(row["syncedSeq"] as Int, 1)
         XCTAssertEqual(row["unreadCount"] as Int, 0)
-        XCTAssertEqual(row["myReadUpTo"] as Int, 1) // прочитанный чат поглотил служебный seq
+        XCTAssertEqual(row["myReadUpTo"] as Int, 1) // a fully read chat absorbs the service seq
 
-        // обычное сообщение после служебного: непрочитанным считается только оно
+        // an ordinary message after a service one: only it counts as unread
         await engine.apply(try msgFrame(seq: 2, msgId: "m2", service: false))
         row = try await db.read { dbc in
             try Row.fetchOne(dbc, sql: "SELECT lastSeq, unreadCount FROM chat WHERE id = 'c1'")!
@@ -50,8 +51,9 @@ final class ServiceFrameTests: XCTestCase {
         XCTAssertEqual(row["unreadCount"] as Int, 1)
     }
 
-    /// Реакция и правка на сообщение, которого ещё нет в БД (оригинал ждёт ключа),
-    /// буферизуются и применяются при появлении строки.
+    /// A reaction and an edit for a message not yet in the database (the
+    /// original is waiting for its key) are buffered and applied once the row
+    /// appears.
     func testReactionAndEditBeforeOriginalApplyAfter() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
@@ -72,7 +74,7 @@ final class ServiceFrameTests: XCTestCase {
         }
         XCTAssertEqual(buffered, 2)
 
-        // оригинал расшифровался и вставился — буфер применяется и очищается
+        // the original decrypted and was inserted: the buffer is applied and cleared
         var original = ContentPayload(kind: "text")
         original.text = "оригинал"
         await engine.applyContent(original, chatId: "c1", msgId: "m1", seq: 1,
@@ -92,7 +94,8 @@ final class ServiceFrameTests: XCTestCase {
         XCTAssertEqual(left, 0)
     }
 
-    /// deleted раньше оригинала буферизуется; повторный deleted (sync-реплей) идемпотентен.
+    /// A deleted arriving before the original is buffered; a repeated deleted
+    /// (sync replay) is idempotent.
     func testDeletedBeforeOriginalAndReplay() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
@@ -105,7 +108,7 @@ final class ServiceFrameTests: XCTestCase {
         original.text = "секрет"
         await engine.applyContent(original, chatId: "c1", msgId: "m1", seq: 1,
                                   from: "peer", sentAt: 1, ts: 1)
-        await engine.apply(deleted) // реплей после появления строки
+        await engine.apply(deleted) // replay once the row exists
 
         let row = try await db.read { dbc in
             try Row.fetchOne(dbc, sql: "SELECT deletedForAll, text FROM message WHERE msgId = 'm1'")!
