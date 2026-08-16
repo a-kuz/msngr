@@ -5,8 +5,8 @@ import GRDB
 import MsngrCore
 import MsngrCrypto
 
-/// Роли участников чата: chat-фрейм переписывает таблицу member, наблюдение
-/// держит экран в актуальном состоянии (сняли админку — поля пропали).
+/// Roles of the chat members: the chat frame rewrites the member table, and
+/// the observation keeps the screen current (admin taken away, controls gone).
 @MainActor
 final class ChatRolesModel: ObservableObject {
     @Published var roles: [String: String] = [:]
@@ -28,7 +28,7 @@ final class ChatRolesModel: ObservableObject {
     }
 }
 
-/// Инфо о чате: профиль собеседника или управление группой.
+/// Chat info: the peer's profile, or managing the group.
 struct ChatInfoView: View {
     @ObservedObject var model: ChatViewModel
     @EnvironmentObject var app: AppState
@@ -53,7 +53,7 @@ struct ChatInfoView: View {
     private var isGroup: Bool { model.chat?.kind == .group }
     private var myRole: String? { rolesModel.roles[model.ownUserId] }
     private var kind: ChatKind { model.chat?.kind ?? .direct }
-    /// Название и аватар группы меняет только админ (сервер проверяет то же).
+    /// Only an admin changes the group's name and avatar; the server checks the same.
     private var canEditSettings: Bool {
         ChatPermissions.canEditSettings(kind: kind, role: myRole)
     }
@@ -197,7 +197,7 @@ struct ChatInfoView: View {
             editTitle = model.chat?.title ?? ""
             rolesModel.start(chatId: model.chatId, db: app.db)
         }
-        // название могло смениться на другом устройстве, пока экран открыт
+        // the title may have changed on another device while this screen was open
         .onChange(of: model.chat?.title) { _, new in
             if !titleChanged || editTitle.isEmpty { editTitle = new ?? "" }
         }
@@ -247,7 +247,7 @@ struct ChatInfoView: View {
         }
     }
 
-    /// Аватар чата: у админа группы — кнопка выбора фото, у остальных просто картинка.
+    /// Chat avatar: a photo picker for a group admin, a plain picture for everyone else.
     @ViewBuilder
     private var groupAvatar: some View {
         let avatar = AvatarView(name: model.headerTitle,
@@ -311,9 +311,9 @@ struct ChatInfoView: View {
         }
     }
 
-    /// Очистка и удаление: оба действия необратимы, поэтому стоят отдельно и
-    /// спрашивают подтверждение с тем же текстом, что и блокировка, — что
-    /// именно уйдёт и что останется у собеседника.
+    /// Clearing and deleting are both irreversible, so they stand apart and ask
+    /// for confirmation in the same terms as blocking: what exactly goes away
+    /// and what the other side keeps.
     @ViewBuilder
     private var destructiveSection: some View {
         Section {
@@ -365,7 +365,7 @@ struct ChatInfoView: View {
         }
     }
 
-    /// nil — снять mute; иначе включить на срок опции.
+    /// nil unmutes; anything else mutes for the option's duration.
     private func applyMute(_ option: MuteOption?) {
         let until = option?.until()
         Task {
@@ -393,7 +393,7 @@ struct ChatInfoView: View {
               let myIdentity = try? store.identity(),
               let theirKeyB64 = peer.identitySigning,
               let theirKey = Data(base64urlEncoded: theirKeyB64) else {
-            // ключ собеседника подтянем из prekey-бандла
+            // fetch the peer's key from the prekey bundle
             Task {
                 if let bundles = try? await app.api.prekeys(userId: peer.id).bundles, let b = bundles.first {
                     try? await app.db.write { dbc in
@@ -481,7 +481,7 @@ extension ChatInfoView {
         }
     }
 
-    /// Вложения всех видов: по кругу на каждый прогон.
+    /// One of every attachment kind, a full round per run.
     func seedAttachments(_ rounds: Int) {
         seeding = true
         seedSent = 0

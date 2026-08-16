@@ -1,14 +1,14 @@
 import SwiftUI
 import MsngrCore
 
-/// Выдача поиска одним списком: чаты появляются на первом же символе, сообщения
-/// и люди подъезжают ниже, когда их найдут.
+/// Search results in one list: chats show up on the very first character,
+/// messages and people arrive below them as they are found.
 struct ChatSearchResults: View {
     @ObservedObject var list: ChatListModel
     @ObservedObject var search: ChatSearchModel
     let ownUserId: String
     @Environment(\.dynamicTypeSize) private var typeSize
-    /// Тап по найденному сообщению: чат открывается на этом сообщении.
+    /// A tap on a found message opens the chat at that message.
     var onOpenMessage: (MessageSearchHit) -> Void
     var onOpenPerson: (APIClient.UserDTO) -> Void
 
@@ -30,7 +30,7 @@ struct ChatSearchResults: View {
         .overlay { if showsEmptyState { emptyState } }
     }
 
-    // MARK: - Сообщения
+    // MARK: - Messages
 
     @ViewBuilder
     private var messagesSection: some View {
@@ -47,7 +47,7 @@ struct ChatSearchResults: View {
             }
             .accessibilityIdentifier("search.messages")
         } else if search.searchingMessages {
-            // чаты уже на экране — состояние объясняет, чего ещё ждать
+            // the chats are already on screen; this says what else is still coming
             Section("Сообщения") {
                 HStack(spacing: 8) {
                     ProgressView()
@@ -58,7 +58,7 @@ struct ChatSearchResults: View {
         }
     }
 
-    // MARK: - Люди
+    // MARK: - People
 
     @ViewBuilder
     private var peopleSection: some View {
@@ -87,10 +87,11 @@ struct ChatSearchResults: View {
         }
     }
 
-    // MARK: - Пусто
+    // MARK: - Empty
 
-    /// Пусто показывается, только когда искать уже нечего: пока идут сообщения
-    /// или люди, на экране состояние поиска, а не его итог.
+    /// The empty state appears only when there is nothing left to find: while
+    /// messages or people are still coming the screen shows the search running,
+    /// not its outcome.
     private var showsEmptyState: Bool {
         list.searchResults.isEmpty && search.hits.isEmpty && search.people.isEmpty
             && !search.searchingMessages && !search.searchingPeople && search.messagesReady
@@ -113,14 +114,14 @@ struct ChatSearchResults: View {
         .accessibilityIdentifier("search.empty")
     }
 
-    /// Аватар человека тянется за размером текста, как строка чата рядом.
+    /// A person's avatar scales with the text size, like the chat row beside it.
     private var personAvatarSide: CGFloat {
         typeSize.scaled(40, relativeTo: .subheadline, max: 58)
     }
 }
 
-/// Строка найденного сообщения: чей чат, кусок текста с подсвеченным словом и
-/// когда это было написано.
+/// A found message as a row: whose chat it is, the snippet with the matched
+/// word highlighted, and when it was written.
 struct MessageHitRow: View {
     let hit: MessageSearchHit
     let chat: ChatListItem?
@@ -143,8 +144,8 @@ struct MessageHitRow: View {
                         .layoutPriority(1)
                 }
                 HStack(alignment: .top, spacing: 4) {
-                    // подпись под вложением ищется как обычный текст, но строка
-                    // должна показывать, что нашлась не переписка, а фото или файл
+                    // an attachment caption is searched as ordinary text, but the
+                    // row has to show the hit is a photo or a file, not a message
                     if let icon = Self.kindIcon(hit.kind) {
                         Image(systemName: icon)
                             .font(Theme.glyph(12, max: 18))
@@ -182,15 +183,15 @@ struct MessageHitRow: View {
         }
     }
 
-    /// Найденные слова выделяются прямо в куске текста: так видно, за что
-    /// строка попала в выдачу.
+    /// The matched words are emphasised inside the snippet itself, so it is
+    /// visible what put the row in the results.
     static func highlighted(_ snippet: MessageSearchSnippet) -> AttributedString {
         var text = AttributedString(snippet.text)
         for range in snippet.matches {
             guard let lower = AttributedString.Index(range.lowerBound, within: text),
                   let upper = AttributedString.Index(range.upperBound, within: text) else { continue }
-            // выделение задаётся ролью текста, а не своим размером: строка
-            // целиком должна тянуться за системным размером шрифта
+            // the emphasis comes from the text role rather than a size of its
+            // own: the whole row has to follow the system font size
             text[lower..<upper].inlinePresentationIntent = .stronglyEmphasized
             text[lower..<upper].foregroundColor = Theme.accent
         }

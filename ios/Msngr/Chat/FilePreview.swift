@@ -3,8 +3,9 @@ import QuickLook
 import UniformTypeIdentifiers
 import MsngrCore
 
-/// Имя файла для просмотра: QuickLook определяет тип по расширению, а в кэше медиа
-/// файл лежит под mediaId с расширением из mime (для документов это «.bin»).
+/// File name for the preview: QuickLook decides the type from the extension, while in the
+/// media cache the file lives under its mediaId with an extension from the mime type,
+/// which for documents is ".bin".
 enum FilePreviewName {
     static func previewFileName(name: String?, mime: String?, mediaId: String) -> String {
         let cleaned = (name ?? "")
@@ -18,7 +19,7 @@ enum FilePreviewName {
     }
 }
 
-/// Экран, поверх которого показывается системный просмотрщик.
+/// The screen the system previewer is presented over.
 @MainActor
 enum TopViewController {
     static func current() -> UIViewController? {
@@ -33,8 +34,8 @@ enum TopViewController {
     }
 }
 
-/// Просмотр файлового сообщения: расшифрованный файл из кэша открывается
-/// в QLPreviewController, нечитаемые типы уходят в системный share-лист.
+/// Preview of a file message: the decrypted file from the cache opens in a
+/// QLPreviewController, and types it cannot read go to the system share sheet.
 @MainActor
 enum FilePreviewPresenter {
     private static var source: PreviewItemSource?
@@ -49,7 +50,7 @@ enum FilePreviewPresenter {
         }
     }
 
-    /// Копия под исходным именем: жёсткая ссылка, чтобы не дублировать байты на диске.
+    /// A copy under the original name, made as a hard link so the bytes are not duplicated on disk.
     private static func named(_ url: URL, as name: String) -> URL {
         guard url.lastPathComponent != name else { return url }
         let fm = FileManager.default
@@ -86,7 +87,7 @@ enum FilePreviewPresenter {
         top.present(ql, animated: true)
     }
 
-    /// Держит URL живым, пока просмотрщик на экране.
+    /// Keeps the URL alive while the previewer is on screen.
     private final class PreviewItemSource: NSObject, QLPreviewControllerDataSource, QLPreviewControllerDelegate {
         let url: URL
         init(url: URL) { self.url = url }

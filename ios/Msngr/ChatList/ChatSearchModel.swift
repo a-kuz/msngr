@@ -2,34 +2,35 @@ import Foundation
 import Combine
 import MsngrCore
 
-/// Медленная половина поиска по чат-листу: полнотекст по сообщениям и люди с
-/// сервера. Быстрая половина — чаты по названию — считается в `ChatListModel`
-/// прямо на нажатие клавиши и этого не ждёт.
+/// The slow half of chat-list search: full text over messages, and people from
+/// the server. The fast half, chats by title, is computed in `ChatListModel` on
+/// the keystroke itself and never waits for this one.
 ///
-/// Каждый набор символов отменяет предыдущий: у выдачи есть номер, и ответ со
-/// старым номером не применяется, даже если пришёл позже свежего.
+/// Every new query cancels the one before it: results carry a generation number,
+/// and an answer with an old number is not applied even if it arrives after a
+/// fresher one.
 @MainActor
 final class ChatSearchModel: ObservableObject {
     @Published private(set) var hits: [MessageSearchHit] = []
     @Published private(set) var people: [APIClient.UserDTO] = []
-    /// Первая страница сообщений по текущему запросу ещё читается.
+    /// The first page of messages for the current query is still being read.
     @Published private(set) var searchingMessages = false
     @Published private(set) var searchingPeople = false
-    /// Первая страница по текущему запросу прочитана: до этого пустой список —
-    /// это «ещё ищем», а не «ничего нет».
+    /// The first page for the current query has been read. Until it has, an
+    /// empty list means "still searching", not "nothing found".
     @Published private(set) var messagesReady = false
 
-    /// Пауза перед запросом: набор идёт быстрее, чем имеет смысл искать.
+    /// Pause before the query: typing runs faster than searching is worth.
     static let debounce = Duration.milliseconds(180)
-    /// Со скольких символов есть смысл спрашивать сервер о людях. Столько же
-    /// требует поиск в листе нового чата.
+    /// How many characters make it worth asking the server about people. The
+    /// new-chat list asks for the same.
     static let peopleMinimum = 2
-    /// За сколько строк до конца списка читается следующая страница.
+    /// How many rows short of the end of the list the next page is read.
     private static let prefetch = 8
 
     private var query = ""
-    /// Номер выдачи: растёт на каждый новый запрос, ответы с чужим номером
-    /// выбрасываются.
+    /// The generation of the results: it grows with every new query, and answers
+    /// carrying someone else's number are thrown away.
     private var generation = 0
     private var cursor: MessageSearchCursor?
     private var reachedEnd = true
@@ -39,8 +40,8 @@ final class ChatSearchModel: ObservableObject {
 
     private let app = AppState.shared
 
-    /// Новый запрос: результаты предыдущего снимаются сразу, чтобы под свежим
-    /// запросом ни секунды не лежала чужая выдача.
+    /// A new query. The previous results are cleared at once, so that results
+    /// belonging to an older query never sit under a fresh one.
     func update(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed != query else { return }
@@ -75,7 +76,8 @@ final class ChatSearchModel: ObservableObject {
         }
     }
 
-    /// Догрузка на подходе к концу списка: вызывается строками у нижнего края.
+    /// Reads the next page as the end of the list nears; the rows near the
+    /// bottom edge call it.
     func loadMoreIfNeeded(at hit: MessageSearchHit) {
         guard !loadingPage, !reachedEnd,
               let index = hits.firstIndex(where: { $0.id == hit.id }),
@@ -86,7 +88,7 @@ final class ChatSearchModel: ObservableObject {
         loadingPage = true
         Task { [weak self] in
             let page = await self?.page(query: query, after: cursor)
-            // выдача сменилась, пока читалась страница: она уже не про этот запрос
+            // the query changed while the page was loading: the page is no longer about it
             guard let self, generation == self.generation else { return }
             self.loadingPage = false
             guard let page else { return }
@@ -116,8 +118,8 @@ final class ChatSearchModel: ObservableObject {
     }
 }
 
-/// Открыть переписку с человеком: у неё либо уже есть чат, либо сервер заводит
-/// его на месте. Одним путём ходят и поиск, и лист нового чата.
+/// Opens the conversation with a person: either its chat already exists, or the
+/// server creates one there and then. Search and the new-chat list share this path.
 enum DirectChat {
     static func open(userId: String) async -> String? {
         let app = AppState.shared

@@ -2,9 +2,9 @@ import XCTest
 import GRDB
 @testable import MsngrCore
 
-/// Офлайн-надёжность: сброс inflight-отправок при старте и схлопывание
-/// read-акций в очереди сервисных действий. Сервер не нужен — движок
-/// создаётся с недоступным адресом.
+/// Offline reliability: resetting inflight sends on start and collapsing read
+/// actions in the service action queue. No server needed, the engine is built
+/// against an address nothing listens on.
 final class OfflineReliabilityTests: XCTestCase {
     private func makeEngine(db: DatabaseQueue) throws -> SyncEngine {
         let api = APIClient(baseURL: URL(string: "http://localhost:1")!)
@@ -15,8 +15,8 @@ final class OfflineReliabilityTests: XCTestCase {
                           ownUserId: "me", ownDeviceId: "dev")
     }
 
-    /// Kill во время отправки: строки outbox, застрявшие в inflight,
-    /// при старте возвращаются в ready одним UPDATE.
+    /// Killed mid-send: outbox rows stuck in inflight go back to ready on
+    /// start, in a single UPDATE.
     func testStartResetsInflightToReady() async throws {
         let db = try AppDatabase.openInMemory()
         try await db.write { dbc in
@@ -34,15 +34,15 @@ final class OfflineReliabilityTests: XCTestCase {
         await engine.stop()
     }
 
-    /// markRead офлайн копится в pendingAction и схлопывается по чату:
-    /// одна строка на chatId, побеждает больший upToSeq.
+    /// Offline markRead accumulates in pendingAction and collapses per chat:
+    /// one row per chatId, the larger upToSeq wins.
     func testMarkReadCollapsesPerChat() async throws {
         let db = try AppDatabase.openInMemory()
-        let engine = try makeEngine(db: db) // без start(): офлайн, очередь не дренится
+        let engine = try makeEngine(db: db) // no start(): offline, the queue never drains
 
         await engine.markRead(chatId: "chat1", upToSeq: 5)
         await engine.markRead(chatId: "chat1", upToSeq: 9)
-        await engine.markRead(chatId: "chat1", upToSeq: 7) // меньший seq не откатывает
+        await engine.markRead(chatId: "chat1", upToSeq: 7) // a smaller seq does not roll it back
         await engine.markRead(chatId: "chat2", upToSeq: 3)
 
         let rows = try await db.read { dbc in
@@ -60,8 +60,8 @@ final class OfflineReliabilityTests: XCTestCase {
         XCTAssertEqual(p2.upToSeq, 3)
     }
 
-    /// Заявка до принятия: read-марка не ставится и в очередь не попадает —
-    /// автор не должен узнать, что получатель открывал чат.
+    /// A request before it is accepted: no read mark is stored and nothing is
+    /// queued, so the author cannot learn that the recipient opened the chat.
     func testMarkReadSkippedForRequestChat() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
@@ -83,7 +83,7 @@ final class OfflineReliabilityTests: XCTestCase {
         }
         XCTAssertEqual(readUpTo, 0)
 
-        // после принятия марки снова ходят
+        // once accepted, marks are sent again
         await engine.acceptChatRequest(chatId: "req")
         await engine.markRead(chatId: "req", upToSeq: 3)
         queued = try await db.read { dbc in

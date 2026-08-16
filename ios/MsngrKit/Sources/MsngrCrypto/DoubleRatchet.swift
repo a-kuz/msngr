@@ -1,12 +1,12 @@
 import CryptoKit
 import Foundation
 
-/// Double Ratchet (Signal spec): DH-рэтчет + симметричные цепочки,
-/// поддержка out-of-order через skipped message keys.
+/// Double Ratchet (Signal spec): DH ratchet plus symmetric chains, with
+/// out-of-order delivery handled through skipped message keys.
 public struct RatchetHeader: Codable, Sendable, Equatable {
-    public let dhPub: Data   // текущий DH-pub отправителя
-    public let pn: UInt32    // длина предыдущей отправной цепочки
-    public let n: UInt32     // номер сообщения в текущей цепочке
+    public let dhPub: Data   // sender's current DH pub
+    public let pn: UInt32    // length of the previous sending chain
+    public let n: UInt32     // message number within the current chain
 }
 
 public struct RatchetMessage: Codable, Sendable {
@@ -35,8 +35,9 @@ public struct DoubleRatchetSession: Codable, Sendable {
     static let maxSkip: UInt32 = 5000
     static let maxSkippedStored = 5000
 
-    /// Сессия уже получала входящие (устоялась) — признак того, что повторный
-    /// prekey-конверт следует игнорировать (защита от replay/session-reset).
+    /// The session has already received something, so it is established. A
+    /// prekey envelope arriving after that is ignored: it would otherwise let a
+    /// replayed handshake reset a live session.
     public var hasReceived: Bool { recvN > 0 || recvChainKey != nil }
 
     // MARK: - KDF
@@ -60,7 +61,7 @@ public struct DoubleRatchetSession: Codable, Sendable {
 
     // MARK: - Init
 
-    /// Алиса (инициатор): знает DH-pub Боба (его signed prekey).
+    /// Alice (initiator): already knows Bob's DH pub, which is his signed prekey.
     public static func initAlice(sharedSecret: SymmetricKey, theirRatchetPub: Data, ad: Data) throws -> DoubleRatchetSession {
         let dhSelf = Curve25519.KeyAgreement.PrivateKey()
         let remote = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: theirRatchetPub)
@@ -75,7 +76,7 @@ public struct DoubleRatchetSession: Codable, Sendable {
         return s
     }
 
-    /// Боб (ответчик): его ratchet-ключ = signed prekey.
+    /// Bob (responder): his ratchet key is the signed prekey.
     public static func initBob(sharedSecret: SymmetricKey, ourRatchetKey: Curve25519.KeyAgreement.PrivateKey, ad: Data) -> DoubleRatchetSession {
         let sk = sharedSecret.withUnsafeBytes { Data($0) }
         return DoubleRatchetSession(rootKey: sk,
@@ -105,12 +106,12 @@ public struct DoubleRatchetSession: Codable, Sendable {
             skipped.removeValue(forKey: skipKey)
             return try open(message, with: mk)
         }
-        // 2. новый DH-pub отправителя → DH-рэтчет
+        // 2. sender moved to a new DH pub -> step the DH ratchet
         if message.header.dhPub != dhRemotePub {
-            try skipRecvKeys(until: message.header.pn) // дочитать старую цепочку
+            try skipRecvKeys(until: message.header.pn) // read out the old chain first
             try dhRatchet(remotePub: message.header.dhPub)
         }
-        // 3. пропущенные в текущей цепочке
+        // 3. gaps within the current chain
         try skipRecvKeys(until: message.header.n)
         guard let chainKey = recvChainKey else { throw CryptoError.noSession }
         let (next, msgKey) = Self.kdfChain(chainKey)
@@ -154,7 +155,7 @@ public struct DoubleRatchetSession: Codable, Sendable {
             recvN += 1
         }
         recvChainKey = chainKey
-        // не дать skipped расти бесконечно: вытесняем самые старые по номеру сообщения
+        // keep skipped bounded: evict the lowest message numbers first
         if skipped.count > Self.maxSkippedStored {
             func msgIndex(_ key: String) -> UInt32 {
                 UInt32(key.split(separator: "/").last.map(String.init) ?? "") ?? 0
@@ -173,14 +174,14 @@ public struct DoubleRatchetSession: Codable, Sendable {
         dhRemotePub = remotePub
         let remote = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: remotePub)
 
-        // recv chain: наш текущий ключ + их новый pub
+        // recv chain: our current key + their new pub
         let selfKey = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: dhSelfPriv)
         let recvOut = try selfKey.sharedSecretFromKeyAgreement(with: remote)
         let (root1, recvChain) = Self.kdfRoot(rootKey, dhOut: recvOut)
         rootKey = root1
         recvChainKey = recvChain
 
-        // send chain: наш новый ключ + их новый pub
+        // send chain: our new key + their new pub
         let newSelf = Curve25519.KeyAgreement.PrivateKey()
         dhSelfPriv = newSelf.rawRepresentation
         let sendOut = try newSelf.sharedSecretFromKeyAgreement(with: remote)

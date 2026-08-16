@@ -88,8 +88,8 @@ public struct IncomingDecryptor: Sendable {
 
         var trustIssue: String?
 
-        // сначала всегда пробуем известные сессии: активную, затем архивные.
-        // Сообщение не должно теряться из-за рассинхрона состояний.
+        // Always try the sessions we already know first, active one before archived ones.
+        // A message must not be lost just because the two sides' state drifted apart.
         if var existing = try store.loadSession(peerUserId: fromUserId, peerDeviceId: fromDeviceId),
            let plain = try? existing.decrypt(ratchetMsg) {
             try store.saveSession(existing, peerUserId: fromUserId, peerDeviceId: fromDeviceId,
@@ -105,9 +105,9 @@ public struct IncomingDecryptor: Sendable {
         }
 
         if box.type == "pk" {
-            // pk не подошёл ни к одной известной сессии → поднимаем новую responder-сессию,
-            // а текущую убираем в архив (её ещё могут использовать «догоняющие» сообщения).
-            // Так корректно разрешается и одновременная инициация (glare), и рассинхрон.
+            // A pk that no known session could open: build a fresh responder session and
+            // move the current one to the archive, where messages still in flight can
+            // reach it. This resolves both simultaneous initiation (glare) and plain drift.
             try store.archiveCurrentSession(peerUserId: fromUserId, peerDeviceId: fromDeviceId)
             guard let ikB64 = box.ik, let ik = Data(base64urlEncoded: ikB64),
                   let ekB64 = box.ek, let ek = Data(base64urlEncoded: ekB64),
@@ -123,8 +123,8 @@ public struct IncomingDecryptor: Sendable {
             if let otpId = box.otpId {
                 otpPriv = try store.oneTimePrekey(id: otpId)
             }
-            // кандидаты: с one-time prekey и без него. Второй вариант спасает, если ключ
-            // уже был израсходован (повторная выдача бандла, дубль конверта).
+            // Two candidates: with the one-time prekey and without it. The second covers a
+            // prekey already spent by a re-issued bundle or a duplicated envelope.
             var candidates: [DoubleRatchetSession] = []
             let identity = try store.identity()
             for otp in [otpPriv, nil] as [Curve25519.KeyAgreement.PrivateKey?] {
@@ -148,16 +148,16 @@ public struct IncomingDecryptor: Sendable {
             return .undecryptable(reason: "pk_decrypt_failed")
         }
 
-        // dr-сообщение, к которому не подошла ни активная, ни архивные сессии:
-        // ключ может приехать позже (сообщение обогнало свой pk) — вернём retryable-причину
+        // A dr message that neither the active nor any archived session could open. Its key
+        // may still arrive (the message overtook its own pk), so the reason is retryable.
         return .undecryptable(reason: "no_session")
     }
 
     private func handleInner(_ plaintext: Data, fromUserId: String, trustIssue: String?) throws -> DecryptedIncoming {
         let inner = try JSONDecoder().decode(InnerMessage.self, from: plaintext)
         if inner.type == "skd", let skd = inner.skd, let chatId = inner.chatId {
-            // повторная раздача той же цепочки не откатывает уже продвинутое
-            // состояние: сохранённый получатель мог уйти вперёд по итерациям
+            // Re-distributing the same chain must not roll the receiver back: the stored
+            // one may already have stepped forward through several iterations.
             if try store.loadSenderKeyIn(chatId: chatId, senderUserId: fromUserId, keyId: skd.keyId) == nil {
                 let receiver = SenderKeyReceiver(distribution: skd)
                 try store.saveSenderKeyIn(chatId: chatId, senderUserId: fromUserId,

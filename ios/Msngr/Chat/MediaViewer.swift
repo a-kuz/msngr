@@ -2,8 +2,8 @@ import SwiftUI
 import AVKit
 import MsngrCore
 
-/// Показ просмотрщика в отдельном UIWindow поверх всего UI приложения:
-/// окно перекрывает и навбар чата, и статусбар.
+/// Presents the viewer in its own UIWindow above the whole app UI: the window covers both
+/// the chat's nav bar and the status bar.
 @MainActor
 enum MediaViewerPresenter {
     private static var window: UIWindow?
@@ -39,7 +39,7 @@ enum MediaViewerPresenter {
     }
 }
 
-/// Фуллскрин-просмотрщик фото/видео: зум, свайп-вниз для закрытия, пейджинг альбома.
+/// Full-screen photo and video viewer: zoom, swipe down to close, paging through an album.
 struct MediaViewerView: View {
     let message: Message
     let startIndex: Int
@@ -187,7 +187,7 @@ private struct MediaPage: View {
     }
 }
 
-/// Видео: стриминг с range-запросов, потом локальный файл когда скачан.
+/// Video: streamed over range requests, then played from the local file once downloaded.
 private struct VideoPlayerPage: View {
     let url: URL
     @State private var player: AVPlayer?

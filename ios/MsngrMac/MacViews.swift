@@ -4,7 +4,7 @@ import Combine
 import MsngrCore
 import MsngrCrypto
 
-// MARK: - Регистрация
+// MARK: - Registration
 
 struct MacRegisterView: View {
     @EnvironmentObject var app: MacAppState
@@ -146,7 +146,7 @@ func macPreviewText(_ m: Message) -> String {
     }
 }
 
-/// Держатель ссылки на state для моделей (macOS не прокидывает env в ObservableObject).
+/// Holds the app state for the models: macOS doesn't pass the environment into an ObservableObject.
 enum MacAppStateHolder {
     @MainActor static var shared: MacAppState?
 }
@@ -171,7 +171,7 @@ struct MacChatView: View {
         .onAppear { model.start(chatId: chatId) }
     }
 
-    /// Заявка до принятия: содержимое не показываем, только имя и решение.
+    /// A request before it is accepted: no content, only the name and the decision.
     private var requestCard: some View {
         VStack(spacing: 12) {
             Text(model.title).font(.title2.bold())
@@ -248,7 +248,7 @@ final class MacChatModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var title = ""
     @Published var replyingTo: Message?
-    /// заявка до принятия: ленту и поле ввода не показываем
+    /// request before acceptance: the feed and the input field stay hidden
     @Published var contentHidden = false
     private var cancellable: AnyCancellable?
     private var members: [String: String] = [:]
@@ -297,15 +297,15 @@ final class MacChatModel: ObservableObject {
         enqueue(c)
     }
 
-    /// Отказ постановки в очередь означает, что сообщение не записалось на диск
-    /// и потеряно; отдельного места показать это в macOS-клиенте нет, поэтому
-    /// пишем в лог, а не молчим.
+    /// A failed enqueue means the message never made it to disk and is lost;
+    /// the macOS client has no place to show that, so it goes to the log rather
+    /// than nowhere.
     private func enqueue(_ content: ContentPayload) {
         Task { [chatId] in
             do {
                 try await MacAppStateHolder.shared?.engine.enqueue(content: content, chatId: chatId)
             } catch {
-                MsngrLog.outbox.error("не удалось поставить \(content.kind) в очередь: \(error)")
+                MsngrLog.outbox.error("failed to enqueue \(content.kind): \(error)")
             }
         }
     }

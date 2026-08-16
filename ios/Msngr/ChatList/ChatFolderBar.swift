@@ -1,14 +1,14 @@
 import SwiftUI
 import MsngrCore
 
-/// Вкладки над списком: «Все» и папки пользователя. Вкладка переключается
-/// тапом, а сам список — свайпом (см. ChatListView); подчёркивание переезжает
-/// одной пружиной на обеих дорогах.
+/// The tabs above the list: «Все» and the user's folders. A tab switches on a
+/// tap, the list itself switches on a swipe (see ChatListView), and the
+/// underline moves on the same spring either way.
 struct ChatFolderBar: View {
     let folders: [ChatFolder]
-    /// Число чатов с непрочитанным по папкам; ключ «Всех» — пустая строка.
+    /// How many chats have unread messages, per folder; the key for «Все» is an empty string.
     let unread: [String: Int]
-    /// Выбранная вкладка; nil — «Все».
+    /// The selected tab; nil means «Все».
     @Binding var selection: String?
     var onManage: () -> Void
     var onEdit: (ChatFolder) -> Void
@@ -16,8 +16,8 @@ struct ChatFolderBar: View {
     @Namespace private var indicator
     @Environment(\.dynamicTypeSize) private var typeSize
 
-    /// Полоса вкладок ведёт свою высоту от шрифта вкладки: на крупном тексте
-    /// название иначе обрезается по нижнему краю.
+    /// The strip takes its height from the tab font: at large text sizes the
+    /// title would otherwise be clipped along the bottom edge.
     private var tabHeight: CGFloat { typeSize.scaled(39, relativeTo: .subheadline, max: 56) }
     private var tabBadgeSide: CGFloat { typeSize.scaled(18, relativeTo: .caption1, max: 28) }
 
@@ -88,8 +88,8 @@ struct ChatFolderBar: View {
         .accessibilityIdentifier("chatlist.folder.\(id ?? "all")")
     }
 
-    /// Пока папок нет, полоса и есть приглашение их завести: на месте будущей
-    /// вкладки стоит кнопка, которая её создаёт.
+    /// While there are no folders the strip is itself the invitation to make
+    /// one: the button that creates it stands where the tab will be.
     private var manageChip: some View {
         Button(action: onManage) {
             HStack(spacing: 4) {

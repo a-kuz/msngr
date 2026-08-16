@@ -18,7 +18,7 @@ final class ImagePipelineTests: XCTestCase {
         if let tempURL { try? FileManager.default.removeItem(at: tempURL) }
     }
 
-    /// PNG 1000x600 с градиентом, сгенерированный через CGContext.
+    /// A PNG drawn with CGContext: a solid background with a contrasting quadrant.
     private static func makePNG(width: Int, height: Int) -> Data? {
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(
@@ -49,7 +49,7 @@ final class ImagePipelineTests: XCTestCase {
         let decodedImage = await pipeline.image(at: tempURL, targetPixelSize: target)
         let image = try XCTUnwrap(decodedImage)
         XCTAssertLessThanOrEqual(max(image.width, image.height), 300)
-        // Пропорции сохранены: 1000x600 -> 300x180.
+        // Aspect ratio is kept: 1000x600 -> 300x180.
         XCTAssertEqual(image.width, 300)
         XCTAssertEqual(image.height, 180)
 
@@ -61,11 +61,11 @@ final class ImagePipelineTests: XCTestCase {
     }
 
     func testPrepareForSendingProducesValidJPEG() throws {
-        // 1000x600 меньше 1280 — размеры не растут; проверим и с меньшим лимитом.
+        // 1000x600 is under the default 1280 limit, so a smaller limit is what actually shrinks it.
         let result = try XCTUnwrap(ImageProcessor.prepareForSending(pngData, maxDimension: 500))
         XCTAssertEqual(result.size, CGSize(width: 500, height: 300))
 
-        // Результат — валидный JPEG: декодится, размеры совпадают.
+        // The result is a real JPEG: it decodes, and at the size we asked for.
         let source = try XCTUnwrap(CGImageSourceCreateWithData(result.data as CFData, nil))
         let type = try XCTUnwrap(CGImageSourceGetType(source) as String?)
         XCTAssertEqual(type, "public.jpeg")
@@ -75,7 +75,7 @@ final class ImagePipelineTests: XCTestCase {
     }
 
     func testPrepareForSendingDefaultLimit() throws {
-        // Длинная сторона 1000 <= 1280 — апскейла нет.
+        // The long side is 1000, under the 1280 limit, so nothing is upscaled.
         let result = try XCTUnwrap(ImageProcessor.prepareForSending(pngData))
         XCTAssertLessThanOrEqual(max(result.size.width, result.size.height), 1280)
     }

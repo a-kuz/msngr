@@ -11,11 +11,10 @@ struct ChatScreen: View {
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showFilePicker = false
     @State private var forwardMessage: Message?
-    /// сообщение, для которого открыт режим выделения текста
+    /// message whose text selection sheet is open
     @State private var selectingText: Message?
-    /// сообщение, для которого спрошено подтверждение удаления
+    /// message the delete confirmation is asked for
     @State private var deleteCandidate: Message?
-    /// подтверждение удаления выбранных в мультивыборе
     @State private var confirmDeleteSelection = false
     @State private var forwardingSelection = false
     @State private var messagesVC = MessagesViewController()
@@ -32,7 +31,7 @@ struct ChatScreen: View {
         ZStack(alignment: .bottom) {
             Theme.chatBackground.ignoresSafeArea()
             VStack(spacing: 0) {
-                // заявка до принятия: вместо ленты карточка с профилем и кнопками
+                // pending request: a profile card with the two buttons stands in for the feed
                 if model.contentHidden {
                     requestCard
                 } else {
@@ -82,8 +81,8 @@ struct ChatScreen: View {
                         .accessibilityIdentifier("chat.selection.count")
                 }
             } else {
-                // своя кнопка вместо системной: возврат — главное действие шапки,
-                // и оно должно читаться раньше остальных её элементов
+                // own button instead of the system one: going back is the header's
+                // primary action and has to read before anything else in it
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button { dismiss() } label: {
                         Image(systemName: "chevron.left")
@@ -100,24 +99,25 @@ struct ChatScreen: View {
         }
         .onAppear {
             model.start()
-            // черновик восстанавливаем только в пустое поле: при возврате из ChatInfo
-            // набранный текст остаётся в @State и не должен затираться
+            // the draft is restored only into an empty field: coming back from
+            // ChatInfo the typed text is still in @State and must not be overwritten
             if text.isEmpty { text = model.chat?.draft ?? "" }
             NotificationCoordinator.shared.activeChatId = chatId
-            // из поиска чат открывается ради конкретного сообщения: запрос ждал,
-            // пока экран появится
+            // search opens the chat for one particular message; the request has been
+            // waiting for this screen to appear
             if let request = MessageJump.take(chatId: chatId) { jump(to: request.msgId) }
         }
-        // chat грузится асинхронно: в onAppear он ещё nil — черновик заливаем,
-        // когда чат реально появился (и только в пустое поле)
+        // chat loads asynchronously and is still nil in onAppear, so the draft goes
+        // in once the chat has actually arrived (and still only into an empty field)
         .onChange(of: model.chat?.id) { _, _ in
             if text.isEmpty, let draft = model.chat?.draft { text = draft }
         }
         .onDisappear {
             let draft = text.trimmingCharacters(in: .whitespacesAndNewlines)
             model.saveDraft(draft.isEmpty ? nil : draft)
-            // push вглубь (ChatInfo) — не рвём подписку и не сбрасываем активный чат,
-            // иначе при возврате лента мертва, а пуши этого чата показываются баннером
+            // on a push deeper in (ChatInfo) the subscription stays and the active chat
+            // is not cleared: otherwise the feed comes back dead and pushes from this
+            // chat start showing up as banners
             guard !showChatInfo else { return }
             model.stop()
             NotificationCoordinator.shared.activeChatId = nil
@@ -126,7 +126,7 @@ struct ChatScreen: View {
             ChatInfoView(model: model)
         }
         .onChange(of: model.editing?.id) { _, _ in
-            // смена редактируемого сообщения (в т.ч. edit A → edit B) — поле показывает его текст
+            // switching which message is edited (edit A → edit B included) puts its text in the field
             if let e = model.editing { text = e.text ?? "" }
         }
         .photosPicker(isPresented: $photoPickerPresented, selection: $photoItems,
@@ -141,7 +141,7 @@ struct ChatScreen: View {
                 Task { await sendFile(url) }
             }
         }
-        // смена палитры: цвета бабблов читаются в configure ячеек — форсируем reload
+        // palette change: bubble colours are read in the cell's configure, so force a reload
         .onReceive(NotificationCenter.default.publisher(for: .paletteChanged)) { _ in
             guard messagesVC.isViewLoaded else { return }
             messagesVC.collectionView.reloadData()
@@ -164,8 +164,8 @@ struct ChatScreen: View {
         .onReceive(NotificationCenter.default.publisher(for: .forwardRequested)) { note in
             forwardMessage = note.object as? Message
         }
-        // из галереи вложений: экраны поверх ленты закрываются, лента доезжает
-        // до сообщения — догрузив историю, если оно глубже окна
+        // from the attachment gallery: the screens above the feed close and the feed
+        // travels to the message, loading history first if it sits deeper than the window
         .onReceive(NotificationCenter.default.publisher(for: .showMessageInChat)) { note in
             guard let request = note.object as? MessageJump, request.chatId == chatId else { return }
             _ = MessageJump.take(chatId: chatId)
@@ -176,7 +176,7 @@ struct ChatScreen: View {
         } message: {
             Text(model.sendFailure ?? "")
         }
-        // удаление одного сообщения из контекстного меню
+        // deleting a single message from the context menu
         .confirmationDialog("Удалить сообщение?", isPresented: deleteCandidateBinding,
                             titleVisibility: .visible) {
             if deleteCandidate?.isOutgoing == true {
@@ -191,7 +191,7 @@ struct ChatScreen: View {
             }
             Button("Отмена", role: .cancel) { deleteCandidate = nil }
         }
-        // удаление выбранных в мультивыборе
+        // deleting the messages picked in multi-select
         .confirmationDialog(deleteSelectionTitle, isPresented: $confirmDeleteSelection,
                             titleVisibility: .visible) {
             if model.canDeleteSelectedForAll {
@@ -220,7 +220,7 @@ struct ChatScreen: View {
         "Удалить " + MessageSelection.title(count: model.selection.count) + "?"
     }
 
-    /// Панель действий мультивыбора вместо поля ввода.
+    /// Multi-select action bar shown in place of the composer.
     private var selectionActionBar: some View {
         HStack(spacing: 0) {
             selectionAction("Удалить", icon: "trash", destructive: true) {
@@ -266,7 +266,7 @@ struct ChatScreen: View {
                      showScrollDown: $showScrollDown)
     }
 
-    /// Пустой чат: центрированная подсказка вместо голого фона.
+    /// Empty chat: a centred hint instead of a bare background.
     private var emptyChatHint: some View {
         VStack(spacing: 8) {
             Image(systemName: "bubble.left.and.bubble.right")
@@ -296,10 +296,10 @@ struct ChatScreen: View {
                            online: model.peer?.online ?? false)
                     .frame(width: 40, height: 40)
                 VStack(alignment: .leading, spacing: 0) {
-                    // тулбар может предложить principal-вью ширину меньше идеальной —
-                    // короткое имя обрезается («4455…»). Текст держит идеальную ширину
-                    // (fixedSize), а реально длинные строки заранее укорачиваются
-                    // с многоточием под доступную ширину навбара
+                    // the toolbar can hand the principal view less than the ideal width,
+                    // and even a short name gets truncated («4455…»). The text holds its
+                    // ideal width (fixedSize), while genuinely long strings are shortened
+                    // with an ellipsis up front to the width the nav bar has
                     Text(Self.fitted(model.headerTitle, font: Theme.Text.headerTitle.uiFont))
                         .textRole(Theme.Text.headerTitle)
                         .foregroundStyle(.primary)
@@ -318,8 +318,8 @@ struct ChatScreen: View {
         .buttonStyle(.plain)
     }
 
-    /// Укорачивает строку шапки с многоточием под ширину, доступную principal-вью
-    /// (экран минус кнопка «назад», аватар и отступы).
+    /// Shortens a header string with an ellipsis to the width the principal view has
+    /// (the screen minus the back button, the avatar and the padding).
     private static func fitted(_ s: String, font: UIFont) -> String {
         let maxWidth = UIScreen.main.bounds.width - 190
         guard s.size(withAttributes: [.font: font]).width > maxWidth else { return s }
@@ -330,8 +330,8 @@ struct ChatScreen: View {
         return t + "…"
     }
 
-    /// Довозит ленту до сообщения: экраны поверх неё закрываются, история
-    /// догружается, если сообщение глубже окна.
+    /// Carries the feed to a message: the screens above it close and history is
+    /// loaded if the message sits deeper than the window.
     private func jump(to msgId: String) {
         showChatInfo = false
         Task {
@@ -372,8 +372,8 @@ struct ChatScreen: View {
         .transition(.move(edge: .top).combined(with: .opacity))
     }
 
-    /// Заявка до принятия: вместо ленты — профиль отправителя и решение.
-    /// Сообщения уже лежат в БД, но на экран не попадают.
+    /// Pending request: the sender's profile and the decision instead of the feed.
+    /// The messages are already in the database, they just never reach the screen.
     private var requestCard: some View {
         VStack(spacing: 0) {
             Spacer()
@@ -424,7 +424,7 @@ struct ChatScreen: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// TOFU-баннер: ключ собеседника сменился, исходящие заблокированы.
+    /// TOFU banner: the peer's key has changed, outgoing messages are blocked.
     private var keyChangeBanner: some View {
         HStack(spacing: 10) {
             Image(systemName: "exclamationmark.shield.fill")
@@ -449,13 +449,13 @@ struct ChatScreen: View {
         .background(.bar)
     }
 
-    /// Уходящее сообщение растворяется в шапке, а не обрезается об неё: тон фона
-    /// набирается к верхнему краю на высоту шапки.
+    /// A message scrolling away dissolves into the header instead of being clipped by
+    /// it: the background tone builds up towards the top edge over the header's height.
     private var headerFade: some View {
         VStack(spacing: 0) {
             LinearGradient(stops: [
-                // до нижнего края шапки фон непрозрачен, дальше долгий спад:
-                // короткий градиент режет баббл кромкой вместо растворения
+                // opaque down to the bottom edge of the header, then a long falloff:
+                // a short gradient cuts the bubble with a visible edge instead of dissolving it
                 .init(color: Theme.chatBackground, location: 0),
                 .init(color: Theme.chatBackground, location: 0.42),
                 .init(color: Theme.chatBackground.opacity(0.75), location: 0.62),
@@ -503,7 +503,7 @@ struct ChatScreen: View {
         .animation(Theme.springFast, value: showScrollDown)
     }
 
-    // MARK: - Отправка вложений
+    // MARK: - Sending attachments
 
     private func sendPicked(_ items: [PhotosPickerItem]) async {
         var photos: [(Data, CGSize, String)] = [] // (jpeg, size, blurhash)
@@ -523,7 +523,7 @@ struct ChatScreen: View {
         await sendPhotos(photos, caption: nil)
     }
 
-    /// Вставленные из буфера картинки — тем же путём, что и выбранные в пикере.
+    /// Images pasted from the clipboard take the same path as ones chosen in the picker.
     private func sendImages(_ images: [UIImage], caption: String) async {
         var photos: [(Data, CGSize, String)] = []
         for image in images {
@@ -540,7 +540,7 @@ struct ChatScreen: View {
     private func sendPhotos(_ photos: [(Data, CGSize, String)], caption: String?) async {
         guard !photos.isEmpty else { return }
 
-        // без сети не теряется: файл в постоянную папку, аплоад делает outbox-воркер
+        // nothing is lost offline: the file goes to a permanent folder, the outbox worker uploads it
         var infos: [MediaInfo] = []
         for (jpeg, size, bh) in photos {
             guard let localName = stash(jpeg, mime: "image/jpeg") else { return }
@@ -566,21 +566,21 @@ struct ChatScreen: View {
         }
     }
 
-    /// Кладёт исходник вложения в постоянную папку. nil — отказ записи, о котором
-    /// пользователь узнаёт из алерта: молча пропущенное вложение выглядело бы как
-    /// «ничего не произошло».
+    /// Puts the attachment's source file into a permanent folder. nil means the write
+    /// failed, and the user hears about it from an alert: an attachment dropped
+    /// silently would look like nothing had happened.
     private func stash(_ data: Data, mime: String? = nil) -> String? {
         do {
             return try app.media.stash(data, mime: mime)
         } catch {
-            MsngrLog.outbox.error("не удалось сохранить вложение: \(error)")
+            MsngrLog.outbox.error("failed to stash attachment: \(error)")
             model.sendFailure = "Вложение не отправлено: не удалось сохранить его на устройстве"
             return nil
         }
     }
 
     private func sendVideo(_ url: URL) async {
-        // компрессия в прогрессивный mp4 + превью-кадр
+        // compress into a progressive mp4, then take a poster frame
         let asset = AVURLAsset(url: url)
         guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset1280x720) else { return }
         let out = FileManager.default.temporaryDirectory.appendingPathComponent("v-\(UUID().uuidString).mp4")
@@ -591,7 +591,6 @@ struct ChatScreen: View {
         guard export.status == .completed, let data = try? Data(contentsOf: out),
               let localName = stash(data, mime: "video/mp4") else { return }
 
-        // превью-кадр
         let gen = AVAssetImageGenerator(asset: asset)
         gen.appliesPreferredTrackTransform = true
         var thumbLocal: String?
@@ -601,7 +600,7 @@ struct ChatScreen: View {
             dims = CGSize(width: cg.width, height: cg.height)
             let ui = UIImage(cgImage: cg)
             if let jpeg = ui.jpegData(compressionQuality: 0.7) {
-                // превью не критично: без него видео уходит с одним blurhash
+                // the thumbnail is optional: without it the video goes out with the blurhash alone
                 thumbLocal = try? app.media.stash(jpeg, mime: "image/jpeg")
                 if let px = ImageProcessor.rgbaPixels(jpeg) {
                     blurhash = BlurHash.encode(pixels: px.pixels, width: px.width, height: px.height) ?? ""
@@ -626,7 +625,7 @@ struct ChatScreen: View {
         let secured = url.startAccessingSecurityScopedResource()
         defer { if secured { url.stopAccessingSecurityScopedResource() } }
         guard let data = try? Data(contentsOf: url), data.count < 100_000_000 else { return }
-        guard let localName = stash(data) else { return }  // файл: расширение не критично
+        guard let localName = stash(data) else { return }  // a plain file: the extension does not matter
         var info = MediaInfo(type: "file", mediaId: "", key: "",
                              hash: "", size: data.count,
                              mime: "application/octet-stream")
@@ -667,17 +666,18 @@ struct VideoTransferable: Transferable {
     }
 }
 
-/// Обёртка UIKit-списка сообщений.
+/// The UIKit message list wrapped for SwiftUI.
 struct MessagesView: UIViewControllerRepresentable {
     let vc: MessagesViewController
-    /// @ObservedObject обязателен: updateUIViewController вызывается по инвалидации
-    /// самого MessagesView, а все его stored-поля — стабильные ссылки, SwiftUI без
-    /// подписки на model считает view неизменным и не прокидывает новый feed в apply()
+    /// @ObservedObject is required: updateUIViewController runs when MessagesView itself
+    /// is invalidated, and every stored field here is a stable reference, so without a
+    /// subscription to the model SwiftUI sees an unchanged view and never hands the new
+    /// feed to apply()
     @ObservedObject var model: ChatViewModel
-    /// feed передаётся и значением: изменение массива меняет value представляемого
-    /// view — SwiftUI гарантированно зовёт updateUIViewController
+    /// the feed is passed by value as well: changing the array changes the value of the
+    /// represented view, so SwiftUI is guaranteed to call updateUIViewController
     let items: [ChatFeedItem]
-    /// режим и состав выбора передаются значением по той же причине, что и feed
+    /// selection mode and contents are passed by value for the same reason as the feed
     let selecting: Bool
     let selectedIds: Set<String>
     var onTapMedia: (Message, Int, UIView) -> Void
@@ -687,7 +687,7 @@ struct MessagesView: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> MessagesViewController {
         vc.onAtBottomChanged = { [weak model] atBottom in
-            // самые новые сообщения не на экране → кнопка «вниз», прочтение не отмечаем
+            // newest messages off screen: show the scroll-down button, mark nothing read
             if showScrollDown == atBottom { showScrollDown = !atBottom }
             model?.isViewingBottom = atBottom
             if atBottom { model?.markVisibleRead() }
@@ -698,15 +698,15 @@ struct MessagesView: UIViewControllerRepresentable {
         }
         vc.onReact = { [weak model] msg, emoji in model?.react(msg, emoji: emoji) }
         vc.onTapMedia = onTapMedia
-        // тап по цитате — переход к оригиналу; если он глубже загруженной
-        // страницы, сначала догружаем историю
+        // tapping a quote jumps to the original; if it lies deeper than the loaded
+        // page, history is fetched first
         vc.onTapReplyQuote = { [weak model, weak vc] msg in
             guard let vc, let targetId = msg.replyTo?.msgId else { return }
             if vc.scrollTo(msgId: targetId, highlight: true) { return }
             guard let model else { return }
             Task {
                 guard await model.ensureLoaded(msgId: targetId) else {
-                    Haptics.rigid()   // оригинал недоступен
+                    Haptics.rigid()   // the original is out of reach
                     return
                 }
                 Self.scrollWhenReady(vc: vc, msgId: targetId)
@@ -719,8 +719,8 @@ struct MessagesView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ vc: MessagesViewController, context: Context) {
-        // колбэки с биндингами переустанавливаются на каждом апдейте: снимок
-        // биндинга из makeUIViewController живёт дольше, чем породившее его тело
+        // callbacks that capture bindings are reinstalled on every update: a binding
+        // captured in makeUIViewController outlives the body that produced it
         vc.onContextAction = { [weak model] msg, action in
             guard let model else { return }
             switch action {
@@ -738,9 +738,9 @@ struct MessagesView: UIViewControllerRepresentable {
         vc.setSelection(mode: selecting, ids: selectedIds)
     }
 
-    /// Догруженная история попадает в список через updateUIViewController —
-    /// скроллим, как только сообщение появилось в ленте. Тем же путём доезжает
-    /// переход из галереи: там ждать приходится ещё и закрытия экранов поверх.
+    /// Fetched history reaches the list through updateUIViewController, so the scroll
+    /// happens as soon as the message shows up in the feed. The jump from the gallery
+    /// arrives the same way, only there the screens on top have to close first.
     static func scrollWhenReady(vc: MessagesViewController, msgId: String, attempts: Int = 16) {
         if vc.scrollTo(msgId: msgId, highlight: true) { return }
         guard attempts > 0 else { return }

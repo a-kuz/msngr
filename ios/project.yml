@@ -27,7 +27,7 @@ targets:
       path: Msngr/Msngr.entitlements
       properties:
         com.apple.security.application-groups: [group.ai.enface.msngr]
-        # аватар и имя отправителя в баннере (Communication Notifications)
+        # sender avatar and name in the banner (Communication Notifications)
         com.apple.developer.usernotifications.communication: true
     dependencies:
       - package: MsngrKit

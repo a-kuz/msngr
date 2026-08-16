@@ -6,7 +6,7 @@ final class ReconnectBackoffTests: XCTestCase {
         XCTAssertEqual(WSClient.reconnectDelay(attempt: 0), 1.0, accuracy: 0.001)
         XCTAssertGreaterThan(WSClient.reconnectDelay(attempt: 3),
                              WSClient.reconnectDelay(attempt: 1))
-        // потолок: возврат сети не должен стоить пользователю минут ожидания
+        // the cap: when the network comes back, the wait must not run into minutes
         XCTAssertEqual(WSClient.reconnectDelay(attempt: 20), 12.0, accuracy: 0.001)
         XCTAssertLessThanOrEqual(WSClient.reconnectDelay(attempt: 100), 12.0)
     }

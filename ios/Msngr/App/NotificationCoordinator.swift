@@ -4,27 +4,26 @@ import UserNotifications
 import GRDB
 import MsngrCore
 
-/// Узел уведомлений. Сервер шлёт APNs-пуш на каждое контентное сообщение,
-/// параллельно живой WS доставляет то же сообщение в приложение, поэтому:
-/// - при активном приложении баннер о сообщении показывается по WS (in-app),
-///   а догнавший системный пуш гасится в willPresent (дедуп по msgId);
-/// - в фоне показывает системный пуш (NSE подставляет расшифрованное превью), а
-///   когда пуш недоступен (симулятор, устройство без токена) — своё локальное
-///   уведомление по WS-фрейму;
-/// - бейдж на иконке — счётчик непрочитанного, посчитанный сервером и
-///   приехавший в пуше; приложение сообщает то же число, когда до него дошло
-///   само (см. `BadgeStore`);
-/// - при прочтении чата его доставленные уведомления снимаются из шторки.
+/// The notification hub. The server pushes every content message over APNs
+/// while the live WS delivers the same message into the app, so:
+/// - with the app active the banner comes from the WS (in-app), and the system
+///   push that catches up is dropped in willPresent (dedup by msgId);
+/// - in the background the system push shows it (the NSE fills in the decrypted
+///   preview); where push is unavailable (simulator, device without a token) the
+///   app posts its own local notification off the WS frame;
+/// - the icon badge is the unread count the server computed and sent in the
+///   push; the app reports the same number once it knows it itself (`BadgeStore`);
+/// - reading a chat clears its delivered notifications from the shade.
 @MainActor
 final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationCoordinator()
-    /// chatId чата, открытого на экране (nil — чат-лист/другой экран)
+    /// chatId of the chat on screen; nil on the chat list or any other screen
     var activeChatId: String?
-    /// доставит ли баннер в фоне сам APNs; false — приложение постит своё
-    /// локальное уведомление, пока в фоне жив WS
+    /// Whether APNs itself delivers the background banner. When false the app
+    /// posts its own local notification for as long as the WS lives in the background.
     var apnsAvailable = true
 
-    /// msgId, для которых баннер уже показан (in-app или системный) — дедуп WS↔APNs
+    /// msgIds whose banner has already been shown (in-app or system): the WS↔APNs dedup
     private var shownMsgIds: Set<String> = []
     private var db: DatabaseQueue?
     private var incomingTask: Task<Void, Never>?
@@ -35,7 +34,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in }
     }
 
-    /// Вызывается после bootstrap: БД и движок готовы.
+    /// Called after bootstrap, once the database and the engine are ready.
     func attach(db: DatabaseQueue, engine: SyncEngine, ownUserId: String) {
         self.db = db
         observeUnread(db: db)
@@ -51,8 +50,8 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         }
     }
 
-    /// Отпускает БД и движок прежней сессии: после логаута файлы хранилища
-    /// удаляются, держать на них ссылки нельзя.
+    /// Releases the previous session's database and engine: logout deletes the
+    /// storage files, so nothing may go on holding references to them.
     func detach() {
         incomingTask?.cancel()
         incomingTask = nil
@@ -67,7 +66,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         UNUserNotificationCenter.current().setBadgeCount(0)
     }
 
-    // MARK: - Входящее по WS → in-app баннер
+    // MARK: - Incoming over WS → in-app banner
 
     private func handleIncomingWS(_ ev: SyncEngine.IncomingMessage) async {
         let appActive = UIApplication.shared.applicationState == .active
@@ -89,8 +88,8 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         await show(action, content: content, info: info, chatId: ev.chatId, msgId: ev.msgId)
     }
 
-    /// Показывает готовый контент: аватар подтягивается из кэша (при отсутствии
-    /// файла — качается, но показ не ждёт больше, чем занимает запрос).
+    /// Shows prepared content. The avatar comes from the cache; a file that is
+    /// missing gets downloaded, and the banner waits no longer than that request.
     private func show(_ action: NotificationDecision.WSAction,
                       content: NotificationContent,
                       info: BannerInfo,
@@ -123,19 +122,19 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
     }
 
     struct BannerInfo {
-        /// nil — уведомления по этому сообщению быть не должно
+        /// nil when this message must not raise a notification at all
         var content: NotificationContent?
-        /// место сообщения в чате; 0 — сообщения ещё нет в БД
+        /// the message's place in the chat; 0 while it is not in the database yet
         var seq: Int = 0
         var sender: NotificationContentBuilder.SenderInfo
         var isGroup: Bool
         var chatAvatarId: String?
         var muted: Bool
-        /// участники группы кроме себя — по ним система понимает, что разговор групповой
+        /// group members other than self: this is how the system tells the conversation is a group one
         var groupMembers: [NotificationContentBuilder.SenderInfo] = []
     }
 
-    /// Собирает контент уведомления из локальной БД: чат, отправитель, сообщение.
+    /// Assembles the notification content from the local database: chat, sender, message.
     private func bannerInfo(chatId: String, msgId: String, from: String) async -> BannerInfo? {
         guard let db else { return nil }
         let showsText = NotificationPreferences.showsMessageText(in: AppGroup.defaults)
@@ -165,7 +164,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
             let message = try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE msgId = ?",
                                                arguments: [msgId])
             info.seq = message?.seq ?? 0
-            // заявка до принятия: имя отправителя показываем, содержимое — нет
+            // a request before it is accepted: the sender's name shows, the content does not
             if hidden {
                 info.content = NotificationContentBuilder.requestContent(
                     chat: chatInfo, sender: senderInfo)
@@ -177,13 +176,10 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         }
     }
 
-    // MARK: - Бейдж и шторка ↔ unreadCount в БД
+    // MARK: - Badge and shade ↔ unreadCount in the database
 
-    /// Бейдж считает сервер и присылает число в пуше; приложение сообщает то же
-    /// число, когда до него дошло само — прочитан чат, догнан журнал. Оба пути
-    /// пишут его через `BadgeStore`, поэтому пуш, обогнавший другой пуш, не
-    /// вернёт на иконку устаревший счётчик.
-    /// Прочитанные сообщения снимаются из шторки по msgId.
+    /// Reports the count the app arrived at on its own — a chat was read, the
+    /// journal caught up — and clears notifications for read messages.
     private func observeUnread(db: DatabaseQueue) {
         badgeCancellable = ValueObservation
             .tracking { dbc in try BadgeStore.localUnread(dbc) }
@@ -200,10 +196,10 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
             })
     }
 
-    /// Снимает из шторки уведомления о сообщениях, которые уже прочитаны.
-    /// Сверка идёт по msgId с myReadUpTo чата: счётчик непрочитанных приходит
-    /// наблюдателю снимком, и по нему только что показанное уведомление
-    /// снималось бы раньше, чем сообщение успело в этот счётчик попасть.
+    /// Clears the shade of notifications whose messages are already read. The
+    /// check goes by msgId against the chat's myReadUpTo: the observer gets the
+    /// unread count as a snapshot, and going by that count would pull a
+    /// just-shown notification before its message even reached the count.
     private func dropReadNotifications() {
         guard let db else { return }
         let center = UNUserNotificationCenter.current()
@@ -230,17 +226,17 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         }
     }
 
-    // MARK: - Системные пуши (APNs)
+    // MARK: - System pushes (APNs)
 
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        // у APNs-пуша здесь UNPushNotificationTrigger, у своего локального — nil
+        // an APNs push carries a UNPushNotificationTrigger here, our own local one has nil
         let isLocal = notification.request.trigger == nil
         let userInfo = notification.request.content.userInfo
         guard let chatId = userInfo["chatId"] as? String else { return [.banner] }
         let msgId = userInfo["msgId"] as? String
 
-        // состояние сообщения в локальной БД: получено ли уже по WS, прочитано ли
+        // the message's state in the local database: already in over WS, already read
         var messageInDB = false
         var messageRead = false
         var muted = false
@@ -267,14 +263,13 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
             messageInDB: messageInDB,
             messageRead: messageRead,
             muted: muted)
-        guard show else { return [] } // бейдж приезжает своим числом в пуше
+        guard show else { return [] } // the badge arrives as its own number in the push
         if let msgId { shownMsgIds.insert(msgId) }
         return [.banner, .list]
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 didReceive response: UNNotificationResponse) async {
-        // tap по пушу → открыть чат
         if let chatId = response.notification.request.content.userInfo["chatId"] as? String {
             NotificationCenter.default.post(name: .openChatRequested, object: chatId)
         }

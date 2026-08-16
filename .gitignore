@@ -1,6 +1,6 @@
 node_modules/
 .wrangler/
-# состояние отдельного стенда: `wrangler dev --persist-to .wrangler-<имя>`
+# state of a separate stand: `wrangler dev --persist-to .wrangler-<name>`
 .wrangler-*/
 *.xcodeproj
 build/

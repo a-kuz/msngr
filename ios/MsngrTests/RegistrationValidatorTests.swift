@@ -3,19 +3,19 @@ import XCTest
 
 final class RegistrationValidatorTests: XCTestCase {
 
-    // MARK: Имя
+    // MARK: Display name
 
     func testNameValid() {
         XCTAssertTrue(RegistrationValidator.isValidName("Аня"))
         XCTAssertTrue(RegistrationValidator.isValidName("Bob"))
-        XCTAssertTrue(RegistrationValidator.isValidName("  Ли Он  ")) // пробелы по краям обрезаются
+        XCTAssertTrue(RegistrationValidator.isValidName("  Ли Он  ")) // surrounding whitespace is trimmed
     }
 
     func testNameTooShort() {
         XCTAssertFalse(RegistrationValidator.isValidName(""))
         XCTAssertFalse(RegistrationValidator.isValidName("Ян"))
-        XCTAssertFalse(RegistrationValidator.isValidName("  a  ")) // после trim остаётся 1 символ
-        XCTAssertFalse(RegistrationValidator.isValidName("   \n ")) // одни пробелы
+        XCTAssertFalse(RegistrationValidator.isValidName("  a  ")) // 1 character left after the trim
+        XCTAssertFalse(RegistrationValidator.isValidName("   \n ")) // whitespace only
     }
 
     func testTrimmedName() {
@@ -23,7 +23,7 @@ final class RegistrationValidatorTests: XCTestCase {
         XCTAssertEqual(RegistrationValidator.trimmedName("Bob"), "Bob")
     }
 
-    // MARK: Юзернейм
+    // MARK: Username
 
     func testUsernameValid() {
         XCTAssertTrue(RegistrationValidator.isValidUsername("bob"))
@@ -34,11 +34,11 @@ final class RegistrationValidatorTests: XCTestCase {
 
     func testUsernameInvalid() {
         XCTAssertFalse(RegistrationValidator.isValidUsername(""))
-        XCTAssertFalse(RegistrationValidator.isValidUsername("ab")) // короче 3
+        XCTAssertFalse(RegistrationValidator.isValidUsername("ab")) // shorter than 3
         XCTAssertFalse(RegistrationValidator.isValidUsername(String(repeating: "a", count: 33)))
-        XCTAssertFalse(RegistrationValidator.isValidUsername("боб")) // кириллица
-        XCTAssertFalse(RegistrationValidator.isValidUsername("bob smith")) // пробел
-        XCTAssertFalse(RegistrationValidator.isValidUsername("bob-1")) // дефис
+        XCTAssertFalse(RegistrationValidator.isValidUsername("боб")) // cyrillic
+        XCTAssertFalse(RegistrationValidator.isValidUsername("bob smith")) // space
+        XCTAssertFalse(RegistrationValidator.isValidUsername("bob-1")) // hyphen
         XCTAssertFalse(RegistrationValidator.isValidUsername("bob!"))
     }
 }

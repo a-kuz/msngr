@@ -1,24 +1,24 @@
 import Foundation
 
-/// Мультикаст поверх AsyncStream: каждое значение доставляется каждому
-/// подписчику. Голый AsyncStream доставляет значение только одному
-/// потребителю, а отмена его итерации терминирует continuation — все
-/// последующие yield теряются для любых будущих подписчиков.
-/// Здесь у каждого подписчика собственный стрим; отмена отписывает только его.
+/// Multicast on top of AsyncStream: every value reaches every subscriber.
+/// A bare AsyncStream hands each value to a single consumer, and cancelling its
+/// iteration terminates the continuation, so every later yield is lost to any future
+/// subscriber too. Here each subscriber gets its own stream and cancelling one
+/// unsubscribes only that subscriber.
 public final class Broadcast<Element: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var continuations: [UUID: AsyncStream<Element>.Continuation] = [:]
     private let replayLast: Bool
     private var last: Element?
 
-    /// replayLast: новый подписчик сразу получает последнее отправленное
-    /// значение (для состояний вроде «подключено», где важен текущий снапшот).
+    /// replayLast: a new subscriber immediately receives the last value sent, which is
+    /// what state like "connected" needs — the current snapshot, not only future changes.
     public init(replayLast: Bool = false) {
         self.replayLast = replayLast
     }
 
-    /// Стрим с начальным значением: подписчик получает его (или более свежее)
-    /// первым элементом.
+    /// Stream with an initial value: a subscriber gets it, or something newer,
+    /// as its first element.
     public convenience init(initial: Element) {
         self.init(replayLast: true)
         last = initial

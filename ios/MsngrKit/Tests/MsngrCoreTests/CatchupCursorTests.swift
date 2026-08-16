@@ -39,7 +39,7 @@ final class CatchupCursorTests: XCTestCase {
 
         let cursors = try db.read { dbc in try HistoryWindow.catchupCursors(dbc) }
         XCTAssertEqual(cursors["c1"], 128)
-        // ничего не догоняли: непрерывный префикс и есть граница
+        // nothing to catch up on: the contiguous prefix already reaches the end
         XCTAssertEqual(cursors["c2"], 10)
     }
 

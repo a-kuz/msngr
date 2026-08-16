@@ -1,10 +1,10 @@
 import XCTest
 @testable import Msngr
 
-/// Матрица правил плашки «N непрочитанных сообщений».
+/// The rule matrix for the "N unread messages" marker.
 final class UnreadMarkerStateTests: XCTestCase {
 
-    // Правило 1: вход с непрочитанными — плашка над первым непрочитанным
+    // Rule 1: entering with unread puts the marker above the first unread message
     func testEnterChatWithUnread() {
         var s = UnreadMarkerState()
         s.enterChat(unreadCount: 5, myReadUpTo: 10)
@@ -20,16 +20,16 @@ final class UnreadMarkerStateTests: XCTestCase {
         XCTAssertNil(s.anchorSeq)
     }
 
-    // Правило 2: входящие при видимом чате увеличивают счётчик активной плашки
+    // Rule 2: incoming messages in a visible chat grow the active marker's counter
     func testIncomingIncrementsActiveMarker() {
         var s = UnreadMarkerState()
         s.enterChat(unreadCount: 5, myReadUpTo: 10)
         s.incoming(seq: 16)
         XCTAssertEqual(s.count, 6)
-        XCTAssertEqual(s.anchorSeq, 11, "якорь не двигается при росте счётчика")
+        XCTAssertEqual(s.anchorSeq, 11, "the anchor does not move when the counter grows")
     }
 
-    // без активной плашки входящее при видимом чате плашку не создаёт
+    // with no active marker, an incoming message in a visible chat creates none
     func testIncomingWithoutMarkerDoesNothing() {
         var s = UnreadMarkerState()
         s.enterChat(unreadCount: 0, myReadUpTo: 10)
@@ -37,7 +37,7 @@ final class UnreadMarkerStateTests: XCTestCase {
         XCTAssertFalse(s.isActive)
     }
 
-    // Правило 3: своя отправка / реакция убирает плашку
+    // Rule 3: your own send or reaction removes the marker
     func testDismissClearsMarker() {
         var s = UnreadMarkerState()
         s.enterChat(unreadCount: 5, myReadUpTo: 10)
@@ -47,7 +47,7 @@ final class UnreadMarkerStateTests: XCTestCase {
         XCTAssertEqual(s.count, 0)
     }
 
-    // после dismiss входящие не оживляют плашку (пока экран видим)
+    // after a dismiss, incoming messages do not revive the marker while the screen stays visible
     func testIncomingAfterDismissDoesNothing() {
         var s = UnreadMarkerState()
         s.enterChat(unreadCount: 5, myReadUpTo: 10)
@@ -56,7 +56,7 @@ final class UnreadMarkerStateTests: XCTestCase {
         XCTAssertFalse(s.isActive)
     }
 
-    // Правило 4: уход в фон/шторку убирает плашку
+    // Rule 4: going to the background or behind the shade removes the marker
     func testObscuredDismissesMarker() {
         var s = UnreadMarkerState()
         s.enterChat(unreadCount: 5, myReadUpTo: 10)
@@ -64,7 +64,7 @@ final class UnreadMarkerStateTests: XCTestCase {
         XCTAssertFalse(s.isActive)
     }
 
-    // Правило 5: пришедшее за время отсутствия — новая плашка при возврате
+    // Rule 5: what arrived while away gets a fresh marker on return
     func testMessagesWhileObscuredShowMarkerOnReturn() {
         var s = UnreadMarkerState()
         s.enterChat(unreadCount: 0, myReadUpTo: 10)
@@ -72,10 +72,10 @@ final class UnreadMarkerStateTests: XCTestCase {
         s.incoming(seq: 11)
         s.incoming(seq: 12)
         s.incoming(seq: 13)
-        XCTAssertFalse(s.isActive, "пока экран не виден, плашки нет")
+        XCTAssertFalse(s.isActive, "while the screen is not visible there is no marker")
         s.becameActive()
         XCTAssertTrue(s.isActive)
-        XCTAssertEqual(s.anchorSeq, 11, "якорь — первое пришедшее за отсутствие")
+        XCTAssertEqual(s.anchorSeq, 11, "the anchor is the first message that arrived while away")
         XCTAssertEqual(s.count, 3)
     }
 
@@ -84,10 +84,10 @@ final class UnreadMarkerStateTests: XCTestCase {
         s.enterChat(unreadCount: 5, myReadUpTo: 10)
         s.becameObscured()
         s.becameActive()
-        XCTAssertFalse(s.isActive, "старая плашка после фона не возвращается")
+        XCTAssertFalse(s.isActive, "the old marker does not come back after the background")
     }
 
-    // повторный цикл фон→возврат не тащит старое накопленное
+    // a second background→return cycle does not carry the old pending count over
     func testObscuredCycleResetsPending() {
         var s = UnreadMarkerState()
         s.becameObscured()
@@ -99,7 +99,7 @@ final class UnreadMarkerStateTests: XCTestCase {
         XCTAssertFalse(s.isActive)
     }
 
-    // после возврата с новой плашкой входящие продолжают увеличивать счётчик
+    // after returning to a fresh marker, incoming messages keep growing the counter
     func testIncomingAfterReturnIncrements() {
         var s = UnreadMarkerState()
         s.becameObscured()
@@ -110,7 +110,7 @@ final class UnreadMarkerStateTests: XCTestCase {
         XCTAssertEqual(s.anchorSeq, 11)
     }
 
-    // склонение текста плашки
+    // plural forms in the marker's title
     func testMarkerTitlePluralization() {
         XCTAssertEqual(UnreadMarkerCell.title(count: 1), "1 непрочитанное сообщение")
         XCTAssertEqual(UnreadMarkerCell.title(count: 2), "2 непрочитанных сообщения")

@@ -1,7 +1,7 @@
 import UIKit
 import MsngrCore
 
-/// Ячейка сообщения: ручной layout по BubbleLayoutPlan, ноль Auto Layout.
+/// Message cell: manual layout driven by BubbleLayoutPlan, no Auto Layout at all.
 final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     var onReply: (() -> Void)?
     var onReact: ((String) -> Void)?
@@ -32,12 +32,12 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private let replyIcon = UIImageView(image: UIImage(systemName: "arrowshape.turn.up.left.fill"))
     private var replyTriggered = false
 
-    // мультивыбор
+    // multi-select
     private let checkbox = SelectionCheckboxView()
     private var selectionMode = false
     private var gestures: [UIGestureRecognizer] = []
     private var selectionTap: UITapGestureRecognizer!
-    /// сдвиг входящего баббла вправо, чтобы освободить место под чекбокс
+    /// how far an incoming bubble moves right to clear room for the checkbox
     static let selectionShift: CGFloat = 34
 
     var messageId: String? { msg?.id }
@@ -48,10 +48,10 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
         bubbleView.isUserInteractionEnabled = true
         contentView.addSubview(bubbleView)
-        // хвостик — subview тела: наследует его transform/alpha при анимациях
-        // (появление, swipe-to-reply, «вылет» при отправке) без лишнего кода;
-        // clipsToBounds у bubbleView не включён, так что вылет за пределы
-        // тела (сам хвост) не обрезается
+        // the tail is a subview of the body: it inherits the body's transform and alpha
+        // through every animation (appearance, swipe-to-reply, the flight out of the send
+        // button) for free, and since bubbleView does not clip to bounds the part of the
+        // tail that sticks out survives
         bubbleView.addSubview(tailView)
 
         bubbleView.addSubview(textView)
@@ -63,8 +63,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
         bubbleView.addSubview(replyBar)
 
-        // время прижато к правому краю своего фрейма: запас ширины из замера
-        // не оставляет рваного зазора справа
+        // the time is pinned to the right edge of its frame, so the width slack left by
+        // measurement does not show up as a ragged gap on the right
         timeLabel.textAlignment = .right
         statusBackdrop.backgroundColor = UIColor.black.withAlphaComponent(0.35)
         statusBackdrop.layer.cornerRadius = 10
@@ -94,21 +94,21 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         longPress.minimumPressDuration = 0.35
         bubbleView.addGestureRecognizer(longPress)
 
-        // одиночный тап отрабатывает только попадание по ссылке; двойной тап
-        // (реакция) имеет приоритет, остальные касания проходят насквозь
+        // a single tap only acts on a hit inside a link; the double tap (reaction) wins,
+        // and every other touch passes straight through
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         tap.require(toFail: doubleTap)
         tap.cancelsTouchesInView = false
         bubbleView.addGestureRecognizer(tap)
 
-        // тап только по области цитаты; удержание отдаёт жест контекстному меню,
-        // двойной тап — реакции
+        // tap confined to the quote area; a long press yields to the context menu and a
+        // double tap to the reaction
         let replyTap = UITapGestureRecognizer(target: self, action: #selector(handleReplyQuoteTap))
         replyTap.require(toFail: longPress)
         replyTap.require(toFail: doubleTap)
         replyBar.addGestureRecognizer(replyTap)
 
-        // в режиме выбора работает только тап по строке: остальные жесты гасятся
+        // in selection mode only the row tap works, every other gesture is switched off
         gestures = [pan, doubleTap, longPress, tap, replyTap]
         selectionTap = UITapGestureRecognizer(target: self, action: #selector(handleSelectionTap))
         selectionTap.isEnabled = false
@@ -119,7 +119,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         onToggleSelection?()
     }
 
-    /// Режим мультивыбора: чекбокс у строки, входящий баббл сдвигается вправо.
+    /// Multi-select mode: a checkbox next to the row, the incoming bubble shifted right.
     func setSelection(mode: Bool, selected: Bool, animated: Bool) {
         selectionMode = mode
         for g in gestures { g.isEnabled = !mode }
@@ -146,7 +146,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         onTapReplyQuote?()
     }
 
-    /// Кратковременная вспышка баббла: подтверждает переход к оригиналу.
+    /// A brief flash of the bubble confirming the jump landed on the original.
     func flashHighlight() {
         bubbleView.viewWithTag(Self.highlightTag)?.removeFromSuperview()
         let overlay = UIView(frame: bubbleView.bounds)
@@ -178,13 +178,13 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         reactionViews = []
         bubbleView.viewWithTag(Self.highlightTag)?.removeFromSuperview()
         contentView.transform = CGAffineTransform(scaleX: 1, y: -1)
-        // сброс незавершённого свайпа-reply
+        // drop an unfinished swipe-to-reply
         bubbleView.transform = .identity
         replyIcon.alpha = 0
         replyTriggered = false
     }
 
-    /// Появление входящего/восстановленного баббла: короткий подъём.
+    /// An incoming or restored bubble arrives with a short lift.
     func animateAppearance() {
         bubbleView.transform = CGAffineTransform(translationX: 0, y: 14).scaledBy(x: 0.96, y: 0.96)
         bubbleView.alpha = 0.4
@@ -195,11 +195,11 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         }
     }
 
-    /// Своё сообщение «вылетает» из кнопки отправки: баббл стартует маленьким
-    /// в точке кнопки и пружиной летит на своё место (как в TG/WhatsApp).
+    /// An own message flies out of the send button: the bubble starts small at the
+    /// button and springs into place (the way TG and WhatsApp do it).
     func animateSendFlight(fromScreenPoint point: CGPoint, in source: UIView) {
         layoutIfNeeded()
-        // convert учитывает переворот ячейки по Y, считать знаки вручную не нужно
+        // convert already accounts for the cell's Y flip, no sign juggling needed
         let start = contentView.convert(point, from: source)
         let target = CGPoint(x: bubbleView.frame.midX, y: bubbleView.frame.midY)
         let dx = start.x - target.x
@@ -232,9 +232,9 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         bubbleView.frame = plan.bubbleFrame
         bubbleView.image = BubbleBackground.image(outgoing: plan.isOutgoing, mediaOnly: plan.statusOnMedia)
 
-        // хвостик — отдельная картинка у нижнего угла тела, торчит за его
-        // пределы; тело (закруглённый прямоугольник) от showTail не зависит,
-        // поэтому правый/левый край баббла не сдвигается при появлении хвоста
+        // the tail is a separate image at the bottom corner of the body and sticks out
+        // past it; the body (a rounded rectangle) does not depend on showTail, so the
+        // bubble's left or right edge stays put when the tail appears
         if plan.showTail && !plan.statusOnMedia {
             tailView.isHidden = false
             tailView.image = BubbleBackground.tailImage(outgoing: plan.isOutgoing)
@@ -248,7 +248,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             tailView.isHidden = true
         }
 
-        // текст
+        // text
         if let tf = plan.textFrame, let text = plan.text {
             textView.isHidden = false
             textView.frame = tf
@@ -262,7 +262,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             textView.isHidden = true
         }
 
-        // имя автора
+        // author name
         if let nf = plan.authorNameFrame {
             nameLabel.isHidden = false
             nameLabel.text = plan.authorName
@@ -272,7 +272,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             nameLabel.isHidden = true
         }
 
-        // форвард
+        // forward
         if let ff = plan.forwardFrame {
             forwardLabel.isHidden = false
             forwardLabel.text = plan.forwardText
@@ -291,7 +291,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             replyBar.isHidden = true
         }
 
-        // медиа
+        // media
         configureMedia(msg: msg, plan: plan)
 
         // voice / file
@@ -303,7 +303,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             voiceView.isHidden = true
         }
 
-        // статус: время + галочки
+        // status: time and ticks
         timeLabel.text = (plan.edited ? "изм. " : "") + plan.timeString
         timeLabel.textColor = plan.statusOnMedia ? .white
             : (plan.isOutgoing ? UIColor(Theme.outgoingMeta) : .secondaryLabel)
@@ -329,13 +329,13 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             tickView.isHidden = true
         }
         timeLabel.frame = timeFrame
-        // медиа-вью добавляются позже статуса — капсула времени должна остаться сверху
+        // media views are added after the status, so the time capsule is raised back on top
         bubbleView.bringSubviewToFront(statusBackdrop)
         bubbleView.bringSubviewToFront(timeLabel)
         bubbleView.bringSubviewToFront(tickView)
 
-        // реакции: анимируем появление только реально новой реакции при обновлении той же
-        // ячейки; при переиспользовании на скролле — без анимации
+        // reactions: only a genuinely new one animates in, and only when the same cell is
+        // being reconfigured; a cell reused during scrolling gets no animation
         let sameCell = configuredMsgId == msg.id
         let previousKeys = Set(reactionViews.map { $0.emojiKey })
         reactionViews.forEach { $0.removeFromSuperview() }
@@ -355,8 +355,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     }
 
     private func configureMedia(msg: Message, plan: BubbleLayoutPlan) {
-        // configure вызывается и на живой ячейке (обновление контента на месте) —
-        // старые медиа-вью убираем здесь, а не только в prepareForReuse
+        // configure also runs on a live cell (content updated in place), so the previous
+        // media views are torn down here and not only in prepareForReuse
         mediaViews.forEach { $0.removeFromSuperview() }
         mediaViews = []
         guard let mediaFrame = plan.mediaFrame else { return }
@@ -377,7 +377,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             if plan.albumRects.isEmpty {
                 iv.layer.cornerRadius = Theme.bubbleCorner
             } else if let mf = plan.mediaFrame {
-                // мозаика: большой радиус только на внешних углах сетки
+                // mosaic: the large radius belongs to the outer corners of the grid only
                 var corners: CACornerMask = []
                 let eps: CGFloat = 1.5
                 if abs(rect.minX - mf.minX) < eps, abs(rect.minY - mf.minY) < eps { corners.insert(.layerMinXMinYCorner) }
@@ -394,7 +394,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             bubbleView.addSubview(iv)
             mediaViews.append(iv)
 
-            // blurhash-плейсхолдер мгновенно, потом реальная картинка
+            // the blurhash placeholder shows at once, the real image replaces it later
             if let bh = media.blurhash, let px = BlurHash.decodePixels(bh, width: 32, height: 32) {
                 iv.image = UIImage.fromRGBA(px, width: 32, height: 32)
             }
@@ -404,7 +404,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             Task { [weak iv] in
                 guard let mm = AppState.shared.media else { return }
                 let effective: MediaInfo = {
-                    // превью видео: выгруженный thumb-блоб либо локальный кадр (до аплоада)
+                    // video preview: the uploaded thumb blob, or the local frame before the upload
                     if isVideo, media.thumbMediaId != nil || media.thumbLocalPath != nil {
                         var t = MediaInfo(type: "photo", mediaId: media.thumbMediaId ?? "",
                                           key: media.thumbKey ?? "", hash: media.thumbHash ?? "",
@@ -452,8 +452,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         onTapLink?(url)
     }
 
-    /// Подложка блока кода: на исходящем баббле — светлее фона, на входящем —
-    /// затемнение, различимое и в тёмной теме.
+    /// Backdrop for a code block: lighter than the bubble on an outgoing one, and on an
+    /// incoming one a darkening that stays visible in the dark theme too.
     static func codeBackground(outgoing: Bool) -> UIColor {
         if outgoing { return UIColor(Theme.outgoingText).withAlphaComponent(0.16) }
         return UIColor { trait in
@@ -463,7 +463,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         }
     }
 
-    // MARK: - Swipe-to-reply с резистенцией
+    // MARK: - Swipe-to-reply with resistance
 
     func gestureRecognizer(_ g: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
@@ -481,7 +481,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         switch g.state {
         case .changed:
             let capped = min(max(tx, 0), 90)
-            let resisted = 60 * (1 - exp(-capped / 60)) // резистенция
+            let resisted = 60 * (1 - exp(-capped / 60)) // resistance
             bubbleView.transform = CGAffineTransform(translationX: resisted, y: 0)
             replyIcon.frame = CGRect(x: bubbleView.frame.minX - 34, y: bubbleView.frame.midY - 11,
                                      width: 22, height: 22)
@@ -524,10 +524,10 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     }()
 }
 
-// MARK: - Компоненты
+// MARK: - Components
 
-/// Чекбокс мультивыбора слева от строки: пустой контур либо залитый акцентом
-/// кружок с галочкой.
+/// Multi-select checkbox to the left of the row: either an empty outline or an
+/// accent-filled circle with a checkmark.
 final class SelectionCheckboxView: UIView {
     private let ring = UIView()
     private let check = UIImageView(image: UIImage(systemName: "checkmark",
@@ -576,20 +576,20 @@ final class SelectionCheckboxView: UIView {
     }
 }
 
-/// Фоны бабблов: ресайзабл-картинка тела (без хвоста — правый/левый край
-/// тела не зависит от наличия хвоста) + отдельная маленькая картинка
-/// хвоста, наложенная поверх тела и торчащая за его пределы.
+/// Bubble backgrounds: a resizable image for the body, which carries no tail so that
+/// its left and right edges do not depend on one, plus a separate small tail image
+/// laid over the body and sticking out past it.
 enum BubbleBackground {
     private static var cache: [String: UIImage] = [:]
     private static var tailCache: [String: UIImage] = [:]
 
-    /// Холст хвоста и точка угла тела баббла внутри этого холста: см. tailImage.
-    /// Публичные — MessageCell позиционирует tailView теми же числами.
+    /// The tail canvas and the position of the body's corner inside it: see tailImage.
+    /// Public because MessageCell places tailView by the very same numbers.
     static let tailCanvasSize = CGSize(width: 20, height: 18)
     static let tailAnchorY: CGFloat = 16
     static func tailAnchorX(outgoing: Bool) -> CGFloat { outgoing ? 12 : 8 }
 
-    /// Цвета бабблов запечены в картинки — при смене палитры кэш сбрасывается.
+    /// Bubble colours are baked into the images, so a palette change drops the cache.
     static func clearCache() { cache.removeAll(); tailCache.removeAll() }
 
     static func image(outgoing: Bool, mediaOnly: Bool) -> UIImage {
@@ -609,18 +609,18 @@ enum BubbleBackground {
         return img
     }
 
-    /// Хвостик — маленькая нерастягиваемая картинка, накладывается поверх тела
-    /// как отдельный subview у соответствующего нижнего угла. Холст с запасом
-    /// вокруг кривой, чтобы внешняя часть хвоста не обрезалась по краю; точка
-    /// (tailAnchorX, tailAnchorY) — угол тела баббла, к которому хвост крепится.
+    /// The tail is a small non-stretchable image laid over the body as its own subview
+    /// at the matching bottom corner. The canvas keeps slack around the curve so the
+    /// outer part of the tail is not clipped; the point (tailAnchorX, tailAnchorY) is
+    /// the corner of the bubble body the tail attaches to.
     static func tailImage(outgoing: Bool) -> UIImage {
         let key = "\(outgoing)|\(UITraitCollection.current.userInterfaceStyle.rawValue)"
         if let img = tailCache[key] { return img }
         let size = tailCanvasSize
         let anchorX = tailAnchorX(outgoing: outgoing)
-        // старые координаты хвоста были рассчитаны для холста тела 44x40
-        // (правый нижний угол в (44,40)); переносим их на холст хвоста тем же
-        // сдвигом, которым угол тела (44,40) или (0,40) переезжает в (anchorX, tailAnchorY)
+        // the curve below is written in the coordinates of the 44x40 body canvas, whose
+        // bottom corner sits at (44,40) or (0,40); dx and dy carry it onto the tail canvas
+        // by the same shift that moves that corner to (anchorX, tailAnchorY)
         let dx = anchorX - (outgoing ? 44 : 0)
         let dy = tailAnchorY - 40
         let x: CGFloat = (outgoing ? 44 - 2 : 2) + dx
@@ -642,7 +642,7 @@ enum BubbleBackground {
     }
 }
 
-/// Цвет имени автора в группе — стабильный по userId.
+/// Colour of an author's name in a group, stable for a given userId.
 enum NameColor {
     static let palette: [UIColor] = [
         .systemRed, .systemOrange, .systemPurple, .systemGreen,
@@ -676,7 +676,7 @@ final class ReplyStripView: UIView {
         textLabel.font = Theme.Text.replyText.uiFont
         authorLabel.text = author
         textLabel.text = text
-        // на тёмном исходящем баббле акцентные цвета нечитаемы
+        // accent colours are unreadable on the dark outgoing bubble
         bar.backgroundColor = outgoing ? UIColor(Theme.outgoingText) : UIColor(Theme.accent)
         authorLabel.textColor = outgoing ? UIColor(Theme.outgoingText) : UIColor(Theme.accent)
         textLabel.textColor = outgoing ? UIColor(Theme.outgoingMeta) : .secondaryLabel
@@ -711,7 +711,7 @@ final class ReactionCapsuleView: UIControl {
         emojiKey = emoji
         label.font = Theme.Text.reaction.uiFont
         label.text = count > 1 ? "\(emoji) \(count)" : emoji
-        // капсула держится палитры баббла; своя реакция выделена насыщенной заливкой
+        // the capsule keeps to the bubble's palette; your own reaction gets a denser fill
         if outgoing {
             backgroundColor = mine
                 ? UIColor(Theme.outgoingTickRead).withAlphaComponent(0.30)
@@ -723,10 +723,10 @@ final class ReactionCapsuleView: UIControl {
                 : UIColor.tertiarySystemFill
             label.textColor = .label
         }
-        // тонкая обводка отделяет капсулу и от входящего, и от исходящего баббла
+        // a hairline border separates the capsule from both the incoming and outgoing bubble
         layer.borderWidth = 0.5
         layer.borderColor = UIColor.separator.resolvedColor(with: traitCollection).cgColor
-        // spring-появление только для реально новой реакции
+        // the spring entrance is for a genuinely new reaction only
         if animateIn {
             transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
             alpha = 0
@@ -753,7 +753,7 @@ final class ReactionCapsuleView: UIControl {
     }
 }
 
-// MARK: - Контекстное меню
+// MARK: - Context menu
 
 extension MessageCell {
     @objc private func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
@@ -765,7 +765,7 @@ extension MessageCell {
         items.append(.init(title: "Ответить", icon: "arrowshape.turn.up.left") { [weak self] in
             self?.onContextAction?(.reply)
         })
-        // фото и альбом копируются картинкой в буфер, текст — строкой
+        // a photo or album goes to the clipboard as an image, text as a string
         if msg.kind == .text || msg.kind == .photo || msg.kind == .album {
             items.append(.init(title: "Копировать", icon: "doc.on.doc") { [weak self] in
                 self?.onContextAction?(.copy)

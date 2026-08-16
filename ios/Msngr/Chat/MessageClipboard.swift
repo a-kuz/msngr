@@ -1,11 +1,11 @@
 import UIKit
 import MsngrCore
 
-/// Буфер обмена для сообщений: копирование текста/фото и чтение вставленных картинок.
+/// Clipboard for messages: copying text and photos, and reading pasted images back.
 @MainActor
 enum MessageClipboard {
-    /// «Копировать» из контекстного меню: фото и альбом кладутся картинками,
-    /// остальное — текстом.
+    /// «Копировать» from the context menu: a photo or an album goes in as images,
+    /// everything else as text.
     static func copy(_ msg: Message) {
         let photos = (msg.album ?? msg.media.map { [$0] } ?? []).filter { $0.type == "photo" }
         guard !photos.isEmpty, let mm = AppState.shared.media else {
@@ -25,8 +25,8 @@ enum MessageClipboard {
         }
     }
 
-    /// Мультивыбор: строка на сообщение, в порядке переписки (сверху старое).
-    /// Одно сообщение копируется обычным путём — фото попадает в буфер картинкой.
+    /// Multi-select: one line per message, in conversation order with the oldest on top.
+    /// A single message goes the usual way, so a photo lands on the clipboard as an image.
     static func copy(_ msgs: [Message]) {
         guard msgs.count != 1 else { return copy(msgs[0]) }
         guard !msgs.isEmpty else { return }
@@ -35,7 +35,7 @@ enum MessageClipboard {
             .joined(separator: "\n")
     }
 
-    /// Картинки из буфера; пусто, если там их нет.
+    /// Images from the clipboard; empty when it holds none.
     static func pastedImages() -> [UIImage] {
         guard UIPasteboard.general.hasImages else { return [] }
         return UIPasteboard.general.images ?? []

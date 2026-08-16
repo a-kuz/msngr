@@ -1,7 +1,7 @@
 import Foundation
 
-/// BlurHash (алгоритм Wolt, https://github.com/woltapp/blurhash): компактная
-/// строка-плейсхолдер изображения. Кодирование — DCT по linear-RGB, base83.
+/// BlurHash (the Wolt algorithm, https://github.com/woltapp/blurhash): a compact
+/// placeholder string for an image. Encoding is a DCT over linear RGB, written in base83.
 public enum BlurHash {
     private static let alphabet = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~")
     private static let charToValue: [Character: Int] = {
@@ -12,13 +12,13 @@ public enum BlurHash {
 
     // MARK: - Encode
 
-    /// `pixels` — RGBA8 построчно (width*height*4 байт), alpha игнорируется.
+    /// `pixels` is RGBA8 row by row (width*height*4 bytes); alpha is ignored.
     public static func encode(pixels: [UInt8], width: Int, height: Int, componentsX: Int = 4, componentsY: Int = 3) -> String? {
         guard (1...9).contains(componentsX), (1...9).contains(componentsY),
               width > 0, height > 0,
               pixels.count == width * height * 4 else { return nil }
 
-        // Линейные значения считаем один раз, а не на каждую компоненту
+        // Convert to linear once, instead of once per component
         var linear = [Float](repeating: 0, count: width * height * 3)
         for i in 0..<(width * height) {
             linear[i * 3 + 0] = sRGBToLinear(pixels[i * 4 + 0])
@@ -30,7 +30,7 @@ public enum BlurHash {
         factors.reserveCapacity(componentsX * componentsY)
         for y in 0..<componentsY {
             for x in 0..<componentsX {
-                // Нормировка по спеке: DC — 1, AC — 2
+                // Normalisation per the spec: 1 for DC, 2 for AC
                 let normalisation: Float = (x == 0 && y == 0) ? 1 : 2
                 var r: Float = 0, g: Float = 0, b: Float = 0
                 for py in 0..<height {
@@ -95,7 +95,7 @@ public enum BlurHash {
 
     // MARK: - Decode
 
-    /// Возвращает RGBA8 (alpha=255) размера width*height или nil при невалидном хэше.
+    /// Returns width*height RGBA8 pixels (alpha=255), or nil if the hash is malformed.
     public static func decodePixels(_ hash: String, width: Int, height: Int, punch: Float = 1) -> [UInt8]? {
         guard width > 0, height > 0 else { return nil }
         let chars = Array(hash)
@@ -160,7 +160,7 @@ public enum BlurHash {
         return value
     }
 
-    // MARK: - Цветовые преобразования
+    // MARK: - Colour conversion
 
     private static func sRGBToLinear(_ value: UInt8) -> Float {
         let v = Float(value) / 255

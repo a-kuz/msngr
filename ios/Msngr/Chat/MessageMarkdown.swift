@@ -2,20 +2,20 @@ import UIKit
 import MsngrCore
 
 extension NSAttributedString.Key {
-    /// Диапазон, который рисуется подложкой блока кода.
+    /// The range drawn with a code block's backdrop.
     static let msngrCodeBlock = NSAttributedString.Key("msngrCodeBlock")
-    /// Ссылка (URL). Свой ключ вместо .link: системный красит текст в синий,
-    /// нечитаемый на исходящем баббле, — цвет задаёт ячейка.
+    /// A URL. Its own key instead of .link, because the system one paints the text blue,
+    /// which is unreadable on an outgoing bubble; the cell picks the colour.
     static let msngrLink = NSAttributedString.Key("msngrLink")
 }
 
-/// Сборка NSAttributedString из мини-маркдауна: шрифты производятся от
-/// BubbleLayout.textFont, поэтому замер и отрисовка идут по одной строке.
+/// Builds an NSAttributedString out of the mini-markdown: the fonts derive from
+/// BubbleLayout.textFont, so measurement and drawing work on one and the same string.
 enum MessageMarkdownRenderer {
-    /// Горизонтальные отступы текста кода от края подложки.
+    /// Horizontal inset of the code text from the edge of its backdrop.
     static let codeInset: CGFloat = 8
-    /// Вертикальные отступы блока кода (задаются интервалами абзаца и потому
-    /// попадают в замер высоты).
+    /// Vertical inset of a code block, expressed as paragraph spacing and therefore
+    /// included in the height measurement.
     static let codeVerticalInset: CGFloat = 6
     static let codeCorner: CGFloat = 8
 
@@ -43,8 +43,8 @@ enum MessageMarkdownRenderer {
                 if !separator.isEmpty {
                     out.append(NSAttributedString(string: separator, attributes: [.font: codeFont]))
                 }
-                // стиль абзаца обязан покрывать и завершающий перевод строки,
-                // иначе TextKit считает абзацем следующий блок
+                // the paragraph style has to cover the trailing newline as well, otherwise
+                // TextKit treats the next block as part of the paragraph
                 out.addAttribute(.paragraphStyle, value: codeParagraphStyle,
                                  range: NSRange(location: start, length: out.length - start))
                 out.addAttribute(.msngrCodeBlock, value: true, range: codeRange)
@@ -70,7 +70,7 @@ enum MessageMarkdownRenderer {
         return URL(string: encoded)
     }
 
-    // MARK: - Шрифты
+    // MARK: - Fonts
 
     static var codeFont: UIFont { Theme.Text.bubbleCode.uiFont }
 
@@ -94,8 +94,7 @@ enum MessageMarkdownRenderer {
         ps.tailIndent = -codeInset
         ps.paragraphSpacingBefore = codeVerticalInset
         ps.paragraphSpacing = codeVerticalInset
-        // длинные строки кода переносятся по символам: горизонтального скролла
-        // внутри баббла нет
+        // long code lines wrap by character: there is no horizontal scrolling inside a bubble
         ps.lineBreakMode = .byCharWrapping
         return ps
     }()

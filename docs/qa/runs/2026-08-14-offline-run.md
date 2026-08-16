@@ -1,32 +1,76 @@
-# Офлайн-матрица: живой прогон 2026-08-14
+# Offline matrix: live run 2026-08-14
 
-Стенд: симуляторы off-a (A39EB056) / off-b (8C6816A7), сборка Msngr из симулятора (бандл переустановлен без пересборки). Свой wrangler на :8790 с изолированным state (`scratchpad/offline-run/wstate`), базовый URL задаётся env `MSNGR_SERVER=http://localhost:8790` при `simctl launch` — правок кода нет. Офлайн = остановка этого wrangler, онлайн = его повторный запуск.
+## Stand
 
-Стенд предыдущего (упавшего) агента восстановить было нельзя: его wrangler-state на диске отсутствует (юзер off-a `01KZYHSPY6…` не существует ни в одной найденной D1), токены приложений получали 401. Пересоздан с нуля: юзеры offa_run2 / offb_run2, чат создан, первое сообщение «Hi run2» доставлено онлайн.
+Simulators off-a (A39EB056) and off-b (8C6816A7), the Msngr build taken from the
+simulator itself (the bundle was reinstalled without a rebuild). Own wrangler on
+:8790 with isolated state (`scratchpad/offline-run/wstate`), the base URL passed
+as the env variable `MSNGR_SERVER=http://localhost:8790` on `simctl launch`, with
+no code changes. Offline here means this wrangler stopped, online means it
+started again.
 
-Скриншоты: `docs/qa/runs/2026-08-14-offline/`.
+The stand of the previous agent, which died, could not be restored: its wrangler
+state is not on disk (the user off-a `01KZYHSPY6…` exists in none of the D1
+databases that were found) and the app tokens got 401. It was recreated from
+scratch: users offa_run2 and offb_run2, a chat created, the first message «Hi
+run2» delivered online.
 
-| # | Сценарий | Статус | Скриншоты |
-|---|----------|--------|-----------|
+## Run
 
-## Детали
+| # | Scenario | Status |
+|---|----------|--------|
+| 1 | Text offline, appears at once with the clock, network back, delivered | PASS, taken by the previous run on the stand of the agent that died, not repeated here |
+| 2 | Photo offline, preview at once with the clock, network back, delivered to off-b | PASS |
+| 3 | Voice message offline, bubble at once, network back, plays on off-b | PASS |
+| 4 | App killed offline with an unsent message, launch, message still there, network back, delivered | PASS |
+| 5 | Draft: text typed and not sent, leave the chat, kill, launch, text back in the field | PASS |
+| 6 | Reaction offline, visible at once, network back, reaches off-b | PASS |
 
-### 3. Голосовое в офлайне — PASS
-Офлайн, запись зажатием микрофона (2,5 с): баббл с волной и длительностью 0:02 появился мгновенно, статус — часики (18:59). После включения сети (реконнект по экспоненциальному бэкоффу занял ~1–2 мин): у off-a двойные галочки, off-b получил голосовое и оно играет (иконка паузы, оранжевый прогресс по волне).
+## Details
 
-Примечание к методике: `simctl privacy grant microphone` перезапускает приложение — выдавать право надо до записи (выдано заранее, сообщение записано после перезапуска и переоткрытия чата).
+### 3. Voice message offline, PASS
 
-### 4. Kill в офлайне с неотправленным — PASS
-Офлайн, «Offline survive 4» отправлено (часики, 19:03), `simctl terminate` → повторный запуск. Сообщение на месте: в списке чатов последним с иконкой часов, в чате — с часиками, история целиком (текст, фото, голосовое). После включения сети — двойные галочки (19:04), off-b получил.
+Offline, recorded by holding the microphone for 2.5 s: a bubble with the waveform
+and a duration of 0:02 appeared instantly, status a clock (18:59). After the
+network came back (the reconnect on exponential backoff took about 1 to 2
+minutes): off-a shows double ticks, off-b received the voice message and it
+plays, with a pause icon and orange progress along the waveform.
 
-### 5. Черновик — PASS
-Текст «Draft not sent 5» набран без отправки, выход из чата (черновик сохраняется при onDisappear), kill, запуск, чат открыт заново — текст в поле ввода.
+A note on method: `simctl privacy grant microphone` restarts the app, so the
+permission has to be granted before recording. It was granted in advance and the
+message was recorded after the restart and reopening the chat.
 
-### 2. Фото в офлайне — PASS
-Wrangler остановлен, шапка чата показала «подключение…». Фото из медиатеки (плюс → «Фото или видео» → выбор → отправка): баббл с полным превью появился в ленте мгновенно, статус — часики (18:56). После старта wrangler: у off-a двойные галочки (в логе `POST /api/media 200`), off-b получил фото и открыл его (`GET /api/media/... 206`).
+### 4. Killed offline with an unsent message, PASS
 
-### 6. Реакция в офлайне — PASS
-off-b прислал «React to me» (онлайн). Офлайн: на off-a лонг-тап → пикер реакций → ❤️ — реакция появилась на баббле мгновенно при «подключение…». После включения сети off-b видит ❤️ на своём сообщении.
+Offline, «Offline survive 4» sent (clock, 19:03), `simctl terminate` then a
+relaunch. The message is still there: last in the chat list with a clock icon,
+in the chat with a clock, and the whole history intact (text, photo, voice
+message). After the network came back, double ticks (19:04) and off-b received
+it.
 
-## Наблюдение (не дефект матрицы)
-Реконнект WS после возврата сети занимает до ~1–2 минут (экспоненциальный бэкофф; NWPathMonitor не срабатывает, потому что сеть симулятора не менялась — «офлайн» имитировался остановкой сервера). Доставка очереди после реконнекта — сразу.
+### 5. Draft, PASS
+
+The text «Draft not sent 5» was typed and not sent, the chat was left (the draft
+is saved on `onDisappear`), the app killed and launched, the chat opened again,
+and the text is back in the input field.
+
+### 2. Photo offline, PASS
+
+Wrangler stopped, the chat header showed «подключение…». A photo from the library
+(plus, «Фото или видео», pick, send): a bubble with the full preview appeared in
+the feed instantly, status a clock (18:56). After wrangler started: off-a shows
+double ticks (`POST /api/media 200` in the log), off-b received the photo and
+opened it (`GET /api/media/... 206`).
+
+### 6. Reaction offline, PASS
+
+off-b sent «React to me» online. Offline, on off-a: long tap, reaction picker,
+❤️, and the reaction appeared on the bubble instantly while the header still said
+«подключение…». After the network came back off-b sees the ❤️ on its own message.
+
+## Observation, not a defect of the matrix
+
+The WS reconnect after the network returns takes up to about 1 to 2 minutes
+(exponential backoff; `NWPathMonitor` does not fire because the simulator's
+network never changed, the offline state having been imitated by stopping the
+server). Delivery of the queue after the reconnect is immediate.

@@ -2,8 +2,8 @@ import XCTest
 import GRDB
 @testable import MsngrCore
 
-/// Применение сообщений из серверной истории (пагинация вверх):
-/// edit/reaction ложатся поверх оригиналов, порядок реплея не важен.
+/// Applying messages replayed from server history while paging upwards: edits
+/// and reactions land on top of their originals whatever order they arrive in.
 final class HistoricReplayTests: XCTestCase {
     private func makeEngine(db: DatabaseQueue) throws -> SyncEngine {
         let api = APIClient(baseURL: URL(string: "http://localhost:1")!)
@@ -14,7 +14,7 @@ final class HistoricReplayTests: XCTestCase {
                           ownUserId: "me", ownDeviceId: "dev")
     }
 
-    /// reaction и edit в историческом реплее применяются к оригиналу.
+    /// A reaction and an edit replayed from history apply to the original.
     func testHistoricReactionAndEditApplyToOriginal() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
@@ -44,15 +44,15 @@ final class HistoricReplayTests: XCTestCase {
         let reactions = try JSONDecoder().decode([String: [String]].self,
                                                  from: Data((row["reactions"] as String).utf8))
         XCTAssertEqual(reactions["👍"], ["peer"])
-        // служебные фреймы не создали собственных строк в ленте
+        // the service frames created no rows of their own in the feed
         let count = try await db.read { dbc in
             try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = 'c1'")!
         }
         XCTAssertEqual(count, 1)
     }
 
-    /// reaction из истории раньше своего оригинала буферизуется в pendingApply
-    /// и применяется при появлении оригинала.
+    /// A reaction that arrives from history ahead of its original waits in
+    /// pendingApply and is applied once the original shows up.
     func testHistoricReactionBeforeOriginalBuffersAndApplies() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
@@ -85,7 +85,7 @@ final class HistoricReplayTests: XCTestCase {
         XCTAssertEqual(left, 0)
     }
 
-    /// Повторный реплей того же диапазона идемпотентен (upsert по msgId).
+    /// Replaying the same range again is idempotent: rows are upserted by msgId.
     func testHistoricReplayIdempotent() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)

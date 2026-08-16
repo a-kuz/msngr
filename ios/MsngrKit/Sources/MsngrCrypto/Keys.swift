@@ -1,9 +1,10 @@
 import CryptoKit
 import Foundation
 
-/// Идентичность устройства: X25519 для DH + Ed25519 для подписей.
-/// (Signal использует XEd25519 поверх одного ключа; CryptoKit не умеет
-/// конвертацию, поэтому пара раздельных ключей, X25519-ключ подписан Ed25519.)
+/// Device identity: X25519 for DH, Ed25519 for signatures.
+/// Signal derives both from a single key via XEd25519; CryptoKit cannot convert
+/// between the two curves, so the identity holds two separate keys and the
+/// X25519 one is signed by the Ed25519 one.
 public struct IdentityKeyPair: Sendable {
     public let dh: Curve25519.KeyAgreement.PrivateKey
     public let signing: Curve25519.Signing.PrivateKey
@@ -56,7 +57,7 @@ public struct OneTimePreKey: Sendable {
     }
 }
 
-/// Prekey-бандл собеседника, полученный с сервера.
+/// A peer's prekey bundle as fetched from the server.
 public struct PreKeyBundle: Sendable {
     public let identity: IdentityPublicKeys
     public let signedPreKeyId: UInt32

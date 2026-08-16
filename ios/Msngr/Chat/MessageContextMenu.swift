@@ -1,8 +1,8 @@
 import UIKit
 import SwiftUI
 
-/// Контекстное меню сообщения: блюр фона, баббл приподнимается,
-/// над ним горизонтальный ряд быстрых реакций, под ним карточка действий.
+/// Message context menu: the background blurs, the bubble lifts, a horizontal row of
+/// quick reactions sits above it and a card of actions below.
 final class MessageContextOverlay: UIView {
     struct Item {
         let title: String
@@ -15,8 +15,8 @@ final class MessageContextOverlay: UIView {
     static let quickReactions = ["❤️", "👍", "🔥", "😂", "😮", "😢"]
 
     private let blurView = UIVisualEffectView(effect: nil)
-    /// Тон фона поверх размытия: гасит просвечивающие бабблы, к выделенному
-    /// сообщению сходит на нет через маску-градиент.
+    /// A wash of background colour over the blur: it kills the bubbles showing through and
+    /// fades out towards the selected message through a gradient mask.
     private let scrim = UIView()
     private let scrimMask = CAGradientLayer()
     private let snapshot: UIView
@@ -40,12 +40,12 @@ final class MessageContextOverlay: UIView {
     }
     private static let gap: CGFloat = 8
 
-    // MARK: - Показ
+    // MARK: - Presentation
 
     static func present(over bubble: UIView, in window: UIWindow, isOutgoing: Bool,
                         myReaction: String?, items: [Item], onReact: @escaping (String) -> Void) {
-        // рендер в картинку: snapshotView возвращает nil/пустоту для бабблов
-        // выше экрана; рендерим только верх (больше экрана всё равно не показать)
+        // rendered into an image, because snapshotView returns nil or nothing for bubbles
+        // taller than the screen; only the top is rendered, more than a screen cannot be shown
         let renderH = min(bubble.bounds.height, window.bounds.height * 1.2)
         let renderer = UIGraphicsImageRenderer(bounds: CGRect(x: 0, y: 0, width: bubble.bounds.width, height: renderH))
         let image = renderer.image { ctx in bubble.layer.render(in: ctx.cgContext) }
@@ -71,15 +71,15 @@ final class MessageContextOverlay: UIView {
 
         blurView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         addSubview(blurView)
-        // одного размытия мало: лента это тёмные бабблы на светлом фоне, и они
-        // остаются читаемыми пятнами. Тон фона поверх гасит их до ровного поля,
-        // а к выделенному сообщению сходит на нет, чтобы оно осталось в фокусе
+        // a blur alone is not enough: the feed is dark bubbles on a light background and
+        // they stay legible as blobs. The wash on top flattens them into an even field and
+        // fades out towards the selected message so it keeps the focus
         scrim.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         scrim.backgroundColor = UIColor(Theme.palette.chatBackground)
         scrim.alpha = 0
         addSubview(scrim)
         let tap = UITapGestureRecognizer(target: self, action: #selector(backgroundTap(_:)))
-        // иначе жест отменяет тачи кнопок меню и реакций — ни одна не нажимается
+        // otherwise the gesture cancels touches on the menu and reaction buttons and none of them press
         tap.cancelsTouchesInView = false
         addGestureRecognizer(tap)
 
@@ -96,8 +96,8 @@ final class MessageContextOverlay: UIView {
         super.layoutSubviews()
         blurView.frame = bounds
         scrim.frame = bounds
-        // градиент строится вокруг сообщения: у него тон прозрачен, к краям
-        // экрана набирает полную плотность
+        // the gradient is built around the message: transparent at the message, full
+        // density towards the edges of the screen
         let focus = snapshot.frame.midY / max(bounds.height, 1)
         scrimMask.frame = bounds
         scrimMask.colors = [UIColor.white.cgColor, UIColor.white.withAlphaComponent(0).cgColor,
@@ -108,11 +108,11 @@ final class MessageContextOverlay: UIView {
         scrim.layer.mask = scrimMask
     }
 
-    // MARK: - Геометрия
+    // MARK: - Geometry
 
-    /// Целевая позиция баббла: сдвигаем по вертикали так, чтобы реакции сверху
-    /// и меню снизу поместились в safe area. Баббл выше свободного места —
-    /// уменьшаем (как TG), сохраняя прижатие к своей стороне.
+    /// Target position of the bubble: it moves vertically until the reactions above and
+    /// the menu below both fit inside the safe area. A bubble taller than the free space
+    /// is trimmed (the way TG does it) while staying pinned to its own side.
     private func targetBubbleFrame() -> CGRect {
         let safe = safeAreaInsets
         let menuH = menuHeight(for: items)
@@ -122,8 +122,8 @@ final class MessageContextOverlay: UIView {
         let availH = bounds.height - safe.bottom - 8 - bottomNeeded - minY
         var f = originFrame
         if f.height > availH {
-            // гигантский баббл: не масштабируем (получается «нитка»), а кропим —
-            // показываем верхнюю часть 1:1, contentMode .top ставит animateIn
+            // a giant bubble is cropped rather than scaled, which would turn it into a
+            // thread: the top part is shown 1:1, and animateIn sets contentMode .top
             f.size.height = availH
             f.origin.y = minY
             return f
@@ -134,18 +134,18 @@ final class MessageContextOverlay: UIView {
     }
 
     private func menuHeight(for items: [Item]) -> CGFloat {
-        // толстый разделитель перед первой деструктивной группой
+        // a thick separator precedes the first destructive group
         let hasDestructive = items.contains { $0.destructive }
         return CGFloat(items.count) * Self.rowHeight + (hasDestructive ? 6 : 0)
     }
 
-    /// Край, к которому прижимаем реакции и меню: сторона баббла.
+    /// The edge the reactions and the menu are pinned to: the bubble's own side.
     private func alignedX(width: CGFloat, bubble: CGRect) -> CGFloat {
         let x = isOutgoing ? bubble.maxX - width : bubble.minX
         return min(max(x, 8), bounds.width - width - 8)
     }
 
-    // MARK: - Реакции
+    // MARK: - Reactions
 
     private func buildReactionBar() {
         reactionBar.backgroundColor = .systemBackground
@@ -193,7 +193,7 @@ final class MessageContextOverlay: UIView {
         dismiss()
     }
 
-    // MARK: - Меню
+    // MARK: - Menu
 
     private func buildMenuCard(items: [Item]) {
         menuCard.backgroundColor = .clear
@@ -264,7 +264,7 @@ final class MessageContextOverlay: UIView {
                                 y: bubble.maxY + Self.gap, width: Self.menuWidth, height: h)
     }
 
-    // MARK: - Анимации
+    // MARK: - Animations
 
     private func animateIn() {
         layoutIfNeeded()
@@ -330,7 +330,7 @@ final class MessageContextOverlay: UIView {
         }
     }
 
-    /// Меняет anchorPoint без визуального сдвига фрейма.
+    /// Changes the anchorPoint without visually moving the frame.
     private func setAnchor(_ anchor: CGPoint, for view: UIView) {
         let f = view.frame
         view.layer.anchorPoint = anchor
@@ -338,7 +338,7 @@ final class MessageContextOverlay: UIView {
     }
 }
 
-/// Строка меню: заголовок слева, SF-иконка справа (как в системном меню iOS).
+/// A menu row: title on the left, SF icon on the right, like the system iOS menu.
 private final class MenuRow: UIControl {
     var onTap: (() -> Void)?
     private let titleLabel = UILabel()

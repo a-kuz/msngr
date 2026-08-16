@@ -1,7 +1,7 @@
 import XCTest
 @testable import MsngrCore
 
-/// Скрытие содержимого чата-заявки до принятия.
+/// Hiding the contents of a request chat until it is accepted.
 final class ChatPrivacyTests: XCTestCase {
     private func chat(isRequest: Bool, iAccepted: Bool, unread: Int = 0) -> Chat {
         var c = Chat(id: "direct:A:B", kind: .direct, title: nil, createdBy: "A", createdAt: 0)
@@ -22,7 +22,7 @@ final class ChatPrivacyTests: XCTestCase {
         XCTAssertFalse(ChatPrivacy.hidesContent(nil))
     }
 
-    /// Основное требование: до accept превью не несёт текста, после — несёт.
+    /// The core rule: the preview carries no text before accept and the real text after it.
     func testPreviewHiddenUntilAccept() {
         XCTAssertEqual(ChatPrivacy.preview(isRequest: true, iAccepted: false, content: "Привет, это я"),
                        ChatPrivacy.requestPlaceholder)
@@ -30,7 +30,7 @@ final class ChatPrivacyTests: XCTestCase {
                        "Привет, это я")
     }
 
-    /// Пустой текст у скрытого чата не должен «просвечивать» как отсутствие сообщений.
+    /// A hidden chat with no text must not read as a chat with no messages.
     func testPreviewOfEmptyContent() {
         XCTAssertEqual(ChatPrivacy.preview(isRequest: true, iAccepted: false, content: nil),
                        ChatPrivacy.requestPlaceholder)
