@@ -1708,9 +1708,18 @@ public actor SyncEngine {
 
     // MARK: - Пользовательские действия
 
-    /// Принять новый identity-ключ собеседника и переотправить заблокированные сообщения.
-    public func acceptKeyChange(chatId: String, peerUserId: String) async {
-        try? e2ee.acceptChangedIdentity(userId: peerUserId)
+    /// Принять новые identity-ключи участников чата и переотправить
+    /// заблокированные сообщения. Ключ мог смениться у любого участника группы,
+    /// поэтому принимаются все, у кого он в чате ждёт подтверждения.
+    public func acceptKeyChange(chatId: String) async {
+        let pending: [String] = (try? await db.read { dbc in
+            try String.fetchAll(dbc, sql: """
+                SELECT t.userId FROM trustedIdentity t
+                JOIN member m ON m.userId = t.userId
+                WHERE m.chatId = ? AND t.changedPending IS NOT NULL
+                """, arguments: [chatId])
+        }) ?? []
+        for userId in pending { try? e2ee.acceptChangedIdentity(userId: userId) }
         try? await db.write { dbc in
             try dbc.execute(sql: """
                 UPDATE message SET status = 0, failReason = NULL WHERE clientMsgId IN

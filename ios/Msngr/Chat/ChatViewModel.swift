@@ -172,11 +172,16 @@ final class ChatViewModel: ObservableObject {
                 // the pending key change is read here rather than from the main
                 // thread: a read of its own would block on the writer queue,
                 // and during a burst that queue is busy applying messages
+                // считается по всем участникам, а не только по собеседнику
+                // direct: в группе отправку блокирует смена ключа у любого из
+                // них, и без баннера сообщение осталось бы лежать навсегда
+                let peers = users.map(\.id).filter { $0 != ownId }
                 var keyChangePending = false
-                if chat?.kind == .direct, let peerId = users.first(where: { $0.id != ownId })?.id {
-                    keyChangePending = try Row.fetchOne(
-                        dbc, sql: "SELECT changedPending FROM trustedIdentity WHERE userId = ?",
-                        arguments: [peerId]).map { ($0["changedPending"] as String?) != nil } ?? false
+                if !peers.isEmpty {
+                    keyChangePending = try Bool.fetchOne(dbc, sql: """
+                        SELECT EXISTS(SELECT 1 FROM trustedIdentity
+                        WHERE changedPending IS NOT NULL AND userId IN (\(databaseQuestionMarks(count: peers.count))))
+                        """, arguments: StatementArguments(peers)) ?? false
                 }
                 return Snapshot(
                     chat: chat, msgs: msgs, users: users,
@@ -275,9 +280,8 @@ final class ChatViewModel: ObservableObject {
     }
 
     func acceptKeyChange() {
-        guard let peerId = peer?.id else { return }
-        Task {
-            await app.engine.acceptKeyChange(chatId: chatId, peerUserId: peerId)
+        Task { [chatId] in
+            await app.engine.acceptKeyChange(chatId: chatId)
             await MainActor.run { self.keyChangePending = false }
         }
     }
