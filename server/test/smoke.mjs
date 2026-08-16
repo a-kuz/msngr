@@ -838,6 +838,22 @@ ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p4", sentAt: Date.n
 const p4 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p4");
 check("no push for service", !(await waitPush(pushFor("eve-sim-udid", p4.msgId), 1200)));
 
+// (в1) Служебный фрейм занимает seq, но бейджа не растит: в прочитанном чате
+// его поглощает read-марка — ровно так же, как курсор двигает клиент. Бейдж
+// считает сервер, поэтому разойтись эти два счёта не должны.
+ce.send({ t: "read", chatId: echat.chatId, upToSeq: p4.seq });
+await ca2.waitFor((f) => f.t === "receipt" && f.kind === "read"
+  && f.by === eve.userId && f.upToSeq === p4.seq);
+ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-svc-1", sentAt: Date.now(),
+  service: true, body: { v: 1, mode: "skd", c: "c2tk" } });
+await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-svc-1");
+ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-svc-2", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const psvc = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-svc-2");
+const pushSvc = await waitPush(pushFor("eve-sim-udid", psvc.msgId));
+check("service frame does not grow the badge", pushSvc?.body.aps.badge === 1,
+  `badge=${pushSvc?.body.aps.badge}`);
+
 // (в2) The push carries the message itself, addressed to the device it goes to:
 // the extension decrypts it and writes it, so a chat opened offline holds what
 // the banner said. A pairwise envelope is trimmed to this device's own box.
@@ -899,6 +915,25 @@ check("expired mute cleared in flags",
 
 // (ж) own echo: у alice токен зарегистрирован, но её собственные отправки пуш не создают
 check("no push for own echo", !pushes.some((p) => p.url === "/3/device/alice-sim-udid"));
+
+// (з) Бейдж считает сервер, и своё отправленное автор непрочитанным не считает —
+// ровно как курсор на устройстве. Иначе число росло бы на то, что он сам написал.
+ce.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-e1", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const e1 = await ce.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-e1");
+check("author's badge counts the peer's message",
+  (await waitPush(pushFor("alice-sim-udid", e1.msgId)))?.body.aps.badge === 1);
+for (const id of ["cm-p11", "cm-p12", "cm-p13"]) {
+  ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: id, sentAt: Date.now(),
+    body: { v: 1, mode: "pw", msgs: {} } });
+  await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === id);
+}
+ce.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-e2", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const e2 = await ce.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-e2");
+const badgeAfter = (await waitPush(pushFor("alice-sim-udid", e2.msgId)))?.body.aps.badge;
+check("own messages do not grow the author's badge", badgeAfter === 1,
+  `badge=${badgeAfter}`);
 
 // 21. Ack раньше пуша: подтверждение отправителю не ждёт APNs
 hold = { token: "eve-sim-udid", ms: 1500 };
