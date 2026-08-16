@@ -44,7 +44,7 @@ final class ChatViewModel: ObservableObject {
     @Published var members: [User] = []
     /// The feed is inverted: [0] is the newest item.
     @Published var feed: [ChatFeedItem] = []
-    @Published var typingUsers: [String] = []
+    @Published private(set) var typingUsers: [String] = []
     @Published var replyingTo: Message?
     @Published var editing: Message?
     @Published var pinnedMessage: Message?
@@ -92,7 +92,8 @@ final class ChatViewModel: ObservableObject {
     private var cancellable: AnyCancellable?
     private var typingTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
-    private var typingClearTask: Task<Void, Never>?
+    private var typing = TypingState()
+    private var typingExpiryTask: Task<Void, Never>?
     private let app = AppState.shared
     var ownUserId: String { app.session?.userId ?? "" }
 
@@ -137,16 +138,36 @@ final class ChatViewModel: ObservableObject {
             for await ev in engine.typingStream.subscribe() {
                 guard let self, ev.chatId == self.chatId else { continue }
                 if ev.kind != nil {
-                    if !self.typingUsers.contains(ev.userId) { self.typingUsers.append(ev.userId) }
-                    self.typingClearTask?.cancel()
-                    self.typingClearTask = Task {
-                        try? await Task.sleep(nanoseconds: 5_000_000_000)
-                        self.typingUsers.removeAll()
-                    }
-                } else if self.typingUsers.contains(ev.userId) {
-                    self.typingUsers.removeAll { $0 == ev.userId }
+                    self.typing.began(ev.userId, at: Date())
+                } else if self.typing.users.contains(ev.userId) {
+                    self.typing.ended(ev.userId)
+                } else {
+                    // a stop for someone who was not typing: every incoming message
+                    // brings one
+                    continue
                 }
+                self.typingUsers = self.typing.users
+                self.scheduleTypingExpiry()
             }
+        }
+    }
+
+    /// One timer, set to whoever falls out first. It is rearmed after every frame,
+    /// so a cancelled one must not take anybody off the header on its way out: a
+    /// peer typing without pause sends a frame every three seconds, and each one
+    /// would then blink the subtitle back to the presence line.
+    private func scheduleTypingExpiry() {
+        typingExpiryTask?.cancel()
+        guard let deadline = typing.nextExpiry() else { return }
+        typingExpiryTask = Task { [weak self] in
+            let wait = deadline.timeIntervalSinceNow
+            if wait > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+            }
+            guard !Task.isCancelled, let self else { return }
+            self.typing.expire(at: Date())
+            self.typingUsers = self.typing.users
+            self.scheduleTypingExpiry()
         }
     }
 
@@ -242,6 +263,10 @@ final class ChatViewModel: ObservableObject {
         obscuredCancellable = nil
         typingTask?.cancel()
         typingTask = nil
+        typingExpiryTask?.cancel()
+        typingExpiryTask = nil
+        typing = TypingState()
+        typingUsers = []
         connectionTask?.cancel()
         connectionTask = nil
     }
