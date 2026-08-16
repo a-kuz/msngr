@@ -549,7 +549,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
 }
 
 enum MessageContextAction {
-    case reply, copy, selectText, forward, select, edit, pin, delete
+    case reply, copy, forward, select, edit, pin, delete
 }
 
 extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {

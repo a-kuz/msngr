@@ -1,5 +1,6 @@
 import UIKit
 import SwiftUI
+import MsngrCore
 
 /// Контекстное меню сообщения: блюр фона, баббл приподнимается,
 /// над ним горизонтальный ряд быстрых реакций, под ним карточка действий.
@@ -193,12 +194,20 @@ final class MessageContextOverlay: UIView {
         tv.attributedText = coloured
         tv.frame = spec.frame
         tv.accessibilityIdentifier = "chat.liftedText"
+        // выделение ведёт жест оверлея, поэтому свои распознаватели текста
+        // касаний не получают: иначе они забирают их себе и гасят протяжку
+        tv.isUserInteractionEnabled = false
+        // снимок это картинка, а картинки касаний не принимают — вместе с ней
+        // их не получил бы и текст поверх
+        snapshot.isUserInteractionEnabled = true
         snapshot.addSubview(tv)
         textView = tv
 
+        // жест живёт на оверлее: нередактируемый нескроллящийся UITextView
+        // отдаёт касания сквозь себя и сам их не получает
         let drag = UIPanGestureRecognizer(target: self, action: #selector(textDrag(_:)))
-        tv.addGestureRecognizer(drag)
-        tv.addInteraction(editMenu)
+        addGestureRecognizer(drag)
+        snapshot.addInteraction(editMenu)
     }
 
     @objc private func textDrag(_ g: UIPanGestureRecognizer) {
@@ -206,6 +215,11 @@ final class MessageContextOverlay: UIView {
         let point = g.location(in: tv)
         switch g.state {
         case .began:
+            // тянут не по тексту — выделять нечего, жест отдаём фону
+            guard tv.bounds.insetBy(dx: -8, dy: -8).contains(point) else {
+                dragAnchor = nil
+                return
+            }
             tv.becomeFirstResponder()
             dragAnchor = tv.closestPosition(to: point)
             Haptics.light()
@@ -217,7 +231,8 @@ final class MessageContextOverlay: UIView {
         case .ended, .cancelled, .failed:
             dragAnchor = nil
             guard let range = tv.selectedTextRange, !range.isEmpty else { return }
-            editMenu.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: point))
+            let source = g.location(in: snapshot)
+            editMenu.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: source))
         default:
             break
         }

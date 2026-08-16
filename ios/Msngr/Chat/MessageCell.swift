@@ -781,11 +781,6 @@ extension MessageCell {
                 self?.onContextAction?(.copy)
             })
         }
-        if msg.text?.isEmpty == false {
-            items.append(.init(title: "Выделить текст", icon: "selection.pin.in.out") { [weak self] in
-                self?.onContextAction?(.selectText)
-            })
-        }
         items.append(.init(title: "Переслать", icon: "arrowshape.turn.up.right") { [weak self] in
             self?.onContextAction?(.forward)
         })
