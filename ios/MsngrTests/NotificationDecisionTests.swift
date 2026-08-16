@@ -1,8 +1,8 @@
 import XCTest
 @testable import Msngr
 
-/// Матрица «показывать ли уведомление»: WS-путь (in-app баннер) и
-/// willPresent-путь (системный APNs-пуш, приходящий на каждое сообщение).
+/// The "show a notification or not" matrix: the WS path (in-app banner) and the
+/// willPresent path (the system APNs push that arrives for every message).
 final class NotificationDecisionTests: XCTestCase {
 
     private func ws(appActive: Bool = true, chatOpen: Bool = false, isOwn: Bool = false,
@@ -15,7 +15,7 @@ final class NotificationDecisionTests: XCTestCase {
                                            apnsAvailable: apnsAvailable)
     }
 
-    // MARK: - Сообщение по WS
+    // MARK: - Message over WS
 
     func testActiveOtherChatShowsInAppBanner() {
         XCTAssertEqual(ws(appActive: true, chatOpen: false), .inAppBanner)
@@ -26,12 +26,12 @@ final class NotificationDecisionTests: XCTestCase {
     }
 
     func testBackgroundShowsNothing() {
-        // в фоне баннер даст системный APNs-пуш; своя локальная нотификация — дубль
+        // in the background the system APNs push gives the banner; a local one would duplicate it
         XCTAssertEqual(ws(appActive: false, chatOpen: false), .none)
     }
 
     func testBackgroundWithoutApnsPostsLocalNotification() {
-        // симулятор и устройство без токена: пуш не придёт, баннер постит приложение
+        // simulator, or a device with no token: no push will come, the app posts the banner
         XCTAssertEqual(ws(appActive: false, apnsAvailable: false), .localNotification)
     }
 
@@ -43,12 +43,12 @@ final class NotificationDecisionTests: XCTestCase {
     }
 
     func testBackgroundWithOpenChatStillNotifies() {
-        // приложение в фоне — открытый на экране чат не повод молчать
+        // the app is in the background, so a chat left open on screen is no reason to stay silent
         XCTAssertEqual(ws(appActive: false, chatOpen: true, apnsAvailable: false), .localNotification)
     }
 
     func testAlreadyShownMsgIdShowsNothing() {
-        // системный пуш успел показаться раньше WS-фрейма
+        // the system push got shown before the WS frame arrived
         XCTAssertEqual(ws(alreadyShown: true), .none)
     }
 
@@ -64,7 +64,7 @@ final class NotificationDecisionTests: XCTestCase {
         XCTAssertEqual(ws(muted: true), .none)
     }
 
-    // MARK: - Системный пуш в активном приложении (willPresent)
+    // MARK: - System push in an active app (willPresent)
 
     private func present(isLocal: Bool = false,
                          chatOpen: Bool = false, alreadyShown: Bool = false,
@@ -79,13 +79,14 @@ final class NotificationDecisionTests: XCTestCase {
     }
 
     func testOwnLocalNotificationAlwaysPresents() {
-        // приложение само поставило баннер по WS-фрейму: сообщение уже в БД и его
-        // msgId уже в alreadyShown, общий дедуп погасил бы собственное уведомление
+        // the app posted this banner itself from a WS frame: the message is already in
+        // the DB and its msgId is already in alreadyShown, so the common dedupe would
+        // swallow the app's own notification
         XCTAssertTrue(present(isLocal: true, alreadyShown: true, messageInDB: true))
     }
 
     func testPushForUnknownMessagePresents() {
-        // WS отстал (или мёртв): пуш — единственный канал, показываем
+        // WS is behind or dead: the push is the only channel, so show it
         XCTAssertTrue(present())
     }
 
@@ -94,13 +95,13 @@ final class NotificationDecisionTests: XCTestCase {
     }
 
     func testPushAfterInAppBannerSuppressed() {
-        // in-app баннер уже показан по WS — системный дубль гасится
+        // the in-app banner was already shown from WS, so the system duplicate is suppressed
         XCTAssertFalse(present(alreadyShown: true, messageInDB: true))
     }
 
     func testPushForMessageAlreadyReceivedViaWSSuppressed() {
-        // recv-ack не остановил пуш (сервер шлёт всегда): сообщение уже в БД,
-        // баннер по нему решался WS-путём — системный не показываем
+        // the recv ack did not stop the push (the server always sends one): the message
+        // is already in the DB and the WS path already decided about its banner
         XCTAssertFalse(present(messageInDB: true))
     }
 

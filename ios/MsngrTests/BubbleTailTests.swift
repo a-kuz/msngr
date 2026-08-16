@@ -1,10 +1,10 @@
 import XCTest
 @testable import Msngr
 
-/// Хвостик баббла — отдельная некапнутая картинка (см. аудит #40/#41):
-/// тело баббла не должно зависеть от наличия хвоста, а сам хвост не должен
-/// обрезаться по краю холста и должен быть зеркально симметричен для
-/// исходящих/входящих сообщений.
+/// The bubble tail is a separate uncapped image (see audit #40/#41): the bubble
+/// body must not depend on whether a tail is there, and the tail itself must not
+/// be clipped at the edge of its canvas and must mirror exactly between outgoing
+/// and incoming messages.
 final class BubbleTailTests: XCTestCase {
     private struct RGBAImage {
         let width: Int
@@ -28,8 +28,8 @@ final class BubbleTailTests: XCTestCase {
         return RGBAImage(width: w, height: h, pixels: pixels)
     }
 
-    /// Хвост не должен касаться ни одного края холста непрозрачным пикселем —
-    /// иначе кривая обрезана (см. дефект: x доходил до 48 при холсте 44).
+    /// No opaque pixel of the tail may touch any edge of the canvas, otherwise the
+    /// curve is clipped (see the defect: x reached 48 on a canvas of 44).
     func testTailNotClippedAtCanvasEdge() {
         for outgoing in [true, false] {
             let img = rasterize(BubbleBackground.tailImage(outgoing: outgoing))
@@ -42,21 +42,21 @@ final class BubbleTailTests: XCTestCase {
                 if img.alpha(x, 0) > 10 { touchesTop = true }
                 if img.alpha(x, img.height - 1) > 10 { touchesBottom = true }
             }
-            XCTAssertFalse(touchesLeft, "outgoing=\(outgoing): хвост обрезан по левому краю холста")
-            XCTAssertFalse(touchesRight, "outgoing=\(outgoing): хвост обрезан по правому краю холста")
-            XCTAssertFalse(touchesTop, "outgoing=\(outgoing): хвост обрезан по верхнему краю холста")
-            XCTAssertFalse(touchesBottom, "outgoing=\(outgoing): хвост обрезан по нижнему краю холста")
+            XCTAssertFalse(touchesLeft, "outgoing=\(outgoing): tail clipped at the left edge of the canvas")
+            XCTAssertFalse(touchesRight, "outgoing=\(outgoing): tail clipped at the right edge of the canvas")
+            XCTAssertFalse(touchesTop, "outgoing=\(outgoing): tail clipped at the top edge of the canvas")
+            XCTAssertFalse(touchesBottom, "outgoing=\(outgoing): tail clipped at the bottom edge of the canvas")
 
-            // и хвост вообще на месте (не пустая картинка)
+            // and the tail is there at all (not an empty image)
             var anyOpaque = false
             for y in 0..<img.height where !anyOpaque {
                 for x in 0..<img.width where img.alpha(x, y) > 10 { anyOpaque = true; break }
             }
-            XCTAssertTrue(anyOpaque, "outgoing=\(outgoing): хвост не отрисовался")
+            XCTAssertTrue(anyOpaque, "outgoing=\(outgoing): tail was not drawn")
         }
     }
 
-    /// Входящий хвост — точное зеркало исходящего по горизонтали (симметрия слева/справа).
+    /// The incoming tail is an exact horizontal mirror of the outgoing one.
     func testIncomingTailIsMirrorOfOutgoing() {
         let out = rasterize(BubbleBackground.tailImage(outgoing: true))
         let inc = rasterize(BubbleBackground.tailImage(outgoing: false))
@@ -71,11 +71,11 @@ final class BubbleTailTests: XCTestCase {
                 }
             }
         }
-        XCTAssertEqual(mismatches, 0, "хвост входящего должен быть зеркалом хвоста исходящего")
+        XCTAssertEqual(mismatches, 0, "the incoming tail must mirror the outgoing one")
     }
 
-    /// Тело баббла (закруглённый прямоугольник) не принимает параметр tail —
-    /// оно рисуется одинаково независимо от того, будет ли хвост показан поверх.
+    /// The bubble body (a rounded rectangle) takes no tail parameter: it is drawn
+    /// the same whether or not a tail will be shown over it.
     func testBodyImageIdenticalRegardlessOfTailUsage() {
         let a = rasterize(BubbleBackground.image(outgoing: true, mediaOnly: false))
         let b = rasterize(BubbleBackground.image(outgoing: true, mediaOnly: false))

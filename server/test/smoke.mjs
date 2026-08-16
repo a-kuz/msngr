@@ -1,14 +1,14 @@
-// Интеграционный смоук: пользователи, direct-чат, WS-обмен, receipts, sync, группа,
-// блокировки, логаут, пуши.
-// Пуш-проверки требуют, чтобы wrangler dev видел APNS_HOST на порт приёмника смоука:
-// по умолчанию http://localhost:9871 (.dev.vars), иначе PUSH_PORT=<порт>.
+// Integration smoke: users, direct chat, WS exchange, receipts, sync, groups,
+// blocks, logout, pushes.
+// The push checks need wrangler dev to point APNS_HOST at the smoke's own
+// receiver: http://localhost:9871 by default (.dev.vars), otherwise PUSH_PORT=<port>.
 import http from "node:http";
 import WebSocket from "ws";
 import { shouldArmAlarm } from "../src/util.ts";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:8787";
 const WS_BASE = BASE.replace(/^http/, "ws");
-// Порт приёмника пушей: должен совпадать с APNS_HOST у проверяемого wrangler dev.
+// Port of the push receiver: has to match APNS_HOST of the wrangler dev under test.
 const PUSH_PORT = Number(process.env.PUSH_PORT ?? 9871);
 let failures = 0;
 
@@ -55,7 +55,7 @@ class Client {
   connect() {
     return new Promise((resolve, reject) => {
       this.ws = new WebSocket(`${WS_BASE}/ws?token=${this.token}&v=${this.protocol}`);
-      // at: момент получения фрейма — по нему сравнивается порядок ack и пуша
+      // at: when the frame arrived, used to compare the order of an ack and a push
       this.ws.on("message", (d) =>
         this.frames.push({ ...JSON.parse(d.toString()), at: Date.now() }));
       this.ws.on("open", resolve);
@@ -72,7 +72,8 @@ class Client {
     }
     return null;
   }
-  /// Позиция в ленте фреймов: с неё ищет waitAfter, ею режется срез раунда.
+  /// Position in the frame log: waitAfter searches from it, and a round's slice
+  /// is cut at it.
   mark() { return this.frames.length; }
   async waitAfter(mark, pred, ms = 4000) {
     const t0 = Date.now();
@@ -85,9 +86,9 @@ class Client {
   }
 }
 
-/// Догон порциями, как его крутит клиент: sync → msg-фреймы, syncState по
-/// чатам, syncDone; дальше catchup по тем, кто ещё отстал, пока more не станет
-/// false. Возвращает раунды со срезом syncState каждого.
+/// Catch-up in portions, the way the client drives it: sync → msg frames,
+/// syncState per chat, syncDone; then catchup for the chats still behind until
+/// more goes false. Returns the rounds with each one's syncState slice.
 async function catchUp(client, cursors, { rounds = 200, ms = 30000 } = {}) {
   let asked = { ...cursors };
   let t = "sync";
@@ -106,7 +107,7 @@ async function catchUp(client, cursors, { rounds = 200, ms = 30000 } = {}) {
     const next = {};
     for (const [chatId, from] of Object.entries(asked)) {
       const st = portions[portions.length - 1].states.find((s) => s.chatId === chatId);
-      if (!st) next[chatId] = from;        // до чата порция не дошла
+      if (!st) next[chatId] = from;        // the portion never reached this chat
       else if (st.more) next[chatId] = st.cursor;
     }
     if (!Object.keys(next).length) return { done: true, portions };
@@ -118,7 +119,7 @@ async function catchUp(client, cursors, { rounds = 200, ms = 30000 } = {}) {
 
 const suffix = Math.random().toString(36).slice(2, 8);
 
-// 1. Регистрация
+// 1. Registration
 const alice = await api("/api/register", { body: {
   username: "alice_" + suffix, displayName: "Alice", ...fakeKeys("a") } });
 const bob = await api("/api/register", { body: {
@@ -131,7 +132,7 @@ const dupe = await api("/api/register", { body: {
   username: "alice_" + suffix, displayName: "X", ...fakeKeys("x") } });
 check("username uniqueness", !dupe.ok && dupe.error === "username_taken");
 
-// 2. Поиск и prekeys
+// 2. Search and prekeys
 const found = await api(`/api/users?q=bob_${suffix}`, { token: alice.token });
 check("user search", found.ok && found.users.length === 1);
 
@@ -140,7 +141,7 @@ check("prekey bundle", bundle.ok && bundle.bundles[0].oneTimePrekey?.key === "ot
 const bundle2 = await api(`/api/users/${bob.userId}/prekeys`, { token: alice.token });
 check("one-time prekey consumed", bundle2.bundles[0].oneTimePrekey?.key === "otp2_b");
 
-// 3. Direct-чат (+дедуп)
+// 3. Direct chat (+ dedupe)
 const chat = await api("/api/chats", { token: alice.token,
   body: { kind: "direct", memberIds: [bob.userId] } });
 check("create direct", chat.ok, JSON.stringify(chat));
@@ -197,7 +198,7 @@ check("upgrade without a version is refused",
 const supported = await upgrade(alice.token, `&v=${ver.protocol}`);
 check("upgrade of a current client is accepted", supported.status === 101, JSON.stringify(supported));
 
-// 5. Отправка сообщения
+// 5. Sending a message
 ca.send({ t: "send", chatId: chat.chatId, clientMsgId: "cm-1", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: { [`${bob.userId}/${bob.deviceId}`]: { type: "dr", c: "ZmFrZQ" } } } });
 const sent = await ca.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-1");
@@ -207,12 +208,12 @@ check("bob receives msg", !!gotMsg && gotMsg.from === alice.userId);
 const aliceEcho = await ca.waitFor((f) => f.t === "msg" && f.msgId === sent.msgId);
 check("alice gets own echo", !!aliceEcho);
 
-// идемпотентность
+// idempotency
 ca.send({ t: "send", chatId: chat.chatId, clientMsgId: "cm-1", sentAt: Date.now(), body: {} });
 const sent2 = await ca.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-1" && f !== sent);
 check("idempotent resend same seq", !!sent2 && sent2.seq === 1 && sent2.msgId === sent.msgId);
 
-// 6. Message request: Bob ещё не принял чат → read-receipt не уходит
+// 6. Message request: Bob has not accepted the chat yet → no read receipt goes out
 const st0 = await api(`/api/chats/${chat.chatId}/history?fromSeq=0`, { token: bob.token });
 void st0;
 const stateRes = await fetch(BASE + "/api/chats", { headers: { authorization: `Bearer ${bob.token}` } }).then(r => r.json());
@@ -226,7 +227,7 @@ await new Promise((r) => setTimeout(r, 600));
 check("no read receipt before accept", !ca.frames.some((f) => f.t === "receipt" && f.kind === "read"));
 check("no typing before accept", !ca.frames.some((f) => f.t === "typing" && f.from === bob.userId));
 
-// presence получателя не виден автору заявки и через профиль
+// the recipient's presence is not visible to the requester, not even via the profile
 const profBefore = await api(`/api/users/${bob.userId}`, { token: alice.token });
 check("no presence before accept", profBefore.ok && profBefore.presence === null,
   JSON.stringify(profBefore.presence));
@@ -238,7 +239,7 @@ const profAfter = await api(`/api/users/${bob.userId}`, { token: alice.token });
 check("presence after accept", profAfter.ok && !!profAfter.presence,
   JSON.stringify(profAfter.presence));
 
-// Receipts после accept
+// Receipts after accept
 cb.send({ t: "recv", chatId: chat.chatId, seqs: [1] });
 const delivered = await ca.waitFor((f) => f.t === "receipt" && f.kind === "delivered");
 check("delivered receipt", !!delivered && delivered.by === bob.userId);
@@ -251,7 +252,7 @@ cb.send({ t: "typing", chatId: chat.chatId, kind: "text" });
 const typing = await ca.waitFor((f) => f.t === "typing" && f.from === bob.userId);
 check("typing", !!typing);
 
-// 8. Offline → sync: Bob отключается, Alice шлёт, Bob возвращается с курсором
+// 8. Offline → sync: Bob disconnects, Alice sends, Bob comes back with a cursor
 cb.ws.close();
 await new Promise((r) => setTimeout(r, 300));
 ca.send({ t: "send", chatId: chat.chatId, clientMsgId: "cm-2", sentAt: Date.now(),
@@ -263,7 +264,7 @@ cb2.send({ t: "sync", cursors: { [chat.chatId]: 1 } });
 const missed = await cb2.waitFor((f) => f.t === "msg" && f.seq === 2);
 check("sync backfill", !!missed);
 
-// 9. Группа
+// 9. Group
 const grp = await api("/api/chats", { token: alice.token,
   body: { kind: "group", memberIds: [bob.userId], title: "Team" } });
 check("create group", grp.ok);
@@ -283,7 +284,7 @@ ca.send({ t: "send", chatId: grp.chatId, clientMsgId: "cm-g1", sentAt: Date.now(
 const gmsg = await cb2.waitFor((f) => f.t === "msg" && f.chatId === grp.chatId);
 check("group message delivered", !!gmsg);
 
-// 10. Снапшот чатов
+// 10. Chats snapshot
 const snap = await api("/api/chats", { token: bob.token });
 check("chats snapshot", snap.ok && snap.chats.length === 2 && snap.users.length >= 3);
 
@@ -295,7 +296,7 @@ const hist = await api(`/api/chats/${chat.chatId}/history?fromSeq=0`, { token: b
 const tomb = hist.msgs.find((m) => m.msgId === sent.msgId);
 check("tombstoned on server", tomb && tomb.deleted === true && tomb.body === null);
 
-// 11a. Чужое сообщение «у всех» не сносится: ни тумбстоуна, ни рассылки
+// 11a. Delete for all does not touch someone else's message: no tombstone, no fanout
 cb2.send({ t: "send", chatId: chat.chatId, clientMsgId: "cm-bob-own", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const bobOwn = await cb2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-bob-own");
@@ -307,18 +308,18 @@ const keptMsg = hist2.msgs.find((m) => m.msgId === bobOwn.msgId);
 check("someone else's message survives delete for all",
   keptMsg && !keptMsg.deleted && keptMsg.body !== null);
 
-// 12. Флаги чата (pin/mute/archive)
+// 12. Chat flags (pin/mute/archive)
 const fl = await api(`/api/chats/${chat.chatId}/flags`, { token: alice.token,
   body: { pinned: true, muted: true } });
 check("chat flags", fl.ok);
 
-// 13. Блокировка
+// 13. Blocking
 const bl = await api("/api/block", { token: bob.token, body: { userId: carol.userId, blocked: true } });
 const tryChat = await api("/api/chats", { token: carol.token,
   body: { kind: "direct", memberIds: [bob.userId] } });
 check("blocked direct rejected", bl.ok && !tryChat.ok && tryChat.error === "blocked");
 
-// 13a. Блокировка в уже созданном чате: отправка удаётся, доставки нет
+// 13a. Blocking inside an existing chat: the send succeeds, the delivery does not happen
 const frank = await api("/api/register", { body: {
   username: "frank_" + suffix, displayName: "Frank", ...fakeKeys("f") } });
 const grace = await api("/api/register", { body: {
@@ -343,8 +344,8 @@ check("blocked sender still gets ack", !!fg2);
 check("blocked message not delivered",
   !(await cf.waitFor((f) => f.t === "msg" && f.msgId === fg2?.msgId, 1200)));
 
-// обратная сторона: заблокировавшему писать в этот чат нельзя, и он об этом
-// знает — сервер отвечает явной ошибкой, а не молчаливым «отправлено»
+// the other direction: the blocker cannot write into this chat and gets told so,
+// the server answers with an explicit error instead of a silent "sent"
 cf.send({ t: "send", chatId: fgChat.chatId, clientMsgId: "cm-fg3", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const fg3err = await cf.waitFor((f) => f.t === "error", 1500);
@@ -352,7 +353,7 @@ check("blocker gets explicit error", fg3err?.error === "blocked", JSON.stringify
 check("no ack for the blocked direction",
   !(await cf.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-fg3", 500)));
 
-// непрочитанное блокирующего не растёт на невидимые сообщения
+// the blocker's unread does not grow on messages they never see
 const fgState = await api("/api/chats", { token: frank.token });
 const fgEntry = fgState.chats.find((e) => e.state.chatId === fgChat.chatId);
 check("read mark covers blocked messages",
@@ -366,7 +367,7 @@ const fg4 = await cg.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-fg4"
 check("delivery resumes after unblock",
   !!(await cf.waitFor((f) => f.t === "msg" && f.msgId === fg4?.msgId)));
 
-// 14. Медиа: upload/download с range
+// 14. Media: upload/download with range
 const blob = new Uint8Array(1024 * 64).fill(7);
 const up = await fetch(BASE + "/api/media", {
   method: "POST",
@@ -380,14 +381,14 @@ const dl = await fetch(`${BASE}/api/media/${upJson.mediaId}`, {
 });
 check("media range download", dl.status === 206 && (await dl.arrayBuffer()).byteLength === 1024);
 
-// 15. Contact discovery по хэшам телефонов
+// 15. Contact discovery by phone hashes
 const ph = await api("/api/phone", { token: bob.token, body: { phoneHash: "hash_" + suffix } });
 const disc = await api("/api/contacts/discover", { token: alice.token,
   body: { hashes: ["hash_" + suffix, "nonexistent"] } });
 check("contact discovery", ph.ok && disc.ok && disc.matches.length === 1
   && disc.matches[0].id === bob.userId);
 
-// 16. Invite link: создать может только участник, join по коду работает
+// 16. Invite link: only a member can create one, joining by code works
 const dave = await api("/api/register", { body: {
   username: "dave_" + suffix, displayName: "Dave", ...fakeKeys("d") } });
 check("register dave", dave.ok);
@@ -411,12 +412,12 @@ const daveGrp = daveChats.chats?.find((c2) => c2.state.chatId === grp.chatId);
 check("dave is member after join", !!daveGrp
   && daveGrp.state.members.some((m) => m.userId === dave.userId));
 
-// direct-чат по инвайту не джойнится
+// an invite does not let anyone join a direct chat
 const dinv = await api(`/api/chats/${chat.chatId}/invite`, { token: alice.token, body: {} });
 const djoin = await api(`/api/join/${dinv.code}`, { token: dave.token, body: {} });
 check("join into direct rejected", !djoin.ok && djoin.error === "not_group");
 
-// 16a. Настройки группы: имя и аватар меняет только админ, участники видят chat-фрейм
+// 16a. Group settings: only an admin changes the title and avatar, members see a chat frame
 const titleByMember = await api(`/api/chats/${grp.chatId}/settings`, { token: dave.token,
   body: { title: "Захвачено" } });
 check("group title by non-admin rejected",
@@ -453,7 +454,7 @@ const meOwn = await api("/api/me", { token: alice.token });
 check("own avatar still updates profile",
   ownAvatar.ok && meOwn.user.avatar_id === ownAvatar.avatarId);
 
-// 17. Service-фрейм: флаг доходит получателю, дедуп по clientMsgId работает
+// 17. Service frame: the flag reaches the recipient, dedupe by clientMsgId works
 ca.send({ t: "send", chatId: chat.chatId, clientMsgId: "cm-skd-1", sentAt: Date.now(),
   service: true, body: { v: 1, mode: "skd", c: "c2tk" } });
 const svc = await cb2.waitFor((f) => f.t === "msg" && f.chatId === chat.chatId && f.service === true);
@@ -466,7 +467,7 @@ const svcAck2 = await ca.waitFor((f) =>
 check("service dedupe by clientMsgId", !!svcAck2 && svcAck2.seq === svcAck1.seq
   && svcAck2.msgId === svcAck1.msgId);
 
-// 18. Sync доигрывает тумбстоуны и read-марки
+// 18. Sync replays tombstones and read marks
 ca.send({ t: "read", chatId: chat.chatId, upToSeq: 2 });
 await new Promise((r) => setTimeout(r, 300));
 const cb3 = new Client("bob3", bob.token);
@@ -478,7 +479,7 @@ const syncRead = await cb3.waitFor((f) =>
   f.t === "receipt" && f.kind === "read" && f.by === alice.userId && f.upToSeq === 2);
 check("sync replays read mark", !!syncRead);
 
-// 19. Догон порциями: курсор двигается, «есть ещё» гаснет, ничего не теряется
+// 19. Catch-up in portions: the cursor moves, "there is more" goes out, nothing is lost
 const N = 210;
 for (let i = 0; i < N; i++) {
   ca.send({ t: "send", chatId: grp.chatId, clientMsgId: `cm-bulk-${i}`, sentAt: Date.now(),
@@ -504,8 +505,8 @@ check("catch-up portion is bounded",
 check("catch-up ends with no more",
   grpStates.slice(0, -1).every((s) => s.more) && grpStates[grpStates.length - 1].more === false);
 
-// 19a. Между порциями объект отвечает на всё остальное: ping, посланный сразу
-// за sync, получает pong до того, как догон дойдёт до конца
+// 19a. Between portions the object still answers everything else: a ping sent
+// right after sync gets its pong before the catch-up reaches the end
 const cb5 = new Client("bob5", bob.token);
 await cb5.connect();
 cb5.send({ t: "sync", cursors: { [grp.chatId]: 1 } });
@@ -516,8 +517,8 @@ const deliveredByPong = cb5.frames.filter(
 check("live traffic is answered mid catch-up", !!pongMid && deliveredByPong < N,
   `${deliveredByPong} of ${N} delivered by the pong`);
 
-// 19b. Обрыв посреди догона: следующее подключение продолжает с курсора,
-// а не с нуля
+// 19b. A drop in the middle of a catch-up: the next connection continues from
+// the cursor rather than from zero
 const cb6 = new Client("bob6", bob.token);
 await cb6.connect();
 cb6.send({ t: "sync", cursors: { [grp.chatId]: 1 } });
@@ -534,7 +535,7 @@ check("interrupted catch-up resumes from the cursor",
   && resumedMsgs.some((f) => f.seq === lastBulk.seq),
   `${resumedMsgs.length} msg(s) after seq ${firstState.cursor}`);
 
-// 20. Блокировка внутри существующего чата
+// 20. Blocking inside an existing chat
 const henry = await api("/api/register", { body: {
   username: "henry_" + suffix, displayName: "Henry", ...fakeKeys("h") } });
 const iris = await api("/api/register", { body: {
@@ -548,18 +549,18 @@ const ch = new Client("henry", henry.token);
 const ci = new Client("iris", iris.token);
 await ch.connect(); await ci.connect();
 
-// до блокировки обмен идёт как обычно
+// before the block the exchange runs as usual
 ch.send({ t: "send", chatId: bchat.chatId, clientMsgId: "cm-b0", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const b0 = await ch.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-b0");
 check("block: msg before block delivered",
   !!(await ci.waitFor((f) => f.t === "msg" && f.msgId === b0.msgId)));
 
-// Iris блокирует Henry
+// Iris blocks Henry
 check("block: applied", (await api("/api/block", { token: iris.token,
   body: { userId: henry.userId, blocked: true } })).ok);
 
-// (а) Henry пишет: ack приходит как обычно, до Iris ничего не доходит
+// (a) Henry writes: the ack arrives as usual, nothing reaches Iris
 ch.send({ t: "send", chatId: bchat.chatId, clientMsgId: "cm-b1", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const b1 = await ch.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-b1");
@@ -571,7 +572,7 @@ check("block: msg not delivered",
 check("block: own echo still delivered",
   !!(await ch.waitFor((f) => f.t === "msg" && f.msgId === b1.msgId)));
 
-// (б) в истории блокирующего заблокированного сообщения нет, у автора — есть
+// (b) the blocked message is absent from the blocker's history and present in the sender's
 const irisHist = await api(`/api/chats/${bchat.chatId}/history?fromSeq=0`, { token: iris.token });
 check("block: hidden from blocker history",
   !irisHist.msgs.some((m) => m.msgId === b1.msgId)
@@ -580,7 +581,7 @@ const henryHist = await api(`/api/chats/${bchat.chatId}/history?fromSeq=0`, { to
 check("block: visible in sender history",
   henryHist.msgs.some((m) => m.msgId === b1.msgId));
 
-// (в) sync блокирующего не доигрывает заблокированное
+// (c) the blocker's sync does not replay the blocked message
 const ci2 = new Client("iris2", iris.token);
 await ci2.connect();
 ci2.send({ t: "sync", cursors: { [bchat.chatId]: 0 } });
@@ -589,7 +590,7 @@ await new Promise((r) => setTimeout(r, 500));
 check("block: sync skips blocked msg",
   !ci2.frames.some((f) => f.t === "msg" && f.msgId === b1.msgId));
 
-// (г) квитанции и typing заблокированного до блокирующего не доходят
+// (d) receipts and typing from the blocked user never reach the blocker
 ch.send({ t: "read", chatId: bchat.chatId, upToSeq: b1.seq });
 ch.send({ t: "typing", chatId: bchat.chatId, kind: "text" });
 await new Promise((r) => setTimeout(r, 700));
@@ -598,7 +599,7 @@ check("block: no receipt to blocker",
 check("block: no typing to blocker",
   !ci.frames.some((f) => f.t === "typing" && f.from === henry.userId));
 
-// (д) блокирующий пишет заблокированному: явный машиночитаемый отказ
+// (e) the blocker writes to the blocked user: an explicit machine-readable refusal
 ci.send({ t: "send", chatId: bchat.chatId, clientMsgId: "cm-b2", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const bErr = await ci.waitFor((f) => f.t === "error" && f.clientMsgId === "cm-b2");
@@ -606,7 +607,7 @@ check("block: blocker gets error code", !!bErr && bErr.error === "blocked", JSON
 check("block: blocker msg not delivered",
   !(await ch.waitFor((f) => f.t === "msg" && f.from === iris.userId, 1200)));
 
-// (е) разблокировка возвращает доставку; сообщения периода блокировки остаются скрытыми
+// (f) unblocking brings delivery back; messages from the blocked period stay hidden
 check("block: released", (await api("/api/block", { token: iris.token,
   body: { userId: henry.userId, blocked: false } })).ok);
 ch.send({ t: "send", chatId: bchat.chatId, clientMsgId: "cm-b3", sentAt: Date.now(),
@@ -620,7 +621,7 @@ check("block: blocked msg stays hidden after unblock",
   && irisHist2.msgs.some((m) => m.msgId === b3.msgId));
 ch.ws.close(); ci.ws.close(); ci2.ws.close();
 
-// 21. Логаут и отзыв устройства
+// 21. Logout and device revocation
 const logoutUser = await api("/api/register", { body: {
   username: "logout_" + suffix, displayName: "Frank", ...fakeKeys("f") } });
 const logoutSess0 = await api("/api/sessions", { token: logoutUser.token });
@@ -639,8 +640,8 @@ const lg_meAfter = await apiRaw("/api/me", { token: logoutUser.token });
 check("lg_revoked token rejected on api", lg_meAfter.status === 401
   && (await lg_meAfter.json()).error === "unauthorized");
 
-// сервер шлёт close-фрейм 4401 сразу; TCP-хвост wrangler dev рвёт с задержкой,
-// поэтому проверяем, что сокет вышел из OPEN
+// the server sends close frame 4401 immediately; wrangler dev tears the TCP tail
+// down with a delay, so the check is that the socket has left OPEN
 await new Promise((r) => setTimeout(r, 400));
 check("lg_revoked token closes live socket", lg_cLogout.ws.readyState !== 1,
   `readyState=${lg_cLogout.ws.readyState}`);
@@ -652,7 +653,7 @@ const lg_wsAfter = await new Promise((r) => {
 });
 check("lg_revoked token rejected on ws upgrade", lg_wsAfter === "error");
 
-// отзыв конкретного устройства из списка
+// revoking one specific device from the list
 const lg_gina = await api("/api/register", { body: {
   username: "gina_" + suffix, displayName: "Gina", ...fakeKeys("g") } });
 const lg_alien = await api(`/api/sessions/${alice.deviceId}/revoke`, { token: lg_gina.token, body: {} });
@@ -664,10 +665,11 @@ check("lg_revoked device token dead", lg_ginaAfter.status === 401);
 const lg_aliceStill = await api("/api/me", { token: alice.token });
 check("foreign device untouched", lg_aliceStill.ok && lg_aliceStill.user.id === alice.userId);
 
-// 22. Пуш-путь: мини-приёмник вместо APNs (порт из PUSH_PORT, туда же смотрит APNS_HOST)
+// 22. Push path: a tiny receiver instead of APNs (port from PUSH_PORT, where APNS_HOST points)
 const pushes = [];
-// приёмник изображает APNs: dead-token отвечает 410, flaky-token — 429 на первую попытку;
-// hold задерживает ответ на пуш устройства, чтобы проверить, что ack не стоит за APNs
+// the receiver plays APNs: dead-token answers 410, flaky-token answers 429 on the
+// first attempt; hold delays the answer for a device's push, so the ack can be
+// shown not to wait on APNs
 let flakyHits = 0;
 let hold = { token: null, ms: 0 };
 const pushSrv = http.createServer((req, res) => {
@@ -715,11 +717,11 @@ const echat = await api("/api/chats", { token: alice.token,
   body: { kind: "direct", memberIds: [eve.userId] } });
 check("create push chat", echat.ok);
 
-// Alice снова онлайн для отправки
+// Alice back online to send
 const ca2 = new Client("alice2", alice.token);
 await ca2.connect();
 
-// (а) получатель без сокета: пуш уходит сразу, APNs-контракт соблюдён
+// (a) recipient with no socket: the push goes out at once and keeps the APNs contract
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p1", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const p1 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p1");
@@ -728,10 +730,10 @@ check("push delivered offline", !!push1, JSON.stringify(pushes));
 if (push1) {
   check("push chatId", push1.body.chatId === echat.chatId);
   check("push thread-id", push1.body.aps["thread-id"] === echat.chatId);
-  // порядок показа лавины строится по seq, поэтому он едет в пуше
+  // the display order of a burst is built from seq, so seq travels in the push
   check("push carries seq", push1.body.seq === p1.seq, `seq=${push1.body.seq}`);
   check("push carries sentAt", typeof push1.body.sentAt === "number");
-  // чат ещё заявка: счётчик не выдаёт, сколько сообщений уже написали
+  // the chat is still a request: the counter does not reveal how much has been written
   check("push badge=0 before accept", push1.body.aps.badge === 0, `badge=${push1.body.aps.badge}`);
   check("push alert w/o plaintext", push1.body.aps.alert.body === "Новое сообщение"
     && push1.body.aps["mutable-content"] === 1 && push1.body.aps.sound === "default");
@@ -741,7 +743,7 @@ if (push1) {
   check("dev push unsigned", push1.headers.authorization === undefined);
 }
 
-// (б) получатель с живым сокетом: WS-фрейм и пуш приходят оба (дедуп на клиенте)
+// (b) recipient with a live socket: both the WS frame and the push arrive (client dedupes)
 const ce = new Client("eve", eve.token);
 await ce.connect();
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p2", sentAt: Date.now(),
@@ -753,8 +755,8 @@ check("push delivered despite live ws", !!push2);
 check("push badge stays 0 before accept", push2 && push2.body.aps.badge === 0,
   `badge=${push2?.body.aps.badge}`);
 
-// read сдвигает бейдж: eve принимает чат (message request), читает всё,
-// следующий пуш приходит с badge=1
+// read moves the badge: eve accepts the chat (message request), reads everything,
+// and the next push arrives with badge=1
 await api(`/api/chats/${echat.chatId}/accept`, { token: eve.token, body: {} });
 ce.send({ t: "read", chatId: echat.chatId, upToSeq: p2.seq });
 await ca2.waitFor((f) => f.t === "receipt" && f.kind === "read" && f.by === eve.userId);
@@ -764,20 +766,20 @@ const p3 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p3")
 const push3 = await waitPush(pushFor("eve-sim-udid", p3.msgId));
 check("push badge after read", push3 && push3.body.aps.badge === 1,
   `badge=${push3?.body.aps.badge}`);
-// по badgeStamp клиент отличает свежий счётчик от обогнавшего его старого:
-// номер выдаёт UserSessionDO и он строго растёт
+// badgeStamp is how the client tells a fresh counter from an older one that
+// overtook it: UserSessionDO issues the number and it strictly grows
 check("badge stamps grow", push1 && push2 && push3
   && push1.body.badgeStamp < push2.body.badgeStamp
   && push2.body.badgeStamp < push3.body.badgeStamp,
   `${push1?.body.badgeStamp} ${push2?.body.badgeStamp} ${push3?.body.badgeStamp}`);
 
-// (в) service-фрейм пуш не порождает
+// (c) a service frame produces no push
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p4", sentAt: Date.now(),
   service: true, body: { v: 1, mode: "skd", c: "c2tk" } });
 const p4 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p4");
 check("no push for service", !(await waitPush(pushFor("eve-sim-udid", p4.msgId), 1200)));
 
-// (в2) The push carries the message itself, addressed to the device it goes to:
+// (c2) The push carries the message itself, addressed to the device it goes to:
 // the extension decrypts it and writes it, so a chat opened offline holds what
 // the banner said. A pairwise envelope is trimmed to this device's own box.
 const eveAddr = `${eve.userId}/${eve.deviceId}`;
@@ -798,8 +800,8 @@ if (push8?.body.env) {
     JSON.stringify({ from: push8.body.from, fromDevice: push8.body.fromDevice }));
 }
 
-// (в3) Больше четырёх килобайт APNs не принимает: конверт уезжает, остальное
-// доезжает — сообщение придёт следующим соединением
+// (c3) APNs takes no more than four kilobytes: the envelope is dropped and the
+// rest still arrives, the message itself comes with the next connection
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p9", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: { [eveAddr]: { type: "dr", c: "A".repeat(5000) } } } });
 const p9 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p9");
@@ -807,14 +809,14 @@ const push9 = await waitPush(pushFor("eve-sim-udid", p9.msgId));
 check("oversized envelope is dropped from the push",
   !!push9 && push9.body.env === undefined && push9.body.msgId === p9.msgId);
 
-// (г) muted-чат пуш не порождает
+// (d) a muted chat produces no push
 await api(`/api/chats/${echat.chatId}/flags`, { token: eve.token, body: { muted: true } });
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p5", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const p5 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p5");
 check("no push for muted chat", !(await waitPush(pushFor("eve-sim-udid", p5.msgId), 1200)));
 
-// (д) mute со сроком: пока срок не вышел — пуша нет
+// (e) mute with an expiry: no push while it has not expired
 const nowS = Math.floor(Date.now() / 1000);
 await api(`/api/chats/${echat.chatId}/flags`, { token: eve.token,
   body: { muted: true, mutedUntil: nowS + 3600 } });
@@ -823,7 +825,7 @@ ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p6", sentAt: Date.n
 const p6 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p6");
 check("no push while mute not expired", !(await waitPush(pushFor("eve-sim-udid", p6.msgId), 1200)));
 
-// (е) срок вышел — пуш уходит, флаг снимается сам
+// (f) once it has expired the push goes out and the flag clears itself
 await api(`/api/chats/${echat.chatId}/flags`, { token: eve.token,
   body: { muted: true, mutedUntil: nowS - 1 } });
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p7", sentAt: Date.now(),
@@ -836,10 +838,10 @@ check("expired mute cleared in flags",
   !!eveEntry && eveEntry.flags.muted === false && eveEntry.flags.mutedUntil === undefined,
   JSON.stringify(eveEntry?.flags));
 
-// (ж) own echo: у alice токен зарегистрирован, но её собственные отправки пуш не создают
+// (g) own echo: alice has a token registered, yet her own sends create no push
 check("no push for own echo", !pushes.some((p) => p.url === "/3/device/alice-sim-udid"));
 
-// 21. Ack раньше пуша: подтверждение отправителю не ждёт APNs
+// 21. Ack before push: the sender's confirmation does not wait for APNs
 hold = { token: "eve-sim-udid", ms: 1500 };
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-h1", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
@@ -848,7 +850,7 @@ const hp1 = await waitPush(pushFor("eve-sim-udid", h1.msgId));
 check("ack precedes push", !!h1 && !!hp1 && h1.at <= hp1.at,
   `ack ${h1?.at} push ${hp1?.at}`);
 
-// пуш предыдущего сообщения ещё висит — ack следующего всё равно приходит сразу
+// the previous message's push is still hanging, the next ack arrives right away anyway
 const holdT0 = Date.now();
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-h2", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
@@ -859,7 +861,7 @@ const hp2 = await waitPush(pushFor("eve-sim-udid", h2.msgId), 8000);
 check("push follows its ack", !!hp2 && h2.at < hp2.at, `ack ${h2?.at} push ${hp2?.at}`);
 hold = { token: null, ms: 0 };
 
-// 23. Разбор ответа APNs: 410 удаляет токен, 429 повторяется
+// 23. Reading the APNs answer: 410 drops the token, 429 is retried
 const jack = await api("/api/register", { body: {
   username: "jack_" + suffix, displayName: "Jack", ...fakeKeys("j") } });
 await api("/api/push-token", { token: jack.token,
@@ -901,7 +903,7 @@ check("retried token kept", kateSess.sessions[0].hasPushToken === true);
 
 pushSrv.close();
 
-// 22. Fanout: падение одного получателя не рвёт доставку остальным
+// 22. Fanout: one recipient failing does not break delivery to the rest
 const mallory = await api("/api/register", { body: {
   username: "mallory_" + suffix, displayName: "Mallory", ...fakeKeys("m") } });
 const trent = await api("/api/register", { body: {
@@ -913,7 +915,7 @@ check("create fanout group", fgrp.ok, JSON.stringify(fgrp));
 const cmal = new Client("mallory", mallory.token);
 const ctre = new Client("trent", trent.token);
 await cmal.connect(); await ctre.connect();
-// дать presence-фреймам разойтись, чтобы они не съели счётчик сбоев
+// let the presence frames go out so they do not eat the fault counter
 await new Promise((r) => setTimeout(r, 600));
 
 const sendTo = (clientMsgId) => ca2.send({ t: "send", chatId: fgrp.chatId, clientMsgId,
@@ -930,7 +932,7 @@ check("healthy recipient unaffected",
 check("failed recipient gets retry",
   !!(await cmal.waitFor((f) => f.t === "msg" && f.msgId === f1.msgId, 4000)));
 
-// typing не повторяется: он устаревает быстрее, чем доедет повтор
+// typing is not retried: it goes stale faster than a retry would arrive
 await fault(1);
 ca2.send({ t: "typing", chatId: fgrp.chatId, kind: "text" });
 check("typing reaches healthy recipient",
@@ -938,7 +940,7 @@ check("typing reaches healthy recipient",
 await new Promise((r) => setTimeout(r, 2000));
 check("typing not retried", !cmal.frames.some((f) => f.t === "typing" && f.chatId === fgrp.chatId));
 
-// получатель сломан насовсем: очередь отдаёт его и продолжает работать
+// a recipient broken for good: the queue gives up on it and keeps working
 await fault(99);
 sendTo("cm-f2");
 const f2 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-f2");
@@ -950,15 +952,15 @@ check("queue keeps moving after dropped recipient",
   !!(await ctre.waitFor((f) => f.t === "msg" && f.msgId === f3.msgId, 8000)));
 await fault(0);
 
-// 23. Очередь рассылки: пачка встаёт в очередь и доигрывается до конца
+// 23. Fanout queue: a burst is queued and replayed to the end
 async function fanoutState() {
   return api(`/api/chats/${fgrp.chatId}/fanout`, { token: alice.token });
 }
-await fault(2); // головное задание застревает на двух повторах
+await fault(2); // the head job gets stuck for two retries
 const Q = 6;
 for (let i = 0; i < Q; i++) sendTo(`cm-q${i}`);
-// ack приходит уже после того, как рассылка встала в очередь: без ожидания
-// состояние очереди спрашивается раньше, чем в ней появляется первое задание
+// the ack comes only after the fanout has been queued: without this wait the
+// queue state would be asked for before the first job appears in it
 await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === `cm-q${Q - 1}`);
 const qState = await fanoutState();
 check("fanout is queued, not inline", qState.ok && qState.pending > 0, JSON.stringify(qState));
@@ -1032,7 +1034,7 @@ check("fanout state hidden from non-member", !strangerQ.ok && strangerQ.error ==
   check("arms ahead of a later alarm", shouldArmAlarm(now + 500, now + 1, now));
 }
 
-// 25. Удаление чата: переписка уходит из списка удалившего и остаётся у собеседника
+// 25. Deleting a chat: the conversation leaves the deleter's list and stays with the peer
 const dana = await api("/api/register", { body: {
   username: "dana_" + suffix, displayName: "Dana", ...fakeKeys("n") } });
 const erik = await api("/api/register", { body: {
@@ -1059,7 +1061,7 @@ check("peer keeps the chat and its journal", !!erikChat && erikChat.state.lastSe
 check("deleter's read mark is at the end of the journal",
   erikChat?.state.readMarks[dana.userId] === 1, JSON.stringify(erikChat?.state.readMarks));
 
-// собеседник пишет снова — чат возвращается
+// the peer writes again and the chat comes back
 const cd2 = new Client("dana2", dana.token);
 await cd2.connect();
 cer.send({ t: "send", chatId: dchat2.chatId, clientMsgId: "cm-e1", sentAt: Date.now(),
@@ -1070,7 +1072,7 @@ const danaList2 = await api("/api/chats", { token: dana.token });
 check("chat comes back on the next message",
   danaList2.chats.some((c2) => c2.state.chatId === dchat2.chatId));
 
-// в группе удаление — это выход
+// in a group, deleting means leaving
 const dgrp = await api("/api/chats", { token: dana.token,
   body: { kind: "group", memberIds: [erik.userId], title: "Leave me" } });
 const delGrp = await api(`/api/chats/${dgrp.chatId}/delete`, { token: dana.token, body: {} });

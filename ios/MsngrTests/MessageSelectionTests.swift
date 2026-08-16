@@ -2,7 +2,8 @@ import XCTest
 @testable import Msngr
 import MsngrCore
 
-/// Мультивыбор: состав выбора, счётчик и доступность «удалить у всех».
+/// Multi-select: what is in the selection, the counter, and whether "delete for
+/// everyone" is available.
 final class MessageSelectionTests: XCTestCase {
     private func msg(_ id: String, outgoing: Bool) -> Message {
         Message(id: id, chatId: "c", fromUserId: outgoing ? "me" : "peer",
@@ -40,7 +41,7 @@ final class MessageSelectionTests: XCTestCase {
         XCTAssertTrue(MessageSelection.canDeleteForAll([mine, mine2]))
         XCTAssertFalse(MessageSelection.canDeleteForAll([mine, theirs]))
         XCTAssertFalse(MessageSelection.canDeleteForAll([theirs]))
-        XCTAssertFalse(MessageSelection.canDeleteForAll([]), "пустой выбор нечего удалять")
+        XCTAssertFalse(MessageSelection.canDeleteForAll([]), "an empty selection has nothing to delete")
     }
 
     func testCounterTitle() {
