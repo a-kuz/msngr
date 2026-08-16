@@ -225,9 +225,9 @@ public actor SyncEngine {
         try? await db.write { dbc in try SyncEngine.applyBlockedList(dbc, serverIds: ids) }
     }
 
-    /// Серверный список поверх локальных флагов. Блокировка, ещё не доехавшая
-    /// до сервера, им не отменяется: иначе решение пользователя откатывалось бы
-    /// само на первом же обновлении.
+    /// The server list laid over the local flags. A block that has not reached the
+    /// server yet is not cancelled by it: otherwise the user's decision would roll
+    /// itself back on the very first update.
     static func applyBlockedList(_ dbc: GRDB.Database, serverIds: [String]) throws {
         let queued = try String.fetchAll(
             dbc, sql: "SELECT payload FROM pendingAction WHERE type = 'block'")
@@ -425,8 +425,8 @@ public actor SyncEngine {
                 }
             }
         case "chat":
-            // из чата убрали, пока устройство было офлайн: состав в таком
-            // фрейме не приходит, и догонять больше нечего
+            // removed from the chat while the device was offline: such a frame
+            // carries no roster, and there is nothing left to catch up on
             if f.event == "removed", let chatId = f.chatId {
                 let attachments = await chatMedia(chatId: chatId)
                 try? await db.write { dbc in
@@ -1263,9 +1263,9 @@ public actor SyncEngine {
                 msg.album = content.album
                 msg.replyTo = content.replyTo
                 msg.forward = content.fwd
-                // историческая копия исчезающего сообщения помечается так же,
-                // как пришедшая живьём: иначе догрузка вверх возвращала бы то,
-                // чему срок уже вышел, и оно оставалось бы навсегда
+                // a historic copy of a disappearing message is stamped the same way
+                // as one that arrived live: otherwise paging up would bring back
+                // what has already expired, and it would stay forever
                 let ttl = try Int.fetchOne(dbc, sql: "SELECT ttlSeconds FROM chat WHERE id = ?",
                                            arguments: [chatId]) ?? 0
                 if ttl > 0 { msg.expiresAt = Date().timeIntervalSince1970 + Double(ttl) }
@@ -1359,8 +1359,8 @@ public actor SyncEngine {
         guard let clientMsgId = f.clientMsgId, let msgId = f.msgId,
               let seq = f.seq, let chatId = f.chatId else { return }
         try? await db.write { dbc in
-            // срок исчезающего сообщения идёт от момента, когда оно ушло:
-            // лежащее в очереди без сети ещё никому не показано
+            // a disappearing message's clock runs from the moment it went out:
+            // one sitting in the queue without a network has been shown to no one
             let ttl = try Int.fetchOne(dbc, sql: "SELECT ttlSeconds FROM chat WHERE id = ?",
                                        arguments: [chatId]) ?? 0
             try dbc.execute(
@@ -1532,8 +1532,8 @@ public actor SyncEngine {
         }
     }
 
-    /// Цель служебного фрейма не имеет серверного msgId: либо ack ещё не пришёл
-    /// (`gone == false`, ждём его), либо сообщение так и не ушло.
+    /// The target of a service frame has no server msgId: either the ack has not
+    /// arrived yet (`gone == false`, we wait for it), or the message never went out.
     struct TargetNotAcked: Error { let gone: Bool }
 
     private func sendOutboxItem(_ item: OutboxItem) async throws {
