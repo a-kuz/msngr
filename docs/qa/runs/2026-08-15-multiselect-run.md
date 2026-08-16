@@ -1,43 +1,50 @@
-# Мультивыбор, удаление и выделение текста (#44)
+# Multiselect, deletion and text selection
 
-Стенд: два своих симулятора `msngr-ms-agent` (Alpha) и `msngr-ms-agent-b` (Beta),
-свой `wrangler dev` на :8802 с отдельным `--persist-to`, приложения запущены
-через `SIMCTL_CHILD_MSNGR_SERVER=http://localhost:8802`. В чате три исходящих
-сообщения Alpha и два входящих от Beta.
+Task #44.
 
-## Что проверено
+## Stand
 
-1. `01-context-menu.png` — контекстное меню своего сообщения: «Выделить текст»,
-   «Выбрать», «Удалить» одним пунктом.
-2. `02-selection-mode.png` — режим выбора: чекбоксы у каждой строки, входящие
-   бабблы сдвинуты вправо, крестик слева в шапке, счётчик «2 сообщения»,
-   панель «Удалить / Переслать / Копировать» вместо поля ввода.
-3. `03-delete-confirm-own.png` — подтверждение для двух своих сообщений:
-   «Удалить у всех» и «Удалить у меня».
-4. `04-delete-confirm-foreign.png` — то же для выбранного сообщения Beta: только
-   «Удалить у меня», варианта «у всех» нет.
-5. `05-deleted-result-sender.png` — после «Удалить у всех» два баббла стали
-   «Сообщение удалено», режим выбора закрылся.
-6. `06-deleted-result-peer.png` — у Beta те же два сообщения стали
-   «Сообщение удалено».
-7. `07-text-selection.png` — «Выделить текст»: отдельный экран с текстом
-   сообщения, выделенным целиком, с системными маркерами.
-8. `08-text-selection-copy.png` — тап по выделению открывает системное меню
-   с Copy.
-9. `09-forward-picker.png`, `10-forward-result.png` — «Переслать» из панели
-   выбора: список чатов и результат («Переслано от Alpha») у Beta.
+Two own simulators, `msngr-ms-agent` (Alpha) and `msngr-ms-agent-b` (Beta), with
+own `wrangler dev` on :8802 and its own `--persist-to`; both apps launched with
+`SIMCTL_CHILD_MSNGR_SERVER=http://localhost:8802`. The chat held three outgoing
+messages from Alpha and two incoming from Beta.
 
-## Ограничение доступа на сервере
+## Run
 
-`ConversationDO /delete` тумбстоунит только сообщения автора запроса (и любые —
-для админа группы). Раньше `deleted`-фрейм рассылался по всему запрошенному
-списку, поэтому чужое сообщение исчезало у клиентов, оставаясь на сервере;
-теперь рассылается список реально снесённых. Проверки в
-`server/test/smoke.mjs`: `no fanout deleting someone else's message`,
-`someone else's message survives delete for all` — на прежнем коде первая падает.
+1. `01-context-menu.png` — the context menu of your own message: «Выделить
+   текст», «Выбрать», and «Удалить» as a single item.
+2. `02-selection-mode.png` — selection mode: a checkbox on every row, incoming
+   bubbles pushed right, a cross at the left of the header, the counter
+   «2 сообщения», and a «Удалить / Переслать / Копировать» bar in place of the
+   input field.
+3. `03-delete-confirm-own.png` — the confirmation for two of your own messages
+   offers «Удалить у всех» and «Удалить у меня».
+4. `04-delete-confirm-foreign.png` — the same with one of Beta's messages
+   selected offers only «Удалить у меня»; there is no delete-for-everyone.
+5. `05-deleted-result-sender.png` — after «Удалить у всех» both bubbles read
+   «Сообщение удалено» and selection mode closed.
+6. `06-deleted-result-peer.png` — the same two messages read «Сообщение
+   удалено» on Beta.
+7. `07-text-selection.png` — «Выделить текст» opens a separate screen with the
+   message text selected whole, with the system handles.
+8. `08-text-selection-copy.png` — tapping the selection brings up the system
+   menu with Copy.
+9. `09-forward-picker.png`, `10-forward-result.png` — «Переслать» from the
+   selection bar: the chat picker, and the result on Beta reading «Переслано от
+   Alpha».
 
-## Юниты
+## The server-side access check
 
-`ios/MsngrTests/MessageSelectionTests.swift` — переключение выбора, порядок
-выбранных по ленте, доступность «удалить у всех» (только когда все выбранные
-свои), склонение счётчика.
+`ConversationDO /delete` tombstones only the messages the requester wrote, plus
+anything at all for a group admin. It used to fan the `deleted` frame out over
+the whole requested list, so someone else's message vanished on the clients
+while surviving on the server; the frame now carries only what was really
+removed. `server/test/smoke.mjs` covers this with `no fanout deleting someone
+else's message` and `someone else's message survives delete for all`; the first
+of those fails against the old code.
+
+## Units
+
+`ios/MsngrTests/MessageSelectionTests.swift` — toggling selection, the order of
+the selected by feed position, when delete-for-everyone is available (only when
+every selected message is your own), and the plural form of the counter.
