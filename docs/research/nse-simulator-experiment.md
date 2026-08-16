@@ -55,7 +55,6 @@ Payload по `docs/protocol.md` (`mutable-content: 1`, `thread-id`, `badge: 3`,
 | background | то же | нет | нет |
 | killed | то же, бейдж 3 на иконке | нет | нет |
 
-![killed](nse-simulator/killed-banner.jpg)
 
 Бейдж из payload применяется, `thread-id` доходит (виден в логе SpringBoard как
 `threadIdentifier: chat-demo`) — то есть уведомление доставляется полностью,
@@ -162,22 +161,18 @@ Application Support на контейнер группы, а вместе с н�
 Один на один — круглый аватар отправителя, заголовок заменяется на его имя,
 иконка приложения уходит в угловой бейдж:
 
-![direct](nse-simulator/comm-direct-clean.jpg)
 
 Группа (`speakableGroupName` + два `recipients`) — заголовок остаётся именем
 отправителя, название группы становится subtitle, аватар всё равно
 отправителя; картинка, назначенная параметру `speakableGroupName`, в баннере не
 используется:
 
-![group](nse-simulator/comm-group.jpg)
 
 Без entitlement — обычный баннер с иконкой приложения, никакой диагностики:
 
-![no entitlement](nse-simulator/comm-direct-noent.jpg)
 
 Аватар передаётся как `INImage(imageData:)`, то есть NSE должен получить
 байты картинки локально, без сети. Удобное хранилище — файлы в контейнере app
-group (`avatars/<userId>.jpg`, тот же контейнер, где БД и `.masterkey`),
 которые пишет приложение при обновлении профиля. Размер: 180×180 достаточно,
 баннер показывает аватар мелко.
 
