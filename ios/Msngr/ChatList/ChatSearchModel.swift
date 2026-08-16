@@ -85,12 +85,14 @@ final class ChatSearchModel: ObservableObject {
         let cursor = self.cursor
         loadingPage = true
         Task { [weak self] in
-            guard let page = await self?.page(query: query, after: cursor),
-                  let self, generation == self.generation else { return }
+            let page = await self?.page(query: query, after: cursor)
+            // выдача сменилась, пока читалась страница: она уже не про этот запрос
+            guard let self, generation == self.generation else { return }
+            self.loadingPage = false
+            guard let page else { return }
             self.hits += page.hits
             self.cursor = page.cursor
             self.reachedEnd = page.reachedEnd
-            self.loadingPage = false
         }
     }
 
