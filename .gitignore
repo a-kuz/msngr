@@ -11,3 +11,5 @@ scratchpad/
 .claude/agent-runs/
 .claude/tidy.log
 .claude/agents.tsv
+.claude/disk.json
+.claude/disk-report.md
