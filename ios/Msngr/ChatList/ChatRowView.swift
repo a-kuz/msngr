@@ -169,23 +169,22 @@ struct DoubleTick: View {
 }
 
 /// An avatar: a photo, or initials on a gradient, with an online dot.
+///
+/// The picture comes from `AvatarCache`, not straight off the URL: the blob
+/// sits behind the device token, and the file the cache leaves in the app group
+/// is the one the notification extension shows as well.
 struct AvatarView: View {
     let name: String
     let avatarId: String?
     var online: Bool = false
+    @State private var image: UIImage?
 
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .bottomTrailing) {
                 Group {
-                    if let avatarId, let api = AppState.shared.api {
-                        AsyncImage(url: api.avatarURL(avatarId)) { phase in
-                            if let image = phase.image {
-                                image.resizable().scaledToFill()
-                            } else {
-                                initialsView
-                            }
-                        }
+                    if let image {
+                        Image(uiImage: image).resizable().scaledToFill()
                     } else {
                         initialsView
                     }
@@ -203,6 +202,11 @@ struct AvatarView: View {
             }
         }
         .animation(Theme.springFast, value: online)
+        .task(id: avatarId) {
+            image = nil
+            guard let avatarId else { return }
+            image = await AvatarImageLoader.shared.image(avatarId)
+        }
     }
 
     private var gradientColors: [Color] {
