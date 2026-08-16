@@ -1,68 +1,69 @@
-# NSE на симуляторе: эксперимент
+# NSE on the simulator: an experiment
 
-Дата: 2026-08-14. Стенд: macOS 25.5, Xcode 26.6 (17F113), симулятор `nse-test`
-(iPhone 17 Pro, iOS 26.5), собственный, удалён после прогона.
+Date: 2026-08-14. Setup: macOS 25.5, Xcode 26.6 (17F113), simulator `nse-test`
+(iPhone 17 Pro, iOS 26.5), created for this run and deleted afterwards.
 
-## Вердикт
+## Verdict
 
-`xcrun simctl push` **не запускает Notification Service Extension** — ни в
-одном из трёх состояний приложения (foreground, background, killed). Баннер
-показывается ровно тем содержимым, что лежит в payload.
+`xcrun simctl push` does not launch the Notification Service Extension, in any
+of the three app states (foreground, background, killed). The banner shows
+exactly the content that sits in the payload.
 
-Это ограничение канала доставки, а не нашего кода: контрольное расширение без
-единой зависимости в отдельном приложении ведёт себя так же.
+This is a limit of the delivery channel, not of our code: a control extension
+with no dependencies at all, in a separate app, behaves the same way.
 
-Отдельный результат, положительный: **Communication Notifications (аватарки и
-имя отправителя) работают на симуляторе без платного аккаунта**, если контент
-формирует само приложение. Проверено на локальных уведомлениях.
+A separate result, this one positive: Communication Notifications (sender
+avatar and name) work on the simulator without a paid account, as long as the
+app itself builds the content. Verified with local notifications.
 
-## Что было в репозитории до эксперимента
+## What was in the repository before the experiment
 
-Таргет `NotificationService` уже описан в `ios/project.yml` (app-extension,
-`NSExtensionPointIdentifier: com.apple.usernotifications.service`, встраивается
-в Msngr через `embed: true`), код — `ios/NotificationService/NotificationService.swift`
-из коммита ee0538b. Собирался и раньше; проверено, что `.appex` попадает в
-`Msngr.app/PlugIns/` и регистрируется системой:
+The `NotificationService` target was already described in `ios/project.yml`
+(app-extension, `NSExtensionPointIdentifier: com.apple.usernotifications.service`,
+embedded into Msngr via `embed: true`), and the code is
+`ios/NotificationService/NotificationService.swift` from commit ee0538b. It
+built before this run too; what was checked here is that the `.appex` lands in
+`Msngr.app/PlugIns/` and is registered by the system:
 
 ```
 $ xcrun simctl spawn <udid> pluginkit -mv | grep enface
 ai.enface.Msngr.NotificationService(1.0)  2B42A7EB-…  …/Msngr.app/PlugIns/NotificationService.appex
 ```
 
-Оба entitlements-файла были пустыми `<dict/>`: xcodegen перегенерирует их из
-`project.yml`, поэтому app group добавлена туда (`entitlements.properties`), а
-не правкой .entitlements.
+Both entitlements files were an empty `<dict/>`: xcodegen regenerates them from
+`project.yml`, so the app group went in there (`entitlements.properties`) and
+not into a hand-edited .entitlements.
 
-## Что делает NSE сейчас
+## What the NSE does today
 
-`didReceive` логирует `[NSE] didReceive run=<uuid>`, дописывает строку в
-`nse-marker.log` в контейнере app group и (только в DEBUG) префиксует заголовок
-строкой `NSE: `. `serviceExtensionTimeWillExpire` отдаёт `bestAttempt`. Три
-независимых канала наблюдения — баннер, файл, unified log — чтобы не спутать
-«расширение не отработало» с «отработало, но не увидели».
+`didReceive` logs `[NSE] didReceive run=<uuid>`, appends a line to
+`nse-marker.log` in the app group container and, in DEBUG only, prefixes the
+title with `NSE: `. `serviceExtensionTimeWillExpire` returns `bestAttempt`.
+Three independent observation channels, banner, file and unified log, so that
+"the extension did not run" cannot be mistaken for "it ran and we missed it".
 
-`SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG` для таргета проверен, ветка
-живая.
+`SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG` is set for the target; the branch
+is live.
 
-## Ход эксперимента
+## How the experiment went
 
-Payload по `docs/protocol.md` (`mutable-content: 1`, `thread-id`, `badge: 3`,
-`chatId`, `msgId`), команда `xcrun simctl push <udid> ai.enface.Msngr payload.json`.
+Payload per `docs/protocol.md` (`mutable-content: 1`, `thread-id`, `badge: 3`,
+`chatId`, `msgId`), command `xcrun simctl push <udid> ai.enface.Msngr payload.json`.
 
-| состояние | баннер | маркер-файл | NSLog от NSE |
+| state | banner | marker file | NSLog from the NSE |
 |---|---|---|---|
-| foreground | «Msngr / Новое сообщение», без префикса | нет | нет |
-| background | то же | нет | нет |
-| killed | то же, бейдж 3 на иконке | нет | нет |
+| foreground | «Msngr / Новое сообщение», no prefix | none | none |
+| background | same | none | none |
+| killed | same, badge 3 on the icon | none | none |
 
 
-Бейдж из payload применяется, `thread-id` доходит (виден в логе SpringBoard как
-`threadIdentifier: chat-demo`) — то есть уведомление доставляется полностью,
-пропущен ровно этап мутации.
+The badge from the payload is applied and `thread-id` arrives (visible in the
+SpringBoard log as `threadIdentifier: chat-demo`), so the notification is
+delivered in full and exactly one stage, mutation, is skipped.
 
-## Почему не запускается
+## Why it does not launch
 
-Полный debug-лог симулятора в момент пуша показывает путь доставки:
+The full simulator debug log at the moment of the push shows the delivery path:
 
 ```
 CoreSimulatorBridge [com.apple.UserNotifications:Connections] [ai.enface.Msngr] Creating a user notification center
@@ -73,134 +74,145 @@ SpringBoard          … trigger: <UNPushNotificationTrigger: …; contentAvaila
 SpringBoard          [ai.enface.Msngr] Saving notification 9C6D-779F: YES [ … pipelineState: pending]
 ```
 
-`simctl push` — это вызов `addNotificationRequest:forBundleIdentifier:` от
-процесса CoreSimulatorBridge, то есть локальное уведомление с подставленным
-push-триггером, а не трафик через apsd. Точка расширения
-`com.apple.usernotifications.service` за весь прогон не запрашивается ни разу
-(0 вхождений в 18406 строк лога), pkd в доставке не участвует. Флаг
-`mutableContent: YES` система видит и игнорирует.
+`simctl push` is a call to `addNotificationRequest:forBundleIdentifier:` made by
+the CoreSimulatorBridge process, that is, a local notification with a push
+trigger attached to it, not traffic through apsd. The
+`com.apple.usernotifications.service` extension point is not requested once
+during the whole run (0 occurrences in 18406 log lines), and pkd takes no part
+in delivery. The system sees the `mutableContent: YES` flag and ignores it.
 
-Крэш-репортов расширения нет (ни в `~/Library/Logs/DiagnosticReports`, ни в
-`CrashReporter` симулятора) — процесс не падает, он не стартует.
+There are no crash reports for the extension, neither in
+`~/Library/Logs/DiagnosticReports` nor in the simulator's `CrashReporter`. The
+process does not die, it never starts.
 
-### Контроль
+### Control
 
-Отдельное приложение `NSEProbe` с расширением без зависимостей (только
-UserNotifications, запись файла в свой Documents, NSLog, подмена title/body) —
-результат тот же: баннер исходный, файла нет, лога нет. Значит дело не в
-MsngrKit, не в GRDB, не в app group и не в debug-dylib.
+A separate app, `NSEProbe`, with an extension that has no dependencies at all
+(UserNotifications only, a file written into its own Documents, NSLog, title and
+body replaced) gives the same result: original banner, no file, no log. So this
+is not MsngrKit, not GRDB, not the app group and not the debug dylib.
 
-Apsd в симуляторе живой и держит соединение с 5223 — путь настоящего APNs
-существует, но требует токен устройства и ключ APNs, то есть платный аккаунт.
+apsd inside the simulator is alive and holds its connection to 5223, so the real
+APNs path exists, but it needs a device token and an APNs key, which means a
+paid account.
 
-## Что осталось непроверенным
+## What remains unverified
 
-Ни один вопрос, ответ на который требует живого процесса расширения, на
-симуляторе не закрыть:
+Nothing whose answer requires a live extension process can be settled on the
+simulator:
 
-- подмена `body`/`subtitle` силами NSE и её вид в баннере и на локскрине;
-- `serviceExtensionTimeWillExpire` и 30-секундный бюджет;
-- доступ к контейнеру app group и к Keychain из процесса расширения;
-- лимит памяти расширения (24 МБ) на реальной расшифровке.
+- replacing `body`/`subtitle` from the NSE, and how that looks in the banner and
+  on the lock screen;
+- `serviceExtensionTimeWillExpire` and the 30-second budget;
+- access to the app group container and to the Keychain from the extension
+  process;
+- the extension memory limit (24 MB) on real decryption.
 
-Косвенно: entitlements расширения на симуляторе формируются корректно —
-`NotificationService.appex-Simulated.xcent` содержит `application-identifier` и
-`com.apple.security.application-groups: group.ai.enface.msngr`. Это аргумент за
-то, что доступ будет, но не доказательство.
+Indirect evidence: the extension's entitlements are produced correctly on the
+simulator. `NotificationService.appex-Simulated.xcent` contains
+`application-identifier` and
+`com.apple.security.application-groups: group.ai.enface.msngr`. That is an
+argument that access will be there, not proof of it.
 
-## App groups на симуляторе
+## App groups on the simulator
 
-Работают без платного аккаунта. installd создаёт контейнер при установке:
+They work without a paid account. installd creates the container at install
+time:
 
 ```
 $ xcrun simctl get_app_container <udid> ai.enface.Msngr groups
 group.ai.enface.msngr  …/data/Containers/Shared/AppGroup/A560C895-…
 ```
 
-Контейнер появляется именно из-за entitlement: у NSEProbe, где группа не
-объявлена, команда возвращает пустой ответ.
+The container appears precisely because of the entitlement: for NSEProbe, where
+the group is not declared, the command returns an empty answer.
 
-Ловушка при диагностике: `codesign -d --entitlements` и файл `*.app.xcent` на
-симуляторных сборках показывают пустой словарь. Реальные entitlements лежат
-рядом в `*-Simulated.xcent` (и `.der`), их и читает installd.
+A trap while diagnosing this: on simulator builds, `codesign -d --entitlements`
+and the `*.app.xcent` file both show an empty dictionary. The real entitlements
+sit next to them in `*-Simulated.xcent` (and `.der`), and those are what installd
+reads.
 
-Entitlement заведён вместе с переносом файлов (`StorageLocation`,
-`StorageMigration` в MsngrCore): включение группы меняет корень хранилища с
-Application Support на контейнер группы, а вместе с ним переезжают
-`msngr.sqlite` и `.masterkey`. Без переноса для уже установленных сборок это
-выглядело бы как чистая установка со сменой identity-ключей; живой апгрейд
-проверен в `docs/qa/runs/2026-08-14-appgroup-run.md`.
+The entitlement was introduced together with the move of the files
+(`StorageLocation`, `StorageMigration` in MsngrCore): turning the group on
+changes the storage root from Application Support to the group container, and
+`msngr.sqlite` and `.masterkey` travel with it. Without that move, an already
+installed build would see a clean install with new identity keys; the live
+upgrade is verified in `docs/qa/runs/2026-08-14-appgroup-run.md`.
 
-Мастер-ключ, которым NSE будет расшифровывать превью, хранится файлом
-`.masterkey` в контейнере app group (`SharedFileMasterKey`,
-`ios/MsngrKit/Sources/MsngrCore/KeyStore.swift`), не в Keychain — отдельная
-группа доступа Keychain для расшифровки в расширении не нужна.
+The master key that the NSE will use to decrypt previews is kept as a
+`.masterkey` file in the app group container (`SharedFileMasterKey`,
+`ios/MsngrKit/Sources/MsngrCore/KeyStore.swift`), not in the Keychain, so no
+separate Keychain access group is needed for decryption in the extension.
 
-## Аватарки в уведомлениях (Communication Notifications)
+## Avatars in notifications (Communication Notifications)
 
-Проверялось на приложении NSEProbe локальными уведомлениями: рендерингом
-занимается SpringBoard, и для него безразлично, кто сформировал контент —
-приложение или расширение. Поэтому результат переносится на NSE, когда тот
-заработает на устройстве.
+Tested on the NSEProbe app with local notifications: the rendering is done by
+SpringBoard, and it makes no difference to SpringBoard who built the content,
+the app or the extension. That is why the result carries over to the NSE once
+the NSE works on a device.
 
-Что нужно, чтобы аватар нарисовался (все три условия обязательны, при любом
-пропущенном `updating(from:)` молча возвращает контент без изменений и ошибку
-не бросает):
+What it takes for the avatar to be drawn (all three conditions are mandatory; if
+any one of them is missing, `updating(from:)` silently returns the content
+unchanged and throws no error):
 
-1. entitlement `com.apple.developer.usernotifications.communication`;
-2. `NSUserActivityTypes` в Info.plist со строкой `INSendMessageIntent`;
-3. в `recipients` интента — `INPerson` с `isMe: true`.
+1. the `com.apple.developer.usernotifications.communication` entitlement;
+2. `NSUserActivityTypes` in Info.plist with the string `INSendMessageIntent`;
+3. an `INPerson` with `isMe: true` among the intent's `recipients`.
 
-Донат интента (`INInteraction.donate`) не нужен: на чистой установке, где
-донатов не было ни разу, аватар рисуется. Донат остаётся нужен для других
-вещей (Siri-предложения, шторка «Поделиться»), но не для баннера.
+Donating the intent (`INInteraction.donate`) is not needed: on a clean install
+where nothing had ever been donated, the avatar is drawn. The donation is still
+needed for other things (Siri suggestions, the share sheet), but not for the
+banner.
 
-Платный аккаунт не требуется: сборка с этим entitlement проходит подписью
-«Sign to Run Locally», ключ попадает в `NSEProbe.app-Simulated.xcent`.
+A paid account is not required: a build with this entitlement passes "Sign to
+Run Locally" signing, and the key lands in `NSEProbe.app-Simulated.xcent`.
 
-Один на один — круглый аватар отправителя, заголовок заменяется на его имя,
-иконка приложения уходит в угловой бейдж:
-
-
-Группа (`speakableGroupName` + два `recipients`) — заголовок остаётся именем
-отправителя, название группы становится subtitle, аватар всё равно
-отправителя; картинка, назначенная параметру `speakableGroupName`, в баннере не
-используется:
+One to one: a round avatar of the sender, the title replaced by their name, the
+app icon moved into the corner badge:
 
 
-Без entitlement — обычный баннер с иконкой приложения, никакой диагностики:
+Group (`speakableGroupName` plus two `recipients`): the title stays the sender's
+name, the group name becomes the subtitle, the avatar is still the sender's, and
+the image assigned to the `speakableGroupName` parameter is not used in the
+banner:
 
 
-Аватар передаётся как `INImage(imageData:)`, то есть NSE должен получить
-байты картинки локально, без сети. Удобное хранилище — файлы в контейнере app
-которые пишет приложение при обновлении профиля. Размер: 180×180 достаточно,
-баннер показывает аватар мелко.
+Without the entitlement: an ordinary banner with the app icon, and no
+diagnostics:
 
-## Что это значит для планирования
 
-До покупки аккаунта можно делать почти всю содержательную часть, если NSE
-останется тонким адаптером:
+The avatar is passed as `INImage(imageData:)`, so the NSE has to obtain the
+image bytes locally, without network. A convenient store is files in the app
+group container, written by the app when the profile is updated. Size: 180×180
+is enough, the banner shows the avatar small.
 
-- вся логика превью (расшифровка, выбор текста, «Имя: текст» для групп,
-  плейсхолдеры для медиа, gap-fill по пропущенным msgId, счёт бейджа) живёт в
-  MsngrCore и покрывается юнит-тестами — там симулятор вообще не нужен;
-- визуальную часть (аватарки, группы, thread-id, длинные тексты) можно
-  доводить сегодня: приложение строит контент тем же кодом и постит локальное
-  уведомление. Это же даёт e2e-проверку на симуляторе на дев-стенде;
-- в `didReceive` остаётся только склейка: прочитать userInfo, дёрнуть билдер,
-  отдать contentHandler.
+## What this means for planning
 
-Чего до устройства с платным аккаунтом не узнать: что расширение вообще
-поднимается, укладывается ли в 30 с и в лимит памяти, видит ли app group и
-Keychain из своего процесса. Это риск для сроков, но не для архитектуры —
-запускать его придётся один раз, когда аккаунт появится.
+Almost all of the substantive work can be done before an account is bought, as
+long as the NSE stays a thin adapter:
 
-Дев-стенд с `apns-mock` остаётся полезным для проверки серверной части (что
-пуш ушёл, с каким payload, с каким бейджем), но проверить им превью нельзя.
-Стоит завести в моке или в приложении режим «показать превью локально», иначе
-любая правка NSE будет непроверяемой.
+- all the preview logic (decryption, picking the text, "Name: text" for groups,
+  placeholders for media, gap-fill over missing msgIds, badge counting) lives in
+  MsngrCore and is covered by unit tests, where no simulator is involved at all;
+- the visual side (avatars, groups, thread-id, long texts) can be polished
+  today: the app builds the content with the same code and posts a local
+  notification. That also gives an end-to-end check on the simulator against the
+  dev backend;
+- what is left in `didReceive` is the wiring: read userInfo, call the builder,
+  hand the result to contentHandler.
 
-## Воспроизведение
+What cannot be learned before a device with a paid account: whether the
+extension comes up at all, whether it fits into 30 s and into the memory limit,
+whether it sees the app group and the Keychain from its own process. That is a
+risk to the schedule, not to the architecture; it has to be launched once, when
+the account appears.
+
+The dev backend with `apns-mock` remains useful for checking the server side
+(that the push went out, with what payload, with what badge), but previews
+cannot be checked with it. Worth adding a "show the preview locally" mode to the
+mock or to the app, otherwise any NSE change will be unverifiable.
+
+## Reproducing
 
 ```
 cd ios && xcodegen
