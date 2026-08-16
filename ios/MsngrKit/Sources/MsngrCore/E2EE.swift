@@ -254,8 +254,7 @@ public final class E2EEManager: @unchecked Sendable {
                         if !isResetting,
                            var session = try store.loadSession(peerUserId: uid, peerDeviceId: device.deviceId) {
                             let msg = try session.encrypt(plaintext)
-                            try store.saveSession(session, peerUserId: uid, peerDeviceId: device.deviceId,
-                                                  theirIdentityDH: device.identityKey)
+                            try store.saveSession(session, peerUserId: uid, peerDeviceId: device.deviceId)
                             boxes[a] = PairwiseBox(type: "dr", c: try JSONEncoder().encode(msg).base64EncodedString())
                             continue
                         }
@@ -287,11 +286,12 @@ public final class E2EEManager: @unchecked Sendable {
                                bundle: APIClient.PrekeyBundleDTO) throws -> PairwiseBox? {
         guard let ikDH = Data(base64urlEncoded: bundle.identityKey),
               let ikSign = Data(base64urlEncoded: bundle.identitySignKey),
+              let ikSig = Data(base64urlEncoded: bundle.identityKeySig),
               let spk = Data(base64urlEncoded: bundle.signedPrekey.key),
               let spkSig = Data(base64urlEncoded: bundle.signedPrekey.sig) else { return nil }
 
         let pkBundle = PreKeyBundle(
-            identity: IdentityPublicKeys(dh: ikDH, signing: ikSign),
+            identity: IdentityPublicKeys(dh: ikDH, signing: ikSign, dhSignature: ikSig),
             signedPreKeyId: bundle.signedPrekey.id,
             signedPreKey: spk,
             signedPreKeySignature: spkSig,
@@ -303,12 +303,12 @@ public final class E2EEManager: @unchecked Sendable {
         var session = try DoubleRatchetSession.initAlice(
             sharedSecret: x3dh.sharedSecret, theirRatchetPub: spk, ad: x3dh.associatedData)
         let msg = try session.encrypt(plaintext)
-        try store.saveSession(session, peerUserId: userId, peerDeviceId: bundle.deviceId,
-                              theirIdentityDH: bundle.identityKey)
+        try store.saveSession(session, peerUserId: userId, peerDeviceId: bundle.deviceId)
 
         var box = PairwiseBox(type: "pk", c: try JSONEncoder().encode(msg).base64EncodedString())
         box.ik = our.dh.publicKey.rawRepresentation.base64urlEncodedString()
         box.isk = our.signing.publicKey.rawRepresentation.base64urlEncodedString()
+        box.iksig = try our.dhSignature.base64urlEncodedString()
         box.ek = x3dh.ephemeralPublic.base64urlEncodedString()
         box.spkId = bundle.signedPrekey.id
         box.otpId = bundle.oneTimePrekey?.id

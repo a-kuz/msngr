@@ -129,7 +129,6 @@ public enum AppDatabase {
                 t.column("peerUserId", .text).notNull()
                 t.column("peerDeviceId", .text).notNull()
                 t.column("state", .blob).notNull()   // sealed JSON of DoubleRatchetSession
-                t.column("theirIdentityDH", .text).notNull()
                 t.primaryKey(["peerUserId", "peerDeviceId"])
             }
             try db.create(table: "senderKeyOut") { t in

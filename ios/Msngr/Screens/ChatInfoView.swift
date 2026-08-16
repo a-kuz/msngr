@@ -389,36 +389,38 @@ struct ChatInfoView: View {
     }
 
     private func computeSafetyNumber(_ peer: User) {
-        guard let store = app.store,
-              let myIdentity = try? store.identity(),
-              let theirKeyB64 = peer.identitySigning,
-              let theirKey = Data(base64urlEncoded: theirKeyB64) else {
-            // fetch the peer's key from the prekey bundle
+        guard let theirSigningB64 = peer.identitySigning, let theirDHB64 = peer.identityDH else {
+            // fetch the peer's keys from the prekey bundle
             Task {
                 if let bundles = try? await app.api.prekeys(userId: peer.id).bundles, let b = bundles.first {
                     try? await app.db.write { dbc in
                         try dbc.execute(sql: "UPDATE user SET identitySigning = ?, identityDH = ? WHERE id = ?",
                                         arguments: [b.identitySignKey, b.identityKey, peer.id])
                     }
-                    await MainActor.run { computeSafetyNumberNow(peer, theirKey: b.identitySignKey) }
+                    await MainActor.run {
+                        computeSafetyNumberNow(peer, theirSigning: b.identitySignKey,
+                                               theirDH: b.identityKey)
+                    }
                 }
             }
             return
         }
-        safetyNumber = SafetyNumbers.generate(
-            ourIdentitySigning: myIdentity.signing.publicKey.rawRepresentation,
-            ourUserId: model.ownUserId,
-            theirIdentitySigning: theirKey, theirUserId: peer.id)
+        computeSafetyNumberNow(peer, theirSigning: theirSigningB64, theirDH: theirDHB64)
     }
 
-    private func computeSafetyNumberNow(_ peer: User, theirKey: String) {
+    /// Both halves of the peer's identity go into the code: the X25519 key is the
+    /// one their messages are encrypted under.
+    private func computeSafetyNumberNow(_ peer: User, theirSigning: String, theirDH: String) {
         guard let store = app.store,
               let myIdentity = try? store.identity(),
-              let theirKeyData = Data(base64urlEncoded: theirKey) else { return }
+              let theirSigningData = Data(base64urlEncoded: theirSigning),
+              let theirDHData = Data(base64urlEncoded: theirDH) else { return }
         safetyNumber = SafetyNumbers.generate(
             ourIdentitySigning: myIdentity.signing.publicKey.rawRepresentation,
+            ourIdentityDH: myIdentity.dh.publicKey.rawRepresentation,
             ourUserId: model.ownUserId,
-            theirIdentitySigning: theirKeyData, theirUserId: peer.id)
+            theirIdentitySigning: theirSigningData, theirIdentityDH: theirDHData,
+            theirUserId: peer.id)
     }
 }
 

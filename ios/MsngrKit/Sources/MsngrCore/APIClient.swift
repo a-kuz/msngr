@@ -70,6 +70,7 @@ public final class APIClient: @unchecked Sendable {
         public var device: [String: String]
         public var identityKey: String
         public var identitySignKey: String
+        public var identityKeySig: String
         public var signedPrekey: SignedPrekeyDTO
         public var oneTimePrekeys: [OneTimePrekeyDTO]
         public var phoneHash: String?
@@ -87,7 +88,7 @@ public final class APIClient: @unchecked Sendable {
             public init(id: UInt32, key: String) { self.id = id; self.key = key }
         }
         public init(username: String, displayName: String, deviceName: String,
-                    identityKey: String, identitySignKey: String,
+                    identityKey: String, identitySignKey: String, identityKeySig: String,
                     signedPrekey: SignedPrekeyDTO, oneTimePrekeys: [OneTimePrekeyDTO],
                     phoneHash: String?) {
             self.username = username
@@ -95,6 +96,7 @@ public final class APIClient: @unchecked Sendable {
             self.device = ["name": deviceName]
             self.identityKey = identityKey
             self.identitySignKey = identitySignKey
+            self.identityKeySig = identityKeySig
             self.signedPrekey = signedPrekey
             self.oneTimePrekeys = oneTimePrekeys
             self.phoneHash = phoneHash
@@ -195,14 +197,16 @@ public final class APIClient: @unchecked Sendable {
     public struct ProvisionClaimRequest: Encodable {
         public var identityKey: String
         public var identitySignKey: String
+        public var identityKeySig: String
         public var signedPrekey: RegisterRequest.SignedPrekeyDTO
         public var oneTimePrekeys: [RegisterRequest.OneTimePrekeyDTO]
         public var device: [String: String]
-        public init(identityKey: String, identitySignKey: String,
+        public init(identityKey: String, identitySignKey: String, identityKeySig: String,
                     signedPrekey: RegisterRequest.SignedPrekeyDTO,
                     oneTimePrekeys: [RegisterRequest.OneTimePrekeyDTO], deviceName: String) {
             self.identityKey = identityKey
             self.identitySignKey = identitySignKey
+            self.identityKeySig = identityKeySig
             self.signedPrekey = signedPrekey
             self.oneTimePrekeys = oneTimePrekeys
             self.device = ["name": deviceName]
@@ -290,6 +294,7 @@ public final class APIClient: @unchecked Sendable {
         public let deviceId: String
         public let identityKey: String
         public let identitySignKey: String
+        public let identityKeySig: String
     }
     public struct DevicesResponse: Decodable { public let devices: [DeviceDTO] }
     /// Devices of several users in one request; consumes no prekeys.
@@ -303,6 +308,7 @@ public final class APIClient: @unchecked Sendable {
         public let deviceId: String
         public let identityKey: String
         public let identitySignKey: String
+        public let identityKeySig: String
         public let signedPrekey: SignedPrekeyBody
         public let oneTimePrekey: OneTimePrekeyBody?
         public struct SignedPrekeyBody: Decodable {

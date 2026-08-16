@@ -25,6 +25,10 @@ public struct DoubleRatchetSession: Codable, Sendable {
     var prevSendN: UInt32 = 0
     var skipped: [String: Data] = [:] // "\(dhPub.base64)/\(n)" -> messageKey
     public var associatedData: Data
+    /// The initiator's ephemeral key this session was built from, on the
+    /// responder side. It names the handshake, which is how a prekey envelope
+    /// delivered twice is told apart from a peer that really started over.
+    var handshakeEphemeral: Data?
 
     /// Messages one chain may jump over in a single step, and skipped keys kept
     /// across steps. Sized for a device that comes back after a long silence:
@@ -35,10 +39,16 @@ public struct DoubleRatchetSession: Codable, Sendable {
     static let maxSkip: UInt32 = 5000
     static let maxSkippedStored = 5000
 
-    /// The session has already received something, so it is established. A
-    /// prekey envelope arriving after that is ignored: it would otherwise let a
-    /// replayed handshake reset a live session.
+    /// The session has already received something, so it is established.
     public var hasReceived: Bool { recvN > 0 || recvChainKey != nil }
+
+    /// This session came out of that handshake and has been used since. A prekey
+    /// envelope carrying the same ephemeral is a replay of it — a peer that
+    /// really started over brings an ephemeral of its own — and rebuilding on it
+    /// would throw away a session that is running.
+    public func isReplayedHandshake(ephemeral: Data) -> Bool {
+        hasReceived && handshakeEphemeral == ephemeral
+    }
 
     // MARK: - KDF
 
@@ -77,12 +87,14 @@ public struct DoubleRatchetSession: Codable, Sendable {
     }
 
     /// Bob (responder): his ratchet key is the signed prekey.
-    public static func initBob(sharedSecret: SymmetricKey, ourRatchetKey: Curve25519.KeyAgreement.PrivateKey, ad: Data) -> DoubleRatchetSession {
+    public static func initBob(sharedSecret: SymmetricKey, ourRatchetKey: Curve25519.KeyAgreement.PrivateKey,
+                               ad: Data, handshakeEphemeral: Data? = nil) -> DoubleRatchetSession {
         let sk = sharedSecret.withUnsafeBytes { Data($0) }
         return DoubleRatchetSession(rootKey: sk,
                                     dhSelfPriv: ourRatchetKey.rawRepresentation,
                                     dhRemotePub: nil,
-                                    associatedData: ad)
+                                    associatedData: ad,
+                                    handshakeEphemeral: handshakeEphemeral)
     }
 
     // MARK: - Encrypt / Decrypt
