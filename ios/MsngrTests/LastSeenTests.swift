@@ -23,4 +23,13 @@ final class LastSeenTests: XCTestCase {
         XCTAssertTrue(text.hasPrefix("был(а) "))
         XCTAssertFalse(text.contains("только что"))
     }
+
+    func testMembersDeclension() {
+        XCTAssertEqual(ChatViewModel.membersText(1), "1 участник")
+        XCTAssertEqual(ChatViewModel.membersText(2), "2 участника")
+        XCTAssertEqual(ChatViewModel.membersText(5), "5 участников")
+        XCTAssertEqual(ChatViewModel.membersText(11), "11 участников")
+        XCTAssertEqual(ChatViewModel.membersText(21), "21 участник")
+        XCTAssertEqual(ChatViewModel.membersText(112), "112 участников")
+    }
 }

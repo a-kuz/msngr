@@ -448,12 +448,29 @@ final class ChatViewModel: ObservableObject {
             return "печатает…"
         }
         if chat?.kind == .group {
-            return "\(members.count) участников"
+            return Self.membersText(members.count)
         }
         guard let peer else { return "" }
         if peer.online { return "в сети" }
         if peer.lastSeen > 0 { return Self.lastSeenText(peer.lastSeen) }
         return ""
+    }
+
+    /// "N participants", in Russian plural forms.
+    static func membersText(_ count: Int) -> String {
+        let mod100 = count % 100
+        let mod10 = count % 10
+        let noun: String
+        if mod100 / 10 == 1 {
+            noun = "участников"
+        } else if mod10 == 1 {
+            noun = "участник"
+        } else if (2...4).contains(mod10) {
+            noun = "участника"
+        } else {
+            noun = "участников"
+        }
+        return "\(count) \(noun)"
     }
 
     /// The "last seen" line built from a timestamp. A fresh timestamp plus a server
