@@ -91,10 +91,54 @@ public enum MessageSearch {
         guard let match = ftsQuery(query) else {
             return MessageSearchPage(hits: [], cursor: nil, reachedEnd: true)
         }
+        let filter = self.filter(match: match, chatId: chatId, after: after)
+        // the snippet markers are read before the predicate, and one row over the
+        // page tells whether anything older matches
+        let arguments: [DatabaseValueConvertible] = [openMark, closeMark]
+            + filter.arguments + [limit + 1]
+        let rows = try Row.fetchAll(dbc, sql: """
+            SELECT message.id, message.msgId, message.chatId, message.fromUserId,
+                   message.kind,
+                   COALESCE(message.serverTs, message.sentAt) AS sortedAt,
+                   snippet(messageFts, ?, ?, '…', -1, 12) AS snip
+            FROM message
+            JOIN messageFts ON messageFts.rowid = message.rowid
+            JOIN chat ON chat.id = message.chatId
+            WHERE \(filter.sql)
+            ORDER BY sortedAt DESC, message.id DESC
+            LIMIT ?
+            """, arguments: StatementArguments(arguments))
+        let page = Array(rows.prefix(limit)).map(hit(from:))
+        let last = page.last.map { MessageSearchCursor(order: $0.sortedAt, id: $0.id) }
+        return MessageSearchPage(hits: page,
+                                 cursor: last ?? after,
+                                 reachedEnd: rows.count <= limit)
+    }
+
+    /// How many messages the query matches. The reader walking matches one by one
+    /// is told where they stand in the whole result, which a page cannot say.
+    public static func count(_ dbc: GRDB.Database, query: String,
+                             chatId: String? = nil) throws -> Int {
+        guard let match = ftsQuery(query) else { return 0 }
+        let filter = self.filter(match: match, chatId: chatId, after: nil)
+        return try Int.fetchOne(dbc, sql: """
+            SELECT COUNT(*)
+            FROM message
+            JOIN messageFts ON messageFts.rowid = message.rowid
+            JOIN chat ON chat.id = message.chatId
+            WHERE \(filter.sql)
+            """, arguments: StatementArguments(filter.arguments)) ?? 0
+    }
+
+    /// What a match has to satisfy: the full-text expression, the messages that are
+    /// part of the conversation at all, the chat when the search is scoped to one,
+    /// and the place a page continues from.
+    private static func filter(match: String, chatId: String?,
+                               after: MessageSearchCursor?) -> (sql: String, arguments: [DatabaseValueConvertible]) {
         var conditions = ["messageFts MATCH ?", "message.deletedForAll = 0",
                           "message.kind != 'system'",
                           "NOT (chat.isRequest = 1 AND chat.iAccepted = 0)"]
-        var arguments: [DatabaseValueConvertible] = [openMark, closeMark, match]
+        var arguments: [DatabaseValueConvertible] = [match]
         if let chatId {
             conditions.append("message.chatId = ?")
             arguments.append(chatId)
@@ -106,25 +150,7 @@ public enum MessageSearch {
                 """)
             arguments += [after.order, after.order, after.id]
         }
-        // one row over the page tells whether anything older matches
-        arguments.append(limit + 1)
-        let rows = try Row.fetchAll(dbc, sql: """
-            SELECT message.id, message.msgId, message.chatId, message.fromUserId,
-                   message.kind,
-                   COALESCE(message.serverTs, message.sentAt) AS sortedAt,
-                   snippet(messageFts, ?, ?, '…', -1, 12) AS snip
-            FROM message
-            JOIN messageFts ON messageFts.rowid = message.rowid
-            JOIN chat ON chat.id = message.chatId
-            WHERE \(conditions.joined(separator: " AND "))
-            ORDER BY sortedAt DESC, message.id DESC
-            LIMIT ?
-            """, arguments: StatementArguments(arguments))
-        let page = Array(rows.prefix(limit)).map(hit(from:))
-        let last = page.last.map { MessageSearchCursor(order: $0.sortedAt, id: $0.id) }
-        return MessageSearchPage(hits: page,
-                                 cursor: last ?? after,
-                                 reachedEnd: rows.count <= limit)
+        return (conditions.joined(separator: " AND "), arguments)
     }
 
     private static func hit(from row: Row) -> MessageSearchHit {
