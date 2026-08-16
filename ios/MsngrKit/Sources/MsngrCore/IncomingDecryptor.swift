@@ -90,10 +90,9 @@ public struct IncomingDecryptor: Sendable {
 
         // Always try the sessions we already know first, active one before archived ones.
         // A message must not be lost just because the two sides' state drifted apart.
-        if var existing = try store.loadSession(peerUserId: fromUserId, peerDeviceId: fromDeviceId),
-           let plain = try? existing.decrypt(ratchetMsg) {
-            try store.saveSession(existing, peerUserId: fromUserId, peerDeviceId: fromDeviceId,
-                                  theirIdentityDH: box.ik ?? "")
+        let current = try store.loadSession(peerUserId: fromUserId, peerDeviceId: fromDeviceId)
+        if var existing = current, let plain = try? existing.decrypt(ratchetMsg) {
+            try store.saveSession(existing, peerUserId: fromUserId, peerDeviceId: fromDeviceId)
             return try handleInner(plain, fromUserId: fromUserId, trustIssue: nil)
         }
         var archive = try store.archivedSessions(peerUserId: fromUserId, peerDeviceId: fromDeviceId)
@@ -108,17 +107,29 @@ public struct IncomingDecryptor: Sendable {
             // A pk that no known session could open: build a fresh responder session and
             // move the current one to the archive, where messages still in flight can
             // reach it. This resolves both simultaneous initiation (glare) and plain drift.
-            try store.archiveCurrentSession(peerUserId: fromUserId, peerDeviceId: fromDeviceId)
             guard let ikB64 = box.ik, let ik = Data(base64urlEncoded: ikB64),
+                  let iskB64 = box.isk, let isk = Data(base64urlEncoded: iskB64),
+                  let sigB64 = box.iksig, let iksig = Data(base64urlEncoded: sigB64),
                   let ekB64 = box.ek, let ek = Data(base64urlEncoded: ekB64),
                   let spkId = box.spkId,
                   let spkPriv = try store.signedPrekey(id: spkId) else {
                 return .undecryptable(reason: "bad_pk")
             }
-            if let iskB64 = box.isk {
-                let trust = try store.checkTrust(userId: fromUserId, identitySigning: iskB64)
-                if case .changed = trust { trustIssue = iskB64 }
+            // The identity is trusted by its signing key and the session runs on its
+            // DH key, so an envelope that does not tie the two together is one where
+            // the trust answer would be about a key nothing here uses.
+            guard IdentityBinding.verify(dh: ik, signature: iksig, signingPub: isk) else {
+                return .undecryptable(reason: "unbound_identity")
             }
+            // The handshake this session already came out of, arriving again: a replay,
+            // and rebuilding on it would put a live session in the archive and leave
+            // this device with a responder session that cannot send.
+            if current?.isReplayedHandshake(ephemeral: ek) == true
+                || archive.contains(where: { $0.isReplayedHandshake(ephemeral: ek) }) {
+                return .undecryptable(reason: MessageRepair.stalePrekeyReason)
+            }
+            let trust = try store.checkTrust(userId: fromUserId, identitySigning: iskB64)
+            if case .changed = trust { trustIssue = iskB64 }
             var otpPriv: Curve25519.KeyAgreement.PrivateKey?
             if let otpId = box.otpId {
                 otpPriv = try store.oneTimePrekey(id: otpId)
@@ -133,15 +144,18 @@ public struct IncomingDecryptor: Sendable {
                                                 ourOneTimePreKey: otp,
                                                 theirIdentityDH: ik, theirEphemeral: ek) {
                     candidates.append(DoubleRatchetSession.initBob(
-                        sharedSecret: x3dh.sharedSecret, ourRatchetKey: spkPriv, ad: x3dh.associatedData))
+                        sharedSecret: x3dh.sharedSecret, ourRatchetKey: spkPriv,
+                        ad: x3dh.associatedData, handshakeEphemeral: ek))
                 }
                 if otpPriv == nil { break }
             }
             for var candidate in candidates {
                 if let plain = try? candidate.decrypt(ratchetMsg) {
                     if let otpId = box.otpId { try store.consumeOneTimePrekey(id: otpId) }
-                    try store.saveSession(candidate, peerUserId: fromUserId, peerDeviceId: fromDeviceId,
-                                          theirIdentityDH: box.ik ?? "")
+                    // the session in place goes to the archive only now, with a
+                    // replacement that has opened something in hand
+                    try store.archiveCurrentSession(peerUserId: fromUserId, peerDeviceId: fromDeviceId)
+                    try store.saveSession(candidate, peerUserId: fromUserId, peerDeviceId: fromDeviceId)
                     return try handleInner(plain, fromUserId: fromUserId, trustIssue: trustIssue)
                 }
             }

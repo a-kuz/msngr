@@ -38,8 +38,7 @@ struct RatchetPair {
         _ = try peer.decrypt(try device.encrypt(Data("hello".utf8)))
         _ = try device.decrypt(try peer.encrypt(Data("hi".utf8)))
 
-        try store.saveSession(device, peerUserId: peerUserId, peerDeviceId: peerDeviceId,
-                              theirIdentityDH: "")
+        try store.saveSession(device, peerUserId: peerUserId, peerDeviceId: peerDeviceId)
     }
 
     /// One message from the peer, as the envelope that travels.

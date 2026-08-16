@@ -10,7 +10,7 @@ final class X3DHTests: XCTestCase {
         let bobOTP = OneTimePreKey(id: 7)
 
         let bundle = PreKeyBundle(
-            identity: bob.publicKeys,
+            identity: try bob.publicKeys,
             signedPreKeyId: 1,
             signedPreKey: bobSPK.key.publicKey.rawRepresentation,
             signedPreKeySignature: bobSPK.signature,
@@ -20,7 +20,7 @@ final class X3DHTests: XCTestCase {
         let a = try X3DH.initiate(our: alice, their: bundle)
         let b = try X3DH.respond(our: bob, ourSignedPreKey: bobSPK.key,
                                  ourOneTimePreKey: bobOTP.key,
-                                 theirIdentityDH: alice.publicKeys.dh,
+                                 theirIdentityDH: alice.dh.publicKey.rawRepresentation,
                                  theirEphemeral: a.ephemeralPublic)
         XCTAssertEqual(a.sharedSecret.withUnsafeBytes { Data($0) },
                        b.sharedSecret.withUnsafeBytes { Data($0) })
@@ -32,14 +32,14 @@ final class X3DHTests: XCTestCase {
         let bob = IdentityKeyPair()
         let bobSPK = try SignedPreKey(id: 1, identity: bob)
         let bundle = PreKeyBundle(
-            identity: bob.publicKeys, signedPreKeyId: 1,
+            identity: try bob.publicKeys, signedPreKeyId: 1,
             signedPreKey: bobSPK.key.publicKey.rawRepresentation,
             signedPreKeySignature: bobSPK.signature,
             oneTimePreKeyId: nil, oneTimePreKey: nil
         )
         let a = try X3DH.initiate(our: alice, their: bundle)
         let b = try X3DH.respond(our: bob, ourSignedPreKey: bobSPK.key, ourOneTimePreKey: nil,
-                                 theirIdentityDH: alice.publicKeys.dh,
+                                 theirIdentityDH: alice.dh.publicKey.rawRepresentation,
                                  theirEphemeral: a.ephemeralPublic)
         XCTAssertEqual(a.sharedSecret.withUnsafeBytes { Data($0) },
                        b.sharedSecret.withUnsafeBytes { Data($0) })
@@ -51,12 +51,45 @@ final class X3DHTests: XCTestCase {
         let mallory = IdentityKeyPair()
         let bobSPK = try SignedPreKey(id: 1, identity: mallory) // signed by the wrong identity
         let bundle = PreKeyBundle(
-            identity: bob.publicKeys, signedPreKeyId: 1,
+            identity: try bob.publicKeys, signedPreKeyId: 1,
             signedPreKey: bobSPK.key.publicKey.rawRepresentation,
             signedPreKeySignature: bobSPK.signature,
             oneTimePreKeyId: nil, oneTimePreKey: nil
         )
         XCTAssertThrowsError(try X3DH.initiate(our: alice, their: bundle))
+    }
+
+    /// A bundle carrying a real signing key beside somebody else's DH key: the
+    /// pair is not signed as one, and the bundle is refused before any DH runs.
+    func testRejectsIdentityWithASwappedDHKey() throws {
+        let alice = IdentityKeyPair()
+        let bob = IdentityKeyPair()
+        let impostor = IdentityKeyPair()
+        let bobSPK = try SignedPreKey(id: 1, identity: bob)
+        let bobKeys = try bob.publicKeys
+        let bundle = PreKeyBundle(
+            identity: IdentityPublicKeys(dh: impostor.dh.publicKey.rawRepresentation,
+                                         signing: bobKeys.signing,
+                                         dhSignature: bobKeys.dhSignature),
+            signedPreKeyId: 1,
+            signedPreKey: bobSPK.key.publicKey.rawRepresentation,
+            signedPreKeySignature: bobSPK.signature,
+            oneTimePreKeyId: nil, oneTimePreKey: nil
+        )
+        XCTAssertFalse(bundle.identity.isBound)
+        XCTAssertThrowsError(try X3DH.initiate(our: alice, their: bundle)) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidSignature)
+        }
+    }
+
+    func testIdentityBindingVerifies() throws {
+        let identity = IdentityKeyPair()
+        XCTAssertTrue(try identity.publicKeys.isBound)
+        // the signature belongs to this DH key alone
+        XCTAssertFalse(IdentityBinding.verify(
+            dh: IdentityKeyPair().dh.publicKey.rawRepresentation,
+            signature: try identity.dhSignature,
+            signingPub: identity.signing.publicKey.rawRepresentation))
     }
 }
 
@@ -66,14 +99,14 @@ final class DoubleRatchetTests: XCTestCase {
         let bob = IdentityKeyPair()
         let bobSPK = try SignedPreKey(id: 1, identity: bob)
         let bundle = PreKeyBundle(
-            identity: bob.publicKeys, signedPreKeyId: 1,
+            identity: try bob.publicKeys, signedPreKeyId: 1,
             signedPreKey: bobSPK.key.publicKey.rawRepresentation,
             signedPreKeySignature: bobSPK.signature,
             oneTimePreKeyId: nil, oneTimePreKey: nil
         )
         let a = try X3DH.initiate(our: alice, their: bundle)
         let b = try X3DH.respond(our: bob, ourSignedPreKey: bobSPK.key, ourOneTimePreKey: nil,
-                                 theirIdentityDH: alice.publicKeys.dh,
+                                 theirIdentityDH: alice.dh.publicKey.rawRepresentation,
                                  theirEphemeral: a.ephemeralPublic)
         let sa = try DoubleRatchetSession.initAlice(
             sharedSecret: a.sharedSecret,
@@ -142,8 +175,7 @@ final class DoubleRatchetTests: XCTestCase {
         XCTAssertEqual(try alice.decrypt(reply), Data("reply".utf8))
         let second = try alice.encrypt(Data("second".utf8))
         XCTAssertEqual(try bob.decrypt(second), Data("second".utf8))
-        // bob.hasReceived == true is what sends E2EEManager down the stale_pk_ignored branch.
-        XCTAssertTrue(bob.hasReceived)
+        XCTAssertThrowsError(try bob.decrypt(pk))
     }
 
     func testSessionSerializationRoundtrip() throws {
@@ -223,18 +255,41 @@ final class MediaCryptoTests: XCTestCase {
 }
 
 final class SafetyNumberTests: XCTestCase {
-    func testSymmetricAndStable() {
-        let a = IdentityKeyPair().publicKeys
-        let b = IdentityKeyPair().publicKeys
-        let n1 = SafetyNumbers.generate(ourIdentitySigning: a.signing, ourUserId: "alice",
-                                        theirIdentitySigning: b.signing, theirUserId: "bob")
-        let n2 = SafetyNumbers.generate(ourIdentitySigning: b.signing, ourUserId: "bob",
-                                        theirIdentitySigning: a.signing, theirUserId: "alice")
+    func testSymmetricAndStable() throws {
+        let a = try IdentityKeyPair().publicKeys
+        let b = try IdentityKeyPair().publicKeys
+        let n1 = SafetyNumbers.generate(ourIdentitySigning: a.signing, ourIdentityDH: a.dh,
+                                        ourUserId: "alice",
+                                        theirIdentitySigning: b.signing, theirIdentityDH: b.dh,
+                                        theirUserId: "bob")
+        let n2 = SafetyNumbers.generate(ourIdentitySigning: b.signing, ourIdentityDH: b.dh,
+                                        ourUserId: "bob",
+                                        theirIdentitySigning: a.signing, theirIdentityDH: a.dh,
+                                        theirUserId: "alice")
         XCTAssertEqual(n1, n2)
         XCTAssertEqual(n1.count, 60)
-        let c = IdentityKeyPair().publicKeys
-        let n3 = SafetyNumbers.generate(ourIdentitySigning: a.signing, ourUserId: "alice",
-                                        theirIdentitySigning: c.signing, theirUserId: "carol")
+        let c = try IdentityKeyPair().publicKeys
+        let n3 = SafetyNumbers.generate(ourIdentitySigning: a.signing, ourIdentityDH: a.dh,
+                                        ourUserId: "alice",
+                                        theirIdentitySigning: c.signing, theirIdentityDH: c.dh,
+                                        theirUserId: "carol")
         XCTAssertNotEqual(n1, n3)
+    }
+
+    /// The code covers the key messages are encrypted under: a peer whose
+    /// signing key is the real one and whose DH key is not reads differently.
+    func testChangedDHKeyChangesTheCode() throws {
+        let us = try IdentityKeyPair().publicKeys
+        let them = try IdentityKeyPair().publicKeys
+        let impostorDH = IdentityKeyPair().dh.publicKey.rawRepresentation
+        let honest = SafetyNumbers.generate(ourIdentitySigning: us.signing, ourIdentityDH: us.dh,
+                                            ourUserId: "alice",
+                                            theirIdentitySigning: them.signing,
+                                            theirIdentityDH: them.dh, theirUserId: "bob")
+        let swapped = SafetyNumbers.generate(ourIdentitySigning: us.signing, ourIdentityDH: us.dh,
+                                             ourUserId: "alice",
+                                             theirIdentitySigning: them.signing,
+                                             theirIdentityDH: impostorDH, theirUserId: "bob")
+        XCTAssertNotEqual(honest, swapped)
     }
 }
