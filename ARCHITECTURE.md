@@ -1,255 +1,268 @@
-# Msngr — архитектура
+# Msngr architecture
 
-Мессенджер со сквозным шифрованием: клиенты для iOS и macOS, бэкенд на
-Cloudflare Workers.
+An end-to-end encrypted messenger: iOS and macOS clients over a Cloudflare
+Workers backend.
 
 ```
 server/           Worker: HTTP API (hono), WS, Durable Objects, D1, R2, APNs
-ios/MsngrKit/     переносимое ядро (Swift Package): MsngrCrypto + MsngrCore
-ios/Msngr/        iOS-приложение (SwiftUI + UIKit для ленты сообщений)
-ios/MsngrMac/     macOS-клиент на том же ядре
-ios/NotificationService/  NSE: превью пуша из общей БД
-docs/             протокол, крипто-флоу, UI, процесс, аудиты, QA
+ios/MsngrKit/     the portable core (Swift package): MsngrCrypto + MsngrCore
+ios/Msngr/        the iOS app (SwiftUI, with UIKit for the message feed)
+ios/MsngrMac/     a macOS client on the same core
+ios/NotificationService/  the NSE: a push preview out of the shared database
+docs/             protocol, crypto flows, UI, process, audits, QA
 ```
 
-## Бэкенд
+## Backend
 
-- **Worker (роутер)** — весь HTTP API и апгрейд `/ws`. Авторизует сокет и
-  передаёт его в `UserSessionDO` пользователя.
-- **UserSessionDO** — по одному на пользователя. Держит WS всех его устройств
-  (WebSocket Hibernation API), чат-лист с локальными флагами (pinned/muted/
-  archived), presence, APNs-токены, кэш непрочитанного для бейджа. Всё, что
-  адресовано пользователю, проходит через его DO — единая точка fan-in.
-- **ConversationDO** — по одному на чат. Хранит членство с ролями и флагом
-  `accepted` (message requests), журнал сообщений (ciphertext + метаданные),
-  read/delivered-марки, закреплённое сообщение, настройки. Присваивает
-  монотонные `seq`, дедуплицирует отправку по `clientMsgId`, после записи
-  ставит фрейм в alarm-очередь рассылки по `UserSessionDO` участников.
-- **D1** — пользователи, устройства с хэшами токенов, identity-ключи и
-  prekey-бандлы, блокировки, инвайты, реестр медиа.
-- **R2** — блобы медиа, зашифрованные на клиенте.
-- **APNs** — token-based auth (p8, ES256, JWT кэшируется). Пуш уходит на каждое
-  контентное сообщение немедленно, независимо от живых сокетов; дубль гасит
-  клиент.
+- **Worker (the router)** — the whole HTTP API and the `/ws` upgrade. It
+  authorises the socket and hands it to the user's `UserSessionDO`.
+- **UserSessionDO** — one per user. It holds the WS of every device they have
+  (WebSocket Hibernation API), the chat list with its local flags (pinned,
+  muted, archived), presence, APNs tokens, and the unread cache behind the
+  badge. Everything addressed to a user passes through their DO, which is the
+  single fan-in point.
+- **ConversationDO** — one per chat. It stores membership with roles and the
+  `accepted` flag for message requests, the message journal (ciphertext plus
+  metadata), read and delivered marks, the pinned message and the settings. It
+  assigns monotonic `seq`, deduplicates sends by `clientMsgId`, and after
+  writing puts the frame into an alarm queue for fan-out over the participants'
+  `UserSessionDO`.
+- **D1** — users, devices with token hashes, identity keys and prekey bundles,
+  blocks, invites, the media registry.
+- **R2** — media blobs, encrypted on the client.
+- **APNs** — token-based auth (p8, ES256, with the JWT cached). A push goes out
+  for every content message immediately, whether or not a socket is alive; the
+  client suppresses the duplicate.
 
-Direct-чат адресуется детерминированным именем `direct:<id>:<id>`, поэтому
-дедуплицируется без индекса. Хранилище DO — SQLite-backed
-(`new_sqlite_classes` в `wrangler.jsonc`).
+A direct chat is addressed by the deterministic name `direct:<id>:<id>`, so it
+deduplicates without an index. DO storage is SQLite-backed
+(`new_sqlite_classes` in `wrangler.jsonc`).
 
-## Протокол
+## Protocol
 
-Один WS на устройство, JSON-фреймы `{t, ...}`. Клиент шлёт `sync`, `send`,
-`recv`, `read`, `typing`, `delete`, `ping`, `bg`, `fg`; сервер — `hello`,
-`sent`, `msg`, `receipt`, `typing`, `presence`, `chat`, `deleted`, `pong`.
-Доставка at-least-once, порядок по `seq`, идемпотентность по `clientMsgId`.
-`sent` уходит сразу после записи сообщения — раньше, чем его увидит получатель
-и раньше вызова APNs.
-После реконнекта клиент присылает per-chat курсоры, сервер отдаёт одну порцию
-пропущенного и новые курсоры, клиент запрашивает следующую сам — и так до
-исчерпания; за последней порцией чата идут тумбстоуны и read/delivered-марки.
-Всё остальное (регистрация, ключи, профили, медиа, контакты) — HTTP.
+One WS per device, JSON frames of the shape `{t, ...}`. The client sends `sync`,
+`send`, `recv`, `read`, `typing`, `delete`, `ping`, `bg` and `fg`; the server
+sends `hello`, `sent`, `msg`, `receipt`, `typing`, `presence`, `chat`, `deleted`
+and `pong`. Delivery is at-least-once, order comes from `seq`, idempotency from
+`clientMsgId`. `sent` goes out as soon as the message is written, before the
+recipient sees it and before APNs is called.
 
-Полная спецификация: `docs/protocol.md`.
+After a reconnect the client sends per-chat cursors, the server returns one
+batch of what was missed along with new cursors, and the client asks for the
+next batch itself until there is nothing left; the last batch of a chat is
+followed by tombstones and the read and delivered marks. Everything else —
+registration, keys, profiles, media, contacts — is HTTP.
+
+The full specification is in `docs/protocol.md`.
 
 ## E2EE
 
-- Identity устройства: пара ключей X25519 (DH) + Ed25519 (подписи). CryptoKit не
-  умеет XEd25519, поэтому ключи раздельные.
-- 1:1 — X3DH (identity + signed prekey + one-time prekey) → Double Ratchet.
-  Корневая и цепочечные KDF — HKDF-SHA256 и HMAC-SHA256, шифрование —
-  ChaChaPoly, заголовок ratchet идёт в associated data. Пропуски и
-  переупорядочивание — через skipped message keys (до 1000 подряд, 2000 в
-  хранении).
-- Группы — sender keys: своя цепочка на чат, раздаётся pairwise-каналом внутри
-  обычного сообщения, каждое групповое сообщение подписано Ed25519. Выход
-  участника ротирует нашу цепочку.
-- Медиа — случайный ключ на файл (ChaChaPoly), ключ и SHA-256 ciphertext едут
-  внутри E2E-сообщения, сервер видит только блоб.
-- Верификация — safety numbers (60 цифр, 5200 итераций SHA-512).
-- Приватные ключи и состояния сессий лежат в БД, зашифрованные мастер-ключом;
-  сам мастер-ключ — файл в контейнере app group под Data Protection.
+- A device identity is a pair of keys, X25519 for DH and Ed25519 for signatures.
+  CryptoKit has no XEd25519, which is why they are separate.
+- One-to-one goes X3DH (identity, signed prekey, one-time prekey) into a Double
+  Ratchet. The root and chain KDFs are HKDF-SHA256 and HMAC-SHA256, encryption
+  is ChaChaPoly, and the ratchet header travels in the associated data. Gaps and
+  reordering are handled with skipped message keys, up to 1000 in a row and 2000
+  in storage.
+- Groups use sender keys: a chain of our own per chat, handed out over the
+  pairwise channel inside an ordinary message, with every group message signed
+  with Ed25519. A member leaving rotates our chain.
+- Media gets a random key per file (ChaChaPoly); the key and the SHA-256 of the
+  ciphertext travel inside the E2E message and the server only ever sees a blob.
+- Verification is by safety numbers, 60 digits over 5200 iterations of SHA-512.
+- Private keys and session state live in the database encrypted under the master
+  key, and the master key itself is a file in the app group container under Data
+  Protection.
 
-Подробности флоу: `docs/crypto-flows.md`.
+The flows are in `docs/crypto-flows.md`.
 
-## Клиентское ядро (MsngrKit)
+## The client core (MsngrKit)
 
-- **MsngrCrypto** — X3DH, Double Ratchet, sender keys, шифрование медиа, safety
-  numbers. Без зависимостей, кроме CryptoKit.
-- **MsngrCore** — GRDB-хранилище (SQLite в WAL) как единственный источник правды
-  для UI, `WSClient` (реконнект с backoff до 12 с, мгновенный реконнект по
-  `NWPathMonitor`, ping/pong keepalive), `SyncEngine` (применение фреймов,
-  outbox, очередь сервисных действий, дотяжка профилей, автопополнение
-  prekeys), `E2EEManager`, `MediaManager`, `APIClient`, BlurHash, мозаика
-  альбомов, image pipeline.
+- **MsngrCrypto** — X3DH, Double Ratchet, sender keys, media encryption, safety
+  numbers. No dependencies beyond CryptoKit.
+- **MsngrCore** — the GRDB store (SQLite in WAL) as the single source of truth
+  for the UI, `WSClient` (reconnect with backoff up to 12 s, immediate reconnect
+  on `NWPathMonitor`, ping/pong keepalive), `SyncEngine` (applying frames, the
+  outbox, the service action queue, fetching profiles, topping up prekeys),
+  `E2EEManager`, `MediaManager`, `APIClient`, BlurHash, album mosaics, the image
+  pipeline.
 
-Очереди в БД: `outbox` (исходящие, состояния `ready`/`inflight`/`blocked`),
-`pendingAction` (read-марки, delete-for-all, accept — схлопываются и дренятся
-при подключении), `pendingDecrypt` (сообщения, пришедшие раньше своего ключа),
-`pendingApply` (правки, реакции и тумбстоуны без оригинала).
+The queues in the database: `outbox` for outgoing messages, in states `ready`,
+`inflight` or `blocked`; `pendingAction` for read marks, delete-for-all and
+accept, which collapse and drain on connect; `pendingDecrypt` for messages that
+arrived before their key; `pendingApply` for edits, reactions and tombstones
+with no original yet.
 
-## Хранилище
+## Storage
 
-Единая точка вычисления путей — `StorageLocation`/`AppContainer`. Корень —
-контейнер app group `group.ai.enface.msngr`, чтобы NSE читал те же файлы; без
-группы (macOS, тесты) — Application Support. Содержимое: `msngr.sqlite`,
-`.masterkey`, `avatars/`, `media-outgoing/`.
+Paths are computed in one place, `StorageLocation` and `AppContainer`. The root
+is the app group container `group.ai.enface.msngr` so that the NSE reads the
+same files; without a group, on macOS and in tests, it is Application Support.
+The contents are `msngr.sqlite`, `.masterkey`, `avatars/` and `media-outgoing/`.
 
-Переезд из Application Support в контейнер делает `StorageMigration`: копия во
-временный каталог внутри нового корня, перемещение на место, только потом
-удаление оригиналов. Файл БД переносится последним — до этого новый корень
-считается незанятым, поэтому прерванный перенос доводится до конца на следующем
-запуске. Файлы получают `completeUntilFirstUserAuthentication`, чтобы
-расширение читало их при заблокированном экране.
+`StorageMigration` moves data from Application Support into the container: a
+copy into a temporary directory inside the new root, a move into place, and only
+then the removal of the originals. The database file moves last, so until it
+lands the new root counts as unoccupied and an interrupted migration finishes on
+the next launch. Files get `completeUntilFirstUserAuthentication` so the
+extension can read them while the screen is locked.
 
-## iOS-клиент
+## The iOS client
 
-- Лента сообщений — `UICollectionView` с ручным диффом и предрассчитанным
-  layout-планом (кэш замеров), инвертированный скролл, пагинация вверх без
-  прыжков. Остальной UI — SwiftUI.
-- Оффлайн-first: UI читает только БД через `ValueObservation`, сеть — фоновая
-  синхронизация. Отправка работает без сети: сообщение и вложение ложатся в
-  outbox, выгрузка и шифрование происходят при подключении.
-- Пуши: APNs + Notification Service Extension, который берёт уже расшифрованный
-  текст из общей БД (ключи для показа превью не нужны). In-app баннер при
-  активном приложении, дедуп с системным пушем по msgId, бейдж из локального
-  `unreadCount`.
-- Пин-код с Face ID, блюр в app switcher, авто-лок.
-- Голосовые: `AVAudioRecorder` в m4a/AAC, waveform из реальных амплитуд,
-  slide-to-cancel и lock.
+- The message feed is a `UICollectionView` with a hand-written diff and a
+  precomputed layout plan (measurements cached), inverted scrolling and upward
+  pagination that does not jump. The rest of the UI is SwiftUI.
+- Offline-first: the UI reads only the database through `ValueObservation` and
+  the network is background synchronisation. Sending works with no network at
+  all, as the message and its attachment go into the outbox and the upload and
+  encryption happen once there is a connection.
+- Pushes: APNs plus a Notification Service Extension, which decrypts the
+  envelope the push carries and writes the message into the shared database, so
+  the banner text is read back out of that row. An in-app banner covers the
+  case of an active app, deduplicated against the system push by msgId. The
+  badge number is computed by the server and stamped with a counter; the device
+  keeps one row for it.
+- A PIN with Face ID, a blur in the app switcher, auto-lock.
+- Voice messages: `AVAudioRecorder` into m4a/AAC, a waveform from real
+  amplitudes, slide-to-cancel and lock.
 
-## Принятые решения
+## Decisions taken
 
-Решения, определяющие развитие; менять их — отдельный разговор, а не побочный
-эффект задачи.
+These shape where the project can go. Changing one is its own conversation, not
+a side effect of some other task.
 
-**Только экосистема Apple: iOS и macOS.** Android не поддерживается и не
-закладывается. Владелец принял ограничение аудитории сознательно: платящая
-часть рынка сосредоточена в App Store, а односторонность обходится дешевле, чем
-компромиссы ради второй платформы.
+**Apple only: iOS and macOS.** Android is neither supported nor planned for. The
+owner accepted the narrower audience deliberately: the paying part of the market
+sits in the App Store, and being one-sided costs less than compromising for a
+second platform.
 
-Что из этого следует и на что можно опираться без запасных путей:
-Secure Enclave есть всегда, поэтому ключи привязываются к железу без ветки на
-программное хранилище; App Attest доступен всегда, поэтому стоимость создания
-аккаунта поднимается аттестацией устройства, а не биометрией и не номером
-телефона; расширение уведомлений имеет один контракт и один бюджет, без
-поправок на производителей, убивающих фоновые процессы; CryptoKit используется
-напрямую; приложение и расширение делят один контейнер и один SQLite.
+What follows from that, and can be relied on without a fallback path: the Secure
+Enclave is always there, so keys bind to hardware with no branch for software
+storage; App Attest is always available, so the cost of making an account is
+raised by device attestation rather than by biometrics or a phone number; the
+notification extension has one contract and one budget, with no allowances for
+vendors that kill background processes; CryptoKit is used directly; the app and
+the extension share one container and one SQLite.
 
-Ядро `MsngrKit` написано на Swift и переносимости не имеет — это цена решения,
-принятая осознанно. Возврат к Android означал бы вынос ядра в переносимый язык,
-то есть переписывание, а не порт. Сервер и протокол платформо-независимы и этим
-решением не затронуты.
+The `MsngrKit` core is written in Swift and is not portable, which is the price
+of that decision and was paid knowingly. Going back to Android would mean moving
+the core into a portable language, so a rewrite rather than a port. The server
+and the protocol are platform-independent and this decision does not touch them.
 
-Открытая цена: у нас нет фолбэка вроде того, каким iMessage деградирует в
-SMS/RCS, поэтому цепочка приглашений обрывается на первом собеседнике без
-iPhone. Чем это закрывать — не решено.
+The open cost: there is no fallback of the kind iMessage has when it degrades to
+SMS or RCS, so a chain of invitations stops at the first person without an
+iPhone. What to do about that is undecided.
 
-**Один ConversationDO сейчас, отдельный объект под группы потом.** Диалог и
-группа расходятся по природе: диалог — мгновенный путь на двоих, группа —
-машина очередей рассылки. Пока группы небольшие, общий объект дешевле; когда
-появятся очереди fanout, права и управление составом, группы выносятся в свой
-Durable Object. Общий принцип: меньше обобщения — больше запаса на оптимизацию
-каждого пути.
+**One ConversationDO for now, a separate object for groups later.** A dialogue
+and a group differ in nature: a dialogue is an instant path between two people,
+a group is a fan-out queue machine. While groups are small the shared object is
+cheaper; once there are fan-out queues, rights and membership management, groups
+move into their own Durable Object. The general principle is that less
+generalisation leaves more room to optimise each path.
 
-**Марки доставки и прочтения — две подвижные границы на участника**, а не
-отметка на каждом сообщении: хранится последний доставленный и последний
-прочитанный seq, проверка «прочитано ли сообщение» сводится к сравнению с
-границей. Прочитано подразумевает доставлено.
+**Delivered and read marks are two moving boundaries per participant**, not a
+mark on every message: the last delivered and the last read seq are stored, and
+asking whether a message has been read is a comparison against the boundary.
+Read implies delivered.
 
-**Постраничное чтение истории учитывает лимит Durable Objects: батч-чтение
-максимум 128 ключей за раз.** Порции истории нарезаются с оглядкой на это
-ограничение.
+**Paged history reading respects the Durable Objects limit of 128 keys per batch
+read.** History batches are cut with that limit in mind.
 
-**Очистка истории «у себя» при сквозном шифровании — клиентская функция.**
-Сообщения лежат в локальной базе, сервер их содержимого не знает: очистка это
-локальное удаление плюс водяная метка, чтобы синхронизация не вернула стёртое.
-Серверного участия требует только удаление «у всех».
+**Clearing history "for myself" is a client feature under end-to-end
+encryption.** The messages are in the local database and the server does not
+know their contents, so clearing is a local delete plus a watermark that keeps
+synchronisation from bringing back what was erased. Only delete-for-everyone
+needs the server.
 
-**Локальная база — единственная копия переписки.** Ratchet движется вперёд, и
-ключи расшифрованного сообщения уничтожаются, поэтому перечитать историю с
-сервера устройство не может: с сервера полезно только то, что это устройство ещё
-не расшифровывало (пропущенное за офлайн). Следствия: удаление локальной базы
-уничтожает переписку безвозвратно; пагинация вверх идёт по локальной базе, а
-запрос к серверу нужен лишь для незакрытых разрывов; смена пользователя обязана
-стирать хранилище целиком, иначе новый владелец устройства наследует чужие
-данные.
+**The local database is the only copy of a conversation.** The ratchet moves
+forward and the keys of a decrypted message are destroyed, so a device cannot
+re-read its history from the server: the only useful thing there is what this
+device has not decrypted yet, meaning whatever it missed while offline. The
+consequences are that deleting the local database destroys the conversation
+irrecoverably; that upward pagination runs over the local database and the
+server is only asked about unclosed gaps; and that switching users must wipe
+storage entirely, or the device's new owner inherits someone else's data.
 
-**Пуш-путь не откладывается.** `waitUntil` не даёт гарантий по времени и иногда
-добавляет заметную задержку (проверено владельцем на предыдущем проекте),
-поэтому вызов к APNs выполняется в обработчике и ожидается, а не переносится в
-фон. Отправителя это не задерживает: подтверждение уходит сразу после присвоения
-seq, рассылка и пуш идут следом. Если замеры на живом APNs покажут, что
-переиспользования HTTP/2-соединения из воркера нет и каждый пуш платит
-рукопожатием, ставится сайдкар с постоянным соединением: синхронный хоп к нему
-дешевле рукопожатия на каждое сообщение.
+**The push path is not deferred.** `waitUntil` gives no timing guarantee and
+sometimes adds noticeable delay, which the owner measured on a previous project,
+so the APNs call is made and awaited inside the handler rather than moved into
+the background. This does not hold up the sender: the acknowledgement goes out
+as soon as seq is assigned, with fan-out and the push behind it. If measurements
+against live APNs show that the worker gets no HTTP/2 connection reuse and every
+push pays for a handshake, a sidecar with a persistent connection goes in: a
+synchronous hop to it is cheaper than a handshake per message.
 
-**Уведомление — это запись в базу, а не показ.** Сообщение, увиденное в центре
-уведомлений, обязано быть в чате при открытии, даже если сеть к тому моменту
-пропала (режим полёта). Поэтому расширение в момент доставки пуша расшифровывает
-сообщение и сохраняет его в общую базу, а баннер рисует уже из сохранённого;
-тап по уведомлению открывает чат из локальной базы, сеть при этом не нужна.
+**A notification is a write to the database, not a display.** A message seen in
+the notification centre has to be in the chat when the chat is opened, even if
+the network is gone by then, as in airplane mode. So the push carries the E2E
+envelope itself, trimmed to the destination device; the extension decrypts it on
+delivery and writes the message into the shared database in the same transaction
+that claims the right to show a banner, and the banner text is read from that
+row. Tapping the notification opens the chat out of the local database and needs
+no network.
 
-Короткое сообщение едет в пуше целиком: шифротекст «привет» — десятки байт при
-лимите APNs в 4 КБ, расширению нечего дозапрашивать. Длинное целиком в пуш не
-кладётся: в баннере видно около четырёх строк, поэтому отправитель шифрует
-отдельное превью (первые ~200 символов), оно едет в нагрузке и хватает для
-баннера. Полное тело расширение забирает вторым запросом сразу при доставке —
-сеть в этот момент жива, — и кладёт в базу целиком, чтобы чат открывался полным
-даже офлайн. Если запрос не удался, сохраняется превью с многоточием и пометкой
-«тело не догружено»; приложение дотягивает его при следующем выходе в сеть.
-Обрезать на сервере нельзя (он не видит текста), поэтому превью готовит
-отправитель, и лишнее шифрование тратится только на длинные сообщения. Побочно
-решается порядок: расширение видит seq и помечает разрыв для догрузки.
-Расшифровка мутирует состояние ratchet, поэтому идёт под арбитражем: право
-расшифровывать у того, кто держит блокировку, приоритет у приложения, а
-расширение без блокировки показывает баннер без текста и оставляет сообщение
-на догрузку приложению.
+APNs will not take more than 4 KB. An envelope that does not fit is dropped from
+the payload rather than truncated, since the server cannot see the text and has
+nothing to truncate; the notification still arrives, and the message itself
+arrives over the next connection. Ordering is handled in passing: the extension
+sees seq and can mark a gap to fill.
 
-**Порядок сообщений держит seq**, монотонные временные метки на сервере не
-нужны: seq назначается объектом чата последовательно, а `sentAt` от клиента
-используется только для показа.
+Decryption mutates ratchet state, so it runs under arbitration: the right to
+decrypt belongs to whoever holds the lock, the app has priority, and an
+extension without the lock shows a banner without text and leaves the message
+for the app.
 
-**Платформа — Cloudflare Workers.** Durable Objects дают то, чего иначе пришлось
-бы строить руками: адресуемое состояние на чат и на пользователя, монотонный
-`seq` без внешней БД, WebSocket Hibernation. Рассылка идёт alarm-очередью в
-`ConversationDO`, а не проходом по участникам на пути отправителя: задание с
-курсором доставки лежит в storage, каждая итерация alarm разбирает батч в
-пределах лимита subrequests и переставляет курсор. Потолок в 1000 subrequests на
-запрос не ограничивает размер аудитории — следующая итерация alarm получает
-свежий бюджет; обрыв посреди рассылки продолжается с курсора, повторная выдача
-фрейма безопасна (клиент дедуплицирует по `msgId`, марки монотонны). Задания
-разбираются по очереди, поэтому получатель видит фреймы чата в том порядке, в
-каком чат их произвёл. Упавший получатель не рвёт доставку остальным: он уходит
-в повтор с backoff, а после трёх попыток отбрасывается с записью в лог. `typing`
-не повторяется — к моменту повтора он уже неверен.
+**Message order is held by seq**, and monotonic server timestamps are not
+needed: seq is assigned sequentially by the chat object, while the client's
+`sentAt` is only used for display.
 
-**Большие группы и каналы — без E2EE.** При тысячах участников ключ есть у всех,
-поэтому сквозное шифрование там ничего не защищает: forward secrecy теряет
-смысл, а цена высокая — нет серверной истории для новых участников, нет поиска,
-на каждое сообщение N конвертов вместо одной копии. Такие чаты держим plaintext
-на сервере, даже если вход в них ограничен. Личные чаты и малые группы остаются
-E2EE. Отсюда требование к UI: тип чата выбирается при создании, показывается
-явным маркером, тихой конверсии между типами нет.
+**The platform is Cloudflare Workers.** Durable Objects give what would
+otherwise have to be built by hand: addressable state per chat and per user, a
+monotonic `seq` with no external database, and WebSocket Hibernation. Fan-out
+runs as an alarm queue in `ConversationDO` rather than as a walk over the
+participants on the sender's path: the job and its delivery cursor sit in
+storage, and each alarm iteration handles a batch within the subrequest limit
+and moves the cursor. The ceiling of 1000 subrequests per request does not cap
+the audience, because the next alarm iteration gets a fresh budget; a break
+mid-fan-out resumes from the cursor, and re-issuing a frame is safe since the
+client deduplicates by `msgId` and the marks are monotonic. Jobs are handled in
+order, so a recipient sees a chat's frames in the order the chat produced them.
+A failing recipient does not break delivery for the rest: it goes into retry
+with backoff and after three attempts is dropped with a log line. `typing` is
+never retried, because by the time of a retry it is already wrong.
 
-**Медиа.** В приватных чатах — шифроблобы в R2, вся обработка (превью, сжатие,
-blurhash) делается на клиенте до шифрования, сервер видит только ciphertext.
-Публичный контент каналов сможет пойти через CF Stream и Images, потому что там
-шифровать нечего. Звонки в перспективе — CF Calls со сквозным шифрованием
-поверх insertable streams; провайдер обязан быть спрятан за нашим протоколом с
-первого файла, чтобы замена не тянула переписывание клиента.
+**Large groups and channels go without E2EE.** With thousands of participants
+everyone holds the key, so end-to-end encryption protects nothing there: forward
+secrecy stops meaning anything while the price stays high, with no server-side
+history for new members, no search, and N envelopes per message instead of one
+copy. Those chats stay plaintext on the server even when entry to them is
+restricted. Private chats and small groups stay E2EE. That imposes a UI
+requirement: the chat type is chosen at creation and shown with an explicit
+marker, and there is no quiet conversion between types.
 
-**Уведомления.** APNs уходит немедленно и всегда для контентного сообщения:
-доставка по WS не гарантирована, а дубль дешевле пропущенного уведомления и
-гасится на клиенте. Текст и аватар при E2EE сервер не знает — их подставляет NSE
-локально, fallback в payload остаётся нейтральным «Новое сообщение». Для
-нешифрованных каналов текст кладёт сразу сервер.
+**Media.** In private chats these are encrypted blobs in R2, with all processing
+— previews, compression, blurhash — done on the client before encryption, so the
+server sees only ciphertext. Public channel content will be able to go through
+CF Stream and Images, because there is nothing to encrypt. Calls, in time, would
+be CF Calls with end-to-end encryption over insertable streams; the provider has
+to sit behind our own protocol from the first file, so that replacing it does
+not drag a client rewrite along.
 
-**Совместимость и версионирование** — см. `docs/PROCESS.md`.
+**Notifications.** APNs fires immediately and always for a content message:
+delivery over WS is not guaranteed, and a duplicate is cheaper than a missed
+notification and is suppressed on the client. Under E2EE the server knows
+neither the text nor the avatar, so the NSE fills them in locally and the
+payload's fallback stays a neutral «Новое сообщение». For unencrypted channels
+the server puts the text in directly.
 
-## Принципы
+**Compatibility and versioning** — see `docs/PROCESS.md`.
 
-- В личных чатах и малых группах сервер не видит plaintext сообщений и медиа.
-- Клиент никогда не блокируется сетью: UI ← SQLite, сеть — фоном.
-- Один WS на устройство; всё остальное — HTTP.
-- Обратная совместимость не поддерживается, точки для версионирования заложены
-  (см. `docs/PROCESS.md`).
+## Principles
+
+- In private chats and small groups the server never sees message or media
+  plaintext.
+- The client is never blocked by the network: the UI reads SQLite and the
+  network runs in the background.
+- One WS per device; everything else is HTTP.
+- Backward compatibility is not maintained, but the places to version are
+  already there (see `docs/PROCESS.md`).
