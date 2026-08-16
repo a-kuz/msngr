@@ -576,9 +576,13 @@ public actor SyncEngine {
 
         // whoever has just sent a message is no longer typing: the sender's own
         // stop frame can be late or lost, and the indicator would then cover the
-        // message that has already arrived
+        // message that has already arrived. One event per sender per batch: a
+        // catch-up of hundreds of messages must not cost hundreds of them
+        var stopped = Set<String>()
         for item in items where !item.isService {
-            typingStream.send((item.chatId, item.from, nil))
+            if stopped.insert(item.chatId + "\u{1}" + item.from).inserted {
+                typingStream.send((item.chatId, item.from, nil))
+            }
         }
 
         // a message for a chat we do not have means we missed its creation

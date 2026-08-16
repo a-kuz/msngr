@@ -123,7 +123,10 @@ final class ChatListModel: ObservableObject {
                         self.refreshTyping()
                     }
                 } else {
-                    self.typing.removeValue(forKey: ev.chatId)
+                    // a stop for a chat that was not typing costs nothing: every
+                    // incoming message brings one, and rebuilding the list on each
+                    // would put the whole catch-up through the main thread
+                    guard self.typing.removeValue(forKey: ev.chatId) != nil else { continue }
                     self.typingClearTasks[ev.chatId]?.cancel()
                     self.typingClearTasks[ev.chatId] = nil
                 }
