@@ -127,6 +127,28 @@ final class ChatSearchSessionTests: XCTestCase {
         XCTAssertTrue(session.canStepOlder)
     }
 
+    /// The page that has been read is not the result: while the matches are still
+    /// being counted the bar says so instead of naming the size of the page.
+    func testThePageSizeIsNotAnnouncedAsTheResultSize() async throws {
+        let results = ChatSearchModel(pages: { _, _ in
+            MessageSearchPage(hits: ["a", "b"].map(searchHit), cursor: nil, reachedEnd: false)
+        }, people: nil)
+        let session = ChatSearchSession(results: results, count: { _ in
+            try? await Task.sleep(for: .milliseconds(600))
+            return 900
+        })
+        session.query = "word"
+        try await settle()
+
+        XCTAssertEqual(session.hits.count, 2)
+        XCTAssertEqual(session.status, "Ищем в переписке…")
+        session.select(session.hits[0])
+        XCTAssertEqual(session.status, "Ищем в переписке…")
+
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(session.status, "1 из 900")
+    }
+
     /// Leaving search leaves nothing of it behind.
     func testResetClearsTheSearch() async throws {
         let session = self.session(["a", "b"])

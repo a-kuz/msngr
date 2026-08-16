@@ -22,6 +22,10 @@ final class ChatSearchSession: ObservableObject {
     @Published private(set) var currentIndex: Int?
     /// How many messages of this chat match the query, nil while it is counted.
     @Published private(set) var total: Int?
+    /// The count is still running. A page is not the result: naming its size while
+    /// the whole result is being counted would state a number that is about to
+    /// change.
+    @Published private(set) var counting = false
     /// The list of matches covers the feed. Choosing a match uncovers it.
     @Published var resultsShown = true
 
@@ -69,10 +73,11 @@ final class ChatSearchSession: ObservableObject {
     var status: String {
         if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Поиск по этому чату" }
         if let currentIndex, currentIndex < results.hits.count {
-            guard let total else { return Self.matchesTitle(count: results.hits.count) }
-            return "\(currentIndex + 1) из \(total)"
+            if let total { return "\((currentIndex + 1).formatted()) из \(total.formatted())" }
+            guard !counting else { return "Ищем в переписке…" }
+            return Self.matchesTitle(count: results.hits.count)
         }
-        if searching { return "Ищем в переписке…" }
+        if searching || counting { return "Ищем в переписке…" }
         if results.hits.isEmpty { return "Ничего не нашлось" }
         return Self.matchesTitle(count: total ?? results.hits.count)
     }
@@ -120,7 +125,11 @@ final class ChatSearchSession: ObservableObject {
         total = nil
         resultsShown = true
         countTask?.cancel()
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else {
+            counting = false
+            return
+        }
+        counting = true
         countTask = Task { [weak self] in
             try? await Task.sleep(for: ChatSearchModel.debounce)
             guard !Task.isCancelled, let self else { return }
@@ -128,6 +137,7 @@ final class ChatSearchSession: ObservableObject {
             // the query moved on while the count was running
             guard generation == self.generation else { return }
             self.total = found
+            self.counting = false
         }
     }
 
@@ -146,7 +156,7 @@ final class ChatSearchSession: ObservableObject {
         } else {
             noun = "совпадений"
         }
-        return "\(count) \(noun)"
+        return "\(count.formatted()) \(noun)"
     }
 
     static func databaseCount(query: String, chatId: String) async -> Int? {
