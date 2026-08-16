@@ -99,11 +99,11 @@ public enum DeviceLink {
     ///
     /// The ratchet destroyed the keys of everything said before this device
     /// existed and the server holds only envelopes addressed elsewhere, so
-    /// replaying that history produces unreadable rows and repair requests for
-    /// messages nobody can serve. A chat marked here is in the state a chat this
-    /// device once deleted is in: `SyncEngine.upsertChatState` reads the mark as
-    /// the position its cursors start from, the catch-up asks only for what
-    /// comes after, and pagination never goes above it.
+    /// replaying that history produces unreadable rows and a repair request per
+    /// message. A chat marked here is in the state a chat this device once
+    /// deleted is in: `SyncEngine.upsertChatState` reads the mark as the
+    /// position its cursors start from, the catch-up asks only for what comes
+    /// after, and pagination never goes above it.
     public static func startChatsFromNow(_ dbc: GRDB.Database, chats: [(chatId: String, lastSeq: Int)],
                                          now: Double = Date().timeIntervalSince1970) throws {
         for chat in chats {
@@ -112,6 +112,31 @@ public enum DeviceLink {
                 ON CONFLICT(chatId) DO UPDATE SET
                   seq = MAX(chatTombstone.seq, excluded.seq), deletedAt = excluded.deletedAt
                 """, arguments: [chat.chatId, chat.lastSeq, now])
+        }
+    }
+
+    /// The chat list, written before the socket has ever been opened.
+    ///
+    /// The mark alone is not enough. The first `sync` carries a cursor per chat
+    /// row this device holds, and a chat the server knows about but the client
+    /// does not is replayed from zero — which is every chat, on a device whose
+    /// database was made a second ago. Writing the rows here is what gives that
+    /// first `sync` a cursor to name, so the catch-up starts at the end of each
+    /// journal instead of the start of it.
+    public static func primeChats(_ dbc: GRDB.Database, snapshot: APIClient.ChatsSnapshot,
+                                  ownUserId: String,
+                                  now: Double = Date().timeIntervalSince1970) throws {
+        try startChatsFromNow(dbc, chats: snapshot.chats.map { ($0.state.chatId, $0.state.lastSeq) },
+                              now: now)
+        for user in snapshot.users {
+            try SyncEngine.upsertUser(dbc, user)
+        }
+        for entry in snapshot.chats {
+            try SyncEngine.upsertChatState(
+                dbc, entry.state, ownUserId: ownUserId,
+                flags: SyncEngine.ChatFlags(pinned: entry.flags.pinned, muted: entry.flags.muted,
+                                            mutedUntil: entry.flags.mutedUntil,
+                                            archived: entry.flags.archived))
         }
     }
 

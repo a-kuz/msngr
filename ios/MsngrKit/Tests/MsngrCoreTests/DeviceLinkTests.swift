@@ -8,15 +8,19 @@ import XCTest
 /// neither through the catch-up nor through upward pagination — and that it
 /// starts with nothing marked unread.
 final class DeviceLinkTests: XCTestCase {
-    private func chatState(_ id: String, lastSeq: Int, peerRead: Int = 0) -> ChatStateDTO {
-        let json = """
+    private func stateJSON(_ id: String, lastSeq: Int, peerRead: Int = 0) -> String {
+        """
         {"chatId":"\(id)","kind":"direct","title":null,"avatarId":null,"description":null,
          "createdBy":"peer","createdAt":1,"pinnedMsgId":null,"lastSeq":\(lastSeq),
          "members":[{"userId":"me","role":"member","joinedAt":1,"accepted":true},
                     {"userId":"peer","role":"member","joinedAt":1,"accepted":true}],
          "readMarks":{"peer":\(peerRead)},"deliveredMarks":{}}
         """
-        return try! JSONDecoder().decode(ChatStateDTO.self, from: Data(json.utf8))
+    }
+
+    private func chatState(_ id: String, lastSeq: Int, peerRead: Int = 0) -> ChatStateDTO {
+        try! JSONDecoder().decode(ChatStateDTO.self,
+                                  from: Data(stateJSON(id, lastSeq: lastSeq, peerRead: peerRead).utf8))
     }
 
     func testALinkedDeviceStartsEveryChatAtItsCurrentEnd() throws {
@@ -105,6 +109,29 @@ final class DeviceLinkTests: XCTestCase {
         }
         let seq = try db.read { dbc in try ChatCleanup.tombstoneSeq(dbc, chatId: "c1") }
         XCTAssertEqual(seq, 90)
+    }
+
+    /// The chat rows exist before the socket does. A chat the server knows
+    /// about and the client does not is replayed from seq 0, so the first
+    /// `sync` has to carry a cursor for every chat the account already has.
+    func testPrimingLeavesNoChatForTheServerToReplayFromZero() throws {
+        let db = try AppDatabase.openInMemory()
+        let json = """
+        {"chats":[{"flags":{"pinned":false,"muted":false,"mutedUntil":null,"archived":false},
+                   "state":\(stateJSON("c1", lastSeq: 12))}],
+         "users":[{"id":"peer","username":"petya","display_name":"Petya",
+                   "bio":null,"avatar_id":null}]}
+        """
+        let snapshot = try JSONDecoder().decode(APIClient.ChatsSnapshot.self, from: Data(json.utf8))
+        try db.write { dbc in
+            try DeviceLink.primeChats(dbc, snapshot: snapshot, ownUserId: "me")
+        }
+        let cursors = try db.read { dbc in try HistoryWindow.catchupCursors(dbc) }
+        XCTAssertEqual(cursors, ["c1": 12])
+        let peer = try db.read { dbc in
+            try String.fetchOne(dbc, sql: "SELECT displayName FROM user WHERE id = 'peer'")
+        }
+        XCTAssertEqual(peer, "Petya")
     }
 
     func testCodeIsShownInTwoHalvesAndReadBackLoosely() {
