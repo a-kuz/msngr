@@ -320,7 +320,8 @@ struct ChatScreen: View {
     /// Укорачивает строку шапки с многоточием под ширину, доступную principal-вью
     /// (экран минус кнопка «назад», аватар и отступы).
     private static func fitted(_ s: String, font: UIFont) -> String {
-        let maxWidth = UIScreen.main.bounds.width - 190
+        // the principal view is centred, so the wider back button costs it twice
+        let maxWidth = UIScreen.main.bounds.width - 208
         guard s.size(withAttributes: [.font: font]).width > maxWidth else { return s }
         var t = s
         while !t.isEmpty, (t + "…").size(withAttributes: [.font: font]).width > maxWidth {
