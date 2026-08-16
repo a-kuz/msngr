@@ -19,6 +19,11 @@ struct InputBar: View {
     /// images from the clipboard waiting to be sent
     @State private var pendingImages: [UIImage] = []
     @State private var pasteboardHasImage = MessageClipboard.hasImages
+    /// микрофон запрещён в системе: единственное, что здесь ещё можно сделать —
+    /// открыть настройки, поэтому кнопка ведёт туда
+    @State private var micDenied = false
+    /// запрос доступа уже в полёте: повторные касания микрофона его не множат
+    @State private var startingRecording = false
     @GestureState private var pressing = false
 
     var body: some View {
@@ -95,6 +100,14 @@ struct InputBar: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             pasteboardHasImage = MessageClipboard.hasImages
+        }
+        .alert("Микрофон выключен", isPresented: $micDenied) {
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                Button("Настройки") { UIApplication.shared.open(url) }
+            }
+            Button("Понятно", role: .cancel) { }
+        } message: {
+            Text("Голосовые сообщения записываются с микрофона.")
         }
         // the hint about how recording works floats above the bar until recording is locked
         .overlay(alignment: .top) {
@@ -250,10 +263,7 @@ struct InputBar: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
-                        if !recorder.isRecording {
-                            Haptics.medium()
-                            try? recorder.start()
-                        }
+                        if !recorder.isRecording { beginRecording() }
                         dragOffset = value.translation.width
                         // swipe up locks the recording
                         if value.translation.height < -70 && !recordingLocked {
@@ -273,6 +283,31 @@ struct InputBar: View {
                         finishRecording()
                     }
             )
+    }
+
+    /// Первое нажатие на микрофон спрашивает доступ и записи не начинает:
+    /// системный диалог перекрывает экран, и этот дубль был бы тишиной.
+    /// Пользователь нажимает второй раз, уже с разрешением.
+    private func beginRecording() {
+        guard !startingRecording else { return }
+        startingRecording = true
+        Task {
+            let granted = await VoiceRecorder.requestPermission()
+            await MainActor.run {
+                startingRecording = false
+                guard granted else {
+                    micDenied = true
+                    return
+                }
+                Haptics.medium()
+                do {
+                    try recorder.start()
+                } catch {
+                    MsngrLog.outbox.error("не удалось начать запись: \(error)")
+                    model.sendFailure = "Голосовое не записано: микрофон занят другим приложением"
+                }
+            }
+        }
     }
 
     private var recordingView: some View {

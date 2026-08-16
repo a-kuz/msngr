@@ -453,6 +453,11 @@ export class ConversationDO implements DurableObject {
         return json({ ok: true, ...(await this.fanoutState()) });
 
       case "/history": {
+        // userId — от чьего лица читаем: журнал отдаётся только участнику,
+        // иначе id чата (в direct он выводится из двух id) хватало бы, чтобы
+        // вычитать чужую переписку конвертами
+        if (!(await this.loadMembers()).has(url.searchParams.get("userId") ?? ""))
+          return err("not_member", 403);
         const fromSeq = Number(url.searchParams.get("fromSeq") ?? "0");
         const toSeq = Number(url.searchParams.get("toSeq") ?? String(meta.lastSeq));
         // one page is one storage batch read: 128 keys is the platform limit
@@ -480,9 +485,12 @@ export class ConversationDO implements DurableObject {
       }
 
       case "/events": {
-        // tombstones of deleted messages plus the current read and delivered marks,
-        // for a client replaying what it missed while offline
+        // tombstones of deleted messages, the current read and delivered marks and the
+        // roster, for a client replaying what it missed while offline. The roster is here
+        // because the chat frame carrying it is sent to live sockets alone: whoever missed
+        // a member leaving would otherwise keep encrypting into a chain that member holds
         const viewer = url.searchParams.get("userId");
+        if (!(await this.loadMembers()).has(viewer ?? "")) return err("not_member", 403);
         const deleted: Array<{ msgId: string; by: string }> = [];
         for (const [, m] of await this.state.storage.list<StoredMsg>({ prefix: "msg:" })) {
           if (!m.deleted || m.blockedFor === viewer) continue;
@@ -492,10 +500,11 @@ export class ConversationDO implements DurableObject {
           (await this.state.storage.get<Record<string, number>>("readMarks")) ?? {};
         const deliveredMarks =
           (await this.state.storage.get<Record<string, number>>("deliveredMarks")) ?? {};
-        return json({ ok: true, deleted, readMarks, deliveredMarks });
+        return json({ ok: true, deleted, readMarks, deliveredMarks, state: await this.chatState() });
       }
 
       case "/unread-count": {
+        // a compact count for the badge: lastSeq minus the user's counted mark
         const userId = url.searchParams.get("userId") ?? "";
         // an unaccepted request stays out of the badge: the number alone would tell the
         // recipient how much has been written to him
@@ -503,7 +512,10 @@ export class ConversationDO implements DurableObject {
         if (!members.get(userId)?.accepted) return json({ ok: true, unread: 0 });
         const marks =
           (await this.state.storage.get<Record<string, number>>("readMarks")) ?? {};
-        return json({ ok: true, unread: Math.max(0, meta.lastSeq - (marks[userId] ?? 0)) });
+        const seen =
+          (await this.state.storage.get<Record<string, number>>("seenMarks")) ?? {};
+        const from = Math.max(marks[userId] ?? 0, seen[userId] ?? 0);
+        return json({ ok: true, unread: Math.max(0, meta.lastSeq - from) });
       }
 
       case "/send": {
@@ -556,6 +568,21 @@ export class ConversationDO implements DurableObject {
           for (const u of blocked) marks[u] = Math.max(marks[u] ?? 0, seq);
           await this.state.storage.put("readMarks", marks);
         }
+        // Счётная марка, по которой считается непрочитанное. Она двигается по
+        // тем же правилам, что и курсор клиента (`advanceChat`): своё
+        // отправленное автор непрочитанным не считает, а служебный фрейм в уже
+        // прочитанном чате поглощается. Держится отдельно от `readMarks`,
+        // потому что квитанции о прочтении шлются только по ним: отправка
+        // сообщения — не заявление о том, что чужие прочитаны.
+        const seen = (await this.state.storage.get<Record<string, number>>("seenMarks")) ?? {};
+        for (const u of blocked) seen[u] = Math.max(seen[u] ?? 0, seq);
+        seen[b.from] = Math.max(seen[b.from] ?? 0, seq);
+        if (msg.service) {
+          for (const uid of members.keys()) {
+            if ((seen[uid] ?? 0) >= seq - 1) seen[uid] = seq;
+          }
+        }
+        await this.state.storage.put("seenMarks", seen);
         // ack answers the sender as soon as the message owns a seq; delivery
         // (and the APNs call behind it) runs in the alarm queue afterwards.
         // Author's own devices are targets too: the echo goes through his UserDO.
@@ -608,7 +635,9 @@ export class ConversationDO implements DurableObject {
           (await this.state.storage.get<Record<string, number>>("readMarks")) ?? {};
         if (b.upToSeq > (marks[b.userId] ?? 0)) {
           marks[b.userId] = b.upToSeq;
-          await this.state.storage.put("readMarks", marks);
+          const seen = (await this.state.storage.get<Record<string, number>>("seenMarks")) ?? {};
+          seen[b.userId] = Math.max(seen[b.userId] ?? 0, b.upToSeq);
+          await this.state.storage.put({ readMarks: marks, seenMarks: seen });
           await this.fanout(
             { t: "receipt", chatId: meta.chatId, kind: "read", upToSeq: b.upToSeq, by: b.userId },
             { except: b.userId }

@@ -24,11 +24,8 @@ struct MessageSelection: Equatable {
         msgs.filter { ids.contains($0.id) }
     }
 
-    /// «Удалить у всех» is available only when every selected message is our own: someone
-    /// else's the server tombstones for a group admin alone, and in a direct chat such a
-    /// request silently does nothing.
     static func canDeleteForAll(_ selected: [Message]) -> Bool {
-        !selected.isEmpty && selected.allSatisfy(\.isOutgoing)
+        MessageDeletion.canDeleteForAll(selected)
     }
 
     /// Counter in the header, with plural forms: «1 сообщение», «2 сообщения», «5 сообщений».

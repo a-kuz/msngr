@@ -91,4 +91,64 @@ final class OfflineReliabilityTests: XCTestCase {
         }
         XCTAssertEqual(queued, 1)
     }
+
+    /// Отклонённая заявка: чат уходит с устройства с тумбстоуном, а блокировка
+    /// ждёт сети в очереди. Без очереди снапшот приносил бы заявку обратно, а
+    /// собеседник оставался бы разблокированным.
+    func testRejectingRequestOfflineQueuesBothHalves() async throws {
+        let db = try AppDatabase.openInMemory()
+        let engine = try makeEngine(db: db) // без start(): офлайн, очередь не дренится
+        try await db.write { dbc in
+            var chat = Chat(id: "req", kind: .direct, title: nil, createdBy: "peer",
+                            createdAt: 1, lastSeq: 3)
+            chat.isRequest = true
+            try chat.insert(dbc)
+            try dbc.execute(sql: "INSERT INTO user (id, username, displayName) VALUES ('peer','p','P')")
+        }
+
+        await engine.deleteChat(chatId: "req")
+        try await engine.setBlocked(userId: "peer", blocked: true)
+
+        let (chats, tombstones, isBlocked) = try await db.read { dbc in
+            (try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM chat WHERE id = 'req'")!,
+             try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM chatTombstone WHERE chatId = 'req'")!,
+             try Bool.fetchOne(dbc, sql: "SELECT isBlocked FROM user WHERE id = 'peer'")!)
+        }
+        XCTAssertEqual(chats, 0)
+        XCTAssertEqual(tombstones, 1)
+        XCTAssertTrue(isBlocked, "инпут-бар гаснет сразу, не дожидаясь сервера")
+
+        let types = try await db.read { dbc in
+            try String.fetchSet(dbc, sql: "SELECT type FROM pendingAction")
+        }
+        XCTAssertEqual(types, ["deleteChat", "block"])
+    }
+
+    /// Список заблокированных с сервера не отменяет блокировку, которая ещё
+    /// стоит в очереди: иначе решение пользователя откатывалось бы само.
+    func testServerListKeepsQueuedBlock() async throws {
+        let db = try AppDatabase.openInMemory()
+        let engine = try makeEngine(db: db)
+        try await db.write { dbc in
+            try dbc.execute(sql: "INSERT INTO user (id, username, displayName) VALUES ('peer','p','P')")
+        }
+        try await engine.setBlocked(userId: "peer", blocked: true)
+
+        // сервер о блокировке ещё не знает и отвечает пустым списком
+        try await db.write { dbc in try SyncEngine.applyBlockedList(dbc, serverIds: []) }
+        var isBlocked = try await db.read { dbc in
+            try Bool.fetchOne(dbc, sql: "SELECT isBlocked FROM user WHERE id = 'peer'")!
+        }
+        XCTAssertTrue(isBlocked)
+
+        // очередь доехала — дальше решает сервер
+        try await db.write { dbc in
+            try dbc.execute(sql: "DELETE FROM pendingAction WHERE type = 'block'")
+            try SyncEngine.applyBlockedList(dbc, serverIds: [])
+        }
+        isBlocked = try await db.read { dbc in
+            try Bool.fetchOne(dbc, sql: "SELECT isBlocked FROM user WHERE id = 'peer'")!
+        }
+        XCTAssertFalse(isBlocked)
+    }
 }

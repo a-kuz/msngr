@@ -316,26 +316,21 @@ final class ChatListModel: ObservableObject {
     }
 
     func acceptRequest(_ item: ChatListItem) {
-        Task {
-            try? await app.api.acceptChat(item.chat.id)
-            try? await app.db.write { dbc in
-                try dbc.execute(sql: "UPDATE chat SET isRequest = 0, iAccepted = 1 WHERE id = ?", arguments: [item.chat.id])
-            }
-        }
+        Task { await app.engine.acceptChatRequest(chatId: item.chat.id) }
     }
 
     func deleteChat(_ item: ChatListItem) {
         Task { await app.engine.deleteChat(chatId: item.chat.id) }
     }
 
+    /// Отклонённая заявка уходит с устройства так же, как удалённый чат: через
+    /// очередь, с тумбстоуном. Иначе снапшот приносил бы её обратно, а
+    /// вернувшийся чат заводил бы курсоры с нуля.
     func blockRequest(_ item: ChatListItem) {
         guard let peer = item.peer else { return }
         Task {
+            await app.engine.deleteChat(chatId: item.chat.id)
             try? await app.engine.setBlocked(userId: peer.id, blocked: true)
-            try? await app.db.write { dbc in
-                try dbc.execute(sql: "DELETE FROM chat WHERE id = ?", arguments: [item.chat.id])
-                try dbc.execute(sql: "DELETE FROM message WHERE chatId = ?", arguments: [item.chat.id])
-            }
         }
     }
 }
