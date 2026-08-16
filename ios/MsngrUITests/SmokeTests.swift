@@ -100,7 +100,7 @@ final class SmokeTests: XCTestCase {
         input.tap()
         let marker = "long-\(Int(Date().timeIntervalSince1970))"
         input.typeText(marker)
-        for i in 1...14 { input.typeText("\nстрока \(i)") }
+        for i in 1...14 { input.typeText("\nline \(i)") }
         app.buttons["chat.send"].tap()
         let bubble = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", marker)).firstMatch
         XCTAssertTrue(bubble.waitForExistence(timeout: 8))
