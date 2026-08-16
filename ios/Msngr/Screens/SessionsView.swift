@@ -32,6 +32,16 @@ struct SessionsView: View {
                          : "Отзыв отключает устройство от аккаунта: сокет закрывается, пуши перестают приходить.")
                 }
             }
+            Section {
+                NavigationLink {
+                    AddDeviceView()
+                } label: {
+                    Label("Добавить устройство", systemImage: "plus.circle")
+                }
+                .accessibilityIdentifier("sessions.add")
+            } footer: {
+                Text("Пароля нет: попасть в аккаунт с нового устройства можно только отсюда. Пока хотя бы одно устройство на руках, доступ не потерян.")
+            }
         }
         .overlay {
             if !loaded {
@@ -113,6 +123,9 @@ struct SessionsView: View {
         defer { busyDeviceId = nil }
         do {
             try await api.revokeSession(deviceId: s.deviceId)
+            // the revoked device holds every group chain it was handed; the next
+            // group message goes out on one it never saw
+            try? app.e2ee?.rotateAllSenderKeys()
             sessions.removeAll { $0.deviceId == s.deviceId }
         } catch {
             await load()

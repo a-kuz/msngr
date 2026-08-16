@@ -111,6 +111,116 @@ public final class APIClient: @unchecked Sendable {
         try await post("api/register", body: body, as: RegisterResponse.self)
     }
 
+    public struct MeResponse: Decodable {
+        public let user: UserDTO
+        public let deviceId: String
+    }
+    public func me() async throws -> MeResponse {
+        try await get("api/me", as: MeResponse.self)
+    }
+
+    // MARK: - Signing in on a new device
+
+    /// A provisioning session is the one thing a device without an account can
+    /// hold, so its calls carry the session's own secret instead of a device
+    /// token. Everything else on this client speaks `Authorization: Bearer`.
+    private func provisionRequest<T: Decodable>(_ path: String, provisionToken: String,
+                                                method: String = "GET", body: Encodable? = nil,
+                                                as type: T.Type) async throws -> T {
+        var req = URLRequest(url: url(for: path))
+        req.httpMethod = method
+        req.setValue(provisionToken, forHTTPHeaderField: "x-provision-token")
+        if let body {
+            req.httpBody = try JSONEncoder().encode(body)
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        let (data, resp) = try await session.data(for: req)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if status >= 400 {
+            let err = try? JSONDecoder().decode(ErrBody.self, from: data)
+            throw APIError(code: err?.error ?? "http_\(status)", status: status)
+        }
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    public struct ProvisionStartResponse: Decodable, Sendable {
+        public let provisionId: String
+        public let code: String
+        public let provisionToken: String
+        public let expiresIn: Double
+    }
+    private struct ProvisionStartRequest: Encodable {
+        let ephemeralKey: String
+        let device: [String: String]
+    }
+    public func provisionStart(ephemeralKey: String, deviceName: String,
+                               platform: String) async throws -> ProvisionStartResponse {
+        try await post("api/provision/start",
+                       body: ProvisionStartRequest(ephemeralKey: ephemeralKey,
+                                                   device: ["name": deviceName, "platform": platform]),
+                       as: ProvisionStartResponse.self)
+    }
+
+    public struct ProvisionStatusResponse: Decodable, Sendable {
+        public let status: String
+        public let envelope: String?
+    }
+    public func provisionStatus(_ provisionId: String,
+                                provisionToken: String) async throws -> ProvisionStatusResponse {
+        try await provisionRequest("api/provision/\(provisionId)", provisionToken: provisionToken,
+                                   as: ProvisionStatusResponse.self)
+    }
+
+    public struct ProvisionLookupResponse: Decodable, Sendable {
+        public let provisionId: String
+        public let ephemeralKey: String
+        public let device: DeviceInfo
+        public let expiresIn: Double
+        public struct DeviceInfo: Decodable, Sendable {
+            public let name: String?
+            public let platform: String?
+        }
+    }
+    public func provisionLookup(code: String) async throws -> ProvisionLookupResponse {
+        try await post("api/provision/lookup", body: ["code": code],
+                       as: ProvisionLookupResponse.self)
+    }
+
+    private struct OkResponse: Decodable { let ok: Bool }
+    public func provisionApprove(_ provisionId: String, envelope: String) async throws {
+        _ = try await post("api/provision/\(provisionId)/approve",
+                           body: ["envelope": envelope], as: OkResponse.self)
+    }
+
+    public struct ProvisionClaimRequest: Encodable {
+        public var identityKey: String
+        public var identitySignKey: String
+        public var signedPrekey: RegisterRequest.SignedPrekeyDTO
+        public var oneTimePrekeys: [RegisterRequest.OneTimePrekeyDTO]
+        public var device: [String: String]
+        public init(identityKey: String, identitySignKey: String,
+                    signedPrekey: RegisterRequest.SignedPrekeyDTO,
+                    oneTimePrekeys: [RegisterRequest.OneTimePrekeyDTO], deviceName: String) {
+            self.identityKey = identityKey
+            self.identitySignKey = identitySignKey
+            self.signedPrekey = signedPrekey
+            self.oneTimePrekeys = oneTimePrekeys
+            self.device = ["name": deviceName]
+        }
+    }
+    public func provisionClaim(_ provisionId: String, provisionToken: String,
+                               _ body: ProvisionClaimRequest) async throws -> RegisterResponse {
+        try await provisionRequest("api/provision/\(provisionId)/claim",
+                                   provisionToken: provisionToken, method: "POST", body: body,
+                                   as: RegisterResponse.self)
+    }
+
+    public func provisionCancel(_ provisionId: String, provisionToken: String) async throws {
+        _ = try await provisionRequest("api/provision/\(provisionId)/cancel",
+                                       provisionToken: provisionToken, method: "POST",
+                                       body: [String: String](), as: OkResponse.self)
+    }
+
     // MARK: - Device sessions
 
     /// An active session: one of the user's devices whose token has not been revoked.

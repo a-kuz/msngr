@@ -89,6 +89,10 @@ enum StateCrypto {
     }
 }
 
+public enum IdentityStoreError: Error, Equatable {
+    case identityAlreadyPresent
+}
+
 /// This device's own keys: the identity and the private halves of the prekeys, kept in
 /// the kv table under the master key.
 public final class IdentityStore: @unchecked Sendable {
@@ -179,6 +183,24 @@ public final class IdentityStore: @unchecked Sendable {
         let pair = IdentityKeyPair()
         try saveBlob("identity", StoredIdentity(dhRaw: pair.dh.rawRepresentation,
                                                 signingRaw: pair.signing.rawRepresentation))
+        return pair
+    }
+
+    /// Installs the account identity a device that is already signed in handed
+    /// over. The identity belongs to the account, not to the device: a linked
+    /// device that made one of its own would show every contact a changed
+    /// security code and would be blocked from sending
+    /// (`docs/research/2026-08-16-second-device.md`).
+    ///
+    /// Storage is empty at this point — linking wipes it the way registration
+    /// does — so an identity already in place means the caller is installing
+    /// over a live account, which is a bug rather than a state to merge.
+    public func adoptIdentity(dhRaw: Data, signingRaw: Data) throws -> IdentityKeyPair {
+        guard try loadBlob("identity", as: StoredIdentity.self) == nil else {
+            throw IdentityStoreError.identityAlreadyPresent
+        }
+        let pair = try IdentityKeyPair(dhRaw: dhRaw, signingRaw: signingRaw)
+        try saveBlob("identity", StoredIdentity(dhRaw: dhRaw, signingRaw: signingRaw))
         return pair
     }
 
@@ -362,6 +384,12 @@ public final class IdentityStore: @unchecked Sendable {
     public func deleteSenderKeyOut(chatId: String) throws {
         _ = try write { dbc in
             try dbc.execute(sql: "DELETE FROM senderKeyOut WHERE chatId = ?", arguments: [chatId])
+        }
+    }
+
+    public func deleteAllSenderKeyOut() throws {
+        _ = try write { dbc in
+            try dbc.execute(sql: "DELETE FROM senderKeyOut")
         }
     }
 
