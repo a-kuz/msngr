@@ -89,10 +89,10 @@ struct ChatScreen: View {
                 // и оно должно читаться раньше остальных её элементов
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button { dismiss() } label: {
-                        Image(systemName: "chevron.left")
-                            .font(Theme.glyph(22, max: 28).weight(.semibold))
+                        Image(systemName: "chevron.backward")
+                            .font(Theme.glyph(34, max: 40).weight(.bold))
                             .foregroundStyle(Theme.accent)
-                            .frame(width: 44, height: 44)
+                            .frame(width: 56, height: 44)
                             .contentShape(Rectangle())
                     }
                     .accessibilityLabel("Назад")
@@ -292,7 +292,8 @@ struct ChatScreen: View {
                 AvatarView(name: model.headerTitle,
                            avatarId: model.chat?.kind == .group ? model.chat?.avatarId : model.peer?.avatarId,
                            online: model.peer?.online ?? false)
-                    .frame(width: 40, height: 40)
+                    // the back chevron leads the header, so the avatar stays under it
+                    .frame(width: 34, height: 34)
                 VStack(alignment: .leading, spacing: 0) {
                     // тулбар может предложить principal-вью ширину меньше идеальной —
                     // короткое имя обрезается («4455…»). Текст держит идеальную ширину
