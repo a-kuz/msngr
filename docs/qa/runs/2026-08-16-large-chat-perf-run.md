@@ -102,12 +102,14 @@ full refetches of the feed window. The feed observation reads the chat row
 covers the whole `chat` table: a draft write refires the window fetch, the feed
 build, the diff and the collection view update, with nothing on screen changed.
 
-The rest of a send is bounded work: the insert of the row, the outbox insert and
-delete, the ack update, and four more chat-row writes (`lastActivityAt`,
-`lastSeq`/`syncedSeq`, the badge) — each of which refires the window fetch
-again. One send at the bottom of the chat costs 14 refetches; at a 900-row
-window that is 117 ms of SQL and no dropped frame, and at a 19 620-row window
-the same 14 refetches are what the reader sees as a stutter.
+The rest of a send is bounded work in itself: the insert of the row, the outbox
+insert and delete, the ack update. What is not bounded is how often it makes the
+feed start over. The tap alone, with the typing counted separately, produced
+seven writes to the chat row (`draft` cleared, `lastActivityAt`, then
+`lastSeq`/`syncedSeq` as the journal comes back) and three writes to `message`,
+and the feed was refetched exactly seven times. At a 900-row window the whole
+type-and-send scenario is 117 ms of SQL and no dropped frame; at a 19 620-row
+window those same seven refetches are the stutter.
 
 ### The jump is what turns the feed into the whole chat
 
