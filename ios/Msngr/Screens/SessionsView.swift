@@ -1,9 +1,9 @@
 import SwiftUI
 import MsngrCore
 
-/// Активные устройства пользователя: список сессий с сервера и отзыв доступа.
-/// Отзыв текущего устройства — тот же путь, что «Выйти»: токен инвалидируется,
-/// локальные данные стираются, приложение возвращается к регистрации.
+/// The user's active devices: the session list from the server, and revoking
+/// access. Revoking the current device takes the same path as «Выйти»: the token
+/// is invalidated, local data is wiped, and the app returns to registration.
 struct SessionsView: View {
     @EnvironmentObject var app: AppState
     @State private var sessions: [APIClient.SessionDTO] = []
@@ -119,7 +119,7 @@ struct SessionsView: View {
         }
     }
 
-    /// «Добавлено 15 августа 2026»; для сегодняшнего входа — время.
+    /// «Добавлено 15 августа 2026»; a session added today shows the time instead.
     static func addedLabel(_ ts: Double) -> String {
         guard ts > 0 else { return "Добавлено недавно" }
         let date = Date(timeIntervalSince1970: ts)

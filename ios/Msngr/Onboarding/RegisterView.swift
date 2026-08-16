@@ -2,7 +2,7 @@ import SwiftUI
 import GRDB
 import MsngrCore
 
-/// Регистрация: username + имя; ключи генерируются на устройстве.
+/// Registration: username plus display name; the keys are generated on the device.
 struct RegisterView: View {
     @EnvironmentObject var app: AppState
     @State private var username = ""
@@ -83,7 +83,8 @@ struct RegisterView: View {
         error = nil
         defer { busy = false }
         do {
-            // временная БД нужна до session: identity создаём в постоянной БД приложения
+            // the identity is generated into the app's permanent database, the
+            // one that outlives registration, not a temporary one
             let storage = AppState.storage
             // a new account starts from empty storage: whatever the container
             // holds belongs to somebody else and is dropped before the identity
@@ -114,7 +115,7 @@ struct RegisterView: View {
             do {
                 try app.saveSession(session)
             } catch {
-                MsngrLog.session.error("не удалось сохранить сессию: \(error)")
+                MsngrLog.session.error("failed to save the session: \(error)")
                 self.error = "Не удалось сохранить сессию на устройстве"
                 return
             }

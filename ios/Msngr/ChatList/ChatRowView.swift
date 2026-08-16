@@ -25,13 +25,12 @@ struct ChatRowView: View {
                             .accessibilityIdentifier("chatRow.muted")
                     }
                     Spacer(minLength: 4)
-                    // галочки своего последнего сообщения
                     if let last = item.lastMessage, last.isOutgoing, !contentHidden {
                         TickView(status: last.status)
                             .font(Theme.glyph(12, max: 18))
                     }
-                    // время и галочки держат идеальную ширину: иначе на крупном
-                    // тексте длинное имя сжимает их в многоточие
+                    // the time and the ticks hold their ideal width: at large text
+                    // sizes a long title would otherwise squeeze them to an ellipsis
                     Text(Self.timeLabel(item.lastMessage.map { $0.serverTs ?? $0.sentAt } ?? item.chat.lastActivityAt))
                         .textRole(Theme.Text.rowTime)
                         .foregroundStyle(.secondary)
@@ -67,15 +66,16 @@ struct ChatRowView: View {
         .animation(Theme.springFast, value: visibleUnread)
     }
 
-    /// Аватар растёт вместе со строкой, но медленнее текста: на крупном
-    /// размере он иначе съедает половину ширины строки.
+    /// The avatar grows with the row but slower than the text: at a large size
+    /// it would otherwise eat half the row's width.
     private var avatarSide: CGFloat { typeSize.scaled(54, relativeTo: .subheadline, max: 74) }
     private var badgeSide: CGFloat { typeSize.scaled(21, relativeTo: .caption1, max: 32) }
 
-    /// Заявка до принятия: ни превью, ни счётчика, ни галочек.
+    /// A request before it is accepted: no preview, no counter, no ticks.
     private var contentHidden: Bool { ChatPrivacy.hidesContent(item.chat) }
 
-    /// Mute со сроком: после срока иконка гаснет, не дожидаясь снятия флага.
+    /// Mute with an expiry: once it passes the icon goes out without waiting
+    /// for the flag itself to be cleared.
     private var muted: Bool {
         MuteState.isMuted(muted: item.chat.muted, mutedUntil: item.chat.mutedUntil)
     }
@@ -138,7 +138,7 @@ struct PreviewLabelStyle: LabelStyle {
     }
 }
 
-/// Галочки статуса: часики → одна → две → две цветные.
+/// Status ticks: clock → one → two → two in colour.
 struct TickView: View {
     let status: MessageStatus
 
@@ -168,7 +168,7 @@ struct DoubleTick: View {
     }
 }
 
-/// Аватар: фото или инициалы на градиенте, точка online.
+/// An avatar: a photo, or initials on a gradient, with an online dot.
 struct AvatarView: View {
     let name: String
     let avatarId: String?
