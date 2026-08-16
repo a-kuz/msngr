@@ -78,6 +78,20 @@ final class HistoryWindowTests: XCTestCase {
 
     // MARK: - Seq gaps
 
+    /// Whether the window was cut short of the end of the chat: what tells a feed
+    /// standing on a jump target from one standing at the newest message.
+    func testKnowsWhetherAnythingIsNewerThanTheWindow() throws {
+        let db = try AppDatabase.openInMemory()
+        try seedChat(db, lastSeq: 100, syncedSeq: 100)
+        try seedMessages(db, seqs: Array(1...100))
+        try db.read { dbc in
+            XCTAssertTrue(try HistoryWindow.hasNewer(dbc, chatId: "c1", topSeq: 60))
+            XCTAssertFalse(try HistoryWindow.hasNewer(dbc, chatId: "c1", topSeq: 100))
+            // an own message still waiting for its seq sorts above everything numbered
+            XCTAssertFalse(try HistoryWindow.hasNewer(dbc, chatId: "c1", topSeq: nil))
+        }
+    }
+
     func testGapsBetweenAdjacentSeqs() {
         XCTAssertEqual(HistoryWindow.gaps(known: [1, 2, 5, 6, 10], lower: 1, upper: 10),
                        [3...4, 7...9])

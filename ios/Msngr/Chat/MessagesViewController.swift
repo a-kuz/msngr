@@ -32,6 +32,8 @@ final class MessagesViewController: UIViewController {
     /// feed, so the first recomputation stays quiet.
     private var atBottom = true
     private var recomputingAtBottom = false
+    /// The next feed comes from a window that was moved: it is shown from the bottom.
+    private var showBottomOnUpdate = false
 
     /// Multi-select state: visible cells are reconfigured in place, because a reload
     /// would cut off the feed's animations; new cells pick it up in configure.
@@ -186,9 +188,27 @@ final class MessagesViewController: UIViewController {
         }
     }
 
+    /// The window was moved back to the end of the chat: the feed arriving next is a
+    /// different stretch of the conversation, and it is shown from its newest message
+    /// rather than diffed against the one the reader was standing in.
+    func showBottomOnNextUpdate() {
+        showBottomOnUpdate = true
+    }
+
     private func applyDiff(_ newItems: [ChatFeedItem]) {
         let old = items
         guard isViewLoaded else { items = newItems; return }
+        if showBottomOnUpdate, !newItems.isEmpty {
+            showBottomOnUpdate = false
+            items = newItems
+            collectionView.layer.removeAllAnimations()
+            collectionView.reloadData()
+            collectionView.layoutIfNeeded()
+            collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.contentInset.top),
+                                            animated: false)
+            updateAtBottom(layoutFirst: true)
+            return
+        }
         // the feed went empty (history cleared): a diff would delete every position
         // at once in the middle of a running insert animation, and the reading
         // anchor would point at nothing
