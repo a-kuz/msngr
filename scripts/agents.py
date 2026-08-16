@@ -37,6 +37,9 @@ def terminal_width():
 
 WIDTH = terminal_width()
 
+# how much of a transcript's end is read on the first try
+TAIL = 512 * 1024
+
 
 def ago(seconds):
     seconds = int(seconds)
@@ -73,28 +76,47 @@ def transcript(session_id):
     return None
 
 
-def read(path):
-    """Start time, last words, last tool call."""
-    started = last_text = last_tool = None
-    with path.open() as f:
-        for line in f:
-            try:
-                entry = json.loads(line)
-            except ValueError:
-                continue
-            if started is None and entry.get("timestamp"):
-                started = entry["timestamp"]
-            content = entry.get("message", {}).get("content")
-            if not isinstance(content, list):
-                continue
-            for block in content:
-                kind = block.get("type")
-                if kind == "text" and entry.get("type") == "assistant":
-                    text = block.get("text", "").strip()
-                    if text:
-                        last_text = text
-                elif kind == "tool_use":
-                    last_tool = tool_call(block.get("name", "?"), block.get("input"))
+def entries(chunk):
+    for line in chunk.splitlines():
+        try:
+            yield json.loads(line)
+        except ValueError:
+            continue
+
+
+def read(path, tail=TAIL):
+    """Start time, last words, last tool call.
+
+    A transcript of a working day is hundreds of megabytes, and `watch` reruns this
+    every couple of seconds: the start is at the head of the file and everything else
+    is at its end, so only those two pieces are read. A tail that holds no assistant
+    text yet is grown until it does or the file runs out.
+    """
+    size = path.stat().st_size
+    with path.open(errors="replace") as f:
+        head = f.read(64 * 1024)
+        started = next((e["timestamp"] for e in entries(head) if e.get("timestamp")), None)
+        last_text = last_tool = None
+        while tail <= size:
+            f.seek(max(0, size - tail))
+            chunk = f.read()
+            if tail < size:  # the first line of a mid-file seek is half a line
+                chunk = chunk.split("\n", 1)[-1]
+            for entry in entries(chunk):
+                content = entry.get("message", {}).get("content")
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    kind = block.get("type")
+                    if kind == "text" and entry.get("type") == "assistant":
+                        text = block.get("text", "").strip()
+                        if text:
+                            last_text = text
+                    elif kind == "tool_use":
+                        last_tool = tool_call(block.get("name", "?"), block.get("input"))
+            if last_text or tail >= size:
+                break
+            tail *= 8
     return started, last_text, last_tool
 
 
@@ -110,10 +132,16 @@ def started_ago(stamp):
         return "?"
 
 
+def running():
+    """The whole process table at once: one `ps` beats a `pgrep` per agent."""
+    return subprocess.run(["ps", "-Ao", "command"], capture_output=True, text=True).stdout
+
+
 def main():
     if not REGISTRY.exists():
         print("no agents registered")
         return
+    processes = running()
     for line in REGISTRY.read_text().splitlines():
         parts = line.split("\t")
         if len(parts) < 2 or not parts[0].strip():
@@ -121,7 +149,7 @@ def main():
         name, session_id = parts[0], parts[1]
         worktree = parts[2] if len(parts) > 2 else ""
 
-        alive = subprocess.run(["pgrep", "-f", session_id], capture_output=True).returncode == 0
+        alive = session_id in processes
         path = transcript(session_id)
         if path is None:
             print(f"{BOLD}{name}{RESET}  {GREY}no transcript for {session_id}{RESET}\n")

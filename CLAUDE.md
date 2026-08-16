@@ -155,6 +155,12 @@ The owner's two devices, the gate runner, and the shared stand in
   message is inserted at `item 0` and shifts the content above it under an
   unchanged `contentOffset`. An update remembers the topmost visible item and
   puts it back; any new update path has to do the same.
+- **The status bar tap.** UIKit delivers it as `scrollViewShouldScrollToTop` and
+  only while exactly one visible scroll view claims it, which is why the input
+  text view has `scrollsToTop = false`. The touch itself is SpringBoard's:
+  XCUITest cannot produce it on the simulator, through the SpringBoard element or
+  through a coordinate in the app's own window alike, so this path is checked in
+  `MsngrTests/StatusBarTapTests` and not in the UI smoke.
 - **Text size.** Every size lives in `Theme.Text`
   (`ios/Msngr/App/Theme.swift`) as a named role; there should be no numbers in
   the screen code. A role is scaled through `UIFontMetrics` with a ceiling: the
