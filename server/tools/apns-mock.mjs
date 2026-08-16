@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Мок APNs для dev-стенда: принимает APNs-совместимые POST /3/device/{token}
-// и доставляет payload в iOS-симулятор через `xcrun simctl push`.
-// token в dev = UDID симулятора. Ответ 200 уходит сразу (как у настоящего
-// APNs), сама доставка — асинхронно, со случайной задержкой.
+// An APNs mock for the dev stand: it takes APNs-shaped POST /3/device/{token}
+// and delivers the payload into an iOS simulator through `xcrun simctl push`.
+// On the dev stand the token is the simulator's UDID. The 200 goes back at once,
+// as real APNs does, while delivery happens asynchronously after a random delay.
 //
 // Delivery runs through a bounded worker pool. `xcrun simctl push` is a
 // CoreSimulator client, and every live client holds an IOSurface slot on the
@@ -12,7 +12,7 @@
 // drain. So the pool caps how many run at once and the backlog is bounded too:
 // a mock that queues without limit only postpones the same pile-up.
 //
-// Запуск:  node tools/apns-mock.mjs [--port 9871] [--drop-rate 0.05]
+// Run:     node tools/apns-mock.mjs [--port 9871] [--drop-rate 0.05]
 //          [--min-delay 150] [--max-delay 500] [--bundle ai.enface.Msngr] [--log]
 //          [--concurrency 4] [--queue 256] [--stats-every 5000]
 //
@@ -31,7 +31,7 @@ function opt(name, def) {
   return i >= 0 && args[i + 1] !== undefined ? args[i + 1] : def;
 }
 const PORT = Number(opt("--port", 9871));
-const DROP_RATE = Number(opt("--drop-rate", 0)); // доля молча съеденных пушей
+const DROP_RATE = Number(opt("--drop-rate", 0)); // share of pushes swallowed silently
 const MIN_DELAY = Number(opt("--min-delay", 150));
 const MAX_DELAY = Number(opt("--max-delay", 500));
 const BUNDLE = opt("--bundle", "ai.enface.Msngr");
@@ -151,15 +151,15 @@ function run({ token, rawBody, chatId, delay, badge }) {
       unlink(file).catch(() => {});
       resolve();
     };
-    // simctl push ждёт JSON-файл с верхнеуровневым "aps" — это ровно
-    // полученное APNs-тело
+    // simctl push wants a JSON file with a top-level "aps", which is exactly
+    // the APNs body that came in
     writeFile(file, rawBody).then(() => {
       const child = spawn("xcrun", ["simctl", "push", token, BUNDLE, file]);
       let stderr = "";
       child.stderr.on("data", (d) => (stderr += d));
       child.on("close", (code) => {
         if (code !== 0) {
-          // симулятор выключен / UDID не найден — логируем, не падаем
+          // simulator shut down or UDID unknown: log it rather than fall over
           stats.failed++;
           log(`simctl push failed (${code}) token=${token.slice(0, 8)}…`, stderr.trim());
         } else {

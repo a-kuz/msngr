@@ -637,14 +637,14 @@ export class ConversationDO implements DurableObject {
           const members = await this.loadMembers();
           const actor = members.get(b.userId);
           if (!actor) return err("not_member", 403);
-          // тумбстоуним ciphertext: найти по msgId (скан последних; msgId→seq индекс)
+          // tombstone the ciphertext, found by msgId through the msgId→seq index
           const idx =
             (await this.state.storage.get<Record<string, number>>("msgIdx")) ?? {};
           const updates: Record<string, StoredMsg> = {};
           const tombstoned: string[] = [];
           for (const [key, m] of await this.state.storage.list<StoredMsg>({ prefix: "msg:" })) {
             if (b.msgIds.includes(m.msgId)) {
-              // чужое сообщение сносит только админ группы
+              // only a group admin can remove someone else's message
               if (m.from !== b.userId && actor.role !== "admin") continue;
               updates[key] = { ...m, body: null, deleted: true, deletedBy: b.userId };
               tombstoned.push(m.msgId);
@@ -653,8 +653,8 @@ export class ConversationDO implements DurableObject {
           void idx;
           if (tombstoned.length) {
             await this.state.storage.put(updates);
-            // рассылаем только то, что действительно снесено: иначе участники
-            // потеряли бы у себя сообщения, оставшиеся на сервере
+            // fan out only what was really removed: otherwise members would lose
+            // messages locally that are still on the server
             await this.fanout({
               t: "deleted", chatId: meta.chatId, msgIds: tombstoned, forAll: true, by: b.userId,
             });
@@ -669,16 +669,16 @@ export class ConversationDO implements DurableObject {
         };
         const members = await this.loadMembers();
         const actor = members.get(b.actor);
-        // viaInvite: не-участник вступает сам по invite-ссылке (только add самого себя)
+        // viaInvite: a non-member joins through an invite link, adding only themselves
         const selfJoin =
           b.viaInvite === true && !actor &&
           b.add.length === 1 && b.add[0] === b.actor && b.remove.length === 0;
         if (!actor && !selfJoin) return err("not_member", 403);
         if (meta.kind !== "group") return err("not_group", 400);
         if (actor) {
-          // удалять может только админ
+          // only an admin can remove a member
           if (b.remove.length && actor.role !== "admin") return err("not_admin", 403);
-          // добавлять может админ; не-админ — только самого себя
+          // an admin can add anyone; anyone else only themselves
           if (b.add.length && actor.role !== "admin") {
             const onlySelf = b.add.length === 1 && b.add[0] === b.actor;
             if (!onlySelf) return err("not_admin", 403);
@@ -701,7 +701,7 @@ export class ConversationDO implements DurableObject {
         if (b.remove.length) await this.notifyUserDOsChatList(b.remove, true);
         await this.broadcastChat("members");
         if (b.remove.length) {
-          // удалённым тоже сообщаем финальное состояние, чтобы клиент убрал чат
+          // the removed member is told the final state too, so their client drops the chat
           const state = await this.chatState();
           await this.enqueueFanout(
             { t: "chat", chatId: meta.chatId, event: "members", state },
@@ -763,10 +763,10 @@ export class ConversationDO implements DurableObject {
       }
 
       case "/presence": {
-        // от UserSessionDO: пользователь сменил online-статус → разослать участникам
+        // from UserSessionDO: a user's online status changed, so tell the members
         const b = (await req.json()) as { userId: string; online: boolean; lastSeen: number };
         const members = await this.loadMembers();
-        // presence не-принявшего получателя не видна автору заявки
+        // the presence of a recipient who has not accepted stays hidden from the requester
         if (!members.get(b.userId)?.accepted) return json({ ok: true });
         if (await this.blockedEitherWay(b.userId)) return json({ ok: true });
         await this.fanout(
