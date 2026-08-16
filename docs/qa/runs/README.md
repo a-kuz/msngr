@@ -1,7 +1,7 @@
 # Run reports
 
-One file per run, named `YYYY-MM-DD-topic.md`. Screenshots and recordings for
-that run go in a directory of the same name without the extension:
+One file per run, `YYYY-MM-DD-topic-run.md`. Screenshots and recordings go in a
+directory named for the same topic, without the suffix:
 
     2026-08-15-20k-chat-run.md
     2026-08-15-20k-chat/01-feed.png
@@ -9,6 +9,9 @@ that run go in a directory of the same name without the extension:
 
 English, like everything else in the repository. Numbered file names keep the
 pictures in the order they were taken.
+
+A few older reports predate this and are named without the suffix or carry no
+directory; they are being renamed as they are touched.
 
 ## What a report says
 
