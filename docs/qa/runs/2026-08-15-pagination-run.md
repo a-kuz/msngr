@@ -24,14 +24,7 @@ wrangler output.
 
 | Step | Expectation | Fact |
 |------|-------------|------|
-| chat of 70 incoming messages, opened | feed at the bottom, message 70 last | as expected (`04-chat-bottom.png`) |
-| scrolling up | older messages keep coming, no spinner | as expected (`05-scrolled-mid.png`) |
-| scrolling to the very beginning | messages 1…70 all present, nothing missing | as expected (`06-history-start.png`) |
-| top of the feed | one «История начинается здесь» item above the first message | as expected (`06-history-start.png`) |
 | whole scroll | no request to the server | 0 `/history` requests in the wrangler log |
-| tap on a quote of message 1 from the bottom of a freshly opened chat | jump to the original outside the window | window expanded, feed scrolled to message 1 (`07-quote-bottom.png`, `08-quote-jump.png`) |
-| «вниз» button from the top | back to the newest message | as expected (`09-back-to-bottom.png`) |
-| own message sent while scrolled up | feed jumps to the bottom, message with a tick | as expected (`10-own-message.png`) |
 
 The client database after the run: 70 messages with seq 1…70, `syncedSeq` 70,
 `historyGap` empty — a contiguous history has no open ranges, which is why the

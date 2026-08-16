@@ -30,31 +30,25 @@ state was read from a copy of `msngr.sqlite` taken from the group container.
 
 ## 1. Lost session, then a new registration
 
-1. `01-alpha-chat.png` — device A holds `swalpha` with a `swbeta` conversation:
    two messages, 👍 from beta and ❤️ from alpha. In the database:
    `{"👍":["…PDS5…"]}` and `{"❤️":["…JZWT…"]}`, marker `ownUserId` = alpha.
 2. The app is terminated, `session.json` is removed from the group container,
-   the app is launched again → `02-register-after-loss.png`, registration
    screen, `msngr.sqlite` still in place.
-3. `swgamma` registers → `03-gamma-chatlist.png`, "Нет чатов". The database
    right after registration: 0 messages, 0 chats, 0 members, 0 `user` rows,
    marker = gamma. The old conversation and its reactions are gone from the
    screen and from the file.
 4. Gamma writes to beta in the new dialog, beta reacts 👍, gamma adds its own by
-   tapping the same capsule → `04-gamma-reactions.png`, `👍 2` in a chat of two.
    In the database `{"👍":["…PDS5…","…EQW6…"]}` — exactly two user ids, both
    present in `member`.
 
 ## 2. Plain restart of an existing account
 
-`05-beta-restart.png` — `simctl terminate` + `launch` on B under `swbeta`: the
 chat list and the dialog with alpha are intact, both reactions (👍 and ❤️)
 survived. Same on A under gamma after a restart: the dialog with beta and its
 `👍 2` are still there.
 
 ## 3. Logout and signing in again
 
-`06-after-logout.png` — "Выйти" on B leads to the registration screen; the group
 container keeps only `avatars` and `Library`, while `msngr.sqlite`, `.masterkey`
 and `session.json` are removed.
 
@@ -62,7 +56,6 @@ Signing in as the same user is not implemented in the app — registration is th
 only entry point (see ROADMAP, "логин на новом устройстве"): registering
 `swbeta` again answers "Юзернейм занят". Registering `swdelta` on the same
 device works, the chat list is empty and the marker is delta
-(`07-after-logout-register.png`).
 
 ## Not covered
 

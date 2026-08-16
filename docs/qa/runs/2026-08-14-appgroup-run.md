@@ -17,7 +17,6 @@ Support. Сборка с entitlement считает пути от контейн
 Сборка из коммита 4234a3d, entitlement ещё нет. Два юзера, чат с тремя
 сообщениями в обе стороны, расшифровка и галочки прочтения работают.
 
-![до миграции](2026-08-14-appgroup/before-chat-sender.png)
 
 ```
 Application Support: .masterkey  media-outgoing/  msngr.sqlite  msngr.sqlite-shm  msngr.sqlite-wal  session.json
@@ -54,12 +53,10 @@ Ratchet-состояния и identity пережили переезд: при �
 расшифровка сломалась бы, при смене identity собеседник получил бы
 предупреждение о смене ключа.
 
-![после миграции](2026-08-14-appgroup/after-chat-sender.png)
 
 Повторный запуск ничего не переносит заново, БД остаётся той же (5
 сообщений), список чатов не меняется:
 
-![после перезапуска](2026-08-14-appgroup/after-relaunch-chatlist.png)
 
 ## Тесты
 
