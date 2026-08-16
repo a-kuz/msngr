@@ -395,6 +395,7 @@ struct MacBubble: View {
 
     private var systemText: String {
         let t = message.text ?? ""
+        if let event = GroupEvent.decode(t) { return event.sentence(isOwn: message.isOutgoing) }
         if t.hasPrefix("identity_changed:") { return "Код безопасности изменился" }
         return t
     }

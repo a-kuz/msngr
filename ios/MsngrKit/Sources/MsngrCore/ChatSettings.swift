@@ -60,6 +60,10 @@ public enum MuteState {
 /// What a chat member is allowed to do; mirrors the server's checks in `ConversationDO`.
 public enum ChatPermissions {
     public static let adminRole = "admin"
+    /// A right the whole group holds.
+    public static let openPolicy = "all"
+    /// A right only admins hold.
+    public static let adminPolicy = "admins"
 
     /// Title, avatar and description: admins only in a group, any member in a direct chat.
     public static func canEditSettings(kind: ChatKind, role: String?) -> Bool {
@@ -72,10 +76,20 @@ public enum ChatPermissions {
         kind == .group && role == adminRole
     }
 
-    /// An admin can add anyone; a non-admin can only add themselves.
-    public static func canAddMembers(kind: ChatKind, role: String?, onlySelf: Bool = false) -> Bool {
-        guard kind == .group, role != nil else { return false }
-        return role == adminRole || onlySelf
+    /// Writing to the chat. A group whose `sendPolicy` is `admins` is read-only
+    /// for everyone else; service content (a key handout, a repair, a reaction)
+    /// travels regardless, which is why this is asked about the input field
+    /// alone.
+    public static func canSend(kind: ChatKind, role: String?, sendPolicy: String) -> Bool {
+        guard kind == .group else { return true }
+        guard let role else { return false }
+        return sendPolicy != adminPolicy || role == adminRole
+    }
+
+    /// Adding a member and minting an invite link, under the group's `invitePolicy`.
+    public static func canInvite(kind: ChatKind, role: String?, invitePolicy: String) -> Bool {
+        guard kind == .group, let role else { return false }
+        return invitePolicy != adminPolicy || role == adminRole
     }
 
     /// Only an admin can grant and revoke admin rights.
