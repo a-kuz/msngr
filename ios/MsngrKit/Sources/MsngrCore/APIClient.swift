@@ -111,6 +111,14 @@ public final class APIClient: @unchecked Sendable {
         try await post("api/register", body: body, as: RegisterResponse.self)
     }
 
+    public struct MeResponse: Decodable {
+        public let user: UserDTO
+        public let deviceId: String
+    }
+    public func me() async throws -> MeResponse {
+        try await get("api/me", as: MeResponse.self)
+    }
+
     // MARK: - Вход на новом устройстве
 
     /// A provisioning session is the one thing a device without an account can
