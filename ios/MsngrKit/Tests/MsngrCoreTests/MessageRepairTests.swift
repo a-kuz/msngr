@@ -3,10 +3,10 @@ import GRDB
 import MsngrCrypto
 @testable import MsngrCore
 
-/// Ремонт нечитаемых сообщений: конверт сохраняется при любом отказе, очередь
-/// переигрывается сама, а то, что переиграть нельзя, запрашивается у отправителя.
-/// Сервер не нужен — движок создаётся с недоступным адресом, отправка копится
-/// в outbox.
+/// Repair of unreadable messages: the envelope is kept whatever the failure,
+/// the queue replays itself, and what cannot be replayed is requested from the
+/// sender. No server needed: the engine is built against an address nothing
+/// listens on, so sends pile up in the outbox.
 final class MessageRepairTests: XCTestCase {
     private func makeEngine(db: DatabaseQueue) throws -> SyncEngine {
         let api = APIClient(baseURL: URL(string: "http://localhost:1")!)
@@ -25,7 +25,7 @@ final class MessageRepairTests: XCTestCase {
         }
     }
 
-    /// Конверт, который эта сессия не откроет никогда (неизвестный режим).
+    /// An envelope this session will never open: the mode is unknown.
     private func brokenFrame(seq: Int, msgId: String) throws -> WSIncoming {
         let json = """
         {"t":"msg","chatId":"c1","seq":\(seq),"msgId":"\(msgId)","from":"peer","fromDevice":"d1",
@@ -45,10 +45,11 @@ final class MessageRepairTests: XCTestCase {
         }
     }
 
-    // MARK: - Сохранение конверта и запрос копии
+    // MARK: - Keeping the envelope and asking for a copy
 
-    /// Неустранимый отказ: конверт остаётся в базе (повторить локально есть чем),
-    /// seq записан как пропавший, отправителю уходит запрос копии.
+    /// A terminal failure: the envelope stays in the database so there is
+    /// something to retry locally, the seq is recorded as missing, and a request
+    /// for a copy goes to the sender.
     func testTerminalFailureKeepsEnvelopeAndAsksSender() async throws {
         let db = try AppDatabase.openInMemory()
         try await makeDirectChat(db)
@@ -59,7 +60,7 @@ final class MessageRepairTests: XCTestCase {
         let pending = try await db.read { dbc in
             try Row.fetchOne(dbc, sql: "SELECT * FROM pendingDecrypt WHERE chatId = 'c1' AND msgId = 'm1'")
         }
-        let row = try XCTUnwrap(pending, "конверт не сохранён — повторить нечем")
+        let row = try XCTUnwrap(pending, "the envelope was not kept, nothing left to retry")
         XCTAssertFalse((row["body"] as Data).isEmpty)
         XCTAssertEqual(row["reason"] as String?, "unknown_mode")
         XCTAssertEqual(row["repairAttempts"] as Int, 1)
@@ -79,8 +80,8 @@ final class MessageRepairTests: XCTestCase {
         XCTAssertEqual(outbox[0].content.attempt, 1)
     }
 
-    /// Пропущенный ключ сам по себе ещё не дефект: конверт откладывается,
-    /// отправителя не беспокоим, пока не выйдет срок ожидания.
+    /// A missing key is not a defect by itself: the envelope is parked and the
+    /// sender is left alone until the grace period runs out.
     func testRetryableFailureWaitsBeforeAsking() async throws {
         let db = try AppDatabase.openInMemory()
         try await makeDirectChat(db)
@@ -98,11 +99,11 @@ final class MessageRepairTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(row)["reason"] as String?, "no_sender_key")
         XCTAssertEqual(try XCTUnwrap(row)["repairAttempts"] as Int, 0)
         let outbox = try await outboxContents(db)
-        XCTAssertTrue(outbox.isEmpty, "запрос ушёл раньше срока ожидания ключа")
+        XCTAssertTrue(outbox.isEmpty, "asked for a copy before the key grace period was over")
     }
 
-    /// Отложенная очередь переигрывается при старте движка, а не только после
-    /// удачного фрейма в том же чате: иначе запись ждёт вечно.
+    /// The parked queue is replayed when the engine starts, not only after a
+    /// successful frame in the same chat, otherwise a row waits forever.
     func testQueueIsSweptOnStart() async throws {
         let db = try AppDatabase.openInMemory()
         try await makeDirectChat(db)
@@ -129,7 +130,7 @@ final class MessageRepairTests: XCTestCase {
             if attempts > 1 { break }
             try await Task.sleep(nanoseconds: 40_000_000)
         }
-        XCTAssertGreaterThan(attempts, 1, "очередь при старте не переигрывалась")
+        XCTAssertGreaterThan(attempts, 1, "the queue was not replayed on start")
 
         var outbox = try await outboxContents(db)
         for _ in 0..<50 where outbox.isEmpty {
@@ -139,15 +140,15 @@ final class MessageRepairTests: XCTestCase {
         XCTAssertEqual(outbox.first?.content.kind, "repairRequest")
     }
 
-    /// Счётчик попыток растёт и ограничивает повторы: после исчерпания движок
-    /// перестаёт просить копию, сколько бы проходов ни было.
+    /// The attempt counter grows and caps the repeats: once it is spent the
+    /// engine stops asking for a copy, however many sweeps run.
     func testAttemptsGrowAndCapRepeats() async throws {
         let db = try AppDatabase.openInMemory()
         try await makeDirectChat(db)
         let engine = try makeEngine(db: db)
 
         await engine.apply(try brokenFrame(seq: 1, msgId: "m1"))
-        // каждый проход застаёт паузу выдержанной, а конверт — нестарым
+        // every sweep finds the backoff elapsed and the envelope not yet expired
         for _ in 0..<(MessageRepair.maxAttempts + 3) {
             try await db.write { dbc in
                 try dbc.execute(sql: """
@@ -167,17 +168,18 @@ final class MessageRepairTests: XCTestCase {
 
         let outbox = try await outboxContents(db)
         XCTAssertEqual(outbox.count, MessageRepair.maxAttempts,
-                       "запросов больше, чем разрешено попыток")
+                       "more requests than the allowed number of attempts")
 
-        // потраченные попытки доводят seq до заглушки в ленте
+        // once the attempts are spent the seq becomes a placeholder in the feed
         let shown = try await db.read { dbc in
             try HistoryWindow.exhaustedGapSeqs(dbc, chatId: "c1", floor: nil)
         }
         XCTAssertEqual(shown, [1])
     }
 
-    /// Конверт с исчерпанными попытками и вышедшим сроком забывается, но запись
-    /// о пропавшем seq остаётся: пагинация не пойдёт за ним на сервер снова.
+    /// An envelope with its attempts spent and its lifetime over is forgotten,
+    /// but the record of the missing seq stays, so pagination will not go back
+    /// to the server for it.
     func testExpiredEnvelopeIsDroppedAndSeqStaysRecorded() async throws {
         let db = try AppDatabase.openInMemory()
         try await makeDirectChat(db)
@@ -202,10 +204,10 @@ final class MessageRepairTests: XCTestCase {
         XCTAssertEqual(gap, 1)
     }
 
-    // MARK: - Сторона отправителя
+    // MARK: - Sender side
 
-    /// Запрос копии: сообщение есть в локальной базе отправителя — оно уезжает
-    /// адресату заново, с исходным msgId.
+    /// A request for a copy where the sender still has the message locally: it
+    /// goes back to the asker under the original msgId.
     func testSenderAnswersWithOriginalContent() async throws {
         let db = try AppDatabase.openInMemory()
         try await makeDirectChat(db)
@@ -240,7 +242,8 @@ final class MessageRepairTests: XCTestCase {
         XCTAssertEqual(original.text, "привет")
     }
 
-    /// Чужого сообщения у нас нет — отвечать нечем, и в очередь ничего не идёт.
+    /// We do not hold someone else's message, so there is nothing to answer with
+    /// and nothing is queued.
     func testSenderIgnoresRequestForMessageItDoesNotHold() async throws {
         let db = try AppDatabase.openInMemory()
         try await makeDirectChat(db)
@@ -255,10 +258,10 @@ final class MessageRepairTests: XCTestCase {
         XCTAssertTrue(outbox.isEmpty)
     }
 
-    // MARK: - Сторона получателя
+    // MARK: - Recipient side
 
-    /// Копия встаёт под исходным msgId: в ленте одно сообщение, а не два, и
-    /// повтор копии тоже дубля не делает.
+    /// The copy lands under the original msgId, so the feed shows one message;
+    /// a second copy does not create a duplicate either.
     func testRepairedCopyReplacesGapWithoutDuplicate() async throws {
         let db = try AppDatabase.openInMemory()
         try await makeDirectChat(db)
@@ -280,7 +283,7 @@ final class MessageRepairTests: XCTestCase {
         let rows = try await db.read { dbc in
             try Message.fetchAll(dbc, sql: "SELECT * FROM message WHERE chatId = 'c1'")
         }
-        XCTAssertEqual(rows.count, 1, "повторная копия создала дубль в ленте")
+        XCTAssertEqual(rows.count, 1, "the repeated copy created a duplicate in the feed")
         XCTAssertEqual(rows[0].msgId, "m1")
         XCTAssertEqual(rows[0].seq, 1)
         XCTAssertEqual(rows[0].text, "привет")
@@ -290,11 +293,12 @@ final class MessageRepairTests: XCTestCase {
             try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingDecrypt")! +
                 Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM historyGap")!
         }
-        XCTAssertEqual(leftovers, 0, "после починки запись о пропаже осталась")
+        XCTAssertEqual(leftovers, 0, "the record of the gap survived the repair")
     }
 
-    /// Заявка до принятия: запрос копии не уходит, иначе автор узнал бы, что на
-    /// той стороне кто-то есть. Конверт при этом сохранён и дождётся принятия.
+    /// A request before it is accepted: no copy is asked for, otherwise the
+    /// author would learn someone is on the other side. The envelope is still
+    /// kept and waits for the acceptance.
     func testRequestChatDoesNotAskUntilAccepted() async throws {
         let db = try AppDatabase.openInMemory()
         try await makeDirectChat(db)
@@ -305,14 +309,14 @@ final class MessageRepairTests: XCTestCase {
 
         await engine.apply(try brokenFrame(seq: 1, msgId: "m1"))
         let queued = try await outboxContents(db)
-        XCTAssertTrue(queued.isEmpty, "запрос ушёл из непринятой заявки")
+        XCTAssertTrue(queued.isEmpty, "a request went out from a chat request that was never accepted")
 
         let kept = try await db.read { dbc in
             try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingDecrypt")!
         }
-        XCTAssertEqual(kept, 1, "конверт заявки не сохранён")
+        XCTAssertEqual(kept, 1, "the envelope of a chat request was not kept")
 
-        // после принятия проход просит копию
+        // once accepted, the sweep does ask for a copy
         try await db.write { dbc in
             try dbc.execute(sql: "UPDATE chat SET isRequest = 0, iAccepted = 1 WHERE id = 'c1'")
             try dbc.execute(sql: "UPDATE pendingDecrypt SET lastTriedAt = 0")
@@ -322,8 +326,8 @@ final class MessageRepairTests: XCTestCase {
         XCTAssertEqual(asked.first?.content.kind, "repairRequest")
     }
 
-    /// Копию принимаем только от автора пропавшего сообщения: иначе участник
-    /// чата подменил бы чужое сообщение своим текстом.
+    /// A copy is accepted only from the author of the missing message, otherwise
+    /// any chat member could replace someone else's message with their own text.
     func testRepairFromSomeoneElseIsRejected() async throws {
         let db = try AppDatabase.openInMemory()
         try await makeDirectChat(db)
@@ -342,11 +346,11 @@ final class MessageRepairTests: XCTestCase {
         let rows = try await db.read { dbc in
             try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = 'c1'")!
         }
-        XCTAssertEqual(rows, 0, "чужая копия попала в ленту")
+        XCTAssertEqual(rows, 0, "a copy from a third party reached the feed")
     }
 
-    /// Вступивший позже участник просит копию старого сообщения: отвечать
-    /// нельзя, иначе он получит историю, закрытую для него сменой цепочки.
+    /// A member who joined later asks for a copy of an older message: answering
+    /// would hand them history the chain rotation closed off from them.
     func testRequestForMessageOlderThanMembershipIsRefused() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
@@ -368,11 +372,11 @@ final class MessageRepairTests: XCTestCase {
         await engine.handleRepairContent(request, chatId: "g1", from: "late", fromDevice: "d1")
 
         let outbox = try await outboxContents(db)
-        XCTAssertTrue(outbox.isEmpty, "старое сообщение уехало вступившему позже")
+        XCTAssertTrue(outbox.isEmpty, "an old message went out to a member who joined later")
     }
 
-    /// Подтверждение раздачи sender key закрывает адрес: следующее сообщение в
-    /// группу цепочку ему не перераздаёт.
+    /// Confirming a sender key delivery closes that address: the next message to
+    /// the group does not redistribute the chain to it.
     func testSenderKeyConfirmationClosesDistribution() async throws {
         let db = try AppDatabase.openInMemory()
         let api = APIClient(baseURL: URL(string: "http://localhost:1")!)
@@ -387,32 +391,32 @@ final class MessageRepairTests: XCTestCase {
         XCTAssertTrue(loaded.1.contains("peer/d1"))
         XCTAssertNil(loaded.2["peer/d1"])
 
-        // получатель пожаловался — раздача забывается и уйдёт заново
+        // the recipient complained: the delivery is forgotten and will go out again
         try e2ee.forgetSenderKeyDistribution(chatId: "g1", userId: "peer")
         loaded = try XCTUnwrap(store.loadSenderKeyOut(chatId: "g1"))
         XCTAssertFalse(loaded.1.contains("peer/d1"))
     }
 
-    // MARK: - Расписание
+    // MARK: - Schedule
 
     func testScheduleTerminalAsksAtOnceAndBacksOff() {
         let now = 1_000_000.0
         XCTAssertTrue(MessageRepair.repairDue(reason: "unknown_mode", firstSeenAt: now,
                                               repairAttempts: 0, repairAskedAt: 0, now: now))
-        // ключ ещё может доехать — ждём срок
+        // the key may still arrive, so wait out the grace period
         XCTAssertFalse(MessageRepair.repairDue(reason: "no_sender_key", firstSeenAt: now,
                                                repairAttempts: 0, repairAskedAt: 0, now: now))
         XCTAssertTrue(MessageRepair.repairDue(reason: "no_sender_key",
                                               firstSeenAt: now - MessageRepair.repairGrace,
                                               repairAttempts: 0, repairAskedAt: 0, now: now))
-        // после запроса пауза выдерживается и растёт
+        // after a request the backoff is honoured and grows
         XCTAssertFalse(MessageRepair.repairDue(reason: "unknown_mode", firstSeenAt: now,
                                                repairAttempts: 1, repairAskedAt: now - 5, now: now))
         XCTAssertTrue(MessageRepair.repairDue(reason: "unknown_mode", firstSeenAt: now,
                                               repairAttempts: 1, repairAskedAt: now - 60, now: now))
         XCTAssertFalse(MessageRepair.repairDue(reason: "unknown_mode", firstSeenAt: now,
                                                repairAttempts: 2, repairAskedAt: now - 60, now: now))
-        // попытки исчерпаны
+        // attempts are spent
         XCTAssertFalse(MessageRepair.repairDue(reason: "unknown_mode", firstSeenAt: now,
                                                repairAttempts: MessageRepair.maxAttempts,
                                                repairAskedAt: 0, now: now))

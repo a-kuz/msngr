@@ -2,8 +2,8 @@ import XCTest
 import GRDB
 @testable import MsngrCore
 
-/// Фрейм {t:"error"} от сервера: сопоставление с исходящим по clientMsgId,
-/// пометка сообщения неотправленным и выход из outbox.
+/// The {t:"error"} frame from the server: matching it to an outgoing message
+/// by clientMsgId, marking that message failed and dropping it from the outbox.
 final class SendFailureTests: XCTestCase {
     private func makeEngine(db: DatabaseQueue) throws -> SyncEngine {
         let api = APIClient(baseURL: URL(string: "http://localhost:1")!)
@@ -14,7 +14,7 @@ final class SendFailureTests: XCTestCase {
                           ownUserId: "me", ownDeviceId: "dev")
     }
 
-    /// Кладёт в БД исходящее в состоянии «отправляется» и его строку в outbox.
+    /// Stores an outgoing message in the sending state together with its outbox row.
     private func seedOutgoing(_ db: DatabaseQueue, clientMsgId: String) async throws {
         try await db.write { dbc in
             try dbc.execute(sql: "INSERT INTO chat (id, kind, createdBy, createdAt) VALUES ('c1','direct','me',0)")
@@ -47,10 +47,10 @@ final class SendFailureTests: XCTestCase {
         let queued = try await db.read { dbc in
             try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM outbox WHERE clientMsgId = 'cm1'")
         }
-        XCTAssertEqual(queued, 0, "отвергнутое сервером не должно ретраиться")
+        XCTAssertEqual(queued, 0, "what the server rejected must not be retried")
     }
 
-    /// Отказ адресуется конкретной отправке: соседнее исходящее не трогается.
+    /// A rejection addresses one send: a neighbouring outgoing message is untouched.
     func testErrorFrameTouchesOnlyMatchingClientMsgId() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
@@ -77,7 +77,7 @@ final class SendFailureTests: XCTestCase {
         XCTAssertEqual(queued, 1)
     }
 
-    /// Код, которого клиент не знает (сервер ушёл вперёд), сохраняется как есть.
+    /// A code the client does not know (the server moved ahead) is stored verbatim.
     func testUnknownCodeIsStored() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
@@ -92,7 +92,7 @@ final class SendFailureTests: XCTestCase {
         XCTAssertEqual(msg?.failReason, "teapot")
     }
 
-    /// Успешный ack после отказа снимает пометку: сообщение всё-таки ушло.
+    /// A successful ack after a rejection clears the mark: the message did go out.
     func testSentAckClearsFailReason() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
@@ -109,7 +109,7 @@ final class SendFailureTests: XCTestCase {
         XCTAssertNil(msg?.failReason)
     }
 
-    // MARK: - Тексты
+    // MARK: - Texts
 
     func testExplanationPerCode() {
         XCTAssertTrue(SendFailure.explanation(SendFailure.blocked).contains("заблокировали"))
@@ -118,7 +118,7 @@ final class SendFailureTests: XCTestCase {
         XCTAssertTrue(SendFailure.explanation(SendFailure.tooManyAttempts).contains("соединение"))
     }
 
-    /// Неизвестный и отсутствующий код дают общий текст, а не пустоту.
+    /// An unknown code and a missing one both give the generic text, never an empty string.
     func testExplanationFallback() {
         XCTAssertFalse(SendFailure.explanation("teapot").isEmpty)
         XCTAssertEqual(SendFailure.explanation("teapot"), SendFailure.explanation(nil))
