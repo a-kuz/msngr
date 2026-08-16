@@ -5,7 +5,7 @@ public struct APIError: Error, Equatable {
     public let status: Int
 }
 
-/// HTTP-клиент серверного API. Все методы — async, ошибки типизированы.
+/// HTTP client for the server API. Every method is async and errors are typed.
 public final class APIClient: @unchecked Sendable {
     public let baseURL: URL
     public var token: String?
@@ -17,8 +17,8 @@ public final class APIClient: @unchecked Sendable {
         self.session = session
     }
 
-    /// Строит URL из пути с возможной query-строкой. appendingPathComponent экранирует
-    /// "?" в %3F, из-за чего query превращается в часть пути и запрос уходит в 404.
+    /// Builds a URL from a path that may carry a query string. appendingPathComponent
+    /// escapes "?" as %3F, which folds the query into the path and turns the request into a 404.
     private func url(for path: String) -> URL {
         let parts = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
         var url = baseURL.appendingPathComponent(String(parts[0]))
@@ -111,18 +111,18 @@ public final class APIClient: @unchecked Sendable {
         try await post("api/register", body: body, as: RegisterResponse.self)
     }
 
-    // MARK: - Сессии устройств
+    // MARK: - Device sessions
 
-    /// Активная сессия — устройство пользователя с неотозванным токеном.
+    /// An active session: one of the user's devices whose token has not been revoked.
     public struct SessionDTO: Decodable, Identifiable, Sendable {
         public let deviceId: String
         public let name: String?
-        /// миллисекунды: `devices.created_at` на сервере пишется `Date.now()`,
-        /// в отличие от остальных клиент-видимых меток времени в секундах
+        /// Milliseconds: the server writes `devices.created_at` with `Date.now()`, unlike
+        /// the other client-visible timestamps, which are in seconds.
         public let createdAt: Double
         public let lastSeen: Double?
         public let hasPushToken: Bool
-        /// устройство, с которого сделан запрос
+        /// The device the request came from.
         public let current: Bool
 
         public var id: String { deviceId }
@@ -135,12 +135,12 @@ public final class APIClient: @unchecked Sendable {
         try await get("api/sessions", as: SessionsResponse.self).sessions
     }
 
-    /// Отзывает токен текущего устройства: следующий же запрос получит 401.
+    /// Revokes this device's token; the very next request gets a 401.
     public func logout() async throws {
         _ = try await request("api/logout", method: "POST", jsonBody: [String: String]())
     }
 
-    /// Отзывает токен другого своего устройства; его сокет сервер закрывает кодом 4401.
+    /// Revokes the token of another device of ours; the server closes its socket with code 4401.
     public func revokeSession(deviceId: String) async throws {
         _ = try await request("api/sessions/\(deviceId)/revoke", method: "POST",
                               jsonBody: [String: String]())
@@ -174,7 +174,7 @@ public final class APIClient: @unchecked Sendable {
         try await get("api/users/\(id)", as: UserResponse.self)
     }
 
-    /// Устройство пользователя с identity-ключами (без prekey-бандла).
+    /// A user's device with its identity keys, without the prekey bundle.
     public struct DeviceDTO: Decodable {
         public let userId: String
         public let deviceId: String
@@ -182,7 +182,7 @@ public final class APIClient: @unchecked Sendable {
         public let identitySignKey: String
     }
     public struct DevicesResponse: Decodable { public let devices: [DeviceDTO] }
-    /// Устройства сразу нескольких пользователей одним запросом; ничего не потребляет.
+    /// Devices of several users in one request; consumes no prekeys.
     public func devices(userIds: [String]) async throws -> [DeviceDTO] {
         guard !userIds.isEmpty else { return [] }
         return try await get("api/devices?ids=\(userIds.joined(separator: ","))",
@@ -219,7 +219,7 @@ public final class APIClient: @unchecked Sendable {
     }
 
     private struct PrekeyCountResponse: Decodable { let count: Int }
-    /// Остаток собственных one-time prekeys на сервере.
+    /// How many of our own one-time prekeys are left on the server.
     public func prekeyCount() async throws -> Int {
         try await get("api/prekeys/count", as: PrekeyCountResponse.self).count
     }
@@ -299,7 +299,7 @@ public final class APIClient: @unchecked Sendable {
         struct Body: Encodable { let msgId: String? }
         _ = try await request("api/chats/\(chatId)/pin-message", method: "POST", jsonBody: Body(msgId: msgId))
     }
-    /// `mutedUntil` без `muted` игнорируется сервером; `muted: true` без срока — бессрочно.
+    /// The server ignores `mutedUntil` without `muted`; `muted: true` with no expiry means forever.
     public func setChatFlags(_ chatId: String, pinned: Bool? = nil,
                              muted: Bool? = nil, mutedUntil: Double? = nil,
                              archived: Bool? = nil) async throws {
@@ -344,8 +344,8 @@ public final class APIClient: @unchecked Sendable {
         let raw = try await request("api/avatar", method: "POST", rawBody: jpeg, contentType: "image/jpeg")
         return try JSONDecoder().decode(AvatarResponse.self, from: raw).avatarId
     }
-    /// Аватар чата: тот же блоб-путь, но сервер кладёт id в настройки чата,
-    /// а не в свой профиль (права — как у /chats/:id/settings).
+    /// Chat avatar: the same blob path, except the server stores the id in the chat settings
+    /// rather than in our own profile. Permissions match /chats/:id/settings.
     public func uploadChatAvatar(chatId: String, jpeg: Data) async throws -> String {
         let raw = try await request("api/avatar?chatId=\(chatId)", method: "POST",
                                     rawBody: jpeg, contentType: "image/jpeg")
@@ -354,7 +354,7 @@ public final class APIClient: @unchecked Sendable {
     public func avatarURL(_ avatarId: String) -> URL {
         baseURL.appendingPathComponent("api/avatar/\(avatarId)")
     }
-    /// Байты аватара (запрос идёт с токеном).
+    /// Avatar bytes; the request carries the token.
     public func avatarData(_ avatarId: String) async throws -> Data {
         try await request("api/avatar/\(avatarId)")
     }
