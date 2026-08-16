@@ -264,7 +264,8 @@ struct ChatScreen: View {
                          MediaViewerPresenter.present(message: msg, startIndex: idx)
                      },
                      selectingText: $selectingText,
-                     showScrollDown: $showScrollDown)
+                     showScrollDown: $showScrollDown,
+                     onSwipeBack: { dismiss() })
     }
 
     /// Пустой чат: центрированная подсказка вместо голого фона.
@@ -672,6 +673,8 @@ struct MessagesView: UIViewControllerRepresentable {
     var onTapMedia: (Message, Int, UIView) -> Void
     @Binding var selectingText: Message?
     @Binding var showScrollDown: Bool
+    /// свайп от левой кромки: возврат к списку чатов
+    var onSwipeBack: () -> Void
 
     func makeUIViewController(context: Context) -> MessagesViewController {
         vc.onAtBottomChanged = { [weak model] atBottom in
@@ -741,6 +744,8 @@ struct MessagesView: UIViewControllerRepresentable {
                 }
             }
         }
+        // замыкание с dismiss живёт не дольше тела body — переустанавливаем
+        vc.onSwipeBack = onSwipeBack
         vc.noteSendTick(sendTick)
         vc.apply(items)
         vc.setSelection(mode: selecting, ids: selectedIds)

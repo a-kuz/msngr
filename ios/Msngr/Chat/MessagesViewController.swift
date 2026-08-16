@@ -6,7 +6,7 @@ import MsngrCore
 /// Инвертированный список сообщений: UICollectionView, перевёрнутый по Y.
 /// Ячейки тоже перевёрнуты — итог выглядит нормально, а «низ» чата это contentOffset 0:
 /// мгновенное открытие с последних сообщений и естественная пагинация вверх.
-final class MessagesViewController: UIViewController {
+final class MessagesViewController: UIViewController, UIGestureRecognizerDelegate {
     /// Лента у низа: самый новый элемент реально виден на экране.
     /// От этого зависят кнопка «вниз» и отметка прочтения.
     var onAtBottomChanged: ((Bool) -> Void)?
@@ -21,6 +21,8 @@ final class MessagesViewController: UIViewController {
     var onToggleSelection: ((Message) -> Void)?
     /// тап по статус-бару: экран ведёт ленту к началу чата
     var onScrollToStart: (() -> Void)?
+    /// свайп от левой кромки: возврат к списку чатов
+    var onSwipeBack: (() -> Void)?
 
     private(set) var collectionView: UICollectionView!
     private var items: [ChatFeedItem] = []
@@ -35,6 +37,9 @@ final class MessagesViewController: UIViewController {
     private var recomputingAtBottom = false
     /// Счётчик своих отправок, уже отработанный лентой.
     private var seenSendTick = 0
+    /// Возврат свайпом: кромка своя, потому что системный жест на этом экране
+    /// не начинается.
+    private let backSwipe = UIPanGestureRecognizer()
     /// Отправка ждёт своего сообщения: оно обязано приехать в низ ленты
     /// и появиться там с анимацией, из какого бы места истории его ни отправили.
     private var awaitingOwnSend = false
@@ -102,19 +107,32 @@ final class MessagesViewController: UIViewController {
         collectionView.register(SystemCell.self, forCellWithReuseIdentifier: "system")
         collectionView.register(UnreadMarkerCell.self, forCellWithReuseIdentifier: "unread")
         view.addSubview(collectionView)
+        backSwipe.addTarget(self, action: #selector(handleBackSwipe(_:)))
+        backSwipe.delegate = self
+        view.addGestureRecognizer(backSwipe)
+        // лента ждёт отказа кромки: вне кромки жест не начинается вовсе,
+        // поэтому скролл остаётся мгновенным
+        collectionView.panGestureRecognizer.require(toFail: backSwipe)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardChanged(_:)),
                                                name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
     }
 
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        // шапка чата рисует свою кнопку возврата, а системная скрыта — вместе с
-        // ней навигация отключает и жест «свайп назад». Возвращаем его, сняв
-        // делегата, который его и глушит
-        if let pop = navigationController?.interactivePopGestureRecognizer {
-            pop.delegate = nil
-            pop.isEnabled = true
-        }
+    /// Возврат свайпом от левой кромки. Системный жест на этом экране не
+    /// начинается: шапка рисует свою кнопку возврата, а с убранной системной
+    /// навигация своему переходу отказывает — ни снятый делегат, ни включённый
+    /// заново распознаватель этого не меняют. Поэтому кромка своя.
+    @objc private func handleBackSwipe(_ g: UIPanGestureRecognizer) {
+        guard g.state == .ended else { return }
+        if g.translation(in: view).x > 70 || g.velocity(in: view).x > 500 { onSwipeBack?() }
+    }
+
+    /// Жест возврата берёт только касания от кромки, идущие вправо; всё
+    /// остальное остаётся ленте.
+    func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+        guard g === backSwipe else { return true }
+        let start = backSwipe.location(in: nil).x - backSwipe.translation(in: nil).x
+        let v = backSwipe.velocity(in: view)
+        return start < MessageCell.backSwipeEdge && v.x > abs(v.y)
     }
 
     override func viewDidLayoutSubviews() {
