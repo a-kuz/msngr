@@ -122,27 +122,7 @@ final class SmokeTests: XCTestCase {
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).tap()
     }
 
-    /// Тап по статус-бару в перевёрнутой ленте ведёт к началу переписки, а не
-    /// к её концу. Синтетическое касание сюда не доходит, поэтому проверка
-    /// живёт в UI-тесте: XCUITest бьёт по настоящему статус-бару.
-    func testF_StatusBarTapGoesToChatStart() {
-        openChatWithAkuz()
-        let input = app.textViews["chat.input"]
-        let marker = "top-\(Int(Date().timeIntervalSince1970))"
-        // лента должна быть длиннее экрана, иначе начало и конец — одно и то же
-        input.tap()
-        for i in 1...25 {
-            input.typeText("\(marker) \(i)")
-            app.buttons["chat.send"].tap()
-        }
-        let last = app.staticTexts["\(marker) 25"]
-        XCTAssertTrue(last.waitForExistence(timeout: 10), "лента не набрала высоту")
-
-        app.statusBars.firstMatch.tap()
-
-        let start = app.staticTexts["История начинается здесь"]
-        XCTAssertTrue(start.waitForExistence(timeout: 10) && start.isHittable,
-                      "лента не пришла к началу переписки")
-        XCTAssertFalse(last.isHittable, "лента осталась на последнем сообщении")
-    }
+    // A status bar tap goes to the beginning of the conversation. The touch is
+    // SpringBoard's, and no way of aiming one at the status bar from XCUITest reaches the
+    // app's delegate on the simulator, so the check lives in MsngrTests/StatusBarTapTests.
 }
