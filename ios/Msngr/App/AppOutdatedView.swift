@@ -17,6 +17,7 @@ struct AppOutdatedView: View {
                 Image(systemName: "arrow.up.circle")
                     .font(.system(size: 56))
                     .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
                 Text("Приложение устарело")
                     .font(.title2.bold())
                 Text(detail)

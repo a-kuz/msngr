@@ -257,10 +257,13 @@ struct ChatInfoView: View {
         if isGroup && canEditSettings {
             PhotosPicker(selection: $avatarItem, matching: .images) {
                 avatar.overlay(alignment: .bottomTrailing) {
+                    // Badge geometry belongs to the fixed-size avatar it sits
+                    // on, not to the type scale.
                     Image(systemName: "camera.fill")
                         .font(.system(size: 12))
                         .foregroundStyle(.white)
                         .frame(width: 26, height: 26)
+                        .accessibilityHidden(true)
                         .background(Theme.accent, in: Circle())
                 }
             }

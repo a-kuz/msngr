@@ -42,14 +42,37 @@ enum OwnUser {
 }
 
 enum BubbleLayout {
-    static let textFont = UIFont.systemFont(ofSize: 17)
-    static let timeFont = UIFont.systemFont(ofSize: 12)
-    static let nameFont = UIFont.systemFont(ofSize: 14, weight: .semibold)
+    static var textFont: UIFont { Theme.Text.bubble.uiFont }
+    static var timeFont: UIFont { Theme.Text.bubbleTime.uiFont }
+    static var nameFont: UIFont { Theme.Text.bubbleName.uiFont }
+    static var forwardFont: UIFont { Theme.Text.bubbleForward.uiFont }
     static let hPadding: CGFloat = 12
     static let vPadding: CGFloat = 7
     static let sideMargin: CGFloat = 10
     static let groupGap: CGFloat = 2
     static let normalGap: CGFloat = 8
+
+    // Everything the plan places vertically follows the text it holds, so the
+    // whole bubble grows and shrinks with the reader's text size.
+
+    /// Height of the time/ticks line.
+    static var statusHeight: CGFloat { ceil(timeFont.lineHeight) + 4 }
+    /// Author name row in groups.
+    static var nameHeight: CGFloat { ceil(nameFont.lineHeight) + 2 }
+    /// "Forwarded from" row.
+    static var forwardHeight: CGFloat { ceil(forwardFont.lineHeight) }
+    /// Quoted-message strip: author line over preview line.
+    static var replyHeight: CGFloat {
+        ceil(Theme.Text.replyAuthor.uiFont.lineHeight + Theme.Text.replyText.uiFont.lineHeight) + 6
+    }
+    static var replyWidth: CGFloat { TypeScale.scaled(220, max: 340) }
+    /// Reaction capsule.
+    static var chipHeight: CGFloat { ceil(Theme.Text.reaction.uiFont.lineHeight) + 8 }
+    /// Voice waveform and file plate.
+    static var attachmentHeight: CGFloat { TypeScale.scaled(42, max: 78) }
+    static var attachmentWidth: CGFloat { TypeScale.scaled(220, max: 340) }
+    /// Delivery ticks next to the time.
+    static var tickWidth: CGFloat { TypeScale.scaled(20, relativeTo: .caption1, max: 34) }
 
     /// Кэш планов: (msgId|width|версия) → план.
     private static let cache = NSCache<NSString, Box>()
@@ -62,7 +85,7 @@ enum BubbleLayout {
                          showName: Bool, ownId: String) -> NSString {
         let reactions = msg.reactions.map { "\($0.key)\($0.value.count)\($0.value.contains(ownId) ? "*" : "")" }.sorted().joined()
         let ver = "\(msg.text ?? "")|\(msg.status.rawValue)|\(msg.edited)|\(reactions)|\(msg.deletedForAll)"
-        return "\(msg.id)|\(Int(width))|\(tightGap)|\(showTail)|\(showName)|\(ver.hashValue)" as NSString
+        return "\(msg.id)|\(Int(width))|\(TypeScale.category.rawValue)|\(tightGap)|\(showTail)|\(showName)|\(ver.hashValue)" as NSString
     }
 
     static func plan(for msg: Message, width: CGFloat, tightGap: Bool, showTail: Bool,
@@ -88,6 +111,8 @@ enum BubbleLayout {
         let maxBubbleWidth = floor(safeWidth * Theme.bubbleMaxWidthRatio)
         let timeString = Self.timeString(msg)
         let statusWidth = Self.statusWidth(msg, timeString: timeString)
+        let statusH = statusHeight
+        let textFont = Self.textFont
 
         var contentWidth: CGFloat = 0
         var y: CGFloat = vPadding
@@ -103,7 +128,7 @@ enum BubbleLayout {
 
         // имя автора (группы, входящие, первое в серии)
         if showName, !msg.isOutgoing {
-            let h: CGFloat = 18
+            let h = nameHeight
             authorNameFrame = CGRect(x: hPadding, y: y, width: 0, height: h) // ширина после contentWidth
             let nameW = (authorName ?? "").size(withAttributes: [.font: nameFont]).width
             contentWidth = max(contentWidth, min(nameW, maxBubbleWidth - 2 * hPadding))
@@ -113,18 +138,20 @@ enum BubbleLayout {
         // форвард
         if let fwd = msg.forward {
             let text = "Переслано от \(fwd.fromName)"
-            let w = min(text.size(withAttributes: [.font: timeFont]).width, maxBubbleWidth - 2 * hPadding)
-            forwardFrame = CGRect(x: hPadding, y: y, width: w, height: 16)
+            let h = forwardHeight
+            let w = min(text.size(withAttributes: [.font: forwardFont]).width, maxBubbleWidth - 2 * hPadding)
+            forwardFrame = CGRect(x: hPadding, y: y, width: w, height: h)
             contentWidth = max(contentWidth, w)
-            y += 18
+            y += h + 2
         }
 
         // reply-плашка
         if msg.replyTo != nil {
-            let w = min(maxBubbleWidth - 2 * hPadding, 220)
-            replyFrame = CGRect(x: hPadding, y: y, width: w, height: 36)
+            let w = min(maxBubbleWidth - 2 * hPadding, replyWidth)
+            let h = replyHeight
+            replyFrame = CGRect(x: hPadding, y: y, width: w, height: h)
             contentWidth = max(contentWidth, w)
-            y += 40
+            y += h + 4
         }
 
         // контент
@@ -157,15 +184,17 @@ enum BubbleLayout {
             y = size.height
             statusOnMedia = true
         case .voice:
-            let w: CGFloat = 220
-            voiceFrame = CGRect(x: hPadding, y: y, width: w, height: 42)
+            let w = attachmentWidth
+            let h = attachmentHeight
+            voiceFrame = CGRect(x: hPadding, y: y, width: w, height: h)
             contentWidth = max(contentWidth, w)
-            y += 42
+            y += h
         case .file:
-            let w: CGFloat = min(240, maxBubbleWidth - 2 * hPadding)
-            voiceFrame = CGRect(x: hPadding, y: y, width: w, height: 42) // файл использует voiceFrame-слот
+            let w = min(attachmentWidth + 20, maxBubbleWidth - 2 * hPadding)
+            let h = attachmentHeight
+            voiceFrame = CGRect(x: hPadding, y: y, width: w, height: h) // файл использует voiceFrame-слот
             contentWidth = max(contentWidth, w)
-            y += 42
+            y += h
         default:
             let display = msg.deletedForAll ? "Сообщение удалено" : (msg.text ?? "")
             let (f, a) = measureText(display, maxWidth: maxBubbleWidth - 2 * hPadding, startY: y)
@@ -177,8 +206,9 @@ enum BubbleLayout {
 
         // --- Реакции: считаем капсулы заранее, размещение статуса зависит от них ---
         struct Chip { let emoji: String; let count: Int; let mine: Bool; let width: CGFloat }
-        let chipH: CGFloat = 26
+        let chipH = chipHeight
         let chipGap: CGFloat = 4
+        let chipFont = Theme.Text.reaction.uiFont
         let ownId = OwnUser.id
         // порядок стабильный: по количеству, при равенстве — по эмодзи,
         // иначе капсулы прыгают местами при каждой перерисовке
@@ -186,7 +216,7 @@ enum BubbleLayout {
             .sorted { ($0.value.count, $1.key) > ($1.value.count, $0.key) }
             .map { emoji, users in
                 let label = users.count > 1 ? "\(emoji) \(users.count)" : emoji
-                let w = label.size(withAttributes: [.font: UIFont.systemFont(ofSize: 14)]).width + 18
+                let w = label.size(withAttributes: [.font: chipFont]).width + 18
                 return Chip(emoji: emoji, count: users.count, mine: users.contains(ownId), width: w)
             }
 
@@ -198,8 +228,9 @@ enum BubbleLayout {
 
         if statusOnMedia, let mf = mediaFrame {
             // статус — капсулой поверх медиа; реакции лягут ниже отдельным блоком
-            statusFrame = CGRect(x: mf.maxX - statusWidth - 16, y: mf.maxY - 26,
-                                 width: statusWidth + 10, height: 20)
+            let capsuleH = statusH + 4
+            statusFrame = CGRect(x: mf.maxX - statusWidth - 16, y: mf.maxY - capsuleH - 6,
+                                 width: statusWidth + 10, height: capsuleH)
             if !chips.isEmpty {
                 var rx = hPadding
                 var ry = mf.maxY + 4
@@ -244,7 +275,7 @@ enum BubbleLayout {
                 }
                 contentWidth = max(contentWidth, rx - chipGap - hPadding + gap + statusWidth)
                 statusFrame = CGRect(x: hPadding + contentWidth - statusWidth,
-                                     y: baseY + (lineH - 16) / 2, width: statusWidth, height: 16)
+                                     y: baseY + (lineH - statusH) / 2, width: statusWidth, height: statusH)
                 y = baseY + lineH
                 reactionsHeight = 0
             } else {
@@ -266,12 +297,12 @@ enum BubbleLayout {
                 if usedInLastRow + gap + statusWidth <= maxContent {
                     contentWidth = max(contentWidth, usedInLastRow + gap + statusWidth)
                     statusFrame = CGRect(x: hPadding + contentWidth - statusWidth,
-                                         y: ry + (chipH - 16) / 2, width: statusWidth, height: 16)
+                                         y: ry + (chipH - statusH) / 2, width: statusWidth, height: statusH)
                     y = ry + chipH
                 } else {
                     statusFrame = CGRect(x: hPadding + contentWidth - statusWidth,
-                                         y: ry + chipH + 2, width: statusWidth, height: 16)
-                    y = ry + chipH + 18
+                                         y: ry + chipH + 2, width: statusWidth, height: statusH)
+                    y = ry + chipH + statusH + 2
                 }
                 reactionsHeight = y - contentBottom
             }
@@ -285,22 +316,23 @@ enum BubbleLayout {
                 let bubbleContentW = max(contentWidth, lastLineWidth + gap + statusWidth)
                 contentWidth = bubbleContentW
                 statusFrame = CGRect(x: hPadding + bubbleContentW - statusWidth,
-                                     y: tf.maxY - 16, width: statusWidth, height: 16)
+                                     y: tf.maxY - statusH, width: statusWidth, height: statusH)
             } else {
                 // случай 2: статус выталкивается на свою строку
                 statusFrame = CGRect(x: hPadding + contentWidth - statusWidth,
-                                     y: y + 2, width: statusWidth, height: 16)
-                y += 18
+                                     y: y + 2, width: statusWidth, height: statusH)
+                y += statusH + 2
             }
         } else if voiceFrame != nil {
             // voice/file без реакций: время в правом нижнем углу той же строки,
             // где мелкая длительность/размер — баббл остаётся одноэтажным
             statusFrame = CGRect(x: hPadding + contentWidth - statusWidth,
-                                 y: y - 16, width: statusWidth, height: 16)
+                                 y: y - statusH, width: statusWidth, height: statusH)
         } else {
             // прочий контент без текста: статус под контентом справа
-            statusFrame = CGRect(x: hPadding + contentWidth - statusWidth, y: y, width: statusWidth, height: 16)
-            y += 18
+            statusFrame = CGRect(x: hPadding + contentWidth - statusWidth, y: y,
+                                 width: statusWidth, height: statusH)
+            y += statusH + 2
         }
 
         y += vPadding
@@ -443,9 +475,10 @@ enum BubbleLayout {
     }
 
     static func statusWidth(_ msg: Message, timeString: String) -> CGFloat {
-        var w = timeString.size(withAttributes: [.font: timeFont]).width
-        if msg.edited { w += "изм. ".size(withAttributes: [.font: timeFont]).width }
-        if msg.isOutgoing { w += 20 } // галочки
+        let font = timeFont
+        var w = timeString.size(withAttributes: [.font: font]).width
+        if msg.edited { w += "изм. ".size(withAttributes: [.font: font]).width }
+        if msg.isOutgoing { w += tickWidth }
         return ceil(w) + 2
     }
 }

@@ -162,9 +162,9 @@ struct ChatGalleryView: View {
     private func row(_ entry: GalleryEntry) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon(entry))
-                .font(.system(size: 17))
+                .font(Theme.glyph(17, max: 26))
                 .foregroundStyle(Theme.accent)
-                .frame(width: 38, height: 38)
+                .frame(width: TypeScale.scaled(38, max: 52), height: TypeScale.scaled(38, max: 52))
                 .background(Theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
                 Text(Self.primary(entry))
@@ -289,6 +289,7 @@ struct ChatGalleryView: View {
                 Image(systemName: Self.emptyIcon(tab))
                     .font(.system(size: 32))
                     .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
                 Text(Self.emptyText(tab))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -351,14 +352,15 @@ private struct GalleryThumbView: View {
                 Image(systemName: entry.kind == .video ? "film" : "photo")
                     .font(.system(size: 20))
                     .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
             }
             if entry.kind == .video {
                 VStack {
                     Spacer()
                     HStack(spacing: 3) {
-                        Image(systemName: "play.fill").font(.system(size: 9))
+                        Image(systemName: "play.fill").font(Theme.glyph(9, max: 13))
                         if let dur = entry.media?.dur {
-                            Text(Self.duration(dur)).font(.system(size: 11, weight: .medium))
+                            Text(Self.duration(dur)).textRole(Theme.Text.thumbnailCaption)
                         }
                         Spacer()
                     }

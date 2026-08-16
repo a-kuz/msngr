@@ -70,9 +70,9 @@ struct InputBar: View {
                         }
                     } label: {
                         Image(systemName: "plus")
-                            .font(.system(size: 22, weight: .medium))
+                            .font(Theme.glyph(22, max: 34))
                             .foregroundStyle(.secondary)
-                            .frame(width: 36, height: 36)
+                            .frame(width: TypeScale.scaled(36, max: 48), height: TypeScale.scaled(36, max: 48))
                     }
                     .accessibilityIdentifier("chat.attach")
                     GrowingTextView(text: $text, height: $inputHeight,
@@ -220,7 +220,7 @@ struct InputBar: View {
                 onSendImages(images, t.trimmingCharacters(in: .whitespacesAndNewlines))
             } label: {
                 Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 32))
+                    .font(Theme.glyph(32, max: 44))
                     .foregroundStyle(Theme.accent)
             }
             .accessibilityIdentifier("chat.send")
@@ -230,7 +230,7 @@ struct InputBar: View {
                 finishRecording()
             } label: {
                 Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 32))
+                    .font(Theme.glyph(32, max: 44))
                     .foregroundStyle(Theme.accent)
             }
         } else {
@@ -240,9 +240,9 @@ struct InputBar: View {
 
     private var micButton: some View {
         Image(systemName: "mic.fill")
-            .font(.system(size: 22))
+            .font(Theme.glyph(22, max: 34))
             .foregroundStyle(recorder.isRecording ? .red : .secondary)
-            .frame(width: 36, height: 36)
+            .frame(width: TypeScale.scaled(36, max: 48), height: TypeScale.scaled(36, max: 48))
             .scaleEffect(recorder.isRecording ? 1.6 : 1)
             .animation(recorder.isRecording
                        ? .easeInOut(duration: 0.6).repeatForever(autoreverses: true)
@@ -282,7 +282,7 @@ struct InputBar: View {
             Text(String(format: "%d:%02d,%01d", Int(recorder.duration) / 60,
                         Int(recorder.duration) % 60,
                         Int(recorder.duration * 10) % 10))
-                .font(.system(size: 16, design: .monospaced))
+                .textRole(Theme.Text.recordTimer)
             LiveWaveView(amplitudes: recorder.liveAmplitudes)
                 .frame(height: 26)
             Spacer()
@@ -303,7 +303,7 @@ struct InputBar: View {
                 .offset(x: min(0, dragOffset / 3))
             }
         }
-        .frame(minHeight: 36)
+        .frame(minHeight: TypeScale.scaled(36, max: 48))
         .transition(.opacity)
     }
 
@@ -333,7 +333,7 @@ struct PendingImageThumb: View {
             .overlay(alignment: .topTrailing) {
                 Button(action: onRemove) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 16))
+                        .font(Theme.glyph(16, max: 24))
                         .symbolRenderingMode(.palette)
                         .foregroundStyle(Color.white, Color.black.opacity(0.55))
                 }
@@ -371,14 +371,19 @@ struct GrowingTextView: UIViewRepresentable {
     @Binding var height: CGFloat
     var onChange: (String) -> Void
     var onPasteImages: ([UIImage]) -> Void = { _ in }
+    /// Reading the size is what brings `updateUIView` back when the reader
+    /// changes it: the field then re-fonts itself and re-measures its height.
+    @Environment(\.dynamicTypeSize) private var typeSize
 
-    static let minHeight: CGFloat = 36
-    static let maxHeight: CGFloat = 6 * 21 + 16
+    /// Поле растёт вместе с текстом: одна строка внизу, шесть — потолок,
+    /// после которого поле начинает скроллиться.
+    static var minHeight: CGFloat { max(36, ceil(Theme.Text.input.uiFont.lineHeight) + 18) }
+    static var maxHeight: CGFloat { 6 * ceil(Theme.Text.input.uiFont.lineHeight) + 16 }
 
     func makeUIView(context: Context) -> UITextView {
         let tv = PasteAwareTextView()
         tv.onPasteImages = onPasteImages
-        tv.font = .systemFont(ofSize: 17)
+        tv.font = Theme.Text.input.uiFont
         tv.backgroundColor = UIColor.systemGray6
         tv.layer.cornerRadius = 18
         tv.textContainerInset = UIEdgeInsets(top: 8, left: 10, bottom: 8, right: 10)
@@ -395,16 +400,22 @@ struct GrowingTextView: UIViewRepresentable {
         let placeholder = UILabel()
         placeholder.tag = 777
         placeholder.text = "Сообщение"
-        placeholder.font = .systemFont(ofSize: 17)
+        placeholder.font = Theme.Text.input.uiFont
         placeholder.textColor = .placeholderText
-        placeholder.frame = CGRect(x: 14, y: 8, width: 200, height: 21)
         tv.addSubview(placeholder)
         return tv
     }
 
     func updateUIView(_ tv: UITextView, context: Context) {
         if tv.text != text { tv.text = text }
-        tv.viewWithTag(777)?.isHidden = !text.isEmpty
+        let font = Theme.Text.input.uiFont
+        if tv.font != font { tv.font = font }
+        if let placeholder = tv.viewWithTag(777) as? UILabel {
+            placeholder.isHidden = !text.isEmpty
+            placeholder.font = font
+            placeholder.frame = CGRect(x: 14, y: 8, width: tv.bounds.width - 20,
+                                       height: ceil(font.lineHeight))
+        }
         recalcHeight(tv)
     }
 
