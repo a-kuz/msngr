@@ -25,12 +25,18 @@ Documentation: `docs/protocol.md` (frames and API), `docs/crypto-flows.md`,
 
 ```bash
 cd ios && xcodegen                                  # required after editing project.yml
-xcodebuild -project ios/Msngr.xcodeproj -scheme Msngr -destination 'id=<UDID>' build
-xcodebuild -project ios/Msngr.xcodeproj -scheme Msngr -destination 'id=<UDID>' \
-  test -only-testing:MsngrTests
-cd ios/MsngrKit && swift test                       # the core
+scripts/build-slot.py xcodebuild -project ios/Msngr.xcodeproj -scheme Msngr \
+  -destination 'id=<UDID>' build
+scripts/build-slot.py xcodebuild -project ios/Msngr.xcodeproj -scheme Msngr \
+  -destination 'id=<UDID>' test -only-testing:MsngrTests
+cd ios/MsngrKit && ../../scripts/build-slot.py swift test    # the core
 cd server && node test/smoke.mjs                    # API/DO/pushes, needs wrangler dev
 ```
+
+Every build and every test run goes through `scripts/build-slot.py`: several
+agents share this host, and six xcodebuilds at once took the load average past
+600 and started failing tests on timing instead of on code. The wrapper holds one
+of two slots for the duration of the command and releases it with the process.
 
 `ios/Msngr.xcodeproj` is in `.gitignore` and is generated from `ios/project.yml`.
 Do not edit `.pbxproj` by hand — the next `xcodegen` will overwrite the edits. The
