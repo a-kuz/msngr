@@ -563,12 +563,29 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         }
     }
 
+    /// The message at the top edge of the screen, or nil while the feed is at its
+    /// bottom. Search remembers it and brings the reader back to it.
+    func topVisibleMessageId() -> String? {
+        guard isViewLoaded, !atBottom else { return nil }
+        let visibleRect = collectionView.bounds.inset(by: collectionView.adjustedContentInset)
+        // the list is inverted: the visual top of the screen is the largest maxY
+        let top = collectionView.indexPathsForVisibleItems.compactMap { path -> (String, CGFloat)? in
+            guard path.item < items.count,
+                  case .message(let msg, _, _, _, _, _) = items[path.item],
+                  let attrs = collectionView.layoutAttributesForItem(at: path),
+                  attrs.frame.intersects(visibleRect) else { return nil }
+            return (msg.msgId ?? msg.id, attrs.frame.maxY)
+        }.max { $0.1 < $1.1 }
+        return top?.0
+    }
+
     /// Scrolls to a message by its server msgId or its local id.
     /// Returns false when the message is not in the loaded feed and history has to be fetched.
     @discardableResult
-    func scrollTo(msgId: String, highlight: Bool = false) -> Bool {
+    func scrollTo(msgId: String, highlight: Bool = false, animated: Bool = true) -> Bool {
         guard let idx = index(ofMsgId: msgId) else { return false }
-        collectionView.scrollToItem(at: IndexPath(item: idx, section: 0), at: .centeredVertically, animated: true)
+        collectionView.scrollToItem(at: IndexPath(item: idx, section: 0), at: .centeredVertically,
+                                    animated: animated)
         if highlight {
             pendingHighlightId = msgId
             // if the cell is already on screen the flash runs alongside the scroll settling;

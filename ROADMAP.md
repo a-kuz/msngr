@@ -61,14 +61,18 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ avatar, name, preview, time, unread badge (design-review 02b)
   - ✅ ticks on the last outgoing message (media-run, case 32)
   - ✅ media-type previews as an icon and a caption (design-review)
-  - 🟡 «печатает…» in place of the preview (not verified live)
-  - 🟡 «Черновик: …» in the row (not verified live; the draft itself — offline-run 5)
-  - 🟡 the mute icon and the pin in place of the badge (not verified live)
+  - ✅ «печатает…» in place of the preview: it goes out when the peer stops
+    typing, and a message that arrives takes it down with it (qa/runs/2026-08-16-chatlist)
+  - ✅ «Черновик: …» in the row, appearing and going with the field, typing
+    outranking it (qa/runs/2026-08-16-chatlist; the draft itself — offline-run 5)
+  - ✅ the mute icon and the pin in place of the badge, unread pushing the pin out
+    (qa/runs/2026-08-16-chatlist)
 - Organising the list
-  - 🟡 sorting: pinned on top, then by activity (not verified live)
-  - 🟡 swipes: archive, mute, pin (not verified live)
-  - 🟡 the archive section and the archive screen (not verified live)
-  - 🟡 the requests section with «Принять» / «Заблокировать» swipes (not verified live)
+  - ✅ sorting: pinned on top, then by activity (qa/runs/2026-08-16-chatlist, on a
+    list with two pinned chats, a request, the archive and unread)
+  - ✅ swipes: archive, mute, pin, delete (qa/runs/2026-08-16-chatlist)
+  - ✅ the archive section and the archive screen (qa/runs/2026-08-16-chatlist)
+  - ✅ the requests section with «Принять» / «Заблокировать» swipes (qa/runs/2026-08-16-chatlist)
   - ⬜ folders and tabs
   - ⬜ animated reordering on a new message
 - Search and empty states
