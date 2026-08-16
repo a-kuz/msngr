@@ -26,7 +26,7 @@ with what the check found. Fixes made during that sweep are in
 | 16 | fixed | Краш: Dictionary(uniqueKeysWithValues:) на дубликатах id (дата-сепараторы) |
 | 17 | fixed | LIMIT 500 в ленте: история докачивается в БД, но не показывается |
 | 18 | confirmed | Delete-for-all чужого в direct: локально удалено, у собеседника нет |
-| 19 | confirmed | Голосовое без requestRecordPermission — пустая запись |
+| 19 | fixed | Голосовое без requestRecordPermission — пустая запись |
 | 20 | fixed | setInsets никем не вызывается: контент под навбаром и инпутом |
 | 21 | fixed | Typing-индикатор залипает: нет таймера, нет typing stop |
 | 22 | fixed | Sync-лимит 200 без продолжения до следующего reconnect |
@@ -87,7 +87,7 @@ with what the check found. Fixes made during that sweep are in
 18. Клиент тумбстоунит локально сразу (`SyncEngine.swift:566`), сервер молча пропускает не-своё для не-админа (`ConversationDO.ts:274`).
     2026-08-16: the server behaviour is deliberate and pinned by `server/test/smoke.mjs:298-308`, and iOS stopped offering the action on a foreign message. The macOS target still offered it on every bubble, so the divergence survived there. Fix pending.
 19. `Voice.swift:15` — `start()` не вызывает `requestRecordPermission`.
-    2026-08-16: confirmed — no permission request anywhere, so the first take records over the system prompt and a denial leaves the mic button silently dead. Fix pending.
+    2026-08-16: confirmed — no permission request anywhere, so the first take records over the system prompt and a denial leaves the mic button silently dead. Fixed: the press asks first and records on the answer, and a denial says so with a way into settings. Tests `MicGateTests` cover the decision; the audio session itself is not under test.
 20. `MessagesViewController.swift:50` + `contentInsetAdjustmentBehavior = .never` — `setInsets` никем не вызывается.
     2026-08-16: fixed earlier. Insets are recomputed on every layout pass and keyboard change (`MessagesViewController.swift:110, 118-135`).
 21. `ChatListModel.swift:95-106` — истечение 5с проверяется лениво, таймера нет; typing stop не шлётся.
