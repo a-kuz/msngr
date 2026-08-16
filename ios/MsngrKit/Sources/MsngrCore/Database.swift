@@ -32,6 +32,15 @@ public enum AppDatabase {
         config.defaultTransactionKind = .immediate
         config.prepareDatabase { db in
             try db.execute(sql: "PRAGMA journal_mode = WAL")
+            // measurement run: every statement is reported with the time SQLite
+            // spent on it (PerfTrace, off without MSNGR_PERF=1)
+            if PerfTrace.shared.isEnabled {
+                db.trace(options: .profile) { event in
+                    if case let .profile(statement, duration) = event {
+                        PerfTrace.shared.sql(statement.sql, duration: duration)
+                    }
+                }
+            }
         }
         let dbQueue = try DatabaseQueue(path: url.path, configuration: config)
         let m = migrator
@@ -384,6 +393,13 @@ public enum AppDatabase {
                 """)
             try db.drop(table: "pendingAction")
             try db.rename(table: "pendingActionNew", to: "pendingAction")
+        }
+        m.registerMigration("v18-messageClientMsgId") { db in
+            // Every answer about a message we sent finds it by clientMsgId: the
+            // ack that writes the server id and the seq, the refusal, the send
+            // that is retried. Without an index each of those reads the whole
+            // table, so the cost of an answer grows with the size of the chat.
+            try db.create(indexOn: "message", columns: ["clientMsgId"])
         }
         return m
     }

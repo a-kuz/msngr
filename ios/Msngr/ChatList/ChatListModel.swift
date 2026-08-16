@@ -66,6 +66,7 @@ final class ChatListModel: ObservableObject {
         let ownId = app.session?.userId ?? ""
         cancellable = ValueObservation
             .tracking { dbc -> ChatListSnapshot in
+                try PerfTrace.shared.measure("chatlist.fetch") {
                 let chats = try Chat.fetchAll(dbc, sql: "SELECT * FROM chat ORDER BY pinned DESC, lastActivityAt DESC")
                 var peers: [String: User] = [:]
                 var lasts: [String: Message] = [:]
@@ -89,6 +90,7 @@ final class ChatListModel: ObservableObject {
                 return ChatListSnapshot(chats: chats, peers: peers, lasts: lasts,
                                         folders: try ChatFolderStore.all(dbc),
                                         pins: try ChatFolderStore.pins(dbc))
+                }
             }
             .publisher(in: db, scheduling: .async(onQueue: .main))
             .sink(receiveCompletion: { _ in }, receiveValue: { [weak self] snapshot in
