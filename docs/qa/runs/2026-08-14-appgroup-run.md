@@ -1,73 +1,70 @@
-# Переезд хранилища в контейнер app group: живой апгрейд
+# Storage moves into the app group container: a live upgrade
 
-Дата: ночь с 2026-08-14 на 2026-08-15. Стенд агента: симуляторы `appgroup-a2` (29841E7E, юзер
-`agsender2`) и `appgroup-b2` (FA80F7EF, юзер `bobby22`), собственный
-`wrangler dev` на :8793 с отдельным `--persist-to`. Симуляторы удалены после
-прогона.
+Date: night of 2026-08-14 into 2026-08-15. Agent stand: simulators `appgroup-a2`
+(29841E7E, user `agsender2`) and `appgroup-b2` (FA80F7EF, user `bobby22`), own
+`wrangler dev` on :8793 with a separate `--persist-to`. Simulators deleted after
+the run.
 
-## Что проверялось
+## What was checked
 
-Установленная сборка без entitlement хранит БД и `.masterkey` в Application
-Support. Сборка с entitlement считает пути от контейнера группы. Апгрейд
-поверх установленной сборки не должен выглядеть как чистая установка:
-аккаунт, история и ratchet-сессии обязаны пережить переезд.
+The installed build without the entitlement keeps the database and `.masterkey`
+in Application Support. A build with the entitlement resolves paths from the
+group container. An upgrade over an already installed build must not look like a
+clean install: the account, the history and the ratchet sessions have to survive
+the move.
 
-## До миграции
+## Before the migration
 
-Сборка из коммита 4234a3d, entitlement ещё нет. Два юзера, чат с тремя
-сообщениями в обе стороны, расшифровка и галочки прочтения работают.
-
+Build from commit 4234a3d, no entitlement yet. Two users, a chat with three
+messages in both directions, decryption and read ticks working.
 
 ```
 Application Support: .masterkey  media-outgoing/  msngr.sqlite  msngr.sqlite-shm  msngr.sqlite-wal  session.json
 $ xcrun simctl get_app_container 29841E7E… ai.enface.Msngr groups
-(пусто)
+(empty)
 md5 .masterkey = 2360c33147fa0bf683c97daa44775061
 userId = 01M0116XAC707HC9N6CJSPNEZS
 ```
 
-## Апгрейд
+## The upgrade
 
-`xcrun simctl install` поверх, без удаления приложения. Контейнер группы
-создаёт installd в момент установки:
+`xcrun simctl install` on top, without deleting the app. installd creates the
+group container at install time:
 
 ```
 group.ai.enface.msngr  …/data/Containers/Shared/AppGroup/1792FEB3-…
 ```
 
-После первого запуска новой сборки:
+After the first launch of the new build:
 
 ```
-группа:              .masterkey  avatars/  media-outgoing/  msngr.sqlite  msngr.sqlite-shm  msngr.sqlite-wal
+group:               .masterkey  avatars/  media-outgoing/  msngr.sqlite  msngr.sqlite-shm  msngr.sqlite-wal
 Application Support: session.json
-md5 .masterkey = 2360c33147fa0bf683c97daa44775061   (тот же файл)
-select count(*) from message = 3                    (вся история)
+md5 .masterkey = 2360c33147fa0bf683c97daa44775061   (the same file)
+select count(*) from message = 3                    (the whole history)
 ```
 
-## После миграции
+## After the migration
 
-Аккаунт тот же (`agsender2`, userId не изменился), история на месте. Обмен
-новыми сообщениями в обе стороны: `Posle migracii A` уходит и
-расшифровывается у bobby22, ответ приходит и расшифровывается у agsender2.
-Ratchet-состояния и identity пережили переезд: при смене мастер-ключа
-расшифровка сломалась бы, при смене identity собеседник получил бы
-предупреждение о смене ключа.
+Same account (`agsender2`, userId unchanged), history in place. New messages
+were exchanged both ways: `Posle migracii A` goes out and decrypts at bobby22,
+the reply arrives and decrypts at agsender2. Ratchet state and identity survived
+the move: a changed master key would have broken decryption, and a changed
+identity would have shown the peer a key change warning.
 
+A second launch migrates nothing again. The database stays the same one (5
+messages) and the chat list is unchanged.
 
-Повторный запуск ничего не переносит заново, БД остаётся той же (5
-сообщений), список чатов не меняется:
+## Tests
 
+- `swift test` in MsngrKit: 53 tests, 8 of them on the storage move.
+- MsngrTests on the agent's simulator: 48 tests.
+- Building Msngr for the simulator: BUILD SUCCEEDED.
+- `scripts/collect-crashes.sh --since 60`: no crashes.
 
-## Тесты
+## What stayed unchecked
 
-- `swift test` в MsngrKit: 53 теста, из них 8 на перенос хранилища.
-- MsngrTests на симуляторе агента: 48 тестов.
-- Сборка Msngr под симулятор: BUILD SUCCEEDED.
-- `scripts/collect-crashes.sh --since 60`: крашей нет.
-
-## Что осталось непроверенным
-
-Класс защиты файлов (`completeUntilFirstUserAuthentication`) на симуляторе не
-проверить: Data Protection там не реализована, так что ни факт применения
-атрибута, ни доступ к БД при заблокированном экране на симуляторе не
-воспроизводятся. Проверять на устройстве.
+The file protection class (`completeUntilFirstUserAuthentication`) cannot be
+checked on a simulator: Data Protection is not implemented there, so neither the
+fact that the attribute is applied nor access to the database with the screen
+locked can be reproduced. To be checked on a device.
