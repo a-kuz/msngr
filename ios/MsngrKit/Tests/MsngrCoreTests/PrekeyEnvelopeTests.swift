@@ -20,10 +20,10 @@ final class PrekeyEnvelopeTests: XCTestCase {
         var ephemeral: Data
 
         mutating func message(_ text: String, type: String = "pk",
-                              spkId: UInt32) throws -> PairwiseBox {
+                              spkId: UInt32, chatId: String = "c1") throws -> PairwiseBox {
             var payload = ContentPayload(kind: "text")
             payload.text = text
-            let inner = InnerMessage(content: payload)
+            let inner = InnerMessage(content: payload, chatId: chatId)
             let msg = try session.encrypt(try JSONEncoder().encode(inner))
             var box = PairwiseBox(type: type, c: try JSONEncoder().encode(msg).base64EncodedString())
             guard type == "pk" else { return box }
@@ -140,6 +140,19 @@ final class PrekeyEnvelopeTests: XCTestCase {
         let followUp = try decryptor.decrypt(envelopeJSON: try envelope(next), chatId: "c1",
                                              fromUserId: peerUserId, fromDeviceId: peerDeviceId)
         XCTAssertEqual(text(followUp), "second")
+    }
+
+    /// The server hands the reader a message of one chat inside another. The
+    /// sender named the chat in the sealed box, so it opens nothing here.
+    func testAMessageDeliveredInAnotherChatIsRefused() throws {
+        let (store, decryptor) = try makeStore()
+        var (peer, spkId) = try makePeer(against: store)
+        let box = try peer.message("meant for c1", spkId: spkId, chatId: "c1")
+
+        let result = try decryptor.decrypt(envelopeJSON: try envelope(box), chatId: "c2",
+                                           fromUserId: peerUserId, fromDeviceId: peerDeviceId)
+        XCTAssertEqual(reason(result), MessageRepair.wrongChatReason)
+        XCTAssertNil(text(result))
     }
 
     /// The peer started over — new keys, new handshake — while this device still

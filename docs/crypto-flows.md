@@ -140,6 +140,14 @@ place. A peer that really started over brings an ephemeral of its own and gets a
 new session, with the previous one moved to the archive once a candidate has
 opened the message.
 
+## Which chat a message belongs to
+
+A pairwise message names its chat inside the sealed box, and the recipient
+compares that with the chat the envelope was delivered in. They differ only if
+the server moved the message, and then it is not shown: the chat it belongs to is
+the one the sender named. A group message needs no such check — the sender key
+chain is stored per chat, so a message moved elsewhere finds no chain at all.
+
 Verification out of band is the 60-digit safety number in the chat info (5200
 iterations of SHA-512 over each fingerprint, with the two sides sorted, so the
 number is the same for both). A fingerprint covers both identity keys.

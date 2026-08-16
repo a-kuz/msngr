@@ -309,9 +309,15 @@ pairwise message carrying an `InnerMessage` with `type:"skd"` inside.
 Inside the pairwise ciphertext:
 
 ```
-{type:"content", content: ContentPayload}
+{type:"content", content: ContentPayload, chatId}
 {type:"skd", skd:{keyId, iteration, chainKey, signingPub}, chatId}
 ```
+
+`chatId` inside the ciphertext is the chat the sender wrote in. The chat the
+envelope arrives in comes from the server, so the recipient checks the two
+against each other and refuses a message put into another conversation
+(`wrong_chat`): it belongs to that other chat, not this one, and no repair is
+asked for it.
 
 `ContentPayload` (also the plaintext in `skm`):
 

@@ -18,11 +18,12 @@ public enum HistoryWindow {
     public static let maxGapAttempts = 3
     /// Seqs that never surface in the feed: the envelope was addressed to
     /// another device, carries our own content, is a tombstone, was processed
-    /// without a row of its own (key distribution, edit, reaction), or its
-    /// message was cleared from this device.
+    /// without a row of its own (key distribution, edit, reaction), its message
+    /// was cleared from this device, or the message names another chat than the
+    /// one it was delivered in.
     public static let silentGapReasons: Set<String> = [
         "not_addressed", "own_echo", "deleted", "service", "sender_key", "identity_changed",
-        "cleared",
+        "cleared", MessageRepair.wrongChatReason,
     ]
 
     // MARK: - Window
