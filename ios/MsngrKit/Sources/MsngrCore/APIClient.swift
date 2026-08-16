@@ -382,6 +382,13 @@ public final class APIClient: @unchecked Sendable {
         return try await get(path, as: HistoryResponse.self).msgs
     }
 
+    /// Says the messages reached this device. The socket carries the same thing
+    /// as a `recv` frame; this is the door for the notification extension, which
+    /// writes a message from a push and has no connection of its own.
+    public func markDelivered(_ chatId: String, seqs: [Int]) async throws {
+        struct Body: Encodable { let seqs: [Int] }
+        _ = try await request("api/chats/\(chatId)/recv", method: "POST", jsonBody: Body(seqs: seqs))
+    }
     public func acceptChat(_ chatId: String) async throws {
         _ = try await request("api/chats/\(chatId)/accept", method: "POST", jsonBody: [String: String]())
     }

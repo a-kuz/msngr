@@ -553,6 +553,22 @@ app.post("/api/chats/:id/members", async (c) => {
   return new Response(r.body, r);
 });
 
+// The delivery receipt with no socket to send it on. The notification extension
+// writes the message its push carried while the app is not running, and that is
+// the moment the message reaches the device; the frame `{t:"recv"}` does the
+// same thing over an open connection, and the object applies the same rules to
+// both.
+app.post("/api/chats/:id/recv", async (c) => {
+  const { userId } = c.get("auth");
+  const b = await c.req.json<{ seqs?: number[] }>();
+  const seqs = (b.seqs ?? []).filter((s) => Number.isFinite(s) && s > 0);
+  if (!seqs.length) return err("bad_seqs");
+  const r = await convStub(c.env, c.req.param("id")).fetch("https://do/recv", {
+    method: "POST", body: JSON.stringify({ userId, seqs }),
+  });
+  return new Response(r.body, r);
+});
+
 app.post("/api/chats/:id/accept", async (c) => {
   const { userId } = c.get("auth");
   const r = await convStub(c.env, c.req.param("id")).fetch("https://do/accept", {

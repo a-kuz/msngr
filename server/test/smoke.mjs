@@ -1296,6 +1296,49 @@ const notMember = await api(`/api/chats/${dgrp.chatId}/delete`, { token: dana.to
 check("deleting a chat you are not in is refused", !notMember.ok);
 cd.ws.close(); cd2.ws.close(); cer.ws.close();
 
+// 26. The delivery receipt over HTTP: what the notification extension sends
+// when it writes a message from a push and the app has no socket up.
+{
+  const gina = await api("/api/register", { body: {
+    username: "gina_" + suffix, displayName: "Gina", ...fakeKeys("g") } });
+  const hugo = await api("/api/register", { body: {
+    username: "hugo_" + suffix, displayName: "Hugo", ...fakeKeys("h") } });
+  const rchat = await api("/api/chats", { token: gina.token,
+    body: { kind: "direct", memberIds: [hugo.userId] } });
+  const cgi = new Client("gina", gina.token);
+  await cgi.connect();
+  await api(`/api/chats/${rchat.chatId}/accept`, { token: hugo.token, body: {} });
+  cgi.send({ t: "send", chatId: rchat.chatId, clientMsgId: "cm-g1", sentAt: Date.now(),
+    body: { v: 1, mode: "pw", msgs: {} } });
+  await cgi.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-g1");
+
+  // Hugo never connects: the receipt is the only thing that arrives from him
+  const rest = await api(`/api/chats/${rchat.chatId}/recv`, { token: hugo.token, body: { seqs: [1] } });
+  check("rest recv accepted", rest.ok, JSON.stringify(rest));
+  const restReceipt = await cgi.waitFor((f) => f.t === "receipt" && f.kind === "delivered");
+  check("rest recv reaches the author",
+    !!restReceipt && restReceipt.by === hugo.userId && restReceipt.upToSeq === 1,
+    JSON.stringify(restReceipt));
+
+  const again = await api(`/api/chats/${rchat.chatId}/recv`, { token: hugo.token, body: { seqs: [1] } });
+  check("rest recv repeats without harm", again.ok);
+  const emptySeqs = await api(`/api/chats/${rchat.chatId}/recv`, { token: hugo.token, body: { seqs: [] } });
+  check("rest recv without seqs is refused", !emptySeqs.ok, JSON.stringify(emptySeqs));
+
+  // a stranger holding the chat id marks nothing
+  const nosy = await api("/api/register", { body: {
+    username: "nosy_" + suffix, displayName: "Nosy", ...fakeKeys("q") } });
+  await api(`/api/chats/${rchat.chatId}/recv`, { token: nosy.token, body: { seqs: [1] } });
+  const rstate = await api("/api/chats", { token: gina.token });
+  const rc = rstate.chats.find((c2) => c2.state.chatId === rchat.chatId);
+  check("rest recv from a stranger marks nothing",
+    rc?.state.deliveredMarks[nosy.userId] === undefined,
+    JSON.stringify(rc?.state.deliveredMarks));
+  check("rest recv marked the member", rc?.state.deliveredMarks[hugo.userId] === 1,
+    JSON.stringify(rc?.state.deliveredMarks));
+  cgi.ws.close();
+}
+
 cmal.ws.close(); ctre.ws.close();
 ca.ws.close(); cb2.ws.close(); cb3.ws.close(); cb4.ws.close(); ca2.ws.close(); ce.ws.close();
 cf.ws.close(); cg.ws.close();
