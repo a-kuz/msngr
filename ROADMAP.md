@@ -452,8 +452,14 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ⬜ publishing: who sees it, how long it lives, taking it down
 - ⬜ the ring on the avatar in the chat list and the viewer with taps and holds
 - ⬜ who watched it, and answering a story into the chat
-- ⬜ E2EE for a story: the audience is a set of devices, so it is the group key
-  path with a changing membership rather than a new scheme
+- ⬜ no E2EE: a story is plaintext on the server, the way a channel is. Who may
+  see it is an access rule, not a key, and the composer has to say that plainly
+  before the story goes out.
+- ⬜ a public link, if the creator asks for one: the story opens in a browser
+  with no app and no account, so it can be shared outside msngr
+- ⬜ the page behind that link: the media, the text over it, and nothing that
+  identifies the audience — who watched belongs to the creator alone
+- ⬜ revoking the link, and what a revoked link shows to someone who kept it
 
 ## Bots
 
