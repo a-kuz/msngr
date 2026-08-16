@@ -10,3 +10,4 @@ DerivedData/
 scratchpad/
 .claude/agent-runs/
 .claude/tidy.log
+.claude/agents.tsv
