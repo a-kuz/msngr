@@ -197,7 +197,14 @@ struct MacChatView: View {
                                     Button("❤️") { model.react(m, "❤️") }
                                     Button("👍") { model.react(m, "👍") }
                                     Button("Ответить") { model.replyingTo = m }
-                                    Button("Удалить у всех", role: .destructive) { model.delete(m) }
+                                    if MessageDeletion.canDeleteForAll([m]) {
+                                        Button("Удалить у всех", role: .destructive) {
+                                            model.delete(m, forAll: true)
+                                        }
+                                    }
+                                    Button("Удалить у себя", role: .destructive) {
+                                        model.delete(m, forAll: false)
+                                    }
                                 }
                         }
                     }
@@ -318,8 +325,11 @@ final class MacChatModel: ObservableObject {
         enqueue(c)
     }
 
-    func delete(_ m: Message) {
-        Task { await MacAppStateHolder.shared?.engine.deleteMessages(chatId: chatId, msgIds: [m.msgId ?? m.id], forAll: true) }
+    func delete(_ m: Message, forAll: Bool) {
+        Task {
+            await MacAppStateHolder.shared?.engine.deleteMessages(
+                chatId: chatId, msgIds: [m.msgId ?? m.id], forAll: forAll)
+        }
     }
 
     private func markRead() {
