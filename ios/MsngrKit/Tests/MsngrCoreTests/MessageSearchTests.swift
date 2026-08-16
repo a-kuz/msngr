@@ -42,13 +42,13 @@ final class MessageSearchTests: XCTestCase {
     func testFindsByWholeWordAndByPrefix() throws {
         let db = try AppDatabase.openInMemory()
         try seedChat(db, id: "c1")
-        try seedMessage(db, id: "m1", chatId: "c1", text: "Ирина завтра приедет", at: 10)
+        try seedMessage(db, id: "m1", chatId: "c1", text: "Irina arrives tomorrow", at: 10)
 
-        XCTAssertEqual(try hits(db, "Ирина").hits.map(\.id), ["m1"])
-        XCTAssertEqual(try hits(db, "ири").hits.map(\.id), ["m1"])
-        XCTAssertEqual(try hits(db, "ИРИНА ЗАВТРА").hits.map(\.id), ["m1"])
-        XCTAssertTrue(try hits(db, "ирина вчера").hits.isEmpty)   // every word is required
-        XCTAssertTrue(try hits(db, "марина").hits.isEmpty)
+        XCTAssertEqual(try hits(db, "Irina").hits.map(\.id), ["m1"])
+        XCTAssertEqual(try hits(db, "iri").hits.map(\.id), ["m1"])
+        XCTAssertEqual(try hits(db, "IRINA TOMORROW").hits.map(\.id), ["m1"])
+        XCTAssertTrue(try hits(db, "irina yesterday").hits.isEmpty)   // every word is required
+        XCTAssertTrue(try hits(db, "marina").hits.isEmpty)
     }
 
     /// Newest match first: that is the useful order when a word appears in years
@@ -57,11 +57,11 @@ final class MessageSearchTests: XCTestCase {
         let db = try AppDatabase.openInMemory()
         try seedChat(db, id: "c1")
         try seedChat(db, id: "c2")
-        try seedMessage(db, id: "old", chatId: "c1", text: "билеты куплены", at: 10)
-        try seedMessage(db, id: "new", chatId: "c2", text: "билеты сдал", at: 30)
-        try seedMessage(db, id: "mid", chatId: "c1", text: "билеты на завтра", at: 20)
+        try seedMessage(db, id: "old", chatId: "c1", text: "tickets bought", at: 10)
+        try seedMessage(db, id: "new", chatId: "c2", text: "tickets returned", at: 30)
+        try seedMessage(db, id: "mid", chatId: "c1", text: "tickets for tomorrow", at: 20)
 
-        XCTAssertEqual(try hits(db, "билеты").hits.map(\.id), ["new", "mid", "old"])
+        XCTAssertEqual(try hits(db, "tickets").hits.map(\.id), ["new", "mid", "old"])
     }
 
     /// One chat, when the search runs inside it — the same query with one more
@@ -70,20 +70,20 @@ final class MessageSearchTests: XCTestCase {
         let db = try AppDatabase.openInMemory()
         try seedChat(db, id: "c1")
         try seedChat(db, id: "c2")
-        try seedMessage(db, id: "m1", chatId: "c1", text: "договор подписан", at: 10)
-        try seedMessage(db, id: "m2", chatId: "c2", text: "договор в почте", at: 20)
+        try seedMessage(db, id: "m1", chatId: "c1", text: "contract signed", at: 10)
+        try seedMessage(db, id: "m2", chatId: "c2", text: "contract in the mail", at: 20)
 
-        XCTAssertEqual(try hits(db, "договор", chatId: "c1").hits.map(\.id), ["m1"])
-        XCTAssertEqual(try hits(db, "договор").hits.map(\.id), ["m2", "m1"])
+        XCTAssertEqual(try hits(db, "contract", chatId: "c1").hits.map(\.id), ["m1"])
+        XCTAssertEqual(try hits(db, "contract").hits.map(\.id), ["m2", "m1"])
     }
 
     /// A caption of a photo is message text and is searched like any other.
     func testFindsCaptionOfAttachment() throws {
         let db = try AppDatabase.openInMemory()
         try seedChat(db, id: "c1")
-        try seedMessage(db, id: "m1", chatId: "c1", text: "чек из кафе", at: 10, kind: .photo)
+        try seedMessage(db, id: "m1", chatId: "c1", text: "receipt from the cafe", at: 10, kind: .photo)
 
-        XCTAssertEqual(try hits(db, "чек").hits.map(\.kind), [.photo])
+        XCTAssertEqual(try hits(db, "receipt").hits.map(\.kind), [.photo])
     }
 
     // MARK: - What it must not show
@@ -94,24 +94,24 @@ final class MessageSearchTests: XCTestCase {
         let db = try AppDatabase.openInMemory()
         try seedChat(db, id: "c1", isRequest: true, iAccepted: false)
         try seedChat(db, id: "c2")
-        try seedMessage(db, id: "hidden", chatId: "c1", text: "секретное слово", at: 20)
-        try seedMessage(db, id: "shown", chatId: "c2", text: "секретное слово", at: 10)
+        try seedMessage(db, id: "hidden", chatId: "c1", text: "secret word", at: 20)
+        try seedMessage(db, id: "shown", chatId: "c2", text: "secret word", at: 10)
 
-        XCTAssertEqual(try hits(db, "секретное").hits.map(\.id), ["shown"])
-        XCTAssertTrue(try hits(db, "секретное", chatId: "c1").hits.isEmpty)
+        XCTAssertEqual(try hits(db, "secret").hits.map(\.id), ["shown"])
+        XCTAssertTrue(try hits(db, "secret", chatId: "c1").hits.isEmpty)
     }
 
     /// Deleted messages and system notes are not part of the conversation.
     func testSkipsDeletedAndSystemMessages() throws {
         let db = try AppDatabase.openInMemory()
         try seedChat(db, id: "c1")
-        try seedMessage(db, id: "gone", chatId: "c1", text: "удалённое слово", at: 20,
+        try seedMessage(db, id: "gone", chatId: "c1", text: "deleted word", at: 20,
                         deletedForAll: true)
-        try seedMessage(db, id: "note", chatId: "c1", text: "удалённое слово", at: 15,
+        try seedMessage(db, id: "note", chatId: "c1", text: "deleted word", at: 15,
                         kind: .system)
-        try seedMessage(db, id: "kept", chatId: "c1", text: "удалённое слово", at: 10)
+        try seedMessage(db, id: "kept", chatId: "c1", text: "deleted word", at: 10)
 
-        XCTAssertEqual(try hits(db, "удалённое").hits.map(\.id), ["kept"])
+        XCTAssertEqual(try hits(db, "deleted").hits.map(\.id), ["kept"])
     }
 
     /// Punctuation and spaces alone are not a search: an empty query matches
@@ -119,7 +119,7 @@ final class MessageSearchTests: XCTestCase {
     func testQueryWithoutWordsMatchesNothing() throws {
         let db = try AppDatabase.openInMemory()
         try seedChat(db, id: "c1")
-        try seedMessage(db, id: "m1", chatId: "c1", text: "что-нибудь", at: 10)
+        try seedMessage(db, id: "m1", chatId: "c1", text: "anything", at: 10)
 
         XCTAssertTrue(try hits(db, "  ").hits.isEmpty)
         XCTAssertTrue(try hits(db, "***").hits.isEmpty)
@@ -131,13 +131,13 @@ final class MessageSearchTests: XCTestCase {
     func testQuerySyntaxInTypedTextIsHarmless() throws {
         let db = try AppDatabase.openInMemory()
         try seedChat(db, id: "c1")
-        try seedMessage(db, id: "m1", chatId: "c1", text: "отчёт готов", at: 10)
+        try seedMessage(db, id: "m1", chatId: "c1", text: "report ready", at: 10)
 
-        XCTAssertEqual(try hits(db, "\"отчёт\"").hits.map(\.id), ["m1"])
-        XCTAssertEqual(try hits(db, "отчёт*").hits.map(\.id), ["m1"])
+        XCTAssertEqual(try hits(db, "\"report\"").hits.map(\.id), ["m1"])
+        XCTAssertEqual(try hits(db, "report*").hits.map(\.id), ["m1"])
         // an operator is read as one more word to find, not as syntax
-        XCTAssertTrue(try hits(db, "отчёт OR смета").hits.isEmpty)
-        XCTAssertTrue(try hits(db, "отчёт NEAR/2 смета").hits.isEmpty)
+        XCTAssertTrue(try hits(db, "report OR estimate").hits.isEmpty)
+        XCTAssertTrue(try hits(db, "report NEAR/2 estimate").hits.isEmpty)
     }
 
     // MARK: - Paging
@@ -148,7 +148,7 @@ final class MessageSearchTests: XCTestCase {
         let db = try AppDatabase.openInMemory()
         try seedChat(db, id: "c1")
         for i in 1...25 {
-            try seedMessage(db, id: "m\(i)", chatId: "c1", text: "смета номер \(i)",
+            try seedMessage(db, id: "m\(i)", chatId: "c1", text: "estimate number \(i)",
                             at: Double(i))
         }
 
@@ -156,7 +156,7 @@ final class MessageSearchTests: XCTestCase {
         var cursor: MessageSearchCursor?
         var pages = 0
         while pages < 10 {
-            let page = try hits(db, "смета", after: cursor, limit: 10)
+            let page = try hits(db, "estimate", after: cursor, limit: 10)
             seen += page.hits.map(\.id)
             cursor = page.cursor
             pages += 1
@@ -175,12 +175,12 @@ final class MessageSearchTests: XCTestCase {
         let db = try AppDatabase.openInMemory()
         try seedChat(db, id: "c1")
         for i in 1...6 {
-            try seedMessage(db, id: "m\(i)", chatId: "c1", text: "встреча \(i)", at: 100)
+            try seedMessage(db, id: "m\(i)", chatId: "c1", text: "meeting \(i)", at: 100)
         }
 
-        let first = try hits(db, "встреча", limit: 3)
+        let first = try hits(db, "meeting", limit: 3)
         XCTAssertEqual(first.hits.count, 3)
-        let second = try hits(db, "встреча", after: first.cursor, limit: 3)
+        let second = try hits(db, "meeting", after: first.cursor, limit: 3)
         XCTAssertEqual(Set(first.hits.map(\.id)).intersection(second.hits.map(\.id)), [])
         XCTAssertEqual(Set(first.hits.map(\.id)).union(second.hits.map(\.id)).count, 6)
     }
@@ -194,7 +194,7 @@ final class MessageSearchTests: XCTestCase {
             for i in 1...20_000 {
                 var msg = Message(id: "m\(i)", chatId: "c1", fromUserId: "peer",
                                   sentAt: Double(i), kind: .text,
-                                  text: "обычная переписка про поездку номер \(i)",
+                                  text: "ordinary chatter about the trip number \(i)",
                                   status: .sent, isOutgoing: false)
                 msg.msgId = "m\(i)"
                 msg.serverTs = Double(i)
@@ -203,7 +203,7 @@ final class MessageSearchTests: XCTestCase {
         }
 
         let started = Date()
-        let page = try hits(db, "поездку", limit: 24)
+        let page = try hits(db, "trip", limit: 24)
         let elapsed = Date().timeIntervalSince(started)
         XCTAssertEqual(page.hits.count, 24)
         XCTAssertEqual(page.hits.first?.id, "m20000")
@@ -218,14 +218,14 @@ final class MessageSearchTests: XCTestCase {
         let db = try AppDatabase.openInMemory()
         try seedChat(db, id: "c1")
         try seedMessage(db, id: "m1", chatId: "c1",
-                        text: "Ирина сказала, что билеты уже куплены", at: 10)
+                        text: "Irina said the tickets are already bought", at: 10)
 
-        let snippet = try XCTUnwrap(try hits(db, "билеты").hits.first?.snippet)
-        XCTAssertTrue(snippet.text.contains("билеты"))
+        let snippet = try XCTUnwrap(try hits(db, "tickets").hits.first?.snippet)
+        XCTAssertTrue(snippet.text.contains("tickets"))
         XCTAssertFalse(snippet.text.contains("\u{2}"))
         XCTAssertFalse(snippet.text.contains("\u{3}"))
         let matched = snippet.matches.map { String(snippet.text[$0]).lowercased() }
-        XCTAssertEqual(matched, ["билеты"])
+        XCTAssertEqual(matched, ["tickets"])
     }
 
     /// A long message is cut around the match, so the row shows where the word is
@@ -233,11 +233,11 @@ final class MessageSearchTests: XCTestCase {
     func testSnippetOfLongMessageIsCutAroundTheMatch() throws {
         let db = try AppDatabase.openInMemory()
         try seedChat(db, id: "c1")
-        let filler = Array(repeating: "слово", count: 60).joined(separator: " ")
-        try seedMessage(db, id: "m1", chatId: "c1", text: "\(filler) редкость \(filler)", at: 10)
+        let filler = Array(repeating: "word", count: 60).joined(separator: " ")
+        try seedMessage(db, id: "m1", chatId: "c1", text: "\(filler) rarity \(filler)", at: 10)
 
-        let snippet = try XCTUnwrap(try hits(db, "редкость").hits.first?.snippet)
-        XCTAssertTrue(snippet.text.contains("редкость"))
+        let snippet = try XCTUnwrap(try hits(db, "rarity").hits.first?.snippet)
+        XCTAssertTrue(snippet.text.contains("rarity"))
         XCTAssertLessThan(snippet.text.count, 200)
     }
 
@@ -247,13 +247,13 @@ final class MessageSearchTests: XCTestCase {
         let db = try AppDatabase.openInMemory()
         try seedChat(db, id: "c1")
         var pending = Message(id: "local-1", chatId: "c1", fromUserId: "me", sentAt: 20,
-                              kind: .text, text: "черновик ушёл", status: .sending,
+                              kind: .text, text: "draft sent", status: .sending,
                               isOutgoing: true)
         pending.msgId = nil
         try db.write { dbc in try pending.save(dbc) }
-        try seedMessage(db, id: "srv-1", chatId: "c1", text: "черновик принят", at: 10)
+        try seedMessage(db, id: "srv-1", chatId: "c1", text: "draft accepted", at: 10)
 
-        let found = try hits(db, "черновик").hits
+        let found = try hits(db, "draft").hits
         XCTAssertEqual(found.map(\.messageId), ["local-1", "srv-1"])
         XCTAssertEqual(found.map(\.chatId), ["c1", "c1"])
     }

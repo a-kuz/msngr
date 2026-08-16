@@ -214,7 +214,7 @@ final class MessageRepairTests: XCTestCase {
         let engine = try makeEngine(db: db)
         try await db.write { dbc in
             var msg = Message(id: "local1", chatId: "c1", fromUserId: "me", sentAt: 42,
-                              kind: .text, text: "привет", status: .sent, isOutgoing: true)
+                              kind: .text, text: "hello", status: .sent, isOutgoing: true)
             msg.msgId = "m1"
             msg.seq = 7
             try msg.save(dbc)
@@ -239,7 +239,7 @@ final class MessageRepairTests: XCTestCase {
         let original = try JSONDecoder().decode(ContentPayload.self,
                                                 from: Data(try XCTUnwrap(reply.orig).utf8))
         XCTAssertEqual(original.kind, "text")
-        XCTAssertEqual(original.text, "привет")
+        XCTAssertEqual(original.text, "hello")
     }
 
     /// We do not hold someone else's message, so there is nothing to answer with
@@ -270,7 +270,7 @@ final class MessageRepairTests: XCTestCase {
         await engine.apply(try brokenFrame(seq: 1, msgId: "m1"))
 
         var original = ContentPayload(kind: "text")
-        original.text = "привет"
+        original.text = "hello"
         var repair = ContentPayload(kind: "repair")
         repair.repairOf = "m1"
         repair.repairSeq = 1
@@ -286,7 +286,7 @@ final class MessageRepairTests: XCTestCase {
         XCTAssertEqual(rows.count, 1, "the repeated copy created a duplicate in the feed")
         XCTAssertEqual(rows[0].msgId, "m1")
         XCTAssertEqual(rows[0].seq, 1)
-        XCTAssertEqual(rows[0].text, "привет")
+        XCTAssertEqual(rows[0].text, "hello")
         XCTAssertEqual(rows[0].sentAt, 42)
 
         let leftovers = try await db.read { dbc in
@@ -336,7 +336,7 @@ final class MessageRepairTests: XCTestCase {
         await engine.apply(try brokenFrame(seq: 1, msgId: "m1"))
 
         var forged = ContentPayload(kind: "text")
-        forged.text = "подмена"
+        forged.text = "a substitute"
         var repair = ContentPayload(kind: "repair")
         repair.repairOf = "m1"
         repair.repairSeq = 1
@@ -359,7 +359,7 @@ final class MessageRepairTests: XCTestCase {
             try dbc.execute(sql: "INSERT INTO member (chatId, userId, role, joinedAt) VALUES ('g1','me','owner',0)")
             try dbc.execute(sql: "INSERT INTO member (chatId, userId, role, joinedAt) VALUES ('g1','late','member',100)")
             var msg = Message(id: "local1", chatId: "g1", fromUserId: "me", sentAt: 42,
-                              kind: .text, text: "до его прихода", status: .sent, isOutgoing: true)
+                              kind: .text, text: "before they joined", status: .sent, isOutgoing: true)
             msg.msgId = "m1"
             msg.seq = 7
             try msg.save(dbc)

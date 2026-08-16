@@ -68,7 +68,7 @@ final class HistoryWindowTests: XCTestCase {
         try seedMessages(db, seqs: Array(1...10))
         try db.write { dbc in
             var msg = Message(id: "local", chatId: "c1", fromUserId: "me", sentAt: 99,
-                              kind: .text, text: "не подтверждено", status: .sending, isOutgoing: true)
+                              kind: .text, text: "not acknowledged", status: .sending, isOutgoing: true)
             msg.clientMsgId = "local"
             try msg.save(dbc)
         }

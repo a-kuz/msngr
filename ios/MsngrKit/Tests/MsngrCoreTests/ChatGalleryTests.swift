@@ -25,7 +25,7 @@ final class ChatGalleryTests: XCTestCase {
                 }
                 var msg = Message(id: "m\(seq)", chatId: "c1", fromUserId: "peer",
                                   sentAt: Double(seq), kind: kind,
-                                  text: kind == .text ? "смотри https://example.com/\(seq)" : nil,
+                                  text: kind == .text ? "look at https://example.com/\(seq)" : nil,
                                   status: .sent, isOutgoing: false)
                 msg.msgId = "srv\(seq)"
                 msg.seq = seq
@@ -104,9 +104,9 @@ final class ChatGalleryTests: XCTestCase {
     func testLinksComeFromMessageText() throws {
         let db = try AppDatabase.openInMemory()
         try db.write { dbc in
-            for (i, text) in ["зайди на example.com и на https://docs.example.org/a",
-                              "без ссылок",
-                              "`code.example.com` в коде не ссылка"].enumerated() {
+            for (i, text) in ["go to example.com and to https://docs.example.org/a",
+                              "no links at all",
+                              "`code.example.com` inside code is not a link"].enumerated() {
                 var msg = Message(id: "t\(i)", chatId: "c1", fromUserId: "peer", sentAt: Double(i),
                                   kind: .text, text: text, status: .sent, isOutgoing: false)
                 msg.msgId = "srvT\(i)"

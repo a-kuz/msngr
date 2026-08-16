@@ -65,7 +65,7 @@ final class ServiceFrameTests: XCTestCase {
                                   from: "peer", sentAt: 1, ts: 1)
         var edit = ContentPayload(kind: "edit")
         edit.targetMsgId = "m1"
-        edit.text = "исправлено"
+        edit.text = "corrected"
         await engine.applyContent(edit, chatId: "c1", msgId: "e1", seq: 3,
                                   from: "peer", sentAt: 1, ts: 1)
 
@@ -76,14 +76,14 @@ final class ServiceFrameTests: XCTestCase {
 
         // the original decrypted and was inserted: the buffer is applied and cleared
         var original = ContentPayload(kind: "text")
-        original.text = "оригинал"
+        original.text = "the original"
         await engine.applyContent(original, chatId: "c1", msgId: "m1", seq: 1,
                                   from: "peer", sentAt: 1, ts: 1)
 
         let row = try await db.read { dbc in
             try Row.fetchOne(dbc, sql: "SELECT text, edited, reactions FROM message WHERE msgId = 'm1'")!
         }
-        XCTAssertEqual(row["text"] as String, "исправлено")
+        XCTAssertEqual(row["text"] as String, "corrected")
         XCTAssertEqual(row["edited"] as Bool, true)
         let reactions = try JSONDecoder().decode([String: [String]].self,
                                                  from: Data((row["reactions"] as String).utf8))
@@ -190,7 +190,7 @@ final class ServiceFrameTests: XCTestCase {
 
         await engine.apply(deleted)
         var original = ContentPayload(kind: "text")
-        original.text = "секрет"
+        original.text = "a secret"
         await engine.applyContent(original, chatId: "c1", msgId: "m1", seq: 1,
                                   from: "peer", sentAt: 1, ts: 1)
         await engine.apply(deleted) // replay once the row exists
