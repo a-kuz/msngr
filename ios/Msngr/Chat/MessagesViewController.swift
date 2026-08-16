@@ -145,6 +145,27 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         updateAtBottom(layoutFirst: true)
     }
 
+    /// Frame clock of the measurement run: every screen refresh is recorded, so
+    /// a gap in the trace is a frame the feed missed.
+    private var frameLink: CADisplayLink?
+    private var lastFrame: CFTimeInterval = 0
+
+    @objc private func frameTick(_ link: CADisplayLink) {
+        if lastFrame > 0 {
+            PerfTrace.shared.span("frame", duration: link.timestamp - lastFrame)
+        }
+        lastFrame = link.timestamp
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if PerfTrace.shared.isEnabled, frameLink == nil {
+            let link = CADisplayLink(target: self, selector: #selector(frameTick(_:)))
+            link.add(to: .main, forMode: .common)
+            frameLink = link
+        }
+    }
+
     /// Swipe back from the left edge. The system gesture does not start on this screen:
     /// the header draws its own back button, and with the system one hidden the
     /// navigation controller refuses its own transition — neither dropping the delegate
@@ -161,6 +182,14 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         let start = backSwipe.location(in: nil).x - backSwipe.translation(in: nil).x
         let v = backSwipe.velocity(in: view)
         return start < MessageCell.backSwipeEdge && v.x > abs(v.y)
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        frameLink?.invalidate()
+        frameLink = nil
+        lastFrame = 0
+        PerfTrace.shared.flush()
     }
 
     override func viewDidLayoutSubviews() {
@@ -220,6 +249,12 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     /// performBatchUpdates so that the content above does not jump when a message
     /// arrives while the reader is in the history.
     func apply(_ newItems: [ChatFeedItem]) {
+        PerfTrace.shared.measure("feed.ui.apply", info: ["items": Double(newItems.count)]) {
+            applyDiff(newItems)
+        }
+    }
+
+    private func applyDiff(_ newItems: [ChatFeedItem]) {
         let old = items
         guard isViewLoaded else { items = newItems; return }
         // the feed went empty (history cleared): a diff would delete every position
@@ -528,12 +563,29 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         }
     }
 
+    /// The message at the top edge of the screen, or nil while the feed is at its
+    /// bottom. Search remembers it and brings the reader back to it.
+    func topVisibleMessageId() -> String? {
+        guard isViewLoaded, !atBottom else { return nil }
+        let visibleRect = collectionView.bounds.inset(by: collectionView.adjustedContentInset)
+        // the list is inverted: the visual top of the screen is the largest maxY
+        let top = collectionView.indexPathsForVisibleItems.compactMap { path -> (String, CGFloat)? in
+            guard path.item < items.count,
+                  case .message(let msg, _, _, _, _, _) = items[path.item],
+                  let attrs = collectionView.layoutAttributesForItem(at: path),
+                  attrs.frame.intersects(visibleRect) else { return nil }
+            return (msg.msgId ?? msg.id, attrs.frame.maxY)
+        }.max { $0.1 < $1.1 }
+        return top?.0
+    }
+
     /// Scrolls to a message by its server msgId or its local id.
     /// Returns false when the message is not in the loaded feed and history has to be fetched.
     @discardableResult
-    func scrollTo(msgId: String, highlight: Bool = false) -> Bool {
+    func scrollTo(msgId: String, highlight: Bool = false, animated: Bool = true) -> Bool {
         guard let idx = index(ofMsgId: msgId) else { return false }
-        collectionView.scrollToItem(at: IndexPath(item: idx, section: 0), at: .centeredVertically, animated: true)
+        collectionView.scrollToItem(at: IndexPath(item: idx, section: 0), at: .centeredVertically,
+                                    animated: animated)
         if highlight {
             pendingHighlightId = msgId
             // if the cell is already on screen the flash runs alongside the scroll settling;
@@ -641,9 +693,9 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
         }
     }
 
-    /// Тап по статус-бару. Системная прокрутка «вверх» в перевёрнутом списке
-    /// уехала бы к самым новым сообщениям — начало чата это другой конец,
-    /// и ведёт туда экран сам.
+    /// A status bar tap. The system's own "scroll to top" would land on the newest
+    /// messages in an inverted feed, so the screen takes the tap over and goes to the
+    /// beginning of the conversation itself.
     func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
         onScrollToStart?()
         return false
