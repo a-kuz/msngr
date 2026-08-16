@@ -102,6 +102,13 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         collectionView.delegate = self
         collectionView.keyboardDismissMode = .interactive
         collectionView.contentInsetAdjustmentBehavior = .never
+        // the feed is flipped, so the system edge effect lands mirrored: it clears
+        // the strip it should soften and softens the rest of the feed. The band
+        // under the header is drawn by HeaderFade instead
+        if #available(iOS 26.0, *) {
+            collectionView.topEdgeEffect.isHidden = true
+            collectionView.bottomEdgeEffect.isHidden = true
+        }
         collectionView.register(MessageCell.self, forCellWithReuseIdentifier: "msg")
         collectionView.register(DateSeparatorCell.self, forCellWithReuseIdentifier: "date")
         collectionView.register(SystemCell.self, forCellWithReuseIdentifier: "system")
