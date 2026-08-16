@@ -8,14 +8,14 @@ import MsngrCore
 /// same author higher up the screen; showTail draws the bubble's tail, set when
 /// nothing of the same series sits below.
 enum ChatFeedItem: Identifiable, Equatable {
-    /// replyAuthorName is the author of the quoted message («Вы» for our own),
+    /// replyAuthorName is the author of the quoted message ("you" for our own),
     /// nil for messages without a quote.
     case message(Message, tightGap: Bool, showTail: Bool, showName: Bool, authorName: String?,
                  replyAuthorName: String? = nil)
     /// id is unique within the feed; label is not, because sentAt is not monotonic
     /// and the same day can appear twice.
     case dateSeparator(id: String, label: String)
-    /// The «N непрочитанных сообщений» banner above the first unread message.
+    /// The unread-count banner above the first unread message.
     /// id stays stable for the whole viewing session: it is tied to the anchor seq.
     case unreadMarker(id: String, count: Int)
     /// Messages this device could not read, between two messages of the feed.
@@ -174,9 +174,9 @@ final class ChatViewModel: ObservableObject {
                 // the pending key change is read here rather than from the main
                 // thread: a read of its own would block on the writer queue,
                 // and during a burst that queue is busy applying messages
-                // считается по всем участникам, а не только по собеседнику
-                // direct: в группе отправку блокирует смена ключа у любого из
-                // них, и без баннера сообщение осталось бы лежать навсегда
+                // it is read over every member, not just the peer of a direct chat:
+                // in a group a key change by any of them blocks sending, and without
+                // the banner the message would sit there forever
                 let peers = users.map(\.id).filter { $0 != ownId }
                 var keyChangePending = false
                 if !peers.isEmpty {
@@ -307,7 +307,7 @@ final class ChatViewModel: ObservableObject {
         let nameById = Dictionary(uniqueKeysWithValues: members.map { ($0.id, $0.displayName) })
         let isGroupChat = members.count > 2
 
-        // author of the quoted message: «Вы» for our own, otherwise a member's name
+        // author of the quoted message: "you" for our own, otherwise a member's name
         func replyAuthorName(_ reply: ReplyPreview) -> String {
             reply.authorId == ownId ? "Вы" : (nameById[reply.authorId] ?? "?")
         }
@@ -397,7 +397,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     var headerSubtitle: String {
-        // with no connection any presence is stale, so don't claim «в сети»
+        // with no connection any presence is stale, so don't claim the peer is online
         if !connected { return "подключение…" }
         if !typingUsers.isEmpty {
             if chat?.kind == .group, let name = members.first(where: { $0.id == typingUsers[0] })?.displayName {
@@ -414,9 +414,9 @@ final class ChatViewModel: ObservableObject {
         return ""
     }
 
-    /// «был(а) …» built from a timestamp. A fresh timestamp plus a server clock
-    /// running ahead gives a negative difference, which the relative formatter
-    /// renders as «через 0 сек.», so a recent departure gets its own wording.
+    /// The "last seen" line built from a timestamp. A fresh timestamp plus a server
+    /// clock running ahead gives a negative difference, which the relative formatter
+    /// renders as a moment in the future, so a recent departure gets its own wording.
     static func lastSeenText(_ lastSeen: TimeInterval, now: Date = Date()) -> String {
         let elapsed = now.timeIntervalSince1970 - lastSeen
         if elapsed < 60 { return "был(а) только что" }
@@ -590,7 +590,7 @@ final class ChatViewModel: ObservableObject {
         saveDraft(text.isEmpty ? nil : text)
         guard chat?.iAccepted != false else { return }
         if text.isEmpty {
-            // the field is empty again: clear «печатает…» on the other side at once
+            // the field is empty again: clear the typing indicator on the other side at once
             lastTypingSent = .distantPast
             Task { await app.engine.sendTyping(chatId: chatId, kind: nil) }
             return

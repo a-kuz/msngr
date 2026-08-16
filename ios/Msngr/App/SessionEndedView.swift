@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The device was cut off from the account from another device. There is
-/// nothing left to reconnect to, so instead of an endless «Подключение…»
+/// nothing left to reconnect to, so instead of an endless connecting state
 /// the screen shows a dead end whose only way out is registering again.
 struct SessionEndedView: View {
     @EnvironmentObject var app: AppState

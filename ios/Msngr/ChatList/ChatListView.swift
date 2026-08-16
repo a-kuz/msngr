@@ -184,7 +184,7 @@ struct ChatListView: View {
         model.folders.first { $0.id == model.selectedFolderId }
     }
 
-    /// The neighbouring tab in the direction of the swipe: «Все» comes first,
+    /// The neighbouring tab in the direction of the swipe: the "all" tab comes first,
     /// then the folders in their own order. There is nowhere to go past the ends.
     private func switchTab(by offset: Int) {
         let ids: [String?] = [nil] + model.folders.map { $0.id }
