@@ -1,14 +1,14 @@
 import CryptoKit
 import Foundation
 
-/// Sender Keys (Signal group messaging): у каждого участника своя цепочка
-/// на группу, распространяется pairwise-каналами. Подпись Ed25519 на каждом
-/// сообщении — аутентификация внутри группы.
+/// Sender Keys (Signal group messaging): every member has its own chain for the
+/// group, handed out over the pairwise channels. The Ed25519 signature on each
+/// message is what authenticates the sender inside the group.
 public struct SenderKeyDistribution: Codable, Sendable {
-    public let keyId: String       // uuid цепочки
-    public let iteration: UInt32   // с какой итерации знает получатель
+    public let keyId: String       // chain uuid
+    public let iteration: UInt32   // iteration the recipient is given the chain at
     public let chainKey: Data
-    public let signingPub: Data    // Ed25519 pub отправителя для этой цепочки
+    public let signingPub: Data    // sender's Ed25519 pub for this chain
 
     public init(keyId: String, iteration: UInt32, chainKey: Data, signingPub: Data) {
         self.keyId = keyId
@@ -32,7 +32,7 @@ public struct SenderKeyMessage: Codable, Sendable {
     }
 }
 
-/// Состояние своей отправной цепочки в группе.
+/// State of our own sending chain in a group.
 public struct SenderKeyState: Codable, Sendable {
     public let keyId: String
     var chainKey: Data
@@ -76,7 +76,7 @@ public struct SenderKeyState: Codable, Sendable {
     }
 }
 
-/// Состояние чужой цепочки (получатель).
+/// State of another member's chain, as held by the receiver.
 public struct SenderKeyReceiver: Codable, Sendable {
     public let keyId: String
     var chainKey: Data
