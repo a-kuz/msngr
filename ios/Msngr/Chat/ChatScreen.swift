@@ -115,7 +115,7 @@ struct ChatScreen: View {
         }
         .onDisappear {
             let draft = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            model.saveDraft(draft.isEmpty ? nil : draft)
+            model.saveDraft(draft.isEmpty ? nil : draft, immediately: true)
             // on a push deeper in (ChatInfo) the subscription stays and the active chat
             // is not cleared: otherwise the feed comes back dead and pushes from this
             // chat start showing up as banners
@@ -474,9 +474,17 @@ struct ChatScreen: View {
 
     private var scrollDownButton: some View {
         Group {
-            if showScrollDown {
+            // a window standing on a jump target has the newest messages above it, so
+            // the way down is offered even when the loaded feed is scrolled to its end
+            if showScrollDown || !model.atNewest {
                 Button {
-                    messagesVC.scrollToBottom()
+                    if model.atNewest {
+                        messagesVC.scrollToBottom()
+                    } else {
+                        // the feed that arrives is a different stretch of the chat
+                        model.returnToBottom()
+                        messagesVC.showBottomOnNextUpdate()
+                    }
                 } label: {
                     ZStack(alignment: .topTrailing) {
                         Image(systemName: "chevron.down")
@@ -501,9 +509,11 @@ struct ChatScreen: View {
                 .padding(.bottom, 68)
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .transition(.scale.combined(with: .opacity))
+                .accessibilityIdentifier("chat.scrollDown")
             }
         }
         .animation(Theme.springFast, value: showScrollDown)
+        .animation(Theme.springFast, value: model.atNewest)
     }
 
     // MARK: - Sending attachments
