@@ -36,8 +36,8 @@ export function newToken(): string {
   return b64url(crypto.getRandomValues(new Uint8Array(32)));
 }
 
-// Все клиент-видимые метки времени — в СЕКУНДАХ (как Date.timeIntervalSince1970 на клиенте).
-// ulid хранит миллисекунды внутри себя отдельно.
+// Every client-visible timestamp is in SECONDS, matching Date.timeIntervalSince1970 on the
+// client. The milliseconds ulid keeps inside itself are a separate thing.
 export function nowSec(): number {
   return Date.now() / 1000;
 }
@@ -53,7 +53,7 @@ export function err(error: string, status = 400): Response {
   return json({ ok: false, error }, status);
 }
 
-// direct-чат детерминированно адресуется парой userId, чтобы дедуплицироваться
+// A direct chat is addressed by its pair of userIds, so both sides land on the same object
 export function directChatName(a: string, b: string): string {
   return "direct:" + [a, b].sort().join(":");
 }
