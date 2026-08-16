@@ -2,12 +2,12 @@ import Foundation
 import CryptoKit
 import MsngrCrypto
 
-/// Внутреннее содержимое pairwise-сообщения: либо контент, либо раздача sender key.
+/// Payload inside a pairwise message: either content or a sender key distribution.
 public struct InnerMessage: Codable {
     public var type: String            // "content" | "skd"
     public var content: ContentPayload?
     public var skd: SenderKeyDistribution?
-    public var chatId: String?         // для skd: к какому чату цепочка
+    public var chatId: String?         // for skd: which chat the chain belongs to
 
     public init(content: ContentPayload) {
         self.type = "content"
@@ -20,23 +20,23 @@ public struct InnerMessage: Codable {
     }
 }
 
-/// Ошибки шифрования исходящих.
+/// Failures while encrypting an outgoing message.
 public enum E2EEError: Error, Equatable {
-    case identityChanged(userId: String) // TOFU: identity-ключ собеседника сменился
-    case noDevices(userId: String)       // у получателя нет ни одного устройства
+    case identityChanged(userId: String) // TOFU: the peer's identity key changed
+    case noDevices(userId: String)       // the recipient has no devices at all
 }
 
-/// Итог расшифровки входящего.
+/// Result of opening an incoming envelope.
 public enum DecryptedIncoming {
     case content(ContentPayload)
     /// Sender key chain stored; no content. The chat and chain are carried out
     /// so the recipient can confirm the distribution to its sender.
     case senderKeyDistribution(chatId: String, keyId: String)
-    case undecryptable(reason: String)  // нет сессии/ключа — показываем плейсхолдер
-    case identityChanged(userId: String, content: ContentPayload?) // TOFU-предупреждение
+    case undecryptable(reason: String)  // no session or key: a placeholder is shown
+    case identityChanged(userId: String, content: ContentPayload?) // TOFU warning
 }
 
-/// E2EE-pipeline: шифрование исходящих (pw / sender keys) и расшифровка входящих.
+/// E2EE pipeline: encrypts outgoing messages (pairwise or sender key) and opens incoming ones.
 public final class E2EEManager: @unchecked Sendable {
     let store: IdentityStore
     let api: APIClient
@@ -60,24 +60,24 @@ public final class E2EEManager: @unchecked Sendable {
 
     private func addr(_ userId: String, _ deviceId: String) -> String { "\(userId)/\(deviceId)" }
 
-    // MARK: - Исходящие
+    // MARK: - Outgoing
 
-    /// direct-чат: pairwise Double Ratchet на каждое устройство получателя (и свои другие).
+    /// Direct chat: a pairwise Double Ratchet message per recipient device, and per own other device.
     public func encryptDirect(content: ContentPayload, toUserId: String) async throws -> Envelope {
         let inner = InnerMessage(content: content)
         return try await encryptPairwise(inner: inner, recipients: [toUserId])
     }
 
-    /// группа: sender key; при необходимости — сначала раздача цепочки pairwise.
-    /// skd шлётся отдельным сообщением до контента под возвращённым `skdId`:
-    /// повтор той же раздачи гасится серверным дедупом, следующий круг раздачи
-    /// (адресат так и не подтвердил) получает свой id и до него доезжает.
+    /// Group: sender key, preceded where needed by a pairwise distribution of the chain.
+    /// The skd goes as its own message ahead of the content under the returned `skdId`:
+    /// repeating the same distribution is swallowed by the server's dedup, while the
+    /// next round (the recipient still has not confirmed) gets its own id and gets through.
     public func encryptGroup(content: ContentPayload, chatId: String,
                              memberIds: [String]) async throws -> (skd: Envelope?, skdId: String?, skm: Envelope) {
         var (state, distributed, attempted) = try store.loadSenderKeyOut(chatId: chatId)
             ?? (SenderKeyState(), Set<String>(), [String: Double]())
 
-        // выяснить все адреса устройств участников (кроме своего устройства)
+        // every member device address except this device
         let byUser = try await deviceMap(userIds: Set(memberIds))
         var allAddrs: [(userId: String, deviceId: String)] = []
         for uid in memberIds {
@@ -85,9 +85,9 @@ public final class E2EEManager: @unchecked Sendable {
                 allAddrs.append((uid, d.deviceId))
             }
         }
-        // Раздача считается доставленной только по подтверждению получателя:
-        // неподтверждённая уходит снова, иначе один потерянный конверт делает
-        // нечитаемыми все сообщения этой цепочки.
+        // A distribution counts as delivered only once the recipient confirms it.
+        // An unconfirmed one is sent again: otherwise a single lost envelope leaves
+        // every message of that chain unreadable.
         let now = Date().timeIntervalSince1970
         let missing = allAddrs.filter {
             let a = addr($0.userId, $0.deviceId)
@@ -122,15 +122,15 @@ public final class E2EEManager: @unchecked Sendable {
         return (skdEnvelope, skdId, env)
     }
 
-    /// Id раздачи: один и тот же для повтора того же круга, разный для нового
-    /// круга и для другого набора адресатов.
+    /// Distribution id: the same when a round is repeated, different for a new round
+    /// and for a different set of recipients.
     static func skdClientMsgId(chatId: String, keyId: String, recipients: [String], round: Int) -> String {
         let digest = SHA256.hash(data: Data(recipients.sorted().joined(separator: ",").utf8))
             .prefix(8).map { String(format: "%02x", $0) }.joined()
         return "skd:\(chatId):\(keyId):\(digest):\(round)"
     }
 
-    /// Получатель подтвердил, что сохранил цепочку: раздавать её ему больше не нужно.
+    /// The recipient confirmed it stored the chain, so it need not be handed out again.
     public func confirmSenderKey(chatId: String, keyId: String, userId: String, deviceId: String) throws {
         guard let (state, distributed, attempted) = try store.loadSenderKeyOut(chatId: chatId),
               state.keyId == keyId else { return }
@@ -144,8 +144,8 @@ public final class E2EEManager: @unchecked Sendable {
                                    distributedTo: confirmed, attemptedAt: pending)
     }
 
-    /// Участник не смог прочитать групповое сообщение: раздача ему цепочки
-    /// забывается, следующее сообщение в чат раздаст её заново.
+    /// A member could not read a group message: their distribution is forgotten, so the
+    /// next message to the chat hands the chain out to them again.
     public func forgetSenderKeyDistribution(chatId: String, userId: String) throws {
         guard let (state, distributed, attempted) = try store.loadSenderKeyOut(chatId: chatId) else { return }
         let prefix = userId + "/"
@@ -156,9 +156,9 @@ public final class E2EEManager: @unchecked Sendable {
                                    distributedTo: keptDistributed, attemptedAt: keptAttempted)
     }
 
-    /// Следующее pairwise-сообщение этому собеседнику поднимает сессию заново
-    /// (X3DH), а текущая уходит в архив: расшифровать нечитаемое ей всё равно
-    /// не удалось, а «догоняющие» сообщения архив ещё откроет.
+    /// The next pairwise message to this peer builds a fresh session over X3DH and puts
+    /// the current one in the archive: it failed to open the unreadable message anyway,
+    /// and the archive can still open messages that arrive late under it.
     public func resetPairwiseSession(with userId: String) throws {
         try store.requestSessionReset(peerUserId: userId)
     }
@@ -176,13 +176,13 @@ public final class E2EEManager: @unchecked Sendable {
         try gate.withLock { _ in try store.acceptChangedKey(userId: userId) }
     }
 
-    /// Ротация sender key (при выходе участника из группы).
+    /// Rotates the sender key, e.g. after a member leaves the group.
     public func rotateSenderKey(chatId: String) throws {
         try store.deleteSenderKeyOut(chatId: chatId)
     }
 
-    /// Устройства всех пользователей одним запросом /devices, сгруппированные по userId.
-    /// Prekey-бандлы не запрашиваются и one-time prekeys не расходуются.
+    /// Devices of every user in a single /devices call, grouped by userId. This asks for
+    /// no prekey bundles, so it spends no one-time prekeys.
     private func deviceMap(userIds: Set<String>) async throws -> [String: [APIClient.DeviceDTO]] {
         let all = try await api.devices(userIds: [String](userIds))
         return Dictionary(grouping: all, by: \.userId)
@@ -192,14 +192,14 @@ public final class E2EEManager: @unchecked Sendable {
                                  onlyDevices: Set<String>? = nil) async throws -> Envelope {
         let plaintext = try JSONEncoder().encode(inner)
         var targets = Set(recipients)
-        targets.insert(ownUserId) // эхо на свои другие устройства
+        targets.insert(ownUserId) // echo to this user's other devices
         let byUser = try await deviceMap(userIds: targets)
 
-        // получатель без единого устройства — некому шифровать
+        // a recipient with no devices at all: there is nothing to encrypt to
         for uid in recipients where uid != ownUserId && (byUser[uid] ?? []).isEmpty {
             throw E2EEError.noDevices(userId: uid)
         }
-        // TOFU по identity-ключам всех устройств получателя (не только первого)
+        // TOFU over the identity keys of every recipient device, not just the first one
         try gate.withLock { _ in
             for uid in targets where uid != ownUserId {
                 for d in byUser[uid] ?? [] {
@@ -211,8 +211,8 @@ public final class E2EEManager: @unchecked Sendable {
         }
 
         var boxes: [String: PairwiseBox] = [:]
-        // полный prekey-бандл (расходует one-time prekey) — только для юзеров,
-        // у которых нашлось устройство без установленной сессии
+        // the full prekey bundle (which spends a one-time prekey) is fetched only for
+        // users that turned out to have a device with no session yet
         var bundlesByUser: [String: [APIClient.PrekeyBundleDTO]] = [:]
         /// Sessions marked for a rebuild, consumed once and remembered: a second
         /// pass must not read the mark as absent and encrypt to the old session.
@@ -228,8 +228,9 @@ public final class E2EEManager: @unchecked Sendable {
             let needBundles = try gate.withLock { _ -> Set<String> in
                 var needed: Set<String> = []
                 for uid in targets {
-                    // сессия помечена на пересборку (по ней не расшифровывалось): текущую
-                    // в архив, это сообщение поднимает новую через X3DH
+                    // the session is marked for a rebuild (nothing decrypted under it):
+                    // the current one goes to the archive, this message starts a new
+                    // one over X3DH
                     let isResetting = resetting[uid]
                         ?? ((try? store.consumeSessionReset(peerUserId: uid)) ?? false)
                     resetting[uid] = isResetting
@@ -241,7 +242,7 @@ public final class E2EEManager: @unchecked Sendable {
                         if isResetting, archived.insert(a).inserted {
                             try? store.archiveCurrentSession(peerUserId: uid, peerDeviceId: device.deviceId)
                         }
-                        // существующая сессия → dr, бандл не нужен
+                        // an existing session encrypts as dr and needs no bundle
                         if !isResetting,
                            var session = try store.loadSession(peerUserId: uid, peerDeviceId: device.deviceId) {
                             let msg = try session.encrypt(plaintext)
@@ -250,7 +251,7 @@ public final class E2EEManager: @unchecked Sendable {
                             boxes[a] = PairwiseBox(type: "dr", c: try JSONEncoder().encode(msg).base64EncodedString())
                             continue
                         }
-                        // новой сессии нужен X3DH
+                        // a new session needs X3DH
                         guard let bundle = bundlesByUser[uid]?.first(where: { $0.deviceId == device.deviceId })
                         else {
                             if bundlesByUser[uid] == nil { needed.insert(uid) }
@@ -273,7 +274,7 @@ public final class E2EEManager: @unchecked Sendable {
         return env
     }
 
-    /// X3DH-инициация новой сессии по полному prekey-бандлу устройства.
+    /// Starts a new session over X3DH from a device's full prekey bundle.
     private func newSessionBox(plaintext: Data, userId: String,
                                bundle: APIClient.PrekeyBundleDTO) throws -> PairwiseBox? {
         guard let ikDH = Data(base64urlEncoded: bundle.identityKey),
@@ -306,7 +307,7 @@ public final class E2EEManager: @unchecked Sendable {
         return box
     }
 
-    // MARK: - Входящие
+    // MARK: - Incoming
 
     /// Opening an envelope belongs to `IncomingDecryptor`: it needs the device's
     /// keys and no network, which is what lets the notification service
