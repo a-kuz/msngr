@@ -14,6 +14,7 @@ struct SessionEndedView: View {
                 Image(systemName: "iphone.slash")
                     .font(.system(size: 56))
                     .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
                 Text("Сессия завершена")
                     .font(.title2.bold())
                 Text("Доступ этого устройства к аккаунту отозван. Переписка и ключи, которые хранились здесь, удаляются.")

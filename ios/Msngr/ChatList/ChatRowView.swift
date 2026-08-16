@@ -5,21 +5,22 @@ struct ChatRowView: View {
     let item: ChatListItem
     let ownUserId: String
     @ObservedObject private var theme = ThemeStore.shared
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         HStack(spacing: 10) {
             AvatarView(name: item.title, avatarId: item.chat.kind == .direct ? item.peer?.avatarId : item.chat.avatarId,
                        online: item.peer?.online ?? false)
-                .frame(width: 54, height: 54)
+                .frame(width: avatarSide, height: avatarSide)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 4) {
                     Text(item.title)
-                        .font(.system(size: 16, weight: .semibold))
+                        .textRole(Theme.Text.rowTitle)
                         .lineLimit(1)
                     if muted {
                         Image(systemName: "speaker.slash.fill")
-                            .font(.system(size: 11))
+                            .font(Theme.glyph(11, max: 17))
                             .foregroundStyle(.tertiary)
                             .accessibilityIdentifier("chatRow.muted")
                     }
@@ -27,30 +28,36 @@ struct ChatRowView: View {
                     // галочки своего последнего сообщения
                     if let last = item.lastMessage, last.isOutgoing, !contentHidden {
                         TickView(status: last.status)
-                            .font(.system(size: 12))
+                            .font(Theme.glyph(12, max: 18))
                     }
+                    // время и галочки держат идеальную ширину: иначе на крупном
+                    // тексте длинное имя сжимает их в многоточие
                     Text(Self.timeLabel(item.lastMessage.map { $0.serverTs ?? $0.sentAt } ?? item.chat.lastActivityAt))
-                        .font(.system(size: 13))
+                        .textRole(Theme.Text.rowTime)
                         .foregroundStyle(.secondary)
+                        .fixedSize()
+                        .layoutPriority(1)
                 }
                 HStack(alignment: .top, spacing: 4) {
                     previewText
-                        .font(.system(size: 15))
+                        .textRole(Theme.Text.rowPreview)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                     Spacer(minLength: 4)
                     if visibleUnread > 0 {
                         Text("\(visibleUnread)")
-                            .font(.system(size: 13, weight: .semibold))
+                            .textRole(Theme.Text.rowBadge)
                             .foregroundStyle(.white)
                             .padding(.horizontal, 7)
-                            .frame(minWidth: 21, minHeight: 21)
+                            .frame(minWidth: badgeSide, minHeight: badgeSide)
                             .background(muted ? Color.gray : Theme.accent)
                             .clipShape(Capsule())
+                            .fixedSize()
+                            .layoutPriority(1)
                             .transition(.scale.combined(with: .opacity))
                     } else if item.chat.pinned {
                         Image(systemName: "pin.fill")
-                            .font(.system(size: 12))
+                            .font(Theme.glyph(12, max: 18))
                             .foregroundStyle(.tertiary)
                     }
                 }
@@ -59,6 +66,11 @@ struct ChatRowView: View {
         .padding(.vertical, 2)
         .animation(Theme.springFast, value: visibleUnread)
     }
+
+    /// Аватар растёт вместе со строкой, но медленнее текста: на крупном
+    /// размере он иначе съедает половину ширины строки.
+    private var avatarSide: CGFloat { typeSize.scaled(54, relativeTo: .subheadline, max: 74) }
+    private var badgeSide: CGFloat { typeSize.scaled(21, relativeTo: .caption1, max: 32) }
 
     /// Заявка до принятия: ни превью, ни счётчика, ни галочек.
     private var contentHidden: Bool { ChatPrivacy.hidesContent(item.chat) }
@@ -119,7 +131,7 @@ struct ChatRowView: View {
 struct PreviewLabelStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(spacing: 3) {
-            configuration.icon.font(.system(size: 12))
+            configuration.icon.font(Theme.glyph(12, max: 18))
             configuration.title
         }
         .foregroundStyle(Theme.accent)
