@@ -43,9 +43,9 @@ while its process is in `ps` or its transcript is still being written.
 | two simulators created, app installed and launched, left booted: `zombie-a` claimed by nobody, `ghost-b` behind a registry entry with a dead session | both read as litter, the six working simulators do not | dry run listed `zombie-a` and `ghost-b` and nothing else |
 | sweep applied | both go, everything else stays | `removed simulator ghost-b (1.61G)`, `removed simulator zombie-a (1.65G)`; `chatsearch-agent`, `chatsearch-peer`, `perfdb-a`, `perfdb-b`, `chatlist-a`, `chatlist-b`, `gate-runner` and the owner's two devices all still listed |
 | merged worktrees with nobody in them | removed with their stands | `run-english2`, `run-perfnet`, `run-search` gone; `run-chatsearch`, `run-perfdb`, `run-chatlist`, `run-housekeeping` kept |
-| wranglers of five deleted worktrees, running 9 to 13 hours | killed, and the space they held returns | 36 processes gone; the 2.46 GB of deleted-but-open files held by `workerd` disappeared from `lsof +L1` |
+| wranglers of five deleted worktrees, running 9 to 13 hours | killed, and the space they held returns | 30 processes signalled, none left in `ps`; the 2.46 GB of deleted-but-open files held by `workerd` disappeared from `lsof +L1` |
 | `perfdb` finished mid-run, its two simulators still booted | swept on the next pass | `removed simulator perfdb-a (2.00G)`, `perfdb-b (2.03G)`, 18 minutes after its transcript went quiet |
-| free space forced below the floor (`TIDY_FLOOR_GB=100`) | a report naming what to give up next | `.claude/disk-report.md` written, notification raised, nothing deleted |
+| free space forced below the floor (`TIDY_FLOOR_GB=100`) | a report naming what to give up next | `.claude/disk-report.md` written, a line in `.claude/tidy.log`, nothing deleted |
 
 The whole sweep costs about two seconds, so running it every five minutes is
 cheaper than the snapshot it refreshes.
@@ -132,16 +132,27 @@ be half-written in there; it is the first thing the escalation report offers.
 
 The five-minute job is not switched on. Branches here are merged by the owner,
 and the plist points at `scripts/tidy.py` in the main checkout, where the file
-arrives with the merge. Firing was proved with a temporary job of the same shape
-running the worktree copy every minute; the installed `ai.enface.msngr.tidy` is
-still the hourly one on the old shell script, which by the reading above does
-nothing but clear derived data. Three commands switch it over, and they are in
-CLAUDE.md.
+arrives with the merge. Firing was proved with a temporary job of the same
+shape, running the worktree copy every minute under launchd's own environment:
+
+```
+2026-08-16 18:43:51  swept: nothing to take, 0 left for the report, free 53.4 GB
+2026-08-16 18:44:54  swept: nothing to take, 0 left for the report, free 52.3 GB
+```
+
+That job has been removed again. The installed `ai.enface.msngr.tidy` is still
+the hourly one on the old shell script, which by the reading above does nothing
+but clear derived data. Three commands switch it over, and they are in CLAUDE.md.
 
 The escalation was exercised by moving the floor, not by filling the disk to 25
 GB free. The path is the same either way — the sweep runs, free space is read,
 the report is written — but the numbers in it came from a machine that was not
 actually short of space.
+
+Whether the banner reaches the screen is unproven. `osascript` exits 0, and the
+report file and the log line are there whatever it does, but Notification Center
+keeps its database where it cannot be read, and a job run by launchd is
+attributed to Script Editor and inherits whatever permission that has.
 
 A reboot is not covered. `RunAtLoad` is false, so the first sweep after a login
 comes five minutes later.
