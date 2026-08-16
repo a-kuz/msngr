@@ -184,7 +184,9 @@ struct ChatGalleryView: View {
     private func icon(_ entry: GalleryEntry) -> String {
         switch entry.kind {
         case .voice:
-            let mine = voice.state.msgId == entry.messageId
+            // the player is keyed by the message row, which for an attachment of its own
+            // is the entry's id; `messageId` is the server one and the feed knows nothing of it
+            let mine = voice.state.msgId == entry.id
             return mine && voice.state.isPlaying ? "pause.fill" : "play.fill"
         case .text: return "link"
         default: return "doc.fill"
@@ -272,7 +274,7 @@ struct ChatGalleryView: View {
         guard let media = msg.media else { return }
         Task {
             guard let mm = AppState.shared.media, let url = try? await mm.fetch(media) else { return }
-            VoicePlayer.shared.toggle(msgId: msg.msgId ?? msg.id, url: url)
+            VoicePlayer.shared.toggle(msgId: msg.id, url: url)
         }
     }
 
