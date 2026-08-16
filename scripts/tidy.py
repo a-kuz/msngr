@@ -33,6 +33,7 @@ import sys
 import time
 from pathlib import Path
 
+sys.dont_write_bytecode = True  # a cleaner does not leave a __pycache__ behind
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import disk  # noqa: E402  the metric and the facts about what belongs to whom
 
