@@ -2,10 +2,10 @@
 
 Agents leave a simulator of about two gigabytes each, a stand, a worktree and a
 derived-data directory, and the ones that are killed leave all of it booted and
-running. Nine abandoned simulators had to be shut down by hand on the morning of
-this run. This is the machinery that replaces that hand: a metric that answers
-at once, a sweep on a five-minute clock, and a report for the human when the
-sweep is not enough.
+running. Nine abandoned simulators were deleted by hand while this was being
+built. This is the machinery that replaces that hand: a metric that answers at
+once, a sweep on a five-minute clock, and a report for the human when the sweep
+is not enough.
 
 ## Stand
 
@@ -55,11 +55,16 @@ cheaper than the snapshot it refreshes.
 Five rules that read correctly and were wrong on this machine. Each was caught
 by running the thing, not by looking at it.
 
-**The old idle check never ran.** `scripts/tidy.sh` aged simulators with `stat
--f %m`, which is BSD syntax; GNU coreutils are first in this `PATH`, so the
-command failed, the age came out empty, and `[ "$age_h" -lt 2 ]` errored instead
-of skipping. The guard that was supposed to spare a simulator idle for less than
-two hours had been passing everything through.
+**Neither of the old script's two rules could fire as written.**
+`scripts/tidy.sh` aged simulators with `stat -f %m`, which is BSD syntax; GNU
+coreutils are first in this `PATH`, so the command failed, the age came out
+empty, and `[ "$age_h" -lt 2 ]` errored instead of skipping — the guard meant to
+spare a simulator idle for under two hours passed everything through. Its
+worktree rule compared branch names against `git branch --merged main | tr -d '
+*'`, and git marks a branch checked out in another worktree with `+`, which that
+`tr` does not remove. A branch with a worktree always reads as `+run-name` and
+never matched, so the one case the rule existed for was the one case it could
+not see. `.claude/tidy.log` records only derived-data removals, which agrees.
 
 **A booted simulator is never quiet.** The first idleness test watched
 `data/Containers`. A booted simulator writes there forever on its own — Siri,
@@ -125,10 +130,18 @@ be half-written in there; it is the first thing the escalation report offers.
 
 ## What the run did not cover
 
+The five-minute job is not switched on. Branches here are merged by the owner,
+and the plist points at `scripts/tidy.py` in the main checkout, where the file
+arrives with the merge. Firing was proved with a temporary job of the same shape
+running the worktree copy every minute; the installed `ai.enface.msngr.tidy` is
+still the hourly one on the old shell script, which by the reading above does
+nothing but clear derived data. Three commands switch it over, and they are in
+CLAUDE.md.
+
 The escalation was exercised by moving the floor, not by filling the disk to 25
 GB free. The path is the same either way — the sweep runs, free space is read,
 the report is written — but the numbers in it came from a machine that was not
 actually short of space.
 
-Whether the five-minute job survives a reboot and a logout is not shown here.
-`RunAtLoad` is false, so the first sweep after a login comes five minutes later.
+A reboot is not covered. `RunAtLoad` is false, so the first sweep after a login
+comes five minutes later.
