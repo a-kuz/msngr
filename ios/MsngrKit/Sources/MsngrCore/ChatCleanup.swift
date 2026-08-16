@@ -68,6 +68,23 @@ public enum ChatCleanup {
         try dbc.execute(sql: "DELETE FROM chat WHERE id = ?", arguments: [chatId])
     }
 
+    /// Messages whose time is up. They leave the same way a cleared history
+    /// does: the row goes, the cursors stay, and a seq above `syncedSeq` is
+    /// closed with a `historyGap` record — otherwise upward pagination asks the
+    /// server for a range whose keys this device has already destroyed.
+    public static func expire(_ dbc: GRDB.Database,
+                              now: Double = Date().timeIntervalSince1970) throws {
+        try dbc.execute(sql: """
+            INSERT INTO historyGap (chatId, seq, reason, attempts, lastTriedAt)
+            SELECT m.chatId, m.seq, 'cleared', 1, ? FROM message m
+            WHERE m.expiresAt IS NOT NULL AND m.expiresAt <= ? AND m.seq IS NOT NULL
+              AND m.seq > COALESCE((SELECT syncedSeq FROM chat WHERE id = m.chatId), 0)
+            ON CONFLICT(chatId, seq) DO NOTHING
+            """, arguments: [now, now])
+        try dbc.execute(sql: "DELETE FROM message WHERE expiresAt IS NOT NULL AND expiresAt <= ?",
+                        arguments: [now])
+    }
+
     /// Position a returning chat starts its cursors from, zero when this device
     /// never deleted it.
     public static func tombstoneSeq(_ dbc: GRDB.Database, chatId: String) throws -> Int {

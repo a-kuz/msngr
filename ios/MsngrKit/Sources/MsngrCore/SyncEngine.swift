@@ -18,6 +18,7 @@ public actor SyncEngine {
     private var actionTask: Task<Void, Never>?
     /// периодические фоновые проходы: снятие истёкшего mute и очередь нечитаемых
     private var maintenanceTask: Task<Void, Never>?
+    private var expiryTask: Task<Void, Never>?
     private var outboxWakeup = AsyncStream<Void>.makeStream()
     private var actionWakeup = AsyncStream<Void>.makeStream()
     private var connected = false
@@ -97,6 +98,7 @@ public actor SyncEngine {
         maintenanceTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.sweepExpiredMutes()
+                await self?.sweepExpiredMessages()
                 // очередь нечитаемых переигрывается и при старте, и дальше по
                 // кругу: запись, ждущая ключа, иначе ждала бы следующего
                 // удачного фрейма в том же чате — то есть могла не дождаться
@@ -130,6 +132,7 @@ public actor SyncEngine {
         outboxTask?.cancel()
         actionTask?.cancel()
         maintenanceTask?.cancel()
+        expiryTask?.cancel()
         await ws.stop()
         connected = false
     }
@@ -156,6 +159,40 @@ public actor SyncEngine {
         try? await ws.sendRaw(Data(#"{"t":"fg"}"#.utf8))
         outboxWakeup.continuation.yield()
         await sweepExpiredMutes()
+    }
+
+    /// Сообщения с истёкшим сроком уходят с устройства вместе с вложениями.
+    /// Свип идёт по кругу обслуживания и, кроме того, будится к ближайшему
+    /// сроку: при коротком TTL круга в полминуты не хватило бы.
+    public func sweepExpiredMessages() async {
+        let now = Date().timeIntervalSince1970
+        let doomed = (try? await db.read { dbc in
+            try Message.fetchAll(dbc, sql: "SELECT * FROM message WHERE expiresAt IS NOT NULL AND expiresAt <= ?",
+                                 arguments: [now])
+        }) ?? []
+        if !doomed.isEmpty {
+            try? await db.write { dbc in try ChatCleanup.expire(dbc, now: now) }
+            for info in doomed.flatMap({ ($0.media.map { [$0] } ?? []) + ($0.album ?? []) }) {
+                media?.remove(info)
+            }
+        }
+        await scheduleNextExpiry()
+    }
+
+    /// Будильник на ближайший срок: без него сообщение с TTL в пять секунд
+    /// висело бы на экране до следующего круга обслуживания.
+    private func scheduleNextExpiry() async {
+        expiryTask?.cancel()
+        let next = (try? await db.read { dbc in
+            try Double.fetchOne(dbc, sql: "SELECT MIN(expiresAt) FROM message WHERE expiresAt IS NOT NULL")
+        }) ?? nil
+        guard let next else { return }
+        let delay = max(0, next - Date().timeIntervalSince1970)
+        expiryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000) + 200_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.sweepExpiredMessages()
+        }
     }
 
     /// Снимает mute у чатов, чей срок вышел: локально и на сервере.
@@ -1226,6 +1263,12 @@ public actor SyncEngine {
                 msg.album = content.album
                 msg.replyTo = content.replyTo
                 msg.forward = content.fwd
+                // историческая копия исчезающего сообщения помечается так же,
+                // как пришедшая живьём: иначе догрузка вверх возвращала бы то,
+                // чему срок уже вышел, и оно оставалось бы навсегда
+                let ttl = try Int.fetchOne(dbc, sql: "SELECT ttlSeconds FROM chat WHERE id = ?",
+                                           arguments: [chatId]) ?? 0
+                if ttl > 0 { msg.expiresAt = Date().timeIntervalSince1970 + Double(ttl) }
                 try msg.upsert(dbc)
                 try SyncEngine.applyBuffered(dbc, chatId: chatId, msgId: msgId)
             }
@@ -1316,13 +1359,19 @@ public actor SyncEngine {
         guard let clientMsgId = f.clientMsgId, let msgId = f.msgId,
               let seq = f.seq, let chatId = f.chatId else { return }
         try? await db.write { dbc in
+            // срок исчезающего сообщения идёт от момента, когда оно ушло:
+            // лежащее в очереди без сети ещё никому не показано
+            let ttl = try Int.fetchOne(dbc, sql: "SELECT ttlSeconds FROM chat WHERE id = ?",
+                                       arguments: [chatId]) ?? 0
             try dbc.execute(
                 sql: """
                 UPDATE message SET msgId = ?, seq = ?, serverTs = ?, status = MAX(status, 1),
-                  failReason = NULL
+                  failReason = NULL, expiresAt = ?
                 WHERE clientMsgId = ?
                 """,
-                arguments: [msgId, seq, f.ts, clientMsgId])
+                arguments: [msgId, seq, f.ts,
+                            ttl > 0 ? Date().timeIntervalSince1970 + Double(ttl) : nil,
+                            clientMsgId])
             try dbc.execute(sql: "DELETE FROM outbox WHERE clientMsgId = ?", arguments: [clientMsgId])
             // правки и реакции, ждавшие серверный id своей цели: теперь он есть
             try dbc.execute(sql: "UPDATE outbox SET state = 'ready' WHERE state = 'waiting'")
