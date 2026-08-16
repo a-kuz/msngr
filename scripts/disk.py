@@ -130,6 +130,44 @@ def device_owner(name, agents):
     return None
 
 
+def live_worktrees():
+    """Agent names with a session writing into their worktree right now.
+
+    An agent is supposed to put itself in .claude/agents.tsv and one had not,
+    while working, with two simulators to its name. Its transcript gives it
+    away: sessions are filed under the directory they run in, so a fresh
+    `.jsonl` under the worktree's own folder is somebody at the keyboard. Read
+    only the modification time — the prompt inside names paths and would claim
+    whatever it happens to mention.
+    """
+    trees = ROOT / ".claude" / "worktrees"
+    found = {}
+    for path in sorted(trees.glob("*")) if trees.is_dir() else []:
+        if not path.is_dir():
+            continue
+        folder = TRANSCRIPTS / str(path).replace("/", "-").replace(".", "-")
+        if any(time.time() - f.stat().st_mtime < QUIET
+               for f in folder.glob("*.jsonl")):
+            name = path.name[4:] if path.name.startswith("run-") else path.name
+            found[name] = path.resolve()
+    return found
+
+
+def claim(device, agents, working):
+    """Who a simulator belongs to, and whether anything would miss it."""
+    role = KEEP_DEVICES.get(device["udid"])
+    if role:
+        return ("owner's device" if role == "owner" else "gate runner"), False
+    owner = device_owner(device["name"], agents)
+    if owner:
+        return (f"agent {owner}", False) if agents[owner]["alive"] \
+            else (f"agent {owner}, gone", True)
+    stem = device["name"].split("-")[0]
+    if stem in working:
+        return f"agent {stem}, unregistered", False
+    return "nobody's", True
+
+
 def devices():
     """Every simulator with the size simctl already knows, so no walk needed."""
     try:
@@ -271,19 +309,9 @@ def scan(wide=False):
 
     # Simulators. Size comes from simctl, so this group costs nothing.
     sims = []
+    working = live_worktrees()
     for dev in devices():
-        role = KEEP_DEVICES.get(dev["udid"])
-        loose = False
-        if role:
-            note = "owner's device" if role == "owner" else "gate runner"
-        else:
-            owner = device_owner(dev["name"], agents)
-            if owner is None:
-                note, loose = "nobody's", True
-            elif agents[owner]["alive"]:
-                note = f"agent {owner}"
-            else:
-                note, loose = f"agent {owner}, gone", True
+        note, loose = claim(dev, agents, working)
         sims.append({"name": f"{dev['name']} ({dev['state'].lower()})",
                      "device": dev["name"], "bytes": dev["bytes"], "note": note,
                      "loose": loose, "udid": dev["udid"],
@@ -316,9 +344,12 @@ def scan(wide=False):
         inner = sum(stand_size[s] for s in stands if is_under(s, tree.resolve()))
         branch = tree.name
         owner = next((n for n, a in agents.items() if a["worktree"] == branch), None)
+        stem = branch[4:] if branch.startswith("run-") else branch
         loose = False
         if owner and agents[owner]["alive"]:
             note = f"agent {owner}"
+        elif stem in working:
+            note = f"agent {stem}, unregistered"
         elif merged(branch):
             note, loose = "branch merged", True
         else:
