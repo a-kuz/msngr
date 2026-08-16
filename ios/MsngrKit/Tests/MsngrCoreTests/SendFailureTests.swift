@@ -32,7 +32,7 @@ final class SendFailureTests: XCTestCase {
         return try JSONDecoder().decode(WSIncoming.self, from: Data(json.utf8))
     }
 
-    func testErrorFrameMarksMessageFailedAndDropsOutbox() async throws {
+    func testErrorFrameMarksMessageFailedAndStopsSending() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
         try await seedOutgoing(db, clientMsgId: "cm1")
@@ -44,10 +44,51 @@ final class SendFailureTests: XCTestCase {
         }
         XCTAssertEqual(msg?.status, .failed)
         XCTAssertEqual(msg?.failReason, SendFailure.blocked)
-        let queued = try await db.read { dbc in
-            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM outbox WHERE clientMsgId = 'cm1'")
+        let ready = try await db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM outbox WHERE clientMsgId = 'cm1' AND state = 'ready'")
         }
-        XCTAssertEqual(queued, 0, "what the server rejected must not be retried")
+        XCTAssertEqual(ready, 0, "what the server rejected must not be retried on its own")
+        let state = try await db.read { dbc in
+            try String.fetchOne(dbc, sql: "SELECT state FROM outbox WHERE clientMsgId = 'cm1'")
+        }
+        XCTAssertEqual(state, "failed", "the payload stays, so the user can send the message again")
+    }
+
+    /// "Send again" puts the message back into the queue with what it was
+    /// written with, and the failure it showed is gone.
+    func testRetrySendRequeuesTheFailedMessage() async throws {
+        let db = try AppDatabase.openInMemory()
+        let engine = try makeEngine(db: db)
+        try await seedOutgoing(db, clientMsgId: "cm1")
+        await engine.apply(try errorFrame(SendFailure.sendFailed, clientMsgId: "cm1"))
+
+        let queued = await engine.retrySend(messageId: "cm1")
+
+        XCTAssertTrue(queued)
+        let msg = try await db.read { dbc in
+            try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE clientMsgId = 'cm1'")
+        }
+        XCTAssertEqual(msg?.status, .sending)
+        XCTAssertNil(msg?.failReason)
+        let state = try await db.read { dbc in
+            try String.fetchOne(dbc, sql: "SELECT state FROM outbox WHERE clientMsgId = 'cm1'")
+        }
+        XCTAssertEqual(state, "ready")
+    }
+
+    /// A message with no queue entry cannot be repeated, and says so instead of
+    /// pretending it went out.
+    func testRetrySendWithoutQueueEntryIsRefused() async throws {
+        let db = try AppDatabase.openInMemory()
+        let engine = try makeEngine(db: db)
+        try await seedOutgoing(db, clientMsgId: "cm1")
+        try await db.write { dbc in
+            try dbc.execute(sql: "DELETE FROM outbox WHERE clientMsgId = 'cm1'")
+        }
+
+        let queued = await engine.retrySend(messageId: "cm1")
+
+        XCTAssertFalse(queued)
     }
 
     /// A rejection addresses one send: a neighbouring outgoing message is untouched.

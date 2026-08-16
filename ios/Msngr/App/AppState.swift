@@ -155,6 +155,9 @@ final class AppState: ObservableObject {
         OwnUser.id = s.userId
         // the NSE reads these values from the shared defaults
         UserDefaults(suiteName: AppGroup.identifier)?.set(s.userId, forKey: "ownUserId")
+        // the extension answers the delivery receipt over HTTP and is launched
+        // by the system, so the address of the stand has to reach it from here
+        ServerEndpoint.setBase(Self.httpBase, in: AppGroup.defaults)
         do {
             db = try AppDatabase.open(at: storage.databaseURL)
             try StorageOwnership.stamp(db, userId: s.userId)

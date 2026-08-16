@@ -854,6 +854,7 @@ struct MessagesView: UIViewControllerRepresentable {
             case .pin: model.pin(msg)
             case .forward: NotificationCenter.default.post(name: .forwardRequested, object: msg)
             case .select: withAnimation(Theme.springFast) { model.beginSelection(with: msg) }
+            case .resend: model.resend(msg)
             // удаление начинается с выбора: сообщение видно, к нему можно
             // добавить ещё, подтверждение стоит внизу
             case .delete:
