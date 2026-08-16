@@ -1,8 +1,8 @@
 import XCTest
 @testable import Msngr
 
-/// Правило микрофона: запись начинается только с разрешением. Раньше нажатие
-/// начинало запись сразу, и первый дубль писался под системным диалогом.
+/// The microphone rule: recording starts only once permission is granted, so no
+/// take is ever captured underneath the system dialog.
 final class MicGateTests: XCTestCase {
     func testUndeterminedAsksInsteadOfRecording() {
         XCTAssertEqual(MicGate.decide(.undetermined), .ask)

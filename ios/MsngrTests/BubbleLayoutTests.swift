@@ -23,7 +23,7 @@ final class BubbleLayoutTests: XCTestCase {
 
     /// Case 1: short single-line text — the time sits inline on the same line.
     func testShortTextTimeInline() {
-        let p = plan("Привет")
+        let p = plan("Hello")
         let tf = try! XCTUnwrap(p.textFrame)
         XCTAssertLessThan(p.statusFrame.minY, tf.maxY,
                           "short text: the time belongs inline, not below the text")
@@ -34,7 +34,7 @@ final class BubbleLayoutTests: XCTestCase {
     /// time onto a line of its own below.
     func testLongLineTimePushedToNewLine() {
         // fits the bubble width, but leaves no room for the time after it
-        let p = plan("Время уже не вместе с первой строкой а на новой строке ниже")
+        let p = plan("This line runs right up to the edge.")
         let tf = try! XCTUnwrap(p.textFrame)
         XCTAssertGreaterThanOrEqual(p.statusFrame.minY, tf.maxY - 2,
             "long line with no room left: the time must move to a new line under the text")
@@ -46,7 +46,7 @@ final class BubbleLayoutTests: XCTestCase {
     /// joins the end of that last line instead of starting a new one.
     func testMultilineShortLastLineTimeInline() {
         // long enough to wrap, with a short trailing line
-        let p = plan("Время уже не вместе с первой строкой и не на новой строке. А вместе с последней")
+        let p = plan("The time is not on the first line and not on a line of its own. It rides the last one")
         let tf = try! XCTUnwrap(p.textFrame)
         XCTAssertGreaterThan(tf.height, 30, "the text is expected to wrap")
         XCTAssertLessThan(p.statusFrame.minY, tf.maxY,
@@ -79,7 +79,7 @@ final class BubbleLayoutTests: XCTestCase {
 
     /// Short text: text, reaction and time all fit on one line.
     func testShortTextReactionAndTimeOnSameLine() {
-        let p = withReactions("Ок", ["👍": ["u1"]])
+        let p = withReactions("OK", ["👍": ["u1"]])
         let chip = try! XCTUnwrap(p.reactionsFrames.first)
         let tf = try! XCTUnwrap(p.textFrame)
         // capsule right of the text, time right of the capsule, all on one line
@@ -92,7 +92,7 @@ final class BubbleLayoutTests: XCTestCase {
     /// Multiline text with reactions: the time leaves the last text line and
     /// moves down to the reactions row.
     func testTimeMovesToReactionRowForMultilineText() {
-        let p = withReactions("Довольно длинное сообщение, которое точно занимает несколько строк подряд",
+        let p = withReactions("A fairly long message that is certain to take up several lines in a row",
                               ["😂": ["u1", "u2"], "🔥": ["u3"]])
         let tf = try! XCTUnwrap(p.textFrame)
         let chip = try! XCTUnwrap(p.reactionsFrames.first)
@@ -109,7 +109,7 @@ final class BubbleLayoutTests: XCTestCase {
         let emojis = ["😂", "🔥", "❤️", "👍", "😮", "😢", "🎉", "🙏", "👏", "💯"]
         var reactions: [String: [String]] = [:]
         for (i, e) in emojis.enumerated() { reactions[e] = ["u\(i)"] }
-        let p = withReactions("Текст", reactions)
+        let p = withReactions("Text", reactions)
         XCTAssertEqual(p.reactionsFrames.count, emojis.count)
         let rows = Set(p.reactionsFrames.map { Int($0.frame.minY.rounded()) })
         XCTAssertGreaterThan(rows.count, 1, "capsules must wrap onto new rows")
@@ -144,7 +144,7 @@ final class BubbleLayoutTests: XCTestCase {
     /// Short text: a fixed gap between text and time, with the time flush
     /// against the right edge of the bubble.
     func testShortTextStatusPinnedToBubbleRightEdge() {
-        let p = plan("Высев")
+        let p = plan("Sown")
         let tf = try! XCTUnwrap(p.textFrame)
         XCTAssertEqual(p.statusFrame.maxX, p.bubbleFrame.width - BubbleLayout.hPadding,
                        accuracy: 0.5, "the time is flush with the right edge of the bubble")
@@ -155,7 +155,7 @@ final class BubbleLayoutTests: XCTestCase {
     // MARK: - Gap between bubbles
 
     private func gapPlan(tightGap: Bool) -> BubbleLayoutPlan {
-        BubbleLayout.plan(for: outgoing("Привет"), width: width, tightGap: tightGap,
+        BubbleLayout.plan(for: outgoing("Hello"), width: width, tightGap: tightGap,
                           showTail: true, showName: false, authorName: nil)
     }
 
@@ -214,9 +214,9 @@ final class BubbleLayoutTests: XCTestCase {
 
     /// Markup markers never reach the bubble; the styles they carry do.
     func testMarkersAreNotRendered() {
-        let p = plan("**жирный** и `код`")
+        let p = plan("**bold** and `code`")
         let attr = try! XCTUnwrap(p.text)
-        XCTAssertEqual(attr.string, "жирный и код")
+        XCTAssertEqual(attr.string, "bold and code")
         let boldFont = attr.attribute(.font, at: 0, effectiveRange: nil) as? UIFont
         XCTAssertTrue(boldFont?.fontDescriptor.symbolicTraits.contains(.traitBold) ?? false)
         let codeFont = attr.attribute(.font, at: attr.length - 1, effectiveRange: nil) as? UIFont
@@ -225,7 +225,7 @@ final class BubbleLayoutTests: XCTestCase {
 
     /// A link gets the .msngrLink attribute; that is what makes the cell open a browser.
     func testLinkAttributePresent() {
-        let attr = try! XCTUnwrap(plan("жми https://example.com сюда").text)
+        let attr = try! XCTUnwrap(plan("tap https://example.com right here").text)
         var found: URL?
         attr.enumerateAttribute(.msngrLink, in: NSRange(location: 0, length: attr.length)) { value, _, _ in
             if let url = value as? URL { found = url }
@@ -236,8 +236,8 @@ final class BubbleLayoutTests: XCTestCase {
     /// The size in the plan matches a direct measurement of the same attributed
     /// text: what gets drawn is exactly what was measured.
     func testTextFrameMatchesMeasuredSize() {
-        for source in ["Привет", "**жирный** текст", "```\nlet a = 1\nlet b = 22\n```",
-                       "текст\n```\ncode\n```\nхвост"] {
+        for source in ["Hello", "**bold** text", "```\nlet a = 1\nlet b = 22\n```",
+                       "text\n```\ncode\n```\ntail"] {
             let p = plan(source)
             let tf = try! XCTUnwrap(p.textFrame)
             let attr = try! XCTUnwrap(p.text)
@@ -314,7 +314,7 @@ final class BubbleLayoutTests: XCTestCase {
     // MARK: - Reply quote
 
     private func replyPlan(replyTo: ReplyPreview, replyAuthorName: String?) -> BubbleLayoutPlan {
-        var m = outgoing("Текст ответа")
+        var m = outgoing("Reply text")
         m.replyTo = replyTo
         return BubbleLayout.plan(for: m, width: width, tightGap: false, showTail: true,
                                  showName: false, authorName: nil, replyAuthorName: replyAuthorName)
@@ -323,24 +323,24 @@ final class BubbleLayoutTests: XCTestCase {
     /// The quote shows the name the caller resolved from user/participants,
     /// never the raw userId in replyTo.authorId.
     func testReplyAuthorUsesResolvedName() {
-        let reply = ReplyPreview(msgId: "m1", authorId: "01KZXED9XMFKTKYDBVH30C", text: "привет", kind: "text")
-        let p = replyPlan(replyTo: reply, replyAuthorName: "Аня")
-        XCTAssertEqual(p.replyAuthor, "Аня")
+        let reply = ReplyPreview(msgId: "m1", authorId: "01KZXED9XMFKTKYDBVH30C", text: "hello", kind: "text")
+        let p = replyPlan(replyTo: reply, replyAuthorName: "Anna")
+        XCTAssertEqual(p.replyAuthor, "Anna")
         XCTAssertNotEqual(p.replyAuthor, reply.authorId, "a quote must never show a raw userId")
     }
 
     /// Replying to your own message: the quote is attributed to you.
     func testReplyAuthorShowsYouForOwnMessage() {
-        let reply = ReplyPreview(msgId: "m1", authorId: "me", text: "моё сообщение", kind: "text")
+        let reply = ReplyPreview(msgId: "m1", authorId: "me", text: "my message", kind: "text")
         let p = replyPlan(replyTo: reply, replyAuthorName: "Вы")
         XCTAssertEqual(p.replyAuthor, "Вы")
     }
 
     /// Without a quote replyAuthor stays nil, even when a name is available.
     func testReplyAuthorNilWithoutReplyTo() {
-        let p = BubbleLayout.plan(for: outgoing("без ответа"), width: width, tightGap: false,
+        let p = BubbleLayout.plan(for: outgoing("no reply"), width: width, tightGap: false,
                                   showTail: true, showName: false, authorName: nil,
-                                  replyAuthorName: "Аня")
+                                  replyAuthorName: "Anna")
         XCTAssertNil(p.replyAuthor)
     }
 
@@ -354,7 +354,7 @@ final class BubbleLayoutTests: XCTestCase {
             ReplyPreview(msgId: "1", authorId: "u", text: "Голосовое сообщение", kind: "voice")),
             "🎤 Голосовое сообщение")
         XCTAssertEqual(BubbleLayout.replyPreviewText(
-            ReplyPreview(msgId: "1", authorId: "u", text: "Договор.pdf", kind: "file")), "📎 Договор.pdf")
+            ReplyPreview(msgId: "1", authorId: "u", text: "Contract.pdf", kind: "file")), "📎 Contract.pdf")
         XCTAssertEqual(BubbleLayout.replyPreviewText(
             ReplyPreview(msgId: "1", authorId: "u", text: "", kind: "album")), "🖼 Альбом")
     }
@@ -372,7 +372,7 @@ final class BubbleLayoutTests: XCTestCase {
     /// copying replyTo.text.
     func testPlanReplyTextUsesPreviewMapping() {
         let reply = ReplyPreview(msgId: "1", authorId: "peer", text: "Видео", kind: "video")
-        let p = replyPlan(replyTo: reply, replyAuthorName: "Петя")
+        let p = replyPlan(replyTo: reply, replyAuthorName: "Pete")
         XCTAssertEqual(p.replyText, "🎥 Видео")
     }
 
@@ -399,7 +399,7 @@ final class BubbleLayoutTests: XCTestCase {
     /// the same message is taller, and its time line grows with it. A plan
     /// measured at the old size must not survive the change.
     func testBubbleGrowsWithTextSize() {
-        let msg = outgoing("Привет, как дела?")
+        let msg = outgoing("Hello, how are you?")
         let measure = { (category: UIContentSizeCategory) -> BubbleLayoutPlan in
             TypeScale.apply(category)
             return BubbleLayout.plan(for: msg, width: self.width, tightGap: false,
