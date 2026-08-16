@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 import MsngrCore
 
 /// Input bar: a growing field, a button that morphs between microphone and send, voice
@@ -14,7 +15,8 @@ struct InputBar: View {
     @StateObject private var recorder = VoiceRecorder()
     @ObservedObject private var theme = ThemeStore.shared
     @State private var inputHeight: CGFloat = GrowingTextView.minHeight
-    @State private var recordingLocked = false
+    /// where the take is in its life: asked for, running, locked, dropped
+    @State private var gesture = RecordingGesture()
     @State private var dragOffset: CGFloat = 0
     /// images from the clipboard waiting to be sent
     @State private var pendingImages: [UIImage] = []
@@ -22,9 +24,6 @@ struct InputBar: View {
     /// the microphone is denied in the system: the only thing left to do from here is
     /// open Settings, so that is where the button leads
     @State private var micDenied = false
-    /// the permission request is already in flight: further taps on the microphone do not multiply it
-    @State private var startingRecording = false
-    @GestureState private var pressing = false
 
     var body: some View {
         if model.peer?.isBlocked == true {
@@ -111,14 +110,28 @@ struct InputBar: View {
         }
         // the hint about how recording works floats above the bar until recording is locked
         .overlay(alignment: .top) {
-            if recorder.isRecording && !recordingLocked {
+            if recorder.isRecording && !gesture.isLocked {
                 recordingHint
                     .offset(y: -40)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
+        // a take is held by this screen and by nothing else: leaving the chat, leaving
+        // the app or a call taking the microphone away drops it whole, so that no stump
+        // of one goes out unnoticed
+        .onDisappear { handle(gesture.interrupted()) }
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIApplication.willResignActiveNotification)) { _ in
+            handle(gesture.interrupted())
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: AVAudioSession.interruptionNotification)) { note in
+            let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt ?? 0
+            guard AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
+            handle(gesture.interrupted())
+        }
         .animation(Theme.springFast, value: recorder.isRecording)
-        .animation(Theme.springFast, value: recordingLocked)
+        .animation(Theme.springFast, value: gesture.isLocked)
     }
 
     /// The hint "swipe left to cancel, up to lock": shown as soon as recording starts.
@@ -238,14 +251,15 @@ struct InputBar: View {
             }
             .accessibilityIdentifier("chat.send")
             .transition(.scale.combined(with: .opacity))
-        } else if recordingLocked {
+        } else if gesture.isLocked {
             Button {
-                finishRecording()
+                handle(gesture.send())
             } label: {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(Theme.glyph(32, max: 44))
                     .foregroundStyle(Theme.accent)
             }
+            .accessibilityIdentifier("chat.sendVoice")
         } else {
             micButton
         }
@@ -256,6 +270,7 @@ struct InputBar: View {
             .font(Theme.glyph(22, max: 34))
             .foregroundStyle(recorder.isRecording ? .red : .secondary)
             .frame(width: TypeScale.scaled(36, max: 48), height: TypeScale.scaled(36, max: 48))
+            .accessibilityIdentifier("chat.mic")
             .scaleEffect(recorder.isRecording ? 1.6 : 1)
             .animation(recorder.isRecording
                        ? .easeInOut(duration: 0.6).repeatForever(autoreverses: true)
@@ -263,50 +278,51 @@ struct InputBar: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
-                        if !recorder.isRecording { beginRecording() }
+                        handle(gesture.touchDown())
                         dragOffset = value.translation.width
-                        // swipe up locks the recording
-                        if value.translation.height < -70 && !recordingLocked {
-                            recordingLocked = true
-                            Haptics.success()
-                        }
-                        // swipe left cancels it
-                        if value.translation.width < -110 {
-                            recorder.cancel()
-                            recordingLocked = false
-                            Haptics.rigid()
-                        }
+                        handle(gesture.moved(value.translation))
                     }
                     .onEnded { _ in
                         dragOffset = 0
-                        guard recorder.isRecording, !recordingLocked else { return }
-                        finishRecording()
+                        handle(gesture.touchUp())
                     }
             )
     }
 
-    /// The first tap on the microphone asks for access and starts no recording: the
-    /// system dialog covers the screen, and that take would be silence. The user taps
-    /// a second time, now with permission in hand.
-    private func beginRecording() {
-        guard !startingRecording else { return }
-        startingRecording = true
-        Task {
-            let granted = await VoiceRecorder.requestPermission()
-            await MainActor.run {
-                startingRecording = false
-                guard granted else {
-                    micDenied = true
-                    return
-                }
-                Haptics.medium()
-                do {
-                    try recorder.start()
-                } catch {
-                    MsngrLog.outbox.error("не удалось начать запись: \(error)")
-                    model.sendFailure = "Голосовое не записано: микрофон занят другим приложением"
+    /// What the gesture decided, carried out. Access is asked for before the recorder
+    /// runs: the system dialog covers the screen, and a take started under it would be
+    /// silence, so the first touch on the microphone only asks.
+    private func handle(_ action: RecordingGesture.Action) {
+        switch action {
+        case .none:
+            break
+        case .ask:
+            Task {
+                let granted = await VoiceRecorder.requestPermission()
+                await MainActor.run {
+                    if !granted { micDenied = true }
+                    handle(gesture.permitted(granted))
                 }
             }
+        case .start:
+            Haptics.medium()
+            do {
+                try recorder.start()
+            } catch {
+                MsngrLog.outbox.error("не удалось начать запись: \(error)")
+                model.sendFailure = "Голосовое не записано: микрофон занят другим приложением"
+                handle(gesture.interrupted())
+            }
+        case .lock:
+            // the microphone gives way to the send button, so the drag ends without an
+            // onEnded of its own and the offset has to be given back here
+            dragOffset = 0
+            Haptics.success()
+        case .cancel:
+            recorder.cancel()
+            Haptics.rigid()
+        case .finish:
+            finishRecording()
         }
     }
 
@@ -321,12 +337,12 @@ struct InputBar: View {
             LiveWaveView(amplitudes: recorder.liveAmplitudes)
                 .frame(height: 26)
             Spacer()
-            if recordingLocked {
+            if gesture.isLocked {
                 Button("Отмена", role: .destructive) {
-                    recorder.cancel()
-                    recordingLocked = false
+                    handle(gesture.discard())
                 }
                 .font(.callout)
+                .accessibilityIdentifier("chat.cancelVoice")
             } else {
                 HStack(spacing: 2) {
                     Image(systemName: "chevron.left")
@@ -339,13 +355,14 @@ struct InputBar: View {
             }
         }
         .frame(minHeight: TypeScale.scaled(36, max: 48))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("chat.recording")
         .transition(.opacity)
     }
 
     private func finishRecording() {
-        recordingLocked = false
         guard let result = recorder.stop() else {
-            // a recording shorter than a second is dropped: a short hard haptic instead of a message
+            // a take under 0.3 s is an accidental touch: a short hard haptic and nothing else
             Haptics.rigid()
             return
         }

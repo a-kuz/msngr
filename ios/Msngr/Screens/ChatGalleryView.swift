@@ -183,7 +183,9 @@ struct ChatGalleryView: View {
 
     private func icon(_ entry: GalleryEntry) -> String {
         switch entry.kind {
-        case .voice: return voice.playingMsgId == entry.messageId ? "pause.fill" : "play.fill"
+        case .voice:
+            let mine = voice.state.msgId == entry.messageId
+            return mine && voice.state.isPlaying ? "pause.fill" : "play.fill"
         case .text: return "link"
         default: return "doc.fill"
         }
