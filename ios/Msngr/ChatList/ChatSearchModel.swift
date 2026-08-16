@@ -6,6 +6,9 @@ import MsngrCore
 /// the server. The fast half, chats by title, is computed in `ChatListModel` on
 /// the keystroke itself and never waits for this one.
 ///
+/// Search inside one chat runs on the same model: the pages come scoped to that
+/// chat and there is nobody to ask about people.
+///
 /// Every new query cancels the one before it: results carry a generation number,
 /// and an answer with an old number is not applied even if it arrives after a
 /// fresher one.
@@ -40,11 +43,13 @@ final class ChatSearchModel: ObservableObject {
 
     /// Where the two halves of a result come from. The screen takes the database
     /// and the server; a test hands over answers whose timing it decides itself.
+    /// A nil people source means this search has no people in it at all.
     private let pages: (String, MessageSearchCursor?) async -> MessageSearchPage?
-    private let peopleSource: (String) async -> [APIClient.UserDTO]
+    private let peopleSource: ((String) async -> [APIClient.UserDTO])?
 
-    init(pages: @escaping (String, MessageSearchCursor?) async -> MessageSearchPage? = ChatSearchModel.databasePage,
-         people: @escaping (String) async -> [APIClient.UserDTO] = ChatSearchModel.serverPeople) {
+    init(pages: @escaping (String, MessageSearchCursor?) async -> MessageSearchPage?
+            = { await ChatSearchModel.databasePage(query: $0, after: $1) },
+         people: ((String) async -> [APIClient.UserDTO])? = ChatSearchModel.serverPeople) {
         self.pages = pages
         self.peopleSource = people
     }
@@ -66,7 +71,7 @@ final class ChatSearchModel: ObservableObject {
         loadingPage = false
         messagesReady = trimmed.isEmpty
         searchingMessages = !trimmed.isEmpty
-        searchingPeople = trimmed.count >= Self.peopleMinimum
+        searchingPeople = peopleSource != nil && trimmed.count >= Self.peopleMinimum
         guard !trimmed.isEmpty else { return }
 
         messagesTask = Task { [weak self] in
@@ -74,11 +79,11 @@ final class ChatSearchModel: ObservableObject {
             guard !Task.isCancelled else { return }
             await self?.loadFirstPage(query: trimmed, generation: generation)
         }
-        guard searchingPeople else { return }
+        guard searchingPeople, let peopleSource else { return }
         peopleTask = Task { [weak self] in
             try? await Task.sleep(for: Self.debounce)
             guard !Task.isCancelled, let self else { return }
-            let found = await self.peopleSource(trimmed)
+            let found = await peopleSource(trimmed)
             guard generation == self.generation else { return }
             self.people = found
             self.searchingPeople = false
@@ -88,23 +93,28 @@ final class ChatSearchModel: ObservableObject {
     /// Reads the next page as the end of the list nears; the rows near the
     /// bottom edge call it.
     func loadMoreIfNeeded(at hit: MessageSearchHit) {
-        guard !loadingPage, !reachedEnd,
-              let index = hits.firstIndex(where: { $0.id == hit.id }),
+        guard let index = hits.firstIndex(where: { $0.id == hit.id }),
               index >= hits.count - Self.prefetch else { return }
+        Task { [weak self] in await self?.loadNextPage() }
+    }
+
+    /// One more page of the current query, appended to the hits already there.
+    /// Does nothing while a page is in flight or while nothing older matches, so
+    /// a reader walking the matches can await it before stepping past the end.
+    func loadNextPage() async {
+        guard !loadingPage, !reachedEnd else { return }
         let generation = self.generation
         let query = self.query
         let cursor = self.cursor
         loadingPage = true
-        Task { [weak self] in
-            let page = await self?.page(query: query, after: cursor)
-            // the query changed while the page was loading: the page is no longer about it
-            guard let self, generation == self.generation else { return }
-            self.loadingPage = false
-            guard let page else { return }
-            self.hits += page.hits
-            self.cursor = page.cursor
-            self.reachedEnd = page.reachedEnd
-        }
+        let page = await self.page(query: query, after: cursor)
+        // the query changed while the page was loading: the page is no longer about it
+        guard generation == self.generation else { return }
+        loadingPage = false
+        guard let page else { return }
+        hits += page.hits
+        self.cursor = page.cursor
+        reachedEnd = page.reachedEnd
     }
 
     private func loadFirstPage(query: String, generation: Int) async {
@@ -123,11 +133,13 @@ final class ChatSearchModel: ObservableObject {
         await pages(query, after)
     }
 
-    /// The message half of a result: one page of the full-text index.
-    static func databasePage(query: String, after: MessageSearchCursor?) async -> MessageSearchPage? {
+    /// The message half of a result: one page of the full-text index, over every
+    /// chat or over the one the search was opened in.
+    static func databasePage(query: String, after: MessageSearchCursor?,
+                             chatId: String? = nil) async -> MessageSearchPage? {
         guard let db = AppState.shared.db else { return nil }
         return try? await db.read { dbc in
-            try MessageSearch.page(dbc, query: query, after: after)
+            try MessageSearch.page(dbc, query: query, chatId: chatId, after: after)
         }
     }
 
