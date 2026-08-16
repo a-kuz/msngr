@@ -52,8 +52,8 @@ cheaper than the snapshot it refreshes.
 
 ## What the live machine corrected
 
-Five rules that read correctly and were wrong on this machine. Each was caught
-by running the thing, not by looking at it.
+Rules that read correctly and were wrong on this machine. Each was caught by
+running the thing, not by looking at it.
 
 **Neither of the old script's two rules could fire as written.**
 `scripts/tidy.sh` aged simulators with `stat -f %m`, which is BSD syntax; GNU
@@ -74,10 +74,11 @@ written by our app and by nothing else: 8 minutes on an abandoned device, 0 on a
 working one, 303 on one sitting idle.
 
 **And a booted simulator is never quiet in the other direction either.** After
-`perfdb` finished, its simulators kept writing `perf-trace.jsonl` every second
-and the SQLite WAL every fifteen, hours after the agent was gone. Waiting for
-quiet before deleting them would have waited forever. The registry decides for a
-name it knows; quiet only decides for a name nothing claims at all.
+`perfdb` finished, its simulators were still writing `perf-trace.jsonl` every
+second and the SQLite WAL every fifteen: the app it left running does not stop
+because its agent did. Waiting for quiet before deleting them would have waited
+for as long as the machine stayed up. The registry decides for a name it knows;
+quiet only decides for a name nothing claims at all.
 
 **Every branch here is merged into main, including the ones being worked on.**
 The rule "remove a worktree whose branch is merged" matched `run-chatsearch` and
