@@ -227,8 +227,8 @@ final class AppState: ObservableObject {
 
     private var revokedTask: Task<Void, Never>?
 
-    /// Сервер отключил устройство от аккаунта: переподключаться некуда,
-    /// показываем экран завершённой сессии.
+    /// The server has cut this device off the account: there is nothing left to
+    /// reconnect to, so the session-ended screen goes up.
     private func observeSessionRevoked(_ engine: SyncEngine) {
         revokedTask?.cancel()
         revokedTask = Task { [weak self] in
@@ -239,8 +239,8 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Уход с экрана «Сессия завершена»: локальные данные отозванного
-    /// устройства стираются, пользователь возвращается к регистрации.
+    /// Leaving the «Сессия завершена» screen: the revoked device's local data is
+    /// wiped and the user is taken back to registration.
     func finishRevokedSession() async {
         await resetToRegistration()
         sessionRevoked = false
@@ -273,7 +273,8 @@ final class AppState: ObservableObject {
             obscured = false
             endBackgroundWork()
             if let engine { Task { await engine.appBecameActive() } }
-            // авто-лок: пин есть и в фоне были дольше грейс-периода
+            // auto-lock: there is a PIN and the app sat in the background longer
+            // than the grace period
             if PinStore.hasPin(), let t = backgroundedAt,
                Date().timeIntervalSince(t) > PinStore.autolockInterval {
                 isLocked = true
@@ -284,9 +285,10 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Без этого процесс усыпляют сразу после сворачивания, и сообщение,
-    /// пришедшее по живому WS, остаётся без уведомления. Система даёт около
-    /// 30 секунд — этого хватает дочитать входящие и поднять баннер.
+    /// Without this the process is suspended as soon as the app is backgrounded,
+    /// and a message arriving over the live WS never raises a notification. The
+    /// system grants around 30 seconds, enough to finish reading the incoming
+    /// messages and put up the banner.
     private func beginBackgroundWork() {
         guard backgroundTask == .invalid else { return }
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "ws-incoming") { [weak self] in

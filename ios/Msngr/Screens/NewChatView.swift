@@ -3,7 +3,7 @@ import Contacts
 import CryptoKit
 import MsngrCore
 
-/// Новый чат: поиск по юзернейму, контакты из адресной книги, создание группы.
+/// A new chat: search by username, contacts from the address book, group creation.
 struct NewChatView: View {
     var onOpen: (String) -> Void
     @EnvironmentObject var app: AppState
@@ -21,7 +21,7 @@ struct NewChatView: View {
     struct ContactMatch: Identifiable {
         let id: String       // userId
         let username: String
-        let bookName: String // имя из адресной книги приоритетнее
+        let bookName: String // the address book name takes precedence
         let avatarId: String?
     }
 
@@ -78,7 +78,7 @@ struct NewChatView: View {
                 }
             }
             .searchable(text: $query, prompt: "Юзернейм или имя")
-            // поле ищет юзернеймы: автокапитализация и автокоррекция мешают
+            // the field searches usernames: autocapitalisation and autocorrection get in the way
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .onChange(of: query) { _, q in
@@ -108,8 +108,9 @@ struct NewChatView: View {
                     }
                 }
             }
-            // системный диалог доступа к контактам — только по явному тапу
-            // «Найти по контактам»; при уже выданном доступе синк идёт сразу
+            // the system contacts permission dialog comes up only on an explicit
+            // tap of «Найти по контактам»; with access already granted the sync
+            // starts straight away
             .task {
                 if contactsStatus == .authorized { await syncContacts() }
             }
@@ -155,7 +156,7 @@ struct NewChatView: View {
         onOpen(chatId)
     }
 
-    /// Запрос доступа к контактам по явному действию пользователя, затем синк.
+    /// Asks for contacts access on an explicit user action, then syncs.
     private func requestContactsAndSync() async {
         _ = try? await CNContactStore().requestAccess(for: .contacts)
         contactsStatus = CNContactStore.authorizationStatus(for: .contacts)
@@ -166,7 +167,7 @@ struct NewChatView: View {
         }
     }
 
-    /// Синк адресной книги: E.164 → SHA-256 → discovery. Доступ уже должен быть выдан.
+    /// Address book sync: E.164 → SHA-256 → discovery. Access must already be granted.
     private func syncContacts() async {
         let store = CNContactStore()
         guard CNContactStore.authorizationStatus(for: .contacts) == .authorized else {
@@ -199,14 +200,14 @@ struct NewChatView: View {
     static func e164(_ raw: String) -> String {
         var digits = raw.filter { $0.isNumber || $0 == "+" }
         if digits.hasPrefix("8") && digits.count == 11 {
-            digits = "+7" + digits.dropFirst() // РФ-формат
+            digits = "+7" + digits.dropFirst() // Russian format
         }
         guard digits.hasPrefix("+"), digits.count >= 11 else { return "" }
         return digits
     }
 }
 
-/// Выбор чата для пересылки.
+/// Picking the chat to forward into.
 struct ForwardPickerView: View {
     var onPick: (String) -> Void
     @StateObject private var model = ChatListModel()
