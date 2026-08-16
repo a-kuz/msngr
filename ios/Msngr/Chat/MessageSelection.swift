@@ -24,11 +24,8 @@ struct MessageSelection: Equatable {
         msgs.filter { ids.contains($0.id) }
     }
 
-    /// «Удалить у всех» доступно, только когда все выбранные сообщения свои:
-    /// чужие сервер тумбстоунит лишь администратору группы, в личной переписке
-    /// такой запрос молча ничего не сделает.
     static func canDeleteForAll(_ selected: [Message]) -> Bool {
-        !selected.isEmpty && selected.allSatisfy(\.isOutgoing)
+        MessageDeletion.canDeleteForAll(selected)
     }
 
     /// Счётчик в шапке: «1 сообщение», «2 сообщения», «5 сообщений».
