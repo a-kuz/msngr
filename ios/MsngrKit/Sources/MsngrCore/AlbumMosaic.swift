@@ -1,13 +1,13 @@
 import CoreGraphics
 import Foundation
 
-/// Элемент альбома: аспект-ратио (ширина/высота) фото или видео.
+/// An album item: the aspect ratio (width/height) of a photo or a video.
 public struct MosaicItem {
     public let aspect: CGFloat
     public init(aspect: CGFloat) { self.aspect = aspect }
 }
 
-/// Фрейм тайла в итоговой раскладке; index — позиция элемента во входном массиве.
+/// A tile's frame in the finished layout; index is the item's position in the input array.
 public struct MosaicRect {
     public let index: Int
     public let frame: CGRect
@@ -17,16 +17,16 @@ public struct MosaicRect {
     }
 }
 
-/// Раскладка альбома в баббле по мотивам MosaicLayout из Telegram iOS:
-/// фиксированные паттерны для 1–4 элементов, для 5–10 — разбиение на строки
-/// по 2–3 тайла с минимизацией искажения аспектов.
+/// Album layout inside a bubble, along the lines of MosaicLayout in Telegram iOS:
+/// fixed patterns for 1 to 4 items; from 5 to 10 the items are split into rows of
+/// two or three tiles, chosen to distort the aspect ratios as little as possible.
 public enum AlbumMosaic {
 
-    // Порог, после которого элемент считается «широким».
+    // Above this ratio an item counts as wide.
     private static let wideAspect: CGFloat = 1.2
-    // Аспекты входа ограничиваем, чтобы экстремальные значения не ломали сетку.
+    // Input aspects are clamped so extreme values cannot wreck the grid.
     private static let aspectRange: ClosedRange<CGFloat> = 0.45...2.5
-    // Комфортная высота строки, к которой стремится подбор разбиения.
+    // The comfortable row height the row search aims for.
     private static let idealRowFactor: CGFloat = 0.45
 
     public static func layout(items: [MosaicItem], maxWidth: CGFloat,
@@ -42,12 +42,12 @@ public enum AlbumMosaic {
             result = ([MosaicRect(index: 0, frame: CGRect(x: 0, y: 0, width: w, height: h))],
                       CGSize(width: w, height: h))
         case 2:
-            // Два широких — друг над другом, иначе бок о бок.
+            // Two wide items stack; anything else sits side by side.
             let rows = (aspects[0] > wideAspect && aspects[1] > wideAspect) ? [[0], [1]] : [[0, 1]]
             result = rowsLayout(rows: rows, aspects: aspects, width: w, spacing: spacing)
         case 3:
             if aspects[0] > wideAspect {
-                // Широкий сверху, два снизу.
+                // The wide one on top, the other two below it.
                 result = rowsLayout(rows: [[0], [1, 2]], aspects: aspects, width: w, spacing: spacing)
             } else {
                 result = bigLeft(aspects: aspects, width: w, spacing: spacing)
@@ -61,7 +61,7 @@ public enum AlbumMosaic {
         return capHeight(result, maxHeight: w * 1.9)
     }
 
-    // MARK: - Паттерн «большой слева + два справа в столбик» (3 элемента)
+    // MARK: - Pattern for three items: one big on the left, two stacked on the right
 
     private static func bigLeft(aspects: [CGFloat], width w: CGFloat,
                                 spacing: CGFloat) -> (rects: [MosaicRect], size: CGSize) {
@@ -78,10 +78,10 @@ public enum AlbumMosaic {
         return (rects, CGSize(width: w, height: h))
     }
 
-    // MARK: - Строчная раскладка
+    // MARK: - Row layout
 
-    /// Раскладывает элементы по заданным строкам: высота строки — из суммы аспектов,
-    /// ширины пропорциональны аспектам, последний тайл добивается до правого края.
+    /// Lays the items out into the given rows: row height comes from the sum of the aspects,
+    /// tile widths are proportional to them, and the last tile is stretched to the right edge.
     private static func rowsLayout(rows: [[Int]], aspects: [CGFloat], width w: CGFloat,
                                    spacing: CGFloat) -> (rects: [MosaicRect], size: CGSize) {
         var rects: [MosaicRect] = []
@@ -101,8 +101,8 @@ public enum AlbumMosaic {
         return (rects, CGSize(width: w, height: y - spacing))
     }
 
-    /// 5–10 элементов: перебор разбиений на строки по 2–3 тайла, выбор варианта
-    /// с минимальным штрафом за искажение аспектов и отклонение высоты строки от комфортной.
+    /// 5 to 10 items: enumerate the splits into rows of two or three tiles and take the one
+    /// with the smallest penalty for distorted aspects and for rows away from the ideal height.
     private static func bestRows(aspects: [CGFloat], width w: CGFloat,
                                  spacing: CGFloat) -> (rects: [MosaicRect], size: CGSize) {
         var best: [[Int]] = []
@@ -120,7 +120,7 @@ public enum AlbumMosaic {
                 let sumA = row.reduce(CGFloat(0)) { $0 + aspects[$1] }
                 let naturalH = availW / sumA
                 let h = clamp(naturalH, w * 0.2, w * 0.68)
-                // Искажение аспектов всех тайлов строки + отклонение от комфортной высоты.
+                // Distortion of every tile in the row, plus the row's distance from the ideal height.
                 penalty += CGFloat(row.count) * abs(log(naturalH / h))
                 penalty += abs(log(h / (w * idealRowFactor)))
             }
@@ -132,7 +132,7 @@ public enum AlbumMosaic {
         return rowsLayout(rows: best, aspects: aspects, width: w, spacing: spacing)
     }
 
-    /// Все разбиения n на упорядоченные слагаемые 2 и 3.
+    /// Every way to write n as an ordered sum of 2s and 3s.
     private static func compositions(_ n: Int) -> [[Int]] {
         if n == 0 { return [[]] }
         var result: [[Int]] = []
@@ -144,9 +144,9 @@ public enum AlbumMosaic {
         return result
     }
 
-    // MARK: - Ограничение общей высоты
+    // MARK: - Capping the overall height
 
-    /// Если контент выше maxHeight — равномерно сжимаем по вертикали.
+    /// Content taller than maxHeight is squeezed vertically by a single factor.
     private static func capHeight(_ layout: (rects: [MosaicRect], size: CGSize),
                                   maxHeight: CGFloat) -> (rects: [MosaicRect], size: CGSize) {
         guard layout.size.height > maxHeight else { return layout }

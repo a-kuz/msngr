@@ -2,7 +2,7 @@ import XCTest
 @testable import Msngr
 import MsngrCore
 
-/// Лента чата, историю которого очистили под открытым экраном.
+/// The feed of a chat whose history was cleared while the screen was open.
 final class ClearedFeedTests: XCTestCase {
     private func msg(_ seq: Int) -> Message {
         var m = Message(id: "m\(seq)", chatId: "c", fromUserId: "peer",
@@ -22,8 +22,8 @@ final class ClearedFeedTests: XCTestCase {
         return vc
     }
 
-    /// Пустой снапшот убирает всё со экрана целиком: ни одной старой ячейки,
-    /// ни висящей анимации от вставки, которая шла в этот момент.
+    /// An empty snapshot takes everything off the screen: no old cell is left, and no
+    /// animation from an insertion that was running at that moment stays hanging.
     @MainActor
     func testClearedChatLeavesNothingOnScreen() {
         let vc = loadedController()
@@ -31,7 +31,8 @@ final class ClearedFeedTests: XCTestCase {
         vc.view.layoutIfNeeded()
         XCTAssertGreaterThan(vc.collectionView.numberOfItems(inSection: 0), 0)
 
-        // сообщение приходит и тут же очистка: обновление ленты застаёт анимацию
+        // a message arrives and the clear follows immediately: the feed update catches
+        // the animation mid-flight
         vc.apply(ChatViewModel.buildFeed([msg(4), msg(3), msg(2), msg(1)], members: []))
         vc.apply([])
         vc.view.layoutIfNeeded()
@@ -40,8 +41,8 @@ final class ClearedFeedTests: XCTestCase {
         XCTAssertTrue(vc.collectionView.visibleCells.isEmpty)
     }
 
-    /// Очищенный чат снова наполняется: первый пришедший после очистки
-    /// снапшот встаёт как открытие чата с нуля.
+    /// A cleared chat fills up again: the first snapshot after the clear lands the way
+    /// opening the chat from scratch would.
     @MainActor
     func testChatRefillsAfterClearing() {
         let vc = loadedController()
@@ -50,11 +51,11 @@ final class ClearedFeedTests: XCTestCase {
         vc.apply(ChatViewModel.buildFeed([msg(5)], members: []))
         vc.view.layoutIfNeeded()
 
-        XCTAssertEqual(vc.collectionView.numberOfItems(inSection: 0), 2) // сообщение + дата
+        XCTAssertEqual(vc.collectionView.numberOfItems(inSection: 0), 2) // message + date
     }
 
-    /// Очищенный чат ленты не строит вообще: без сообщений нет ни заглушек
-    /// нечитаемых seq, ни отметки начала истории.
+    /// A cleared chat builds no feed at all: with no messages there are neither
+    /// placeholders for unreadable seqs nor a history-start item.
     @MainActor
     func testEmptyChatBuildsNoFeedItems() {
         let feed = ChatViewModel.buildFeed([], members: [], unreadableSeqs: [4, 5],

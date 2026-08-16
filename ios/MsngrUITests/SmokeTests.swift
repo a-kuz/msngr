@@ -1,8 +1,8 @@
 import XCTest
 
-/// Смоук-гейт: базовые пользовательские сценарии.
-/// Требует запущенный wrangler dev на :8787 и юзера akuz на сервере.
-/// Тесты идут по алфавиту — префиксы фиксируют порядок.
+/// Smoke gate: the basic user journeys.
+/// Needs wrangler dev running on :8787 and the user akuz on the server.
+/// XCTest runs tests alphabetically, so the prefixes pin the order.
 final class SmokeTests: XCTestCase {
     var app: XCUIApplication!
 
@@ -18,7 +18,7 @@ final class SmokeTests: XCTestCase {
         ensureRegistered()
     }
 
-    /// Первый запуск на чистом симуляторе — регистрируем свежего юзера.
+    /// On a clean simulator the first launch registers a fresh user.
     private func ensureRegistered() {
         let username = app.textFields["reg.username"]
         if username.waitForExistence(timeout: 3) {
@@ -30,32 +30,34 @@ final class SmokeTests: XCTestCase {
             displayName.typeText("UI Tester")
             app.buttons["reg.submit"].tap()
         }
-        // ждём сам список, а не заголовок навигации: заголовка в дереве
-        // доступности нет, пока список пуст и его закрывает пустое состояние.
-        // Регистрация генерирует ключи, на симуляторе это занимает секунды
+        // wait for the list itself rather than the navigation title: while the
+        // list is empty the empty state covers it and the title is absent from
+        // the accessibility tree. Registration generates keys, which takes
+        // seconds on the simulator.
         XCTAssertTrue(app.otherElements["chatlist.root"].waitForExistence(timeout: 30)
                         || app.staticTexts["Чаты"].exists,
-                      "чат-лист не открылся")
+                      "the chat list never opened")
     }
 
-    /// Открывает чат с akuz: из списка, либо через поиск нового чата.
+    /// Opens the chat with akuz, from the list or through new chat search.
     private func openChatWithAkuz() {
         let existing = app.cells.containing(NSPredicate(format: "label CONTAINS 'Akuz'")).firstMatch
         if existing.waitForExistence(timeout: 2) {
             existing.tap()
         } else {
             app.buttons["chatlist.new"].tap()
-            // в шите нового чата своё поле — не путать с «Поиск» чат-листа под шитом
+            // the new chat sheet has its own field; the chat list search sits
+            // underneath the sheet and matches too if you are not specific
             let search = app.searchFields["Юзернейм или имя"]
-            XCTAssertTrue(search.waitForExistence(timeout: 5), "нет поля поиска юзеров")
+            XCTAssertTrue(search.waitForExistence(timeout: 5), "no user search field")
             search.tap()
             _ = search.waitForExistence(timeout: 1)
             search.typeText("akuz")
             let row = app.staticTexts["@akuz"]
-            XCTAssertTrue(row.waitForExistence(timeout: 8), "юзер akuz не найден поиском")
+            XCTAssertTrue(row.waitForExistence(timeout: 8), "search did not find the user akuz")
             row.tap()
         }
-        XCTAssertTrue(app.textViews["chat.input"].waitForExistence(timeout: 8), "чат не открылся")
+        XCTAssertTrue(app.textViews["chat.input"].waitForExistence(timeout: 8), "the chat never opened")
     }
 
     private func send(_ text: String) {
@@ -74,7 +76,7 @@ final class SmokeTests: XCTestCase {
         let marker = "smoke-\(Int(Date().timeIntervalSince1970))"
         send(marker)
         XCTAssertTrue(app.staticTexts[marker].waitForExistence(timeout: 8),
-                      "отправленное сообщение не появилось в ленте")
+                      "the sent message never appeared in the feed")
     }
 
     func testC_DraftPersistsAcrossReopen() {
@@ -83,12 +85,12 @@ final class SmokeTests: XCTestCase {
         input.tap()
         let draft = "draft-\(Int(Date().timeIntervalSince1970))"
         input.typeText(draft)
-        app.navigationBars.buttons.firstMatch.tap() // назад
+        app.navigationBars.buttons.firstMatch.tap() // back
         XCTAssertTrue(app.staticTexts["Чаты"].waitForExistence(timeout: 5))
         openChatWithAkuz()
         let value = app.textViews["chat.input"].value as? String ?? ""
-        XCTAssertTrue(value.contains(draft), "черновик потерян: '\(value)'")
-        // очистка: отправляем черновик, чтобы следующий прогон стартовал чисто
+        XCTAssertTrue(value.contains(draft), "the draft was lost: '\(value)'")
+        // send the draft so the next run starts from a clean input
         app.buttons["chat.send"].tap()
     }
 
@@ -104,11 +106,11 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(bubble.waitForExistence(timeout: 8))
         bubble.press(forDuration: 0.8)
         XCTAssertTrue(app.staticTexts["Ответить"].waitForExistence(timeout: 4),
-                      "контекстное меню не показалось для длинного сообщения")
-        // закрыть тапом по фону (верхний левый угол)
+                      "no context menu for a long message")
+        // dismiss by tapping the background in the top left corner
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.08)).tap()
         XCTAssertFalse(app.staticTexts["Ответить"].waitForExistence(timeout: 2),
-                       "меню не закрылось по тапу мимо")
+                       "the menu stayed up after a tap outside it")
     }
 
     func testE_AttachMenuOpensFromPaperclip() {
@@ -116,7 +118,7 @@ final class SmokeTests: XCTestCase {
         app.buttons["chat.attach"].tap()
         XCTAssertTrue(app.buttons["Фото или видео"].waitForExistence(timeout: 4)
                       || app.staticTexts["Фото или видео"].waitForExistence(timeout: 1),
-                      "меню вложений не открылось")
+                      "the attachment menu never opened")
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).tap()
     }
 }

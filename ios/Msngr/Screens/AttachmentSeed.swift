@@ -20,9 +20,10 @@ enum AttachmentSeed {
         }
     }
 
-    // MARK: - Кадры
+    // MARK: - Frames
 
-    /// Цветной кадр с номером: в сетке видно, что порядок и пагинация верны.
+    /// A coloured frame with a number on it, so the grid shows at a glance that
+    /// the order and the pagination are right.
     private static func image(_ number: Int, size: CGSize = CGSize(width: 900, height: 1200)) -> Data? {
         let hue = Double(number % 12) / 12
         let renderer = UIGraphicsImageRenderer(size: size)
@@ -56,7 +57,7 @@ enum AttachmentSeed {
         return media
     }
 
-    // MARK: - Виды сообщений
+    // MARK: - Message kinds
 
     private static func sendPhoto(chatId: String, round: Int) async {
         guard let jpeg = image(round), let media = info(jpeg) else { return }
@@ -137,10 +138,10 @@ enum AttachmentSeed {
         }
     }
 
-    // MARK: - Генерация файлов
+    // MARK: - File generation
 
-    /// Две секунды сплошного цвета в mp4: настоящий контейнер, который
-    /// проигрывается просмотрщиком и даёт кадр превью.
+    /// Two seconds of solid colour as mp4: a real container the viewer plays and
+    /// which yields a preview frame.
     private static func renderVideo(_ number: Int) async -> URL? {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("seed-\(UUID().uuidString).mp4")
@@ -187,7 +188,8 @@ enum AttachmentSeed {
         ctx.fill(CGRect(x: 0, y: 0, width: ctx.width, height: ctx.height))
     }
 
-    /// Три секунды тона в m4a: файл открывается плеером голосовых как записанный.
+    /// Three seconds of a tone as m4a: the voice player opens the file as if it
+    /// had been recorded.
     private static func renderVoice(_ number: Int) -> URL? {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("seed-\(UUID().uuidString).m4a")

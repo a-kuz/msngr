@@ -3,13 +3,13 @@ import CryptoKit
 import GRDB
 import MsngrCrypto
 
-/// Поставщик мастер-ключа для шифрования крипто-состояний в БД.
+/// Supplies the master key that encrypts crypto state in the database.
 public protocol MasterKeyProvider: Sendable {
     func masterKey() throws -> SymmetricKey
 }
 
-/// Keychain-реализация: ключ генерируется один раз, kSecAttrAccessibleAfterFirstUnlock
-/// (нужен NSE для расшифровки пушей при заблокированном экране).
+/// Keychain-backed: the key is generated once with kSecAttrAccessibleAfterFirstUnlock,
+/// which is what lets the extension open pushes while the screen is locked.
 public struct KeychainMasterKey: MasterKeyProvider {
     let service: String
     let accessGroup: String?
@@ -46,17 +46,17 @@ public struct KeychainMasterKey: MasterKeyProvider {
     }
 }
 
-/// Для тестов: фиксированный ключ в памяти.
+/// For tests: a fixed in-memory key.
 public struct StaticMasterKey: MasterKeyProvider {
     let key: SymmetricKey
     public init(key: SymmetricKey = SymmetricKey(size: .bits256)) { self.key = key }
     public func masterKey() throws -> SymmetricKey { key }
 }
 
-/// Мастер-ключ в защищённом файле внутри общего контейнера (app group).
-/// Приложение и NSE читают один и тот же ключ без keychain-sharing.
-/// Файл защищён Data Protection (completeUntilFirstUserAuthentication — доступен
-/// NSE при заблокированном экране после первой разблокировки).
+/// The master key in a protected file inside the shared container, which lets the app
+/// and the extension read the same key without keychain sharing. Data Protection is
+/// completeUntilFirstUserAuthentication, so the extension can read it on a locked
+/// screen once the device has been unlocked at least once.
 public struct SharedFileMasterKey: MasterKeyProvider {
     let url: URL
 
@@ -79,7 +79,7 @@ public struct SharedFileMasterKey: MasterKeyProvider {
     }
 }
 
-/// Шифрование блобов состояния (ratchet, sender keys) мастер-ключом.
+/// Encrypts state blobs (ratchet, sender keys) with the master key.
 enum StateCrypto {
     static func seal(_ data: Data, with key: SymmetricKey) throws -> Data {
         try ChaChaPoly.seal(data, using: key).combined
@@ -89,8 +89,8 @@ enum StateCrypto {
     }
 }
 
-/// Собственные ключи устройства: identity в Keychain-совместимом хранилище (kv,
-/// зашифровано мастер-ключом), приватные prekey — там же.
+/// This device's own keys: the identity and the private halves of the prekeys, kept in
+/// the kv table under the master key.
 public final class IdentityStore: @unchecked Sendable {
     private let db: DatabaseQueue
     private let master: SymmetricKey
@@ -171,7 +171,7 @@ public final class IdentityStore: @unchecked Sendable {
         }
     }
 
-    /// Возвращает (или создаёт) identity устройства.
+    /// The device identity, created on first use.
     public func identity() throws -> IdentityKeyPair {
         if let stored = try loadBlob("identity", as: StoredIdentity.self) {
             return try IdentityKeyPair(dhRaw: stored.dhRaw, signingRaw: stored.signingRaw)
@@ -182,7 +182,7 @@ public final class IdentityStore: @unchecked Sendable {
         return pair
     }
 
-    /// Генерация prekey-набора для регистрации; приватные части сохраняются.
+    /// Generates the prekey set for registration, keeping the private halves.
     public struct GeneratedPrekeys {
         public let signedPrekey: SignedPreKey
         public let oneTime: [OneTimePreKey]
@@ -203,7 +203,7 @@ public final class IdentityStore: @unchecked Sendable {
         return GeneratedPrekeys(signedPrekey: spk, oneTime: oneTime)
     }
 
-    /// Пополнение one-time prekeys (когда сервер расходует).
+    /// Tops up the one-time prekeys as the server spends them.
     public func generateMoreOneTime(count: Int = 50) throws -> [OneTimePreKey] {
         guard var stored = try loadBlob("prekeys", as: StoredPrekeys.self) else {
             throw CryptoError.noSession
@@ -231,14 +231,14 @@ public final class IdentityStore: @unchecked Sendable {
         return try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: raw)
     }
 
-    /// One-time prekey одноразовый: удалить после использования.
+    /// A one-time prekey is good for a single session, so it is dropped after use.
     public func consumeOneTimePrekey(id: UInt32) throws {
         guard var stored = try loadBlob("prekeys", as: StoredPrekeys.self) else { return }
         stored.oneTime.removeValue(forKey: id)
         try saveBlob("prekeys", stored)
     }
 
-    // MARK: - Ratchet-сессии
+    // MARK: - Ratchet sessions
 
     public func loadSession(peerUserId: String, peerDeviceId: String) throws -> DoubleRatchetSession? {
         try read { dbc in
@@ -269,8 +269,8 @@ public final class IdentityStore: @unchecked Sendable {
         }
     }
 
-    /// Архивные сессии: ими больше не шифруем, но ещё расшифровываем «догоняющие»
-    /// сообщения, отправленные в старую сессию (рассинхрон, glare, переустановка).
+    /// Archived sessions no longer encrypt anything, but they still open late messages
+    /// that were sent into the old session after a divergence, a glare or a reinstall.
     private static let maxArchived = 5
 
     public func archivedSessions(peerUserId: String, peerDeviceId: String) throws -> [DoubleRatchetSession] {
@@ -295,16 +295,16 @@ public final class IdentityStore: @unchecked Sendable {
         }
     }
 
-    /// Пометка «следующее сообщение этому собеседнику начинает сессию заново».
-    /// Ставится, когда его сообщения не открываются ни активной сессией, ни
-    /// архивными: X3DH из свежего бандла — единственный способ сойтись.
+    /// Marks that the next message to this peer starts the session over. Set when their
+    /// messages open under neither the active session nor the archived ones: a fresh
+    /// X3DH from a new bundle is then the only way back into step.
     public func requestSessionReset(peerUserId: String) throws {
         try write { dbc in
             try KVRow(key: "sessionReset:" + peerUserId, value: "1").save(dbc)
         }
     }
 
-    /// Снимает пометку и сообщает, была ли она.
+    /// Clears the mark and reports whether it was there.
     public func consumeSessionReset(peerUserId: String) throws -> Bool {
         try write { dbc in
             try dbc.execute(sql: "DELETE FROM kv WHERE key = ?", arguments: ["sessionReset:" + peerUserId])
@@ -312,7 +312,7 @@ public final class IdentityStore: @unchecked Sendable {
         }
     }
 
-    /// Текущую активную сессию — в архив (перед заменой на новую).
+    /// Moves the active session into the archive, ahead of replacing it with a new one.
     public func archiveCurrentSession(peerUserId: String, peerDeviceId: String) throws {
         guard let current = try loadSession(peerUserId: peerUserId, peerDeviceId: peerDeviceId) else { return }
         var archive = try archivedSessions(peerUserId: peerUserId, peerDeviceId: peerDeviceId)
@@ -322,8 +322,9 @@ public final class IdentityStore: @unchecked Sendable {
 
     // MARK: - Sender keys
 
-    /// Своя цепочка на чат: состояние, адреса с подтверждённой раздачей и
-    /// адреса, которым раздача ушла и подтверждения ещё нет (адрес → момент).
+    /// This device's chain for a chat: the state, the addresses that confirmed the
+    /// distribution, and the addresses it went out to without a confirmation yet
+    /// (address to the moment it was sent).
     public func loadSenderKeyOut(chatId: String) throws -> (SenderKeyState, Set<String>, [String: Double])? {
         try read { dbc in
             guard let row = try Row.fetchOne(
@@ -394,7 +395,7 @@ public final class IdentityStore: @unchecked Sendable {
 
     public enum TrustResult { case firstUse, trusted, changed(previous: String) }
 
-    /// Проверка identity-ключа собеседника (TOFU).
+    /// Checks a peer's identity key, trust on first use.
     public func checkTrust(userId: String, identitySigning: String) throws -> TrustResult {
         try write { dbc in
             if let row = try Row.fetchOne(
@@ -417,7 +418,7 @@ public final class IdentityStore: @unchecked Sendable {
         }
     }
 
-    /// Пользователь явно принял новый ключ после предупреждения.
+    /// The user explicitly accepted the new key after the warning.
     public func acceptChangedKey(userId: String) throws {
         try write { dbc in
             try dbc.execute(

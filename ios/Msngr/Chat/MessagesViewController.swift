@@ -3,37 +3,38 @@ import SwiftUI
 import SafariServices
 import MsngrCore
 
-/// Инвертированный список сообщений: UICollectionView, перевёрнутый по Y.
-/// Ячейки тоже перевёрнуты — итог выглядит нормально, а «низ» чата это contentOffset 0:
-/// мгновенное открытие с последних сообщений и естественная пагинация вверх.
+/// Inverted message list: a UICollectionView flipped along Y, with the cells
+/// flipped back so the result reads normally. The bottom of the chat is then
+/// contentOffset 0: it opens instantly on the latest messages and pages upwards
+/// the way a scroll view already wants to.
 final class MessagesViewController: UIViewController {
-    /// Лента у низа: самый новый элемент реально виден на экране.
-    /// От этого зависят кнопка «вниз» и отметка прочтения.
+    /// The feed is at the bottom: the newest item is really on screen. The scroll
+    /// to bottom button and the read receipt both depend on this.
     var onAtBottomChanged: ((Bool) -> Void)?
     var onNeedOlder: (() -> Void)?
     var onReply: ((Message) -> Void)?
     var onReact: ((Message, String) -> Void)?
     var onContextAction: ((Message, MessageContextAction) -> Void)?
     var onTapMedia: ((Message, Int, UIView) -> Void)?
-    /// тап по цитате в баббле-ответе (переход к оригиналу)
+    /// Tap on the quote inside a reply bubble, which jumps to the original.
     var onTapReplyQuote: ((Message) -> Void)?
-    /// тап по строке в режиме мультивыбора
+    /// Tap on a row while multi-select is on.
     var onToggleSelection: ((Message) -> Void)?
 
     private(set) var collectionView: UICollectionView!
     private var items: [ChatFeedItem] = []
     private var width: CGFloat = 0
-    /// сообщение, которое ждёт вспышки подсветки после перехода по цитате
+    /// The message waiting for its highlight flash after a jump from a quote.
     private var pendingHighlightId: String?
     private var selectionMode = false
     private var selectedIds: Set<String> = []
-    /// Последнее посчитанное «лента у низа»; стартовое значение совпадает
-    /// с состоянием пустой ленты, поэтому первый пересчёт молчит.
+    /// Last computed "feed is at the bottom". The initial value matches an empty
+    /// feed, so the first recomputation stays quiet.
     private var atBottom = true
     private var recomputingAtBottom = false
 
-    /// Состояние мультивыбора: видимые ячейки перестраиваются на месте
-    /// (reload оборвал бы анимации ленты), новые получают его при настройке.
+    /// Multi-select state: visible cells are reconfigured in place, because a reload
+    /// would cut off the feed's animations; new cells pick it up in configure.
     func setSelection(mode: Bool, ids: Set<String>) {
         guard mode != selectionMode || ids != selectedIds else { return }
         let animated = isViewLoaded && view.window != nil
@@ -89,9 +90,9 @@ final class MessagesViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        // шапка чата рисует свою кнопку возврата, а системная скрыта — вместе с
-        // ней навигация отключает и жест «свайп назад». Возвращаем его, сняв
-        // делегата, который его и глушит
+        // the chat header draws its own back button and the system one is hidden;
+        // hiding it also disables the swipe-back gesture, so bring it back by
+        // dropping the delegate that suppresses it
         if let pop = navigationController?.interactivePopGestureRecognizer {
             pop.delegate = nil
             pop.isEnabled = true
@@ -102,29 +103,30 @@ final class MessagesViewController: UIViewController {
         super.viewDidLayoutSubviews()
         if width != view.bounds.width {
             width = view.bounds.width
-            // кэш планов раскладки зависит от ширины — сбрасываем при её изменении,
-            // иначе бабблы, посчитанные под другую ширину, вылезают за экран
+            // the layout plan cache is keyed to the width, so a width change drops
+            // it; otherwise bubbles measured for another width run off the screen
             BubbleLayout.clearCache()
             collectionView.collectionViewLayout.invalidateLayout()
         }
         updateInsets()
     }
 
-    // MARK: - Инсеты (навбар сверху, инпут-бар/клавиатура снизу)
+    // MARK: - Insets (nav bar above, input bar and keyboard below)
 
-    /// Фрейм клавиатуры в координатах экрана; .null — клавиатура скрыта.
+    /// Keyboard frame in screen coordinates; .null means the keyboard is hidden.
     private var keyboardScreenFrame: CGRect = .null
 
     @objc private func keyboardChanged(_ note: Notification) {
         guard let end = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
-        // клавиатура скрыта = уехала за нижний край экрана
+        // hidden means it moved past the bottom edge of the screen
         keyboardScreenFrame = end.minY >= UIScreen.main.bounds.maxY ? .null : end
         updateInsets()
     }
 
-    /// Считает инсеты сам: safe area даёт перекрытие навбаром/индикатором,
-    /// перекрытие клавиатурой считается от её фрейма в координатах view —
-    /// часть, которую уже отработал внешний layout (SwiftUI), не учитывается повторно.
+    /// Computes the insets itself: the safe area gives the overlap with the nav bar
+    /// and the home indicator, while the keyboard overlap is measured from its frame
+    /// converted into view coordinates, so the part the outer SwiftUI layout has
+    /// already handled is not counted twice.
     private func updateInsets() {
         var bottomOverlap = view.safeAreaInsets.bottom
         if !keyboardScreenFrame.isNull {
@@ -135,28 +137,30 @@ final class MessagesViewController: UIViewController {
     }
 
     func setInsets(top: CGFloat, bottom: CGFloat) {
-        // список перевёрнут: top-инсет экрана = bottom контента
+        // the list is flipped: the screen's top inset is the content's bottom
         let insets = UIEdgeInsets(top: bottom, left: 0, bottom: top, right: 0)
         guard insets != collectionView.contentInset else { return }
         let wasAtBottom = collectionView.contentOffset.y <= -collectionView.contentInset.top + 1
         collectionView.contentInset = insets
         collectionView.verticalScrollIndicatorInsets = insets
-        // лента была у низа — держим её у низа и с новым инсетом
+        // it was at the bottom, so keep it there under the new inset
         if wasAtBottom {
             collectionView.contentOffset = CGPoint(x: 0, y: -insets.top)
         }
-        // клавиатура открылась или уехала — видимая область другая
+        // the keyboard came up or went away, so the visible area is different
         updateAtBottom(layoutFirst: true)
     }
 
-    /// Обновление ленты: точечный diff по id. Инвертированный список — index 0 внизу
-    /// экрана. Вставки/удаления идут через performBatchUpdates, чтобы контент выше
-    /// не прыгал при новом сообщении, когда пользователь читает историю.
+    /// Updates the feed with a pointwise diff by id. The list is inverted, so item 0
+    /// is at the bottom of the screen. Inserts and deletes go through
+    /// performBatchUpdates so that the content above does not jump when a message
+    /// arrives while the reader is in the history.
     func apply(_ newItems: [ChatFeedItem]) {
         let old = items
         guard isViewLoaded else { items = newItems; return }
-        // лента опустела (очистка истории): дифф удалял бы все позиции разом
-        // посреди идущей анимации вставки, и якорь чтения указывал бы в пустоту
+        // the feed went empty (history cleared): a diff would delete every position
+        // at once in the middle of a running insert animation, and the reading
+        // anchor would point at nothing
         if newItems.isEmpty {
             items = []
             collectionView.layer.removeAllAnimations()
@@ -167,8 +171,8 @@ final class MessagesViewController: UIViewController {
         if old.isEmpty {
             items = newItems
             collectionView.reloadData()
-            // открытие чата с непрочитанными: лента встаёт на плашку.
-            // Коллекция инвертирована — визуальный верх экрана это .bottom
+            // opening a chat with unread messages parks the feed on the banner.
+            // The collection is inverted, so the visual top of the screen is .bottom
             if let idx = newItems.firstIndex(where: { if case .unreadMarker = $0 { return true }; return false }) {
                 collectionView.layoutIfNeeded()
                 collectionView.scrollToItem(at: IndexPath(item: idx, section: 0), at: .bottom, animated: false)
@@ -184,33 +188,34 @@ final class MessagesViewController: UIViewController {
             for (i, item) in newItems.enumerated() where !contentEqual(old[i], item) {
                 refreshItem(at: i, item: item)
             }
-            // высота могла измениться (правка текста) — геометрия другая
+            // an edit can change a height, so the geometry is different
             updateAtBottom(layoutFirst: true)
             return
         }
 
-        // вычисляем удаления и вставки по позициям id; при дубликате id берём
-        // первую позицию, а не трапаемся (id обязаны быть уникальны, но краш хуже)
+        // deletes and inserts come from the positions of the ids; a duplicate id
+        // resolves to its first position instead of trapping, since ids are meant
+        // to be unique but a crash is worse than a misplaced row
         let oldIndex = Dictionary(oldIds.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
         let newIndex = Dictionary(newIds.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
         let deletes = oldIds.enumerated().filter { newIndex[$0.element] == nil }
             .map { IndexPath(item: $0.offset, section: 0) }
         let inserts = newIds.enumerated().filter { oldIndex[$0.element] == nil }
             .map { IndexPath(item: $0.offset, section: 0) }
-        // якорь на то, что человек читает: список инвертирован, вставка нового
-        // сообщения идёт в item 0 и сдвигает под неизменным contentOffset весь
-        // контент выше. Запоминаем верхний видимый элемент и его положение на
-        // экране, чтобы вернуть их после обновления
+        // anchor on what the reader is looking at: the list is inverted, so a new
+        // message is inserted at item 0 and shifts everything above it while
+        // contentOffset stays put. Remember the top visible item and where it sits
+        // on screen, then put it back after the update
         let anchor = readingAnchor()
 
-        // если структура изменилась слишком сложно (перестановки) — безопасный reload
+        // a structural change too complex to diff (a reordering) falls back to reload
         let onlyAppendOrRemove = deletes.count + inserts.count == abs(oldIds.count - newIds.count)
             || (deletes.isEmpty || inserts.isEmpty)
         guard onlyAppendOrRemove, deletes.count + inserts.count < 60 else {
             items = newItems
             collectionView.reloadData()
             restore(anchor)
-            // своё новое сообщение внизу обязано стать видимым и на reload-пути
+            // our own new message at the bottom has to become visible on this path too
             if case .message(let m, _, _, _, _, _)? = newItems.first, m.isOutgoing,
                oldIndex[newIds[0]] == nil {
                 collectionView.layoutIfNeeded()
@@ -220,24 +225,26 @@ final class MessagesViewController: UIViewController {
             return
         }
 
-        // состояние до вставки: был ли самый новый элемент на экране
+        // state before the insert: was the newest item on screen
         let wasAtBottom = atBottom
         items = newItems
 
-        // дифф из одного лишь удаления плашки непрочитанных — уходит с анимацией
-        // (свернул в шторку / отправил своё / поставил реакцию)
+        // a diff that only removes the unread banner animates it away (the reader
+        // pulled down the shade, sent something, or added a reaction)
         let onlyMarkerDelete = inserts.isEmpty && !deletes.isEmpty
             && deletes.allSatisfy { if case .unreadMarker = old[$0.item] { return true }; return false }
         if onlyMarkerDelete {
-            // пересчёт в completion: до конца анимации набор видимых ячеек ещё
-            // со старыми индексами, а layoutIfNeeded оборвал бы уход плашки
+            // recompute in the completion: until the animation ends the visible
+            // cells still carry the old indices, and layoutIfNeeded would cut the
+            // banner's exit short
             collectionView.performBatchUpdates({ collectionView.deleteItems(at: deletes) },
                                                completion: { [weak self] _ in self?.updateAtBottom() })
             return
         }
-        // новое сообщение внизу — анимируем появление (spring); вставки истории
-        // сверху идут без анимации, чтобы не дёргать контент под пальцем
-        // новое сообщение приходит в item 0 (низ инвертированного списка)
+        // a new message at the bottom gets a spring appearance; history inserted at
+        // the top comes in without animation so the content under the finger stays
+        // still. A new message always arrives at item 0, the bottom of the
+        // inverted list
         let newBottom: (id: String, outgoing: Bool)? = {
             guard inserts.contains(where: { $0.item == 0 }),
                   case .message(let m, _, _, _, _, _) = newItems[0] else { return nil }
@@ -249,23 +256,24 @@ final class MessagesViewController: UIViewController {
                 if !deletes.isEmpty { collectionView.deleteItems(at: deletes) }
                 if !inserts.isEmpty { collectionView.insertItems(at: inserts) }
             }
-            // своё сообщение показываем всегда, из любой глубины истории:
-            // мгновенный переход к низу до материализации ячейки — анимированный
-            // скролл отсюда гонялся бы с полётом баббла и отменялся следующим
-            // апдейтом ленты (ack), из-за чего иногда не доезжал
+            // our own message is always shown, from any depth of history: jump to
+            // the bottom instantly, before the cell materialises. An animated
+            // scroll from here would race the bubble's flight and get cancelled by
+            // the next feed update (the ack), so it sometimes never arrived
             if newBottom?.outgoing == true {
                 collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.contentInset.top), animated: false)
             }
-            // completion у batch-апдейта без анимации вызывается до создания
-            // вставленной ячейки (cellForItem там nil) — материализуем её сразу
-            // и запускаем анимацию появления синхронно, до первого кадра
+            // with animation off, the batch update's completion runs before the
+            // inserted cell exists (cellForItem is nil there), so materialise it
+            // here and start the appearance animation synchronously, before the
+            // first frame
             collectionView.layoutIfNeeded()
             if newBottom?.outgoing != true { restore(anchor) }
         }
-        // уцелевшие элементы могли сменить содержимое в том же апдейте, где что-то
-        // вставилось: у соседа сверху пропадает хвостик и меняется зазор, когда
-        // сообщение продолжает его серию, растёт счётчик плашки непрочитанных.
-        // Дифф по id такие ячейки не пересоздаёт — обновляем их отдельно
+        // surviving items can change their content in the same update that inserted
+        // something: the neighbour above loses its tail and changes its gap when the new
+        // message continues its series, and the unread banner's counter grows. A diff by
+        // id does not recreate those cells, so they are refreshed separately
         for (i, item) in newItems.enumerated() {
             guard let oldIdx = oldIndex[item.id], !contentEqual(old[oldIdx], item) else { continue }
             refreshItem(at: i, item: item)
@@ -280,19 +288,19 @@ final class MessagesViewController: UIViewController {
                 cell.animateAppearance()
             }
         }
-        // чужое новое сообщение: плавно подскролливаем, только если пользователь
-        // и так был у низа — читающего историю не дёргаем
+        // someone else's new message: scroll down smoothly only if the reader was at the
+        // bottom anyway; a reader in the history is left alone
         if let nb = newBottom, !nb.outgoing, wasAtBottom {
             collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.contentInset.top), animated: true)
         }
-        // вставка и удаление меняют геометрию без события скролла
+        // inserts and deletes change the geometry without a scroll event
         updateAtBottom()
     }
 
-    /// Обновление уже стоящей в ленте позиции, содержимое которой изменилось.
-    /// reload пересоздаёт ячейку и мгновенно обрывает идущую анимацию появления
-    /// (ack pending→sent приходит в первые миллисекунды полёта), поэтому видимую
-    /// ячейку той же высоты перенастраиваем на месте.
+    /// Refreshes a position that already stands in the feed and whose content changed.
+    /// A reload recreates the cell and instantly cuts off a running appearance animation
+    /// (the pending→sent ack lands in the first milliseconds of the flight), so a visible
+    /// cell of the same height is reconfigured in place instead.
     private func refreshItem(at index: Int, item: ChatFeedItem) {
         let indexPath = IndexPath(item: index, section: 0)
         switch item {
@@ -318,8 +326,8 @@ final class MessagesViewController: UIViewController {
         UIView.performWithoutAnimation { collectionView.reloadItems(at: [indexPath]) }
     }
 
-    /// Полная настройка ячейки сообщения: контент + колбэки (замыкания захватывают msg,
-    /// при обновлении контента их нужно переустановить вместе с ним).
+    /// Full setup of a message cell: content plus callbacks. The closures capture msg, so
+    /// when the content is updated they have to be reinstalled along with it.
     private func configureMessageCell(_ cell: MessageCell, msg: Message, plan: BubbleLayoutPlan) {
         cell.configure(msg: msg, plan: plan)
         cell.onReply = { [weak self] in self?.onReply?(msg) }
@@ -332,8 +340,8 @@ final class MessagesViewController: UIViewController {
         cell.setSelection(mode: selectionMode, selected: selectedIds.contains(msg.id), animated: false)
     }
 
-    /// Ссылка из сообщения открывается во встроенном браузере: чат остаётся
-    /// на месте, возврат — свайпом вниз.
+    /// A link from a message opens in the built-in browser: the chat stays where it is
+    /// and a swipe down brings it back.
     private func open(_ url: URL) {
         guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
             UIApplication.shared.open(url)
@@ -364,20 +372,20 @@ final class MessagesViewController: UIViewController {
         if !animated { updateAtBottom(layoutFirst: true) }
     }
 
-    // MARK: - Удержание позиции чтения
+    // MARK: - Holding the reading position
 
-    /// Элемент у верхнего края экрана и его положение относительно него.
+    /// The item at the top edge of the screen and where it sits relative to that edge.
     private struct ReadingAnchor {
         let id: String
         let offsetInView: CGFloat
     }
 
-    /// Якорь берётся, только когда человек читает историю: у низа ленту ведут
-    /// новые сообщения, и удерживать там нечего.
+    /// An anchor is only taken while someone is reading the history: at the bottom the
+    /// feed is led by new messages and there is nothing to hold.
     private func readingAnchor() -> ReadingAnchor? {
         guard isViewLoaded, !atBottom else { return nil }
         let visibleRect = collectionView.bounds.inset(by: collectionView.adjustedContentInset)
-        // список инвертирован: визуальный верх экрана — элемент с наибольшим maxY
+        // the list is inverted: the visual top of the screen is the item with the largest maxY
         let top = collectionView.indexPathsForVisibleItems.compactMap { path -> (IndexPath, CGRect)? in
             guard let attrs = collectionView.layoutAttributesForItem(at: path),
                   attrs.frame.intersects(visibleRect) else { return nil }
@@ -388,7 +396,7 @@ final class MessagesViewController: UIViewController {
                              offsetInView: top.1.maxY - collectionView.contentOffset.y)
     }
 
-    /// Возвращает якорный элемент туда же, где он был до обновления.
+    /// Puts the anchored item back exactly where it stood before the update.
     private func restore(_ anchor: ReadingAnchor?) {
         guard let anchor, let idx = items.firstIndex(where: { $0.id == anchor.id }) else { return }
         collectionView.layoutIfNeeded()
@@ -400,27 +408,28 @@ final class MessagesViewController: UIViewController {
                                         animated: false)
     }
 
-    // MARK: - «Лента у низа»
+    // MARK: - "The feed is at the bottom"
 
-    /// Решение «лента у низа»: список инвертирован, самый новый элемент лежит
-    /// в item 0, и низ — это когда он попал в число видимых. Пустая лента — низ.
+    /// Deciding whether the feed is at the bottom: the list is inverted, the newest item
+    /// lives at item 0, and being at the bottom means it is among the visible ones. An
+    /// empty feed counts as being at the bottom.
     static func isAtBottom(visibleItems: [Int], totalItems: Int) -> Bool {
         guard totalItems > 0 else { return true }
         return visibleItems.contains(0)
     }
 
-    /// Пересчёт по фактически видимым ячейкам. Смещение в точках тут не годится:
-    /// при открытии чата лента встаёт на плашку непрочитанных, и самые новые
-    /// сообщения при этом на экране.
-    /// layoutFirst — прогнать раскладку до опроса: после reloadData, вставок и
-    /// смены инсетов набор видимых ячеек ещё старый.
+    /// Recomputed from the cells that are actually visible. A content offset in points is
+    /// no good here: opening a chat parks the feed on the unread banner while the newest
+    /// messages are on screen all the same.
+    /// layoutFirst runs the layout before asking, because after reloadData, an insert or
+    /// an inset change the set of visible cells is still the old one.
     private func updateAtBottom(layoutFirst: Bool = false) {
         guard isViewLoaded, !recomputingAtBottom else { return }
         recomputingAtBottom = true
         defer { recomputingAtBottom = false }
         if layoutFirst { collectionView.layoutIfNeeded() }
-        // из bounds вычитаем инсеты: то, что лежит под инпут-баром или навбаром,
-        // пользователь не видит
+        // the insets come off the bounds: whatever lies under the input bar or the nav bar
+        // is not something the reader sees
         let visibleRect = collectionView.bounds.inset(by: collectionView.adjustedContentInset)
         let visible = collectionView.indexPathsForVisibleItems.filter { path in
             guard let attrs = collectionView.layoutAttributesForItem(at: path) else { return false }
@@ -429,24 +438,24 @@ final class MessagesViewController: UIViewController {
         let value = Self.isAtBottom(visibleItems: visible, totalItems: items.count)
         guard value != atBottom else { return }
         atBottom = value
-        // колбэк меняет @State, а пересчёт бывает и внутри apply(), то есть
-        // посреди обновления SwiftUI-view — отдаём следующим тиком
+        // the callback changes @State, and the recomputation can happen inside apply(),
+        // that is in the middle of a SwiftUI view update, so it is delivered on the next tick
         DispatchQueue.main.async { [weak self] in
             guard let self, self.atBottom == value else { return }
             self.onAtBottomChanged?(value)
         }
     }
 
-    /// Скролл к сообщению по серверному msgId или локальному id.
-    /// Возвращает false, если сообщения нет в загруженной ленте (нужна догрузка истории).
+    /// Scrolls to a message by its server msgId or its local id.
+    /// Returns false when the message is not in the loaded feed and history has to be fetched.
     @discardableResult
     func scrollTo(msgId: String, highlight: Bool = false) -> Bool {
         guard let idx = index(ofMsgId: msgId) else { return false }
         collectionView.scrollToItem(at: IndexPath(item: idx, section: 0), at: .centeredVertically, animated: true)
         if highlight {
             pendingHighlightId = msgId
-            // ячейка уже на экране — вспышка идёт параллельно доводке скролла;
-            // иначе сработает, когда ячейка материализуется или скролл доедет
+            // if the cell is already on screen the flash runs alongside the scroll settling;
+            // otherwise it fires once the cell materialises or the scroll arrives
             flushPendingHighlight()
         }
         return true
@@ -456,8 +465,8 @@ final class MessagesViewController: UIViewController {
         Self.index(ofMsgId: msgId, in: items)
     }
 
-    /// Позиция сообщения в ленте: свои сообщения лежат под clientMsgId,
-    /// а ссылаются на них (цитата, закреп) серверным msgId.
+    /// Position of a message in the feed: own messages live under their clientMsgId, while
+    /// references to them (a quote, a pin) use the server msgId.
     static func index(ofMsgId msgId: String, in items: [ChatFeedItem]) -> Int? {
         items.firstIndex { item in
             guard case .message(let m, _, _, _, _, _) = item else { return false }
@@ -511,7 +520,7 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
                                          showTail: showTail, showName: showName, authorName: authorName,
                                          replyAuthorName: replyAuthorName)
             configureMessageCell(cell, msg: msg, plan: plan)
-            // ячейка оригинала создаётся уже по ходу скролла к нему — вспышка ждала её
+            // the original's cell is created while the scroll to it is under way, and the flash was waiting
             if let id = pendingHighlightId, id == msg.id || id == msg.msgId {
                 pendingHighlightId = nil
                 DispatchQueue.main.async { cell.flashHighlight() }
@@ -557,14 +566,15 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         updateAtBottom()
-        // пагинация: близко к «верху» истории (в инвертированной системе — к концу контента)
+        // pagination: close to the "top" of the history, which in the inverted system is
+        // the end of the content
         if scrollView.contentOffset.y > scrollView.contentSize.height - scrollView.bounds.height - 600 {
             onNeedOlder?()
         }
     }
 }
 
-// MARK: - Вспомогательные ячейки
+// MARK: - Auxiliary cells
 
 /// Text rows between bubbles (date capsule, unread band, system note) all share
 /// one role, so one measurement serves the layout and the cells.
@@ -619,8 +629,7 @@ final class DateSeparatorCell: UICollectionViewCell {
     }
 }
 
-/// Плашка-разделитель «N непрочитанных сообщений»: полоса на всю ширину,
-/// скроллится вместе с лентой.
+/// The «N непрочитанных сообщений» divider: a full-width band that scrolls with the feed.
 final class UnreadMarkerCell: UICollectionViewCell {
     private let label = UILabel()
     private let band = UIView()
@@ -657,7 +666,7 @@ final class UnreadMarkerCell: UICollectionViewCell {
         label.frame = band.bounds.insetBy(dx: 12, dy: 0)
     }
 
-    /// «1 непрочитанное сообщение / 2 непрочитанных сообщения / 5 непрочитанных сообщений»
+    /// Plural forms: «1 непрочитанное сообщение / 2 непрочитанных сообщения / 5 непрочитанных сообщений».
     static func title(count: Int) -> String {
         let mod100 = count % 100
         let mod10 = count % 10

@@ -1,28 +1,28 @@
 import Foundation
 
-/// Причины, по которым исходящее сообщение осталось неотправленным.
+/// Why an outgoing message was never sent.
 ///
-/// Коды — машиночитаемые: часть приходит с сервера фреймом `{t:"error", error}`
-/// (см. docs/protocol.md), часть ставит сам клиент, когда до сервера не дошло.
-/// Хранятся в колонке `message.failReason`; тексты для пользователя лежат рядом,
-/// чтобы код и его формулировка правились одним изменением.
+/// The codes are machine-readable: some arrive from the server in an
+/// `{t:"error", error}` frame (see docs/protocol.md), the rest are set by the client
+/// when the message never reached the server. They are stored in `message.failReason`;
+/// the user-facing wording sits next to them so a code and its text change together.
 public enum SendFailure {
-    /// Сервер отказал: получатель в нашем чёрном списке.
+    /// Server refused: the recipient is on our block list.
     public static let blocked = "blocked"
-    /// Сервер отказал: мы больше не участник чата.
+    /// Server refused: we are no longer a member of the chat.
     public static let notMember = "not_member"
-    /// Сервер отказал без уточнения причины.
+    /// Server refused without saying why.
     public static let sendFailed = "send_failed"
-    /// Клиент не отправил: identity-ключ собеседника сменился и ещё не принят (TOFU).
+    /// Client never sent it: the peer's identity key changed and has not been trusted yet (TOFU).
     public static let identityChanged = "identity_changed"
-    /// Клиент не отправил: попытки исчерпаны.
+    /// Client never sent it: out of attempts.
     public static let tooManyAttempts = "too_many_attempts"
 
-    /// Заголовок для любой причины: пользователю важен факт, а не код.
+    /// One title for every reason; what matters to the user is the fact, not the code.
     public static let title = "Сообщение не доставлено"
 
-    /// Объяснение причины для пользователя. Неизвестный код (сервер ушёл вперёд)
-    /// даёт общую формулировку, а не пустую строку.
+    /// The explanation shown to the user. An unknown code (a server running ahead of us)
+    /// still gets wording rather than an empty string.
     public static func explanation(_ code: String?) -> String {
         switch code {
         case blocked:

@@ -53,8 +53,8 @@ final class ChatCleanupTests: XCTestCase {
         XCTAssertEqual(chat?.lastSeq, 40)
         XCTAssertEqual(chat?.syncedSeq, 40)
         XCTAssertEqual(chat?.syncCursor, 40)
-        // ничего не осталось непрочитанного: производный счётчик обнуляется
-        // движением отметки, а не записью числа
+        // nothing is left unread: the derived counter drops to zero because the
+        // read mark moved, not because a number was written into it
         XCTAssertEqual(chat?.myReadUpTo, 40)
         XCTAssertEqual(chat?.unreadCount, 0)
         let cursors = try db.read { dbc in try HistoryWindow.catchupCursors(dbc) }
@@ -75,16 +75,16 @@ final class ChatCleanupTests: XCTestCase {
 
         try db.write { dbc in try ChatCleanup.clearHistory(dbc, chatId: "c1") }
 
-        // запись о пропущенном seq на месте, а сообщения выше застрявшего
-        // префикса закрыты собственной записью — иначе они снова стали бы
-        // «непрочитанным» диапазоном для сервера
+        // the gap record for the missing seq stays, and the messages above the
+        // stalled prefix get a record of their own; otherwise they would turn
+        // back into a range the client keeps asking the server for
         let after = try db.read { dbc in try HistoryWindow.openGaps(dbc, chatId: "c1") }
         XCTAssertTrue(after.isEmpty, "cleared chat must not reopen a seq range for the server")
         let reasons = try db.read { dbc in
             try String.fetchAll(dbc, sql: "SELECT reason FROM historyGap WHERE chatId = 'c1' ORDER BY seq")
         }
         XCTAssertEqual(reasons, ["no_session", "cleared", "cleared", "cleared", "cleared", "cleared"])
-        // молчаливые причины заглушку в ленте не рисуют
+        // silent reasons draw no placeholder in the feed
         let shown = try db.read { dbc in
             try HistoryWindow.exhaustedGapSeqs(dbc, chatId: "c1", floor: nil)
         }
@@ -188,7 +188,7 @@ final class ChatCleanupTests: XCTestCase {
         try db.write { dbc in try ChatCleanup.deleteChat(dbc, chatId: "c1") }
         XCTAssertEqual(try db.read { dbc in try ChatCleanup.tombstoneSeq(dbc, chatId: "c1") }, 120)
 
-        // сообщение от собеседника вернуло чат: снапшот отдаёт его состояние
+        // a message from the peer brings the chat back and the snapshot carries its state
         let state = ChatStateDTO(
             chatId: "c1", kind: "direct", title: nil, avatarId: nil, description: nil,
             createdBy: "peer", createdAt: 1,
@@ -202,7 +202,7 @@ final class ChatCleanupTests: XCTestCase {
         let chat = try db.read { dbc in try Chat.fetchOne(dbc, key: "c1") }
         XCTAssertEqual(chat?.syncedSeq, 120)
         XCTAssertEqual(chat?.syncCursor, 120)
-        // 20 сообщений, которых на устройстве уже нет, в счётчик не идут
+        // the 20 messages this device no longer holds do not count as unread
         XCTAssertEqual(chat?.myReadUpTo, 120)
         XCTAssertEqual(chat?.unreadCount, 1)
         let cursors = try db.read { dbc in try HistoryWindow.catchupCursors(dbc) }

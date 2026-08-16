@@ -3,22 +3,23 @@ import Intents
 import UserNotifications
 import MsngrCore
 
-/// Уведомление о сообщении в виде Communication Notification: круглый аватар
-/// отправителя вместо иконки приложения и его имя в заголовке.
+/// Message notification shaped as a Communication Notification: the sender's
+/// round avatar in place of the app icon and their name in the title.
 ///
-/// Картинку рисует SpringBoard по `INSendMessageIntent`, и только если сошлись
-/// три условия: entitlement `com.apple.developer.usernotifications.communication`,
-/// `INSendMessageIntent` в `NSUserActivityTypes` и `INPerson(isMe: true)` среди
-/// recipients. При любом пропуске `updating(from:)` возвращает контент без
-/// изменений и ошибку не бросает — баннер тогда обычный, с иконкой приложения.
+/// SpringBoard draws the picture from `INSendMessageIntent`, and only when all
+/// three conditions hold: the `com.apple.developer.usernotifications.communication`
+/// entitlement, `INSendMessageIntent` in `NSUserActivityTypes`, and
+/// `INPerson(isMe: true)` among the recipients. Miss any of them and
+/// `updating(from:)` returns the content unchanged without throwing, so the
+/// banner comes out as the plain one with the app icon.
 enum CommunicationNotification {
 
     /// - Parameters:
-    ///   - avatarFile: файл аватара отправителя из AvatarCache; nil — баннер без картинки.
-    ///   - groupMembers: участники группы кроме себя. Групповой разговор система
-    ///     распознаёт по числу recipients: при одном получателе баннер выходит
-    ///     как личный и название группы в нём не показывается.
-    ///   - groupAvatarFile: аватар группы; в баннере не используется (там аватар отправителя).
+    ///   - avatarFile: sender avatar file from AvatarCache; nil gives a banner without a picture.
+    ///   - groupMembers: group participants other than yourself. The system tells a
+    ///     group conversation by the number of recipients: with a single recipient the
+    ///     banner comes out as a direct one and carries no group title.
+    ///   - groupAvatarFile: group avatar; the banner shows the sender's avatar instead.
     static func content(_ built: NotificationContent,
                         sender: NotificationContentBuilder.SenderInfo,
                         ownUserId: String,

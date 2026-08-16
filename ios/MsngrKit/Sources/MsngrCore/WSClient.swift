@@ -5,16 +5,16 @@ public enum WSEvent: Sendable {
     case connected
     case frame(Data)
     case disconnected
-    /// токен устройства больше не действует (отозван); переподключение прекращено
+    /// the device token no longer works (it was revoked); reconnecting has stopped
     case unauthorized
     /// The server no longer serves this build's protocol version. Reconnecting
     /// changes nothing, so the loop stops and the app states that it is behind.
     case outdated
 }
 
-/// WebSocket-клиент: авто-reconnect с экспоненциальным backoff,
-/// мгновенный reconnect при смене сети (NWPathMonitor), ping keepalive,
-/// обнаружение мёртвого сокета по таймауту pong.
+/// WebSocket client: reconnects on its own with exponential backoff, reconnects
+/// immediately when the network changes (NWPathMonitor), keeps the socket alive with
+/// pings and spots a dead one when the pong fails to arrive.
 public actor WSClient {
     private let url: URL
     private var task: URLSessionWebSocketTask?
@@ -23,8 +23,8 @@ public actor WSClient {
     public private(set) var isConnected = false
 
     private var reconnectAttempt = 0
-    /// отложенная попытка реконнекта: отменяется пинком из форграунда
-    /// и возвратом сети, чтобы не досиживать паузу
+    /// the pending reconnect attempt: a nudge from the foreground or the network
+    /// coming back cancels it so the pause is not sat out
     private var reconnectTask: Task<Void, Never>?
     private var shouldRun = false
     private var pingTimer: Task<Void, Never>?
@@ -68,7 +68,7 @@ public actor WSClient {
     private func pathChanged(_ status: NWPath.Status) {
         let was = lastPathStatus
         lastPathStatus = status
-        // wifi<->cellular или возврат сети: не ждём backoff, реконнект сразу
+        // wifi<->cellular, or the network coming back: reconnect now, skip the backoff
         if shouldRun, status == .satisfied, was != .satisfied || !isConnected {
             reconnectAttempt = 0
             reconnectNow()
@@ -92,7 +92,7 @@ public actor WSClient {
         task = t
         t.resume()
         receiveLoop(t)
-        // первый фрейм от сервера ("hello") подтвердит соединение
+        // the first frame from the server ("hello") is what confirms the connection
     }
 
     private func receiveLoop(_ t: URLSessionWebSocketTask) {
@@ -103,7 +103,7 @@ public actor WSClient {
     }
 
     private func handleReceive(_ result: Result<URLSessionWebSocketTask.Message, Error>, task t: URLSessionWebSocketTask) {
-        guard t === task else { return } // устаревший сокет
+        guard t === task else { return } // a stale socket
         switch result {
         case .success(let msg):
             if !isConnected {
@@ -132,7 +132,7 @@ public actor WSClient {
         }
     }
 
-    /// Код закрытия при отзыве устройства.
+    /// Close code the server sends when the device has been revoked.
     static let revokedCloseCode = 4401
 
     /// Upgrade status the server answers a client below its floor with
@@ -143,9 +143,9 @@ public actor WSClient {
         (task.response as? HTTPURLResponse)?.statusCode == outdatedStatus
     }
 
-    /// Отзыв токена сервер сообщает двумя способами: живой сокет закрывается
-    /// кодом 4401, а следующая попытка апгрейда `/ws` не проходит авторизацию
-    /// и отдаёт 401. Оба означают, что реконнект бессмысленен.
+    /// A revoked token reaches the client in two ways: a live socket is closed with
+    /// 4401, and the next `/ws` upgrade fails authorization with 401. Either way
+    /// reconnecting leads nowhere.
     private static func isRevoked(task: URLSessionWebSocketTask) -> Bool {
         if task.closeCode.rawValue == revokedCloseCode { return true }
         return (task.response as? HTTPURLResponse)?.statusCode == 401
@@ -185,9 +185,9 @@ public actor WSClient {
         awaitingPong = false
     }
 
-    /// Пауза перед попыткой номер attempt: экспонента с потолком.
-    /// Потолок низкий: после возврата сети клиент обязан догнать сервер
-    /// за секунды, а не за минуты.
+    /// Pause before attempt number `attempt`: exponential with a ceiling. The ceiling
+    /// is deliberately low, because once the network is back the client has to catch up
+    /// with the server within seconds.
     static func reconnectDelay(attempt: Int) -> Double {
         min(pow(1.6, Double(attempt)), 12.0)
     }
@@ -214,7 +214,7 @@ public actor WSClient {
         awaitingPong = false
         pingTimer = Task { [weak self] in
             while !Task.isCancelled {
-                // 12с: presence на сервере живёт по свежести пинга (TTL 35с)
+                // 12s: presence on the server lives off ping freshness, TTL 35s
                 try? await Task.sleep(nanoseconds: 12_000_000_000)
                 guard let self else { return }
                 await self.pingTick()
@@ -225,7 +225,7 @@ public actor WSClient {
     private func pingTick() {
         guard isConnected else { return }
         if awaitingPong {
-            // pong не пришёл за цикл — сокет мёртв
+            // no pong within a cycle: the socket is dead
             socketDied()
             return
         }
@@ -233,11 +233,11 @@ public actor WSClient {
         Task { try? await self.sendRaw(Data(#"{"t":"ping"}"#.utf8)) }
     }
 
-    /// Пинок из форграунда: мёртвый после фона сокет переподключается сразу,
-    /// живой — подтверждает presence немедленным пингом.
+    /// A nudge from the foreground: a socket that died in the background reconnects
+    /// right away, a live one confirms presence with an immediate ping.
     public func nudge() {
         if task == nil {
-            // отложенная попытка досиживала бы паузу до 12с — отменяем и пробуем сразу
+            // a pending attempt would sit out up to 12s, so cancel it and try now
             reconnectTask?.cancel()
             reconnectAttempt = 0
             connectIfNeeded()

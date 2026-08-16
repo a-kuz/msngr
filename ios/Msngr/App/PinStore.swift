@@ -1,8 +1,7 @@
 import Foundation
 import CryptoKit
 
-/// Пин-код: хранится как SHA-256(salt+pin) в Keychain-подобном UserDefaults suite
-/// с NSFileProtectionComplete (сам пин никогда не хранится).
+/// Passcode kept as SHA-256(salt + pin); the pin itself is never stored.
 enum PinStore {
     private static let defaults = UserDefaults.standard
     static let autolockInterval: TimeInterval = 30

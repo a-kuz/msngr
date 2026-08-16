@@ -2,9 +2,9 @@ import XCTest
 @testable import Msngr
 import MsngrCore
 
-/// Уникальность id элементов ленты: дата-сепараторы с одинаковым label
-/// не должны давать одинаковый id (лента строится по порядку seq,
-/// sentAt при этом может быть немонотонным).
+/// What buildFeed puts on screen: unique item ids, the unread marker, series
+/// grouping and reply authors. The feed is ordered by seq, and sentAt along it
+/// may go backwards, so two date separators can carry the same label.
 final class ChatFeedTests: XCTestCase {
     private let day: TimeInterval = 86_400
 
@@ -19,7 +19,7 @@ final class ChatFeedTests: XCTestCase {
     @MainActor
     func testSeparatorIdsUniqueForNonMonotonicSentAt() {
         let base: TimeInterval = 1_700_000_000
-        // порядок ленты — по seq DESC; sentAt скачет: день A, день B, снова день A
+        // the feed runs by seq DESC while sentAt jumps: day A, day B, day A again
         let msgs = [
             msg("m3", sentAt: base, seq: 3),
             msg("m2", sentAt: base + 2 * day, seq: 2),
@@ -28,9 +28,9 @@ final class ChatFeedTests: XCTestCase {
         let feed = ChatViewModel.buildFeed(msgs, members: [])
 
         let ids = feed.map(\.id)
-        XCTAssertEqual(Set(ids).count, ids.count, "id элементов ленты должны быть уникальны: \(ids)")
+        XCTAssertEqual(Set(ids).count, ids.count, "feed item ids must be unique: \(ids)")
 
-        // один и тот же день встречается дважды — сепаратора два, label одинаковый
+        // the same day appears twice: two separators, one label
         let separators = feed.compactMap { item -> (id: String, label: String)? in
             if case .dateSeparator(let id, let label) = item { return (id, label) }
             return nil
@@ -48,15 +48,15 @@ final class ChatFeedTests: XCTestCase {
         return m
     }
 
-    // Плашка непрочитанных: в инвертированной ленте стоит сразу после самого
-    // старого сообщения с seq >= якоря (на экране — над первым непрочитанным).
+    // The unread marker: in the inverted feed it follows the oldest message
+    // with seq >= the anchor, which on screen puts it above the first unread one.
     @MainActor
     func testUnreadMarkerAboveFirstUnread() {
         let base: TimeInterval = 1_700_000_000
         let msgs = [
             incoming("m5", sentAt: base + 40, seq: 5),
             incoming("m4", sentAt: base + 30, seq: 4),
-            incoming("m3", sentAt: base + 20, seq: 3),  // первый непрочитанный
+            incoming("m3", sentAt: base + 20, seq: 3),  // first unread
             msg("m2", sentAt: base + 10, seq: 2),
             msg("m1", sentAt: base, seq: 1),
         ]
@@ -64,20 +64,20 @@ final class ChatFeedTests: XCTestCase {
                                            unreadMarker: (anchorSeq: 3, count: 3))
         let markerIdx = feed.firstIndex { if case .unreadMarker = $0 { return true }; return false }
         XCTAssertNotNil(markerIdx)
-        // элемент прямо перед маркером в массиве — сообщение m3 (на экране оно под плашкой)
+        // the item just before the marker in the array is m3, which on screen sits under it
         if case .message(let m, _, _, _, _, _) = feed[markerIdx! - 1] {
             XCTAssertEqual(m.id, "m3")
         } else {
-            XCTFail("перед маркером должно быть первое непрочитанное, есть \(feed[markerIdx! - 1])")
+            XCTFail("the first unread message must precede the marker, got \(feed[markerIdx! - 1])")
         }
         if case .unreadMarker(let id, let count) = feed[markerIdx!] {
-            XCTAssertEqual(id, "unread:3", "id стабилен и привязан к якорному seq")
+            XCTAssertEqual(id, "unread:3", "the id is stable and tied to the anchor seq")
             XCTAssertEqual(count, 3)
         }
         XCTAssertEqual(feed.map(\.id).count, Set(feed.map(\.id)).count)
     }
 
-    // счётчик растёт, якорь тот же — id маркера не меняется
+    // the count grows while the anchor holds, so the marker id stays the same
     @MainActor
     func testUnreadMarkerIdStableWhenCountGrows() {
         let base: TimeInterval = 1_700_000_000
@@ -96,7 +96,7 @@ final class ChatFeedTests: XCTestCase {
         XCTAssertEqual(id1, id2)
     }
 
-    // без параметра маркера лента не содержит плашку
+    // without the marker parameter the feed carries no marker
     @MainActor
     func testNoMarkerWithoutParam() {
         let base: TimeInterval = 1_700_000_000
@@ -104,8 +104,9 @@ final class ChatFeedTests: XCTestCase {
         XCTAssertFalse(feed.contains { if case .unreadMarker = $0 { return true }; return false })
     }
 
-    /// Заявка до принятия: лента пустая, сообщения из БД на экран не попадают.
-    /// После принятия та же история строится обычным образом.
+    /// A request before it is accepted shows an empty feed: what the database
+    /// holds never reaches the screen. Once accepted the same history builds
+    /// as usual.
     @MainActor
     func testFeedHiddenForRequestChat() {
         let base: TimeInterval = 1_700_000_000
@@ -120,9 +121,9 @@ final class ChatFeedTests: XCTestCase {
         }, ["m3", "m2", "m1"])
     }
 
-    // MARK: - Группировка серий: хвостик и зазор
+    // MARK: - Series grouping: tail and gap
 
-    /// Флаги группировки сообщений ленты в её порядке (index 0 — самое новое).
+    /// Grouping flags in feed order, index 0 being the newest message.
     private func grouping(_ feed: [ChatFeedItem]) -> [(id: String, tightGap: Bool, showTail: Bool)] {
         feed.compactMap { item in
             if case .message(let m, let tightGap, let showTail, _, _, _) = item {
@@ -132,8 +133,8 @@ final class ChatFeedTests: XCTestCase {
         }
     }
 
-    /// Серия одного автора внутри минуты: хвостик только у последнего снизу,
-    /// у остальных тесный зазор сверху.
+    /// One author within a minute: only the bottom bubble gets a tail, the
+    /// rest get the tight gap above them.
     @MainActor
     func testSeriesWithinMinuteTailOnlyOnNewest() {
         let base: TimeInterval = 1_700_000_000
@@ -145,12 +146,12 @@ final class ChatFeedTests: XCTestCase {
         let g = grouping(ChatViewModel.buildFeed(msgs, members: []))
         XCTAssertEqual(g.map(\.id), ["m3", "m2", "m1"])
         XCTAssertEqual(g.map(\.showTail), [true, false, false],
-                       "хвостик только у самого нового сообщения серии")
-        // тесный зазор — у продолжений серии; самое старое открывает серию
+                       "only the newest message of a series carries the tail")
+        // continuations get the tight gap; the oldest one opens the series
         XCTAssertEqual(g.map(\.tightGap), [true, true, false])
     }
 
-    /// Разрыв больше минуты рвёт серию: хвостик у обоих, зазор обычный.
+    /// A pause over a minute breaks the series: both get a tail and a normal gap.
     @MainActor
     func testPauseOverMinuteBreaksSeries() {
         let base: TimeInterval = 1_700_000_000
@@ -163,7 +164,7 @@ final class ChatFeedTests: XCTestCase {
         XCTAssertEqual(g.map(\.tightGap), [false, false])
     }
 
-    /// Ровно 60 секунд — уже не серия (условие строгое: < 60).
+    /// Exactly 60 seconds is already too far apart: the condition is < 60.
     @MainActor
     func testExactlySixtySecondsBreaksSeries() {
         let base: TimeInterval = 1_700_000_000
@@ -175,7 +176,7 @@ final class ChatFeedTests: XCTestCase {
         XCTAssertEqual(g.map(\.showTail), [true, true])
     }
 
-    /// Чередование авторов: каждое сообщение — своя серия.
+    /// Alternating authors: every message stands as its own series.
     @MainActor
     func testAlternatingAuthorsBreakSeries() {
         let base: TimeInterval = 1_700_000_000
@@ -190,11 +191,11 @@ final class ChatFeedTests: XCTestCase {
         XCTAssertEqual(g.map(\.tightGap), [false, false, false, false])
     }
 
-    /// Подряд идущие сообщения одного автора рвутся сменой дня,
-    /// даже если по времени они укладываются в минуту.
+    /// A day change breaks a run by the same author even when the two messages
+    /// are less than a minute apart.
     @MainActor
     func testDayChangeBreaksSeries() {
-        // 23:59:40 и 00:00:10 следующего дня — разница 30 секунд, но дни разные
+        // 23:59:40 and 00:00:10 the next day: 30 seconds apart, different days
         var comps = DateComponents()
         comps.year = 2026; comps.month = 3; comps.day = 10
         comps.hour = 23; comps.minute = 59; comps.second = 40
@@ -205,11 +206,11 @@ final class ChatFeedTests: XCTestCase {
             msg("m1", sentAt: late, seq: 1),
         ]
         let g = grouping(ChatViewModel.buildFeed(msgs, members: []))
-        XCTAssertEqual(g.map(\.showTail), [true, true], "смена дня рвёт серию")
+        XCTAssertEqual(g.map(\.showTail), [true, true], "a day change breaks the series")
         XCTAssertEqual(g.map(\.tightGap), [false, false])
     }
 
-    /// Системное сообщение не склеивается в серию с соседями своего автора.
+    /// A system message never joins a series with its author's neighbours.
     @MainActor
     func testSystemMessageBreaksSeries() {
         let base: TimeInterval = 1_700_000_000
@@ -224,7 +225,7 @@ final class ChatFeedTests: XCTestCase {
         XCTAssertEqual(g.map(\.showTail), [true, true, true])
     }
 
-    // MARK: - Автор цитаты в ленте
+    // MARK: - Reply author in the feed
 
     private func replyAuthorNames(_ feed: [ChatFeedItem]) -> [String?] {
         feed.compactMap { item in
@@ -233,8 +234,8 @@ final class ChatFeedTests: XCTestCase {
         }
     }
 
-    /// Цитата на своё сообщение — «Вы», на чужое — имя участника из members,
-    /// без цитаты — nil.
+    /// Quoting your own message names you; quoting someone else names that
+    /// member from `members`; a message without a quote has no name at all.
     @MainActor
     func testReplyAuthorNameResolvedFromMembers() {
         let base: TimeInterval = 1_700_000_000
@@ -255,11 +256,11 @@ final class ChatFeedTests: XCTestCase {
         func name(for id: String) -> String? { names.first { $0.0 == id }?.1 ?? nil }
         XCTAssertEqual(name(for: "m2"), "Вы")
         XCTAssertEqual(name(for: "m3"), "Боб")
-        XCTAssertNil(name(for: "m1"), "без replyTo имени цитаты нет")
+        XCTAssertNil(name(for: "m1"), "no replyTo means no quote author")
     }
 
-    /// Автор цитаты не найден среди участников (вышел из чата) — заглушка «?»,
-    /// а не сырой userId и не краш.
+    /// The quoted author is not among the members any more (left the chat):
+    /// the quote falls back to "?" instead of a raw userId or a crash.
     @MainActor
     func testReplyAuthorNameFallsBackForUnknownMember() {
         let base: TimeInterval = 1_700_000_000

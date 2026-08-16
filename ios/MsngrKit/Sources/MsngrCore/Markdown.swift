@@ -1,6 +1,6 @@
 import Foundation
 
-/// Начертания, которые может нести кусок текста сообщения.
+/// Styles a run of message text can carry.
 public struct MarkdownStyle: OptionSet, Hashable, Sendable {
     public let rawValue: Int
     public init(rawValue: Int) { self.rawValue = rawValue }
@@ -11,11 +11,11 @@ public struct MarkdownStyle: OptionSet, Hashable, Sendable {
     public static let code = MarkdownStyle(rawValue: 1 << 3)
 }
 
-/// Отрезок текста с одинаковым оформлением.
+/// A run of text with uniform styling.
 public struct MarkdownSpan: Equatable, Sendable {
     public var text: String
     public var style: MarkdownStyle
-    /// Абсолютный URL, если отрезок — ссылка.
+    /// Absolute URL when the run is a link.
     public var link: String?
 
     public init(_ text: String, style: MarkdownStyle = [], link: String? = nil) {
@@ -25,18 +25,19 @@ public struct MarkdownSpan: Equatable, Sendable {
     }
 }
 
-/// Блок сообщения: обычный абзац с инлайн-разметкой либо блок кода.
+/// A message block: a paragraph with inline markup, or a code block.
 public enum MarkdownBlock: Equatable, Sendable {
     case paragraph([MarkdownSpan])
     case code(text: String, language: String?)
 }
 
-/// Разбор мини-маркдауна в тексте сообщения. Разметка нигде не хранится:
-/// в БД лежит исходный текст с маркерами, парсер вызывается при отрисовке.
+/// Parses the small markdown dialect of message text. Nothing about the markup is
+/// stored: the database keeps the source text with its markers and the parser runs
+/// at draw time.
 ///
-/// Поддержано: `**жирный**`, `_курсив_`, `*курсив*`, `~~зачёркнутый~~`,
-/// `` `моноширинный` ``, ```` ```блок кода``` ````, экранирование `\*`,
-/// автолинки (http/https и голые домены). Незакрытый маркер остаётся текстом.
+/// Supported: `**bold**`, `_italic_`, `*italic*`, `~~strikethrough~~`,
+/// `` `monospace` ``, ```` ```code block``` ````, escaping with `\*`, and autolinks
+/// (http/https plus bare domains). An unclosed marker stays plain text.
 public enum MessageMarkdown {
     public static func parse(_ source: String) -> [MarkdownBlock] {
         guard !source.isEmpty else { return [] }
@@ -69,7 +70,7 @@ public enum MessageMarkdown {
         return out
     }
 
-    // MARK: - Блоки кода
+    // MARK: - Code blocks
 
     private enum Piece {
         case text(String)
@@ -78,8 +79,8 @@ public enum MessageMarkdown {
 
     private static let fence: [Character] = ["`", "`", "`"]
 
-    /// Режет исходник на текстовые куски и блоки кода. Открывающий ограничитель
-    /// без закрывающего блоком не считается и остаётся обычным текстом.
+    /// Cuts the source into text pieces and code blocks. An opening fence without a
+    /// closing one is no block at all and stays plain text.
     private static func splitCodeBlocks(_ source: String) -> [Piece] {
         let s = Array(source)
         var pieces: [Piece] = []
@@ -94,7 +95,7 @@ public enum MessageMarkdown {
             }
             var body = Array(s[(i + 3)..<close])
             var language: String?
-            // первая строка вида ```swift — язык, а не первая строка кода
+            // a first line like ```swift names the language and is not code
             if let nl = body.firstIndex(of: "\n") {
                 let head = String(body[0..<nl]).trimmingCharacters(in: .whitespaces)
                 if !head.isEmpty, head.count <= 20,
@@ -106,7 +107,7 @@ public enum MessageMarkdown {
                 }
             }
             if body.last == "\n" { body.removeLast() }
-            // перевод строки перед блоком принадлежит разделению блоков
+            // the newline ahead of a block belongs to the separation between blocks
             if plain.last == "\n" { plain.removeLast() }
             pieces.append(.text(String(plain)))
             plain = []
@@ -143,7 +144,7 @@ public enum MessageMarkdown {
         return backslashes % 2 == 1
     }
 
-    // MARK: - Инлайн-разметка
+    // MARK: - Inline markup
 
     private static let escapable: Set<Character> = ["*", "_", "~", "`", "\\"]
 
@@ -179,7 +180,7 @@ public enum MessageMarkdown {
                 i += 2
                 continue
             }
-            // моноширинный: содержимое буквальное, вложенной разметки нет
+            // monospace: the contents are literal, nothing nested is parsed inside
             if c == "`", let close = closingIndex(s, from: i + 1, char: "`", count: 1), close > i + 1 {
                 flush()
                 out.append(MarkdownSpan(String(s[(i + 1)..<close]), style: style.union(.code)))
@@ -202,15 +203,15 @@ public enum MessageMarkdown {
         return out
     }
 
-    /// Длина цепочки одинаковых символов, начиная с позиции.
+    /// Length of the run of identical characters starting at the position.
     private static func runLength(_ s: [Character], at i: Int) -> Int {
         var n = 0
         while i + n < s.count, s[i + n] == s[i] { n += 1 }
         return n
     }
 
-    /// Позиция закрывающего маркера той же длины. Экранированные символы
-    /// и содержимое инлайн-кода пропускаются.
+    /// Position of the closing marker of the same length. Escaped characters and the
+    /// contents of inline code are skipped over.
     private static func closingIndex(_ s: [Character], from: Int, char: Character, count: Int) -> Int? {
         var j = from
         while j < s.count {
@@ -226,8 +227,8 @@ public enum MessageMarkdown {
             }
             if s[j] == char {
                 let run = runLength(s, at: j)
-                // закрывающая цепочка длиннее маркера («***жирный курсив***»):
-                // берём её хвост, лишние символы достаются вложенному разбору
+                // a closing run longer than the marker ("***bold italic***"): its tail
+                // closes this one, the extra characters go to the nested pass
                 if count == 2, run >= 2 { return j + run - count }
                 if count == 1, run == 1 { return j }
                 j += run
@@ -238,13 +239,13 @@ public enum MessageMarkdown {
         return nil
     }
 
-    // MARK: - Автолинки
+    // MARK: - Autolinks
 
     private static let linkRegex = try! NSRegularExpression(
         pattern: #"(?i)\b(?:(https?)://)?(?:[\p{L}0-9](?:[\p{L}0-9_-]*[\p{L}0-9])?\.)+(\p{L}{2,24})(?::\d{1,5})?(?:/[^\s<>"']*)?"#)
 
-    /// Голый домен считается ссылкой только с известным TLD: иначе в ссылки
-    /// уезжают имена файлов вроде main.swift и сокращения «т.к.».
+    /// A bare domain counts as a link only with a known TLD, otherwise file names like
+    /// main.swift and abbreviations written with a dot inside turn into links.
     private static let knownTLDs: Set<String> = [
         "com", "net", "org", "edu", "gov", "int", "mil", "info", "biz", "name", "pro",
         "app", "dev", "io", "ai", "co", "me", "tv", "fm", "gg", "to", "ly", "sh", "is",
@@ -283,7 +284,7 @@ public enum MessageMarkdown {
             let tld = ns.substring(with: m.range(at: 2)).lowercased()
             if scheme == nil, !knownTLDs.contains(tld) { continue }
 
-            // хвостовая пунктуация к ссылке не относится: «зайди на example.com.»
+            // trailing punctuation is not part of the link: "go to example.com."
             while range.length > 0,
                   let last = ns.substring(with: range).last,
                   trailingPunctuation.contains(last) {

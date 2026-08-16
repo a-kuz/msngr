@@ -1,484 +1,544 @@
-# Сравнение бэкенда msngr с референсом
+# The msngr backend compared with the reference
 
-Референс — проприетарный код BIG, права у k2fintech; здесь только принципы, перенос кода запрещён.
+The reference is proprietary BIG code, rights held by k2fintech; only principles
+are described here, copying code is forbidden.
 
-Референс: один core-воркер на Cloudflare Workers (401 TS-файла, ~75k строк, 1145 коммитов,
-последний — сентябрь 2025) плюс четыре внешних воркера. Наш `server/src` — 1606 строк,
-два Durable Object.
+The reference: one core worker on Cloudflare Workers (401 TS files, ~75k lines,
+1145 commits, the last one September 2025) plus four external workers. Our
+`server/src` is 1606 lines and two Durable Objects.
 
-Дальше по каждой теме: как решено там, как у нас, что из этого следует. В конце —
-приоритизированный список.
+What follows goes topic by topic: how it is solved there, how it is with us,
+what follows from that. A prioritised list closes the document.
 
 ---
 
-## 1. Раскладка на сервисы
+## 1. Splitting into services
 
-**Как там.** Core держит состояние: пользовательские DO, D1, WebSocket-соединения. Наружу
-вынесены звонки (`CALLS`), каналы (`CHANNELS`), деньги (`MONEY`, `MONEY_SERVICE`),
-транскодинг видео и приём квитанций доставки. Связь — service bindings и классы
-`WorkerEntrypoint` в корне core (`CallsEntrypoint`, `ChannelsEntrypoint`, `MoneyEntrypoint`,
-`VideoEntrypoint`, `DeliveringEnterypoint`). Они не содержат логики, это адаптеры
-«RPC-вызов → нужный DO-стаб», чтобы внешний воркер не знал ни схемы chatId, ни имён
-DO-биндингов.
+**How it is there.** Core holds the state: per-user DOs, D1, WebSocket
+connections. Moved outside are calls (`CALLS`), channels (`CHANNELS`), money
+(`MONEY`, `MONEY_SERVICE`), video transcoding and the receiving of delivery
+receipts. They talk over service bindings and `WorkerEntrypoint` classes in the
+core root (`CallsEntrypoint`, `ChannelsEntrypoint`, `MoneyEntrypoint`,
+`VideoEntrypoint`, `DeliveringEnterypoint`). Those classes carry no logic; they
+are adapters from an RPC call to the right DO stub, so that an external worker
+needs to know neither the chatId scheme nor the names of the DO bindings.
 
-Граница проведена по одному признаку: **всё, что не является состоянием переписки,
-живёт снаружи**. Звонок — это сигнализация с коротким жизненным циклом, его состояние
-core не нужно. Канал на десятки тысяч подписчиков — другая модель распространения
-(батч получателей, а не пообъектный fan-out), и она мешала бы обычным чатам делить
-с ней лимиты.
+The boundary follows a single rule: anything that is not conversation state
+lives outside. A call is signalling with a short life cycle, and core has no use
+for its state. A channel with tens of thousands of subscribers is a different
+distribution model (a batch of recipients instead of per-object fan-out), and it
+would force ordinary chats to share limits with it.
 
-Самый интересный приём: функция резолва чата возвращает либо локальный DO-стаб (диалог,
-группа, AI), либо RPC-стаб внешнего воркера (канал), потому что у них совместимая
-номенклатура методов. Вызывающий код не знает, где физически лежит чат. Тип чата
-определяется по длине id — роутинг без обращения к БД.
+The most interesting device: the chat resolution function returns either a local
+DO stub (dialog, group, AI) or an RPC stub of an external worker (channel),
+because their method nomenclature is compatible. The calling code does not know
+where the chat physically lives. Chat type is derived from the length of the id,
+so routing needs no database lookup.
 
-Отдельно стоит `back-delivering-listener`: крошечный воркер на своём домене, без
-авторизации. В payload пуша кладётся зашифрованный URL `userId.chatId.messageId`;
-Notification Service Extension на устройстве дёргает его до показа уведомления, воркер
-расшифровывает и через RPC ставит отметку «доставлено». Так квитанция появляется, даже
-когда приложение не запущено и сокета нет.
+`back-delivering-listener` stands apart: a tiny worker on its own domain with no
+authorization. The push payload carries an encrypted URL of the form
+`userId.chatId.messageId`; the Notification Service Extension on the device
+calls it before showing the notification, the worker decrypts it and marks the
+message delivered over RPC. That way the receipt appears even when the app is
+not running and there is no socket.
 
-**Как у нас.** Один воркер, всё внутри. Разделения нет, RPC наружу нет.
+**How it is with us.** One worker, everything inside. No split, no RPC outward.
 
-**Вывод.** Дробить сейчас незачем: объём функций в разы меньше, а межворкерный вызов —
-это лишняя латентность и лишний способ сломаться. Но два следствия применимы уже сейчас.
+**Conclusion.** There is no reason to split now: the feature volume is smaller by
+a wide margin, and a cross-worker call is extra latency and one more way to
+break. Two consequences do apply already.
 
-Первое: в `ARCHITECTURE.md` каналы описаны как чаты без E2EE с серверной историей и
-поиском, то есть ровно та сущность, которую в референсе пришлось выносить наружу.
-Стоит с самого начала держать резолв чата за одной функцией, возвращающей стаб, чтобы
-вынос канала в отдельный воркер был правкой одной функции, а не переписыванием.
+First: `ARCHITECTURE.md` describes channels as chats without E2EE, with
+server-side history and search, which is exactly the entity the reference had to
+move outside. Worth keeping chat resolution behind a single function returning a
+stub from the start, so that moving channels into a separate worker is an edit
+to one function rather than a rewrite.
 
-Второе: приём с квитанцией из NSE решает нашу конкретную проблему. Сейчас `delivered`
-ставится только по WS-фрейму `recv`, то есть только когда приложение открыто. Пуш с
-`mutable-content: 1` и NSE у нас уже есть — не хватает эндпоинта, который NSE дёрнет.
+Second: the NSE receipt trick solves a concrete problem of ours. Right now
+`delivered` is set only by the `recv` WS frame, that is, only while the app is
+open. We already have a push with `mutable-content: 1` and an NSE; what is
+missing is an endpoint for the NSE to call.
 
 ---
 
 ## 2. Durable Objects
 
-**Как там.** Четырнадцать DO-биндингов. Принцип деления не «горячее/холодное», а
-**идентичность против состояния**.
+**How it is there.** Fourteen DO bindings. The split is not by hot versus cold
+but by identity versus state.
 
-В D1 — только то, что должно быть глобально запрашиваемым: пользователи, телефонные
-номера, контакты, реестр публичных групп, каталог стикеров, зарезервированные
-юзернеймы. Семь таблиц, девятнадцать миграций. Таблицы сообщений в D1 нет вообще.
+D1 holds only what has to be globally queryable: users, phone numbers, contacts,
+the registry of public groups, the sticker catalogue, reserved usernames. Seven
+tables, nineteen migrations. There is no message table in D1 at all.
 
-Всё остальное — в DO, и ключ выбран так, чтобы **DO был локом и границей транзакции**
-для своей сущности: запись сообщения трогает ровно один чат и должна быть
-сериализована относительно конкурентных записей в тот же чат; проверка уникальности
-юзернейма трогает глобальный индекс. Первое — DO, второе — D1.
+Everything else is in DOs, and the key is chosen so that a DO is the lock and
+the transaction boundary for its entity: writing a message touches exactly one
+chat and has to be serialised against concurrent writes to that same chat, while
+a username uniqueness check touches a global index. The first is a DO, the
+second is D1.
 
-Второй принцип: **проекции на пользователя дублируются, а не джойнятся**. Сообщения
-диалога лежат один раз в `DialogsDO`, но у каждого участника в его `MessagingDO`
-лежит собственная денормализованная строка чат-листа. На чтении ничего не соединяется,
-всё разносится на записи. Отсюда объём кода, посвящённого рассылке событий между DO.
+The second principle: per-user projections are duplicated rather than joined.
+Dialog messages are stored once in `DialogsDO`, but each participant has their
+own denormalised chat-list row in their `MessagingDO`. Nothing is joined on
+read, everything is spread out on write. Hence the amount of code devoted to
+propagating events between DOs.
 
-Границы, за которые стоит зацепиться:
+Boundaries worth holding on to:
 
-- **Пуш-ретраи вынесены в отдельный `MessageStatusTrackerDO` на пользователя**, потому
-  что лестница повторов должна работать алармами, пока сокетный DO гибернирован, и не
-  должна конкурировать с живым трафиком за единственный поток объекта.
-- **Приватность вынесена в `PrivacyDO`**, потому что её читают *чужие* объекты, решая,
-  что показать; будить ради этого сокетный DO владельца — плохо.
-- **Ключи X3DH в `KeysDO` на SQLite**, потому что выдача one-time prekey должна быть
-  атомарной: две параллельные установки сессии не должны получить один ключ.
-- **APNs JWT в синглтон-DO**, потому что Apple ограничивает частоту генерации токена и
-  владелец у минтинга должен быть ровно один.
-- **`PhoneNumberDO` с ключом по номеру телефона** как точка встречи для сопоставления
-  контактов: A загрузил номер B, B загрузил номер A, матч фиксируется в объекте номера.
+- **Push retries are moved into a separate `MessageStatusTrackerDO` per user**,
+  because the retry ladder has to run on alarms while the socket DO is
+  hibernated, and it must not compete with live traffic for the object's single
+  thread.
+- **Privacy is moved into `PrivacyDO`**, because it is read by *other* objects
+  deciding what to show; waking the owner's socket DO for that is a bad trade.
+- **X3DH keys live in `KeysDO` on SQLite**, because handing out a one-time
+  prekey has to be atomic: two parallel session setups must not get the same
+  key.
+- **The APNs JWT is in a singleton DO**, because Apple rate-limits token
+  generation and minting must have exactly one owner.
+- **`PhoneNumberDO` keyed by phone number** as the meeting point for contact
+  matching: A uploaded B's number, B uploaded A's number, and the match is
+  recorded in the number's object.
 
-Слабое место референса, которое стоит не повторять: **у DO один слот alarm**. Два
-чатовых DO наследуют общий планировщик задач, но переопределяют `alarm()` собственной
-реализацией — и задачи, запланированные внутри них, не выполнятся никогда. Плюс схема
-таблиц внутри SQLite-DO мигрируется интроспекцией (`PRAGMA table_list`, потом
-create-or-alter) без счётчика версии, на каждом холодном старте объекта.
+A weak spot of the reference that is worth not repeating: a DO has one alarm
+slot. Both chat DOs inherit a shared task scheduler but override `alarm()` with
+their own implementation, so tasks scheduled inside them will never run. On top
+of that, the table schema inside SQLite DOs is migrated by introspection
+(`PRAGMA table_list`, then create-or-alter) with no version counter, on every
+cold start of the object.
 
-**Как у нас.** Два DO. `UserSessionDO` совмещает сокеты, presence, чат-лист, APNs-токены,
-кэш непрочитанного и отправку пушей. `ConversationDO` — членство, журнал, марки,
-настройки, пин. Хранилище — key-value API, хотя классы объявлены `new_sqlite_classes`;
-SQL не используется. Единственный alarm `UserSessionDO` занят presence-TTL. Alarm
-`ConversationDO` свободен, хотя `ARCHITECTURE.md` описывает alarm-очередь рассылки как
-принятое решение — в коде её нет.
+**How it is with us.** Two DOs. `UserSessionDO` combines sockets, presence, the
+chat list, APNs tokens, the unread cache and push sending. `ConversationDO`
+handles membership, the log, marks, settings and the pin. Storage is the
+key-value API, even though the classes are declared as `new_sqlite_classes`; SQL
+is not used. The single alarm of `UserSessionDO` is taken by the presence TTL.
+The alarm of `ConversationDO` is free, although `ARCHITECTURE.md` describes an
+alarm-driven delivery queue as a decided matter; there is no such queue in the
+code.
 
-**Вывод.** Дробление на четырнадцать объектов соразмерно четырнадцати продуктовым
-подсистемам, а не нашим двум; копировать структуру не надо. Но два конкретных шва
-уже мешают.
+**Conclusion.** A split into fourteen objects matches fourteen product
+subsystems, not our two, so their structure should not be copied. But two
+specific seams already hurt.
 
-Пуш живёт внутри обработчика `/event` в `UserSessionDO`. Значит: если подзапрос fanout'а
-до этого DO не прошёл, не будет ни фрейма, ни пуша; отправка пуша занимает единственный
-поток объекта, через который идут все сокеты пользователя; повтора нет вообще.
+The push lives inside the `/event` handler in `UserSessionDO`. Which means: if
+the fan-out subrequest to that DO did not go through, there will be neither a
+frame nor a push; sending the push occupies the object's single thread, the one
+all the user's sockets go through; and there is no retry at all.
 
-Единственный alarm уже занят. Любая вторая работа по таймеру (ретраи доставки, чистка,
-отложенная рассылка) потребует диспетчера задач поверх одного alarm-слота: ключи,
-отсортированные по времени исполнения, и выбор ближайшей одним `list` с `limit: 1`.
-Это дешёвый и проверенный приём, и его лучше завести до того, как понадобится второй
-таймер, а не после.
-
----
-
-## 3. Доставка и fanout
-
-**Как там.** Три разных режима под три разных профиля нагрузки.
-
-*Диалог.* Прямой RPC на DO получателя. Ответ несёт флаг «доставлено»: если получатель
-был онлайн и событие ушло в сокет, объект диалога тут же ставит отметку и уведомляет
-автора. Один сетевой вызов закрывает и доставку, и квитанцию.
-
-*Группа.* Fan-out не синхронный. Записи по одной на участника кладутся в исходящую
-очередь, взводится alarm через ~150 мс, за один тик обрабатывается 3–4 события, alarm
-перевзводится, пока очередь не пуста. Перед разбором очередь схлопывается: для всех
-типов, кроме нового сообщения, остаётся только последнее событие на пару
-(тип, получатель). Отправленные переезжают в множество in-flight; всё, что провисело
-там дольше трёх секунд, возвращается на повтор. Защищает от лимита подзапросов и CPU
-внутри одного вызова: рассылка на две сотни участников одним циклом гарантированно
-упёрлась бы в них.
-
-*E2E-диалог.* Настоящий персистентный outbox: каждое событие пишется в storage ключом
-`bufEvent::<chatId>::<messageId>`, курсор — отдельным ключом со статусом `ack`/`pending`.
-Онлайн-клиенту уходит до 50 событий одним батч-кадром, дальше сервер молчит по этому
-чату, пока клиент не пришлёт подтверждение расшифровки. Только по нему курсор двигается
-и уходит следующая порция. Это защищает не только от потери при обрыве: в цепочке
-ratchet обгон следующего сообщения перед предыдущим ломает расшифровку.
-
-Плюс проверка непрерывности: клиент присылает id, который считает последним, сервер
-сверяет с собственным счётчиком и при расхождении возвращает отрицательный код —
-сигнал «твоё представление о чате разошлось с моим, перешифруй».
-
-Идемпотентность — по клиентскому id сообщения, но поиск идёт по массиву, поднятому в
-память, то есть окно дедупликации ограничено.
-
-Ресинк после офлайна для обычных чатов — **pull**: клиент запрашивает список чатов с
-`lastMessageId` по каждому, диффит со своим состоянием и постранично забирает то, чего
-не хватает. Сервер сам ничего не доигрывает.
-
-Планировщик задач: ключи `$$_tasks::<ULID>`, где ULID закодирован от времени исполнения,
-так что лексикографический порядок ключей совпадает с хронологическим. Опциональный
-ключ дедупликации схлопывает повторные планирования в одну ожидающую задачу — иначе
-каждое входящее событие плодило бы свой таймер. Потолка попыток и dead-letter нет,
-это признанная дыра: детерминированно падающая задача ретраится вечно.
-
-Queues объявлены только продюсером и используются как аварийный сброс, если прямой
-вызов пуш-сервиса бросил исключение. Workflows — только под отложенные AI-задачи, где
-нужен `step.sleep` длиной в недели, переживающий передеплой.
-
-**Как у нас.** `ConversationDO.fanout` — `Promise.all` по всем участникам с
-`.catch(() => {})`, прямо в обработчике `/send`, до ответа отправителю. Дважды: сначала
-всем, кроме автора, потом отдельным вызовом автору.
-
-Что из этого следует, по фактам кода:
-
-- Провалившийся подзапрос — молча потерянный фрейм. Для `msg` это спасает клиентский
-  resync (журнал в DO — источник правды), для `receipt`, `typing`, `presence` и `chat`
-  восстановления нет никакого.
-- Отправитель ждёт весь fan-out. Ack тем медленнее, чем больше группа.
-- Размер группы жёстко ограничен лимитом подзапросов на один вызов.
-- `broadcastPresence` обходит **все** чаты пользователя, каждый `ConversationDO` рассылает
-  дальше всем участникам. На каждую смену статуса это O(чаты × участники) подзапросов,
-  и alarm дёргает её каждые 35 секунд.
-
-Отдельно — обработчик `sync` в `UserSessionDO`. Он последовательно, по всем чатам, в
-цикле без ограничения тянет историю батчами по 200 и шлёт кадры, а после каждого чата
-запрашивает `/events`. Пока это идёт, единственный поток DO занят: события всех
-остальных отправителей этому пользователю стоят в очереди. Курсор клиента при этом
-двигается только по факту применения фреймов, так что оборвавшийся посередине sync
-начнётся заново с той же точки. Клиент с большой историей может застрять в цикле
-пересинхронизации.
-
-`/events` в `ConversationDO` перебирает **весь** журнал чата с префиксом `msg:`, чтобы
-собрать тумбстоуны — на каждый sync, по каждому чату. `/delete` делает то же самое.
-Там же остался мёртвый `msgIdx`: читается и гасится через `void`.
-
-Мелочь, но её стоит свести: в `ARCHITECTURE.md` зафиксирован потолок батча в 128 ключей,
-а `/history` и цикл `sync` работают с числом 200. Сейчас чтение идёт через `list` с
-диапазоном, к которому этот потолок не относится, но два разных числа на один и тот же
-смысл рано или поздно разойдутся.
-
-Идемпотентность у нас **лучше**: `cmid:<from>/<clientMsgId>` — durable-ключ в storage,
-дедуп не зависит от того, что поднято в память.
-
-**Вывод.** Главный структурный разрыв — доигрывание истории реализовано как push из
-сокетного обработчика, а не как pull по курсору. Референс здесь проще и надёжнее:
-сервер отдаёт список чатов с последним seq, клиент сам добирает страницы по HTTP,
-который у нас уже есть (`/api/chats/:id/history`). Кадр `sync` тогда сводится к дайджесту
-и перестаёт блокировать DO.
-
-Второй разрыв — отсутствие персистентной очереди событий. Схлопывание по
-(тип, получатель) и разбор порциями по alarm — это ровно то, что описано в нашем же
-`ARCHITECTURE.md` для каналов, но не написано.
+The single alarm is already taken. Any second timer-driven job (delivery
+retries, cleanup, deferred fan-out) will need a task dispatcher on top of that
+one alarm slot: keys sorted by execution time, and the nearest one picked with a
+single `list` using `limit: 1`. It is a cheap and well-tried device, and it is
+better introduced before the second timer is needed rather than after.
 
 ---
 
-## 4. Пуши
+## 3. Delivery and fanout
 
-**Как там.**
+**How it is there.** Three different modes for three different load profiles.
 
-- Токены устройств в отдельном DO с ключом по fingerprint устройства, плюс тот же
-  объект адресуется по значению токена. Через секунду после записи планируется сверка
-  цепочки токен ↔ fingerprint ↔ пользователь; если токен раньше принадлежал другой
-  связке, у прежней он вычищается. Это защита от переустановки приложения и смены
-  аккаунта на том же устройстве, когда чужие уведомления продолжали бы прилетать.
-- Alert-пуши уходят на **один** токен на пользователя — признанная асимметрия: сокеты
-  мультидевайсные, пуши нет.
-- Бейдж — суммарное непрочитанное по всем чатам на момент отправки.
-- `apns-collapse-id` = клиентский id сообщения, иначе восемь повторов дали бы восемь
-  баннеров.
-- В payload — per-chat порядковый номер, персистируемый на сервере, чтобы клиент
-  обнаружил пропущенный пуш.
-- Для E2E-диалогов текст в alert подменяется на нейтральную строку.
-- JWT ES256 принадлежит синглтон-DO: кэш в storage, обновление рекуррентной задачей раз
-  в шесть минут, принудительная инвалидация при ошибке и со второй попытки. Причина
-  прямая: у Apple токен живёт до часа, но слишком частая генерация даёт 429. Рядом лежит
-  вариант с кэшем в переменной модуля — он слабее, потому что при холодном старте
-  изолята генерация происходит заново.
-- Ретраи — отдельный DO на пользователя, лестница 5с → 10с → 20с → 40с → 60с → 2м → 5м →
-  10м, после чего запись удаляется. Отменяется **по квитанции доставки**, из любого
-  источника: сокет, догоняющий проход, воркер подтверждения из NSE. Прочтение на другом
-  устройстве пуши не отменяет и уже показанное уведомление не отзывает.
-- Mute сервером **не** проверяется: флаг просто едет клиенту, замьюченный чат всё равно
-  порождает APNs-запрос и всё равно попадает в бейдж.
+*Dialog.* A direct RPC to the recipient's DO. The response carries a "delivered"
+flag: if the recipient was online and the event went into the socket, the dialog
+object marks it immediately and notifies the author. One network call closes
+both delivery and the receipt.
 
-**Как у нас.** Пуш уходит немедленно на каждое контентное сообщение, независимо от
-сокетов; дубль гасит клиент по `chatId`/`msgId`. Токены — все устройства пользователя.
-Mute проверяется на сервере и гасит пуш. `apns-collapse-id` = `msgId`. Бейдж — ленивый
-пересчёт инвалидированных чатов подзапросами к `ConversationDO` в момент отправки.
+*Group.* The fan-out is not synchronous. One record per participant goes into an
+outbound queue, an alarm is armed at about 150 ms, one tick handles 3 to 4
+events, and the alarm is rearmed until the queue is empty. Before processing,
+the queue is collapsed: for every type except a new message, only the last event
+per (type, recipient) pair survives. Sent items move into an in-flight set, and
+anything sitting there longer than three seconds goes back for a retry. This
+protects against the subrequest and CPU limits inside a single invocation:
+fanning out to two hundred participants in one loop would hit them for certain.
 
-Что не сделано:
+*E2E dialog.* A genuinely persistent outbox: every event is written to storage
+under the key `bufEvent::<chatId>::<messageId>`, and the cursor is a separate key
+with status `ack` or `pending`. An online client gets up to 50 events in one
+batch frame, after which the server stays silent on that chat until the client
+confirms decryption. Only then does the cursor move and the next portion go out.
+This protects against more than loss on a disconnect: in a ratchet chain, a
+later message overtaking an earlier one breaks decryption.
 
-- Повтора нет. `sendPush(...).catch(() => {})`, одна попытка, результат никуда не идёт.
-- Ответ APNs не разбирается. `410 Unregistered` не удаляет токен: мёртвые токены копятся
-  вечно и каждый раз тратят подзапрос.
-- JWT лежит в переменной модуля воркера — тот самый слабый вариант, который в референсе
-  заменён синглтоном. Регенерация на каждом холодном старте изолята. Насколько часто это
-  реально упирается в лимит Apple, я не мерил; это гипотеза, а приём с единственным
-  владельцем токена — известное решение.
-- Бейдж считается O(инвалидированных чатов) подзапросами внутри пуш-пути.
-- Квитанции из NSE нет (см. п. 1).
+There is also a continuity check: the client sends the id it believes is the
+last, the server compares it with its own counter and on a mismatch returns a
+negative code, meaning "your view of the chat has diverged from mine, re-encrypt".
 
-**Вывод.** Пуш на все устройства и серверный mute у нас сделаны лучше. Не хватает трёх
-вещей, каждая дешёвая: разбор ответа APNs с удалением мёртвого токена, повтор с
-отменой по квитанции, владелец JWT с кэшем в storage вместо переменной изолята.
+Idempotency is keyed on the client message id, but the lookup runs over an array
+held in memory, so the dedup window is bounded.
 
----
+Resync after being offline, for ordinary chats, is a pull: the client asks for
+the list of chats with `lastMessageId` for each, diffs it against its own state
+and fetches what is missing page by page. The server replays nothing on its own.
 
-## 5. Схема данных
+The task scheduler: keys `$$_tasks::<ULID>`, where the ULID is encoded from the
+execution time, so lexicographic key order coincides with chronological order.
+An optional dedup key collapses repeated scheduling into a single pending task;
+without it every incoming event would spawn its own timer. There is no attempt
+cap and no dead letter, an acknowledged hole: a deterministically failing task is
+retried forever.
 
-**Как там.** D1 — семь таблиц, девятнадцать миграций с числовым префиксом, применяются
-штатным `wrangler d1 migrations apply`; в конфиге заданы `migrations_dir` и
-`migrations_table`. Своего раннера нет.
+Queues are declared as producer only and used as an emergency fallback if the
+direct call to the push service threw. Workflows are used only for deferred AI
+tasks, where `step.sleep` has to span weeks and survive a redeploy.
 
-Внутри DO SQLite включён только для ключей и историй. Схема этих таблиц эволюционирует
-интроспекцией в коде, без версии — это самая слабая часть их дизайна. Остальные DO —
-key-value с толерантным чтением (новый ключ, фолбэк на старый) вместо миграций.
+**How it is with us.** `ConversationDO.fanout` is a `Promise.all` over all
+participants with `.catch(() => {})`, right inside the `/send` handler, before
+the sender gets a response. Twice: first everyone except the author, then the
+author in a separate call.
 
-Что есть у них серверно и чего нет у нас:
+What follows from that, per the code:
 
-- **Приватность** — девять опций (телефон, юзернейм, онлайн, аватар, пересылка, звонки,
-  голосовые, сообщения, приглашения) на пятиуровневой шкале от «никто» до «все». У нас
-  presence и lastSeen видны всем участникам общих чатов без настройки.
-- **Закрепы** — до трёх с TTL. У нас один `pinnedMsgId`.
-- **Упоминания** — событие и поля в строке чат-листа. У нас нет.
-- **Инвайт-ссылки** — TTL, лимит использований, требование подтверждения, счётчик. У нас
-  код без срока, без лимита, без отзыва, создать может любой участник.
-- **Автоудаление в группах** — настройка в днях, отметка на сообщении. У нас TTL живёт
-  только на клиенте: сервер шифротекст не удаляет никогда.
-- **Роли и права админа** — раздельные флаги (править группу, приглашать, назначать
-  админов, платежи). У нас булев admin.
-- **Жалобы** — примитивно, но есть.
-- Плюс истории, стикеры, подписки, платные чаты, AI-чаты, коллекции — продуктовые
-  вещи не из нашего периметра.
+- A failed subrequest is a silently lost frame. For `msg` the client resync saves
+  it (the log in the DO is the source of truth); for `receipt`, `typing`,
+  `presence` and `chat` there is no recovery whatsoever.
+- The sender waits for the whole fan-out. The bigger the group, the slower the
+  ack.
+- Group size is hard-capped by the subrequest limit of a single invocation.
+- `broadcastPresence` walks every chat of the user, and each `ConversationDO`
+  then broadcasts to all its participants. That is O(chats × participants)
+  subrequests per status change, and the alarm triggers it every 35 seconds.
 
-Черновиков и полнотекстового поиска нет ни у них, ни у нас.
+The `sync` handler in `UserSessionDO` deserves its own paragraph. It goes
+sequentially over all chats, in a loop with no bound, pulling history in batches
+of 200 and sending frames, and after each chat it requests `/events`. While that
+runs, the single DO thread is busy: events from every other sender to this user
+queue up behind it. The client's cursor moves only as frames are applied, so a
+sync interrupted halfway starts over from the same point. A client with a large
+history can get stuck in a resync loop.
 
-**Как у нас.** Один `schema.sql` на семь таблиц, **механизма миграций нет вообще**: ни
-каталога, ни `migrations_dir` в `wrangler.jsonc`. Первый `ALTER TABLE` в проде класть
-некуда.
+`/events` in `ConversationDO` walks the entire chat log with the `msg:` prefix to
+collect tombstones, on every sync, for every chat. `/delete` does the same. The
+dead `msgIdx` also survives there: it is read and discarded through `void`.
 
-Реакции, правки и переключение TTL у нас реализованы как служебные E2E-сообщения с
-флагом `service`. Под сквозным шифрованием это единственный честный вариант, и он
-правильный, но у него есть цена: каждая реакция занимает `seq` и навсегда остаётся в
-журнале чата.
+A small thing, but worth reconciling: `ARCHITECTURE.md` fixes the batch ceiling
+at 128 keys, while `/history` and the `sync` loop work with 200. Reads currently
+go through a ranged `list`, to which that ceiling does not apply, but two
+different numbers for the same meaning will diverge sooner or later.
 
-Блокировки лежат в D1 и проверяются **только при создании direct-чата**. В существующем
-чате заблокированный пишет свободно и получает квитанции: `/send` смотрит лишь членство.
+Our idempotency is better: `cmid:<from>/<clientMsgId>` is a durable key in
+storage, and the dedup does not depend on what is held in memory.
 
-Токен устройства — SHA-256 в D1, бессрочный. Логаута нет, отзыва нет, списка устройств
-нет, срока нет.
+**Conclusion.** The main structural gap is that history replay is implemented as
+a push from the socket handler instead of a pull by cursor. The reference is
+simpler and more reliable here: the server hands out the chat list with the last
+seq, and the client fetches pages itself over HTTP, which we already have
+(`/api/chats/:id/history`). The `sync` frame then shrinks to a digest and stops
+blocking the DO.
 
-Серверной чистки нет никакой: тумбстоуны и дедуп-ключи накапливаются в DO, осиротевшие
-блобы в R2 никто не собирает, реестр `media` только растёт.
-
-**Вывод.** Отсутствие миграций D1 — не стилистика, а тупик при первом же изменении схемы;
-чинится одной правкой конфига и переносом `schema.sql` в нумерованный файл. Блокировки,
-не действующие внутри чата, — прямая дыра в обещании функции. Приватность presence и
-права админа — продуктовые дыры, а не архитектурные, но обе дешевле сделать до того,
-как формат `chat`-фрейма застынет у клиентов.
+The second gap is the absence of a persistent event queue. Collapsing by (type,
+recipient) and processing in portions on an alarm is exactly what our own
+`ARCHITECTURE.md` describes for channels, and what is not written.
 
 ---
 
-## 6. Операционка
+## 4. Pushes
 
-**Как там.** Четыре конфига (dev/stage/pp/prod) с разными D1, R2, очередями, роутами и
-APNs-топиками. Везде включены `logpush` и `[observability]`, есть tail-consumer —
-отдельный воркер, получающий трейсы всех запросов. `[placement] mode = "off"`, потому что
-состояние всё равно в DO, а стабы берутся с `locationHint` в Западную Европу: вся
-messaging-плоскость закреплена в одном регионе, чтобы убрать межрегиональные RTT из
-цепочки «отправитель → чат → получатель». Плата — постоянная латентность для
-неевропейских клиентов.
+**How it is there.**
 
-Слабые места, которые честно стоит назвать, потому что копировать их не надо. `deploy.sh`
-— семь строк: tmux с двумя панелями, `wrangler deploy` для core и для calls. Миграции не
-применяет, секреты не пушит, типы не проверяет, тесты не гоняет, код возврата не смотрит.
-Теги DO-миграций между окружениями разошлись: dev на v92, stage на лесенке v74–v86,
-pp пересоздан с нуля, prod на v1–v2, причём один и тот же DO-класс объявлен
-SQLite-бэкендом в трёх окружениях и обычным в проде. «Повторить прод на стейдже» одной
-командой нельзя.
+- Device tokens live in a separate DO keyed by device fingerprint, and the same
+  object is also addressable by the token value. A second after the write, a
+  reconciliation of the token ↔ fingerprint ↔ user chain is scheduled; if the
+  token previously belonged to another triple, it is cleaned out of the old one.
+  This guards against app reinstall and account switching on the same device,
+  where someone else's notifications would keep arriving.
+- Alert pushes go to one token per user, an acknowledged asymmetry: sockets are
+  multi-device, pushes are not.
+- The badge is the total unread across all chats at the moment of sending.
+- `apns-collapse-id` is the client message id, otherwise eight retries would give
+  eight banners.
+- The payload carries a per-chat sequence number, persisted on the server, so the
+  client can detect a missed push.
+- For E2E dialogs the alert text is replaced with a neutral string.
+- The ES256 JWT belongs to a singleton DO: cached in storage, refreshed by a
+  recurring task every six minutes, force-invalidated on an error and on the
+  second attempt. The reason is direct: Apple's token lives up to an hour, but
+  generating it too often yields a 429. Next to it sits the variant with the
+  cache in a module variable, which is weaker, because a cold start of the
+  isolate regenerates the token.
+- Retries are a separate DO per user, on a ladder of 5s → 10s → 20s → 40s → 60s →
+  2m → 5m → 10m, after which the record is deleted. It is cancelled by the
+  delivery receipt, from any source: the socket, a catch-up pass, or the
+  confirmation worker called from the NSE. A read on another device neither
+  cancels pushes nor withdraws an already shown notification.
+- Mute is not checked on the server: the flag simply travels to the client, so a
+  muted chat still produces an APNs request and still lands in the badge.
 
-Тесты: 33 spec-файла, ~25 тысяч строк, из которых 15 тысяч — один нагрузочный сценарий с
-единственным `it()`. Это не юнит-тесты, а E2E-скрипты против **живого dev-стенда** с
-реальной регистрацией по тестовым номерам. Неидемпотентны, зависят от доступности стенда,
-логика DO напрямую не тестируется. `vitest-pool-workers` и miniflare не подключены.
-Единственный изолированный юнит — генератор ULID. CI нет: ни GitHub Actions, ни чего-либо
-ещё. ESLint заметно ослаблен (`no-console` выключен, `no-explicit-any` выключен,
-неиспользуемые переменные — warn), `typecheck` в скриптах не вызывается.
+**How it is with us.** The push goes out immediately for every content message,
+regardless of sockets; the client suppresses the duplicate by `chatId`/`msgId`.
+Tokens: all of the user's devices. Mute is checked on the server and suppresses
+the push. `apns-collapse-id` is `msgId`. The badge is a lazy recount of
+invalidated chats via subrequests to `ConversationDO` at send time.
 
-**Как у нас.** Один `wrangler.jsonc` с `database_id: "REPLACE_ON_DEPLOY"`, то есть окружений
-нет как понятия. Нет `[observability]`, нет logpush, нет tail — в проде мы не увидим
-ничего. Нет `locationHint`. Деплой — `wrangler deploy` из npm-скрипта.
+What is not done:
 
-Тесты: `server/test/smoke.mjs` — 390 строк, около шестидесяти проверок, сквозной прогон
-протокола против локального `wrangler dev`, включая WS-фреймы, идемпотентность, message
-requests, инвайты, sync за пределами одного батча и пуши через мок APNs. Входит в
-`make check` как гейт перед коммитом.
+- No retry. `sendPush(...).catch(() => {})`, one attempt, and the result goes
+  nowhere.
+- The APNs response is not parsed. `410 Unregistered` does not delete the token:
+  dead tokens accumulate forever and burn a subrequest every time.
+- The JWT sits in a module variable of the worker, the very weak variant the
+  reference replaced with a singleton. Regeneration on every cold start of the
+  isolate. How often this actually runs into Apple's limit I did not measure;
+  that part is a hypothesis, while the single-owner pattern for the token is a
+  known solution.
+- The badge costs O(invalidated chats) subrequests inside the push path.
+- There is no receipt from the NSE (see section 1).
 
-**Вывод.** Здесь **у нас лучше по дисциплине и хуже по покрытию**. Один детерминированный
-смоук в гейте коммита полезнее двадцати пяти тысяч строк неидемпотентных скриптов против
-общего стенда: их прогон меняет состояние стенда и не воспроизводится. Расширять надо
-именно смоук, а не заводить второй, «настоящий» слой тестов.
-
-Что взять: окружения с раздельными D1 и APNs-топиками (иначе первый же реальный
-пользователь окажется в одной базе с прогонами), `[observability]` и logpush (иначе
-диагностика в проде невозможна), `locationHint` для стабов DO. Что не брать: `deploy.sh`
-в текущем виде и расхождение тегов миграций между окружениями.
-
----
-
-## 7. Ошибки, middleware, валидация
-
-**Как там.** Роутер `@cloudflare/itty-router-openapi`. Каждый хендлер — класс со статической
-Zod-схемой: параметры пути, query и тело валидируются **до** вызова обработчика, и внутрь
-приходят уже разобранные типизированные данные. Базовый класс переопределяет обработчик
-ошибки валидации, разворачивая Zod-issues в одну строку и отдавая 400 в том же JSON-формате,
-что и прикладные ошибки. Ответы схемой не валидируются, только описываются. OpenAPI
-собирается в рантайме из этих же схем; лежащий в репозитории снапшот обновляется руками.
-
-Порядок регистрации маршрутов несёт смысл: строка с middleware авторизации делит файл
-на публичную и приватную половины. Отладочные ручки регистрируются в обход
-OpenAPI-обёртки и прячутся за длинными случайными префиксами, часть из них живёт и в проде.
-
-Авторизация: JWT HS256, срок жизни access-токена 300 дней, проверка подписи без единого
-обращения к БД. Отсюда прямое следствие: отозвать токен нельзя, логаут его не
-инвалидирует. Refresh-токен — не JWT, а строка с зашитым userId, чтобы найти нужный DO
-без запроса в базу; ротация в отдельном DO, один активный refresh на пользователя.
-Апгрейд WebSocket авторизуется тем же заголовком `Authorization`, что закрывает браузерных
-клиентов и явно предполагает нативные приложения. Middleware пишет данные пользователя
-прямо в объект `env` — паттерн «env как request context», который стоит обходить стороной.
-
-Обработка ошибок слабее, чем можно ожидать: три класса исключений, никаких машиночитаемых
-кодов, глобального error boundary нет, поле с HTTP-статусом внутри исключения применяется
-в трёх хендлерах из двух с лишним сотен. Практическое следствие: «не найдено» из глубины
-чаще всего приезжает клиенту как 500. Логирование — `console.log`, Sentry нет,
-наблюдаемость целиком на платформенных logpush и tail.
-
-**Как у нас.** Hono, авторизация одним `app.use("/api/*")` — граница явная и читается
-лучше, чем позиция строки в файле. Формат ошибок `{ok:false, error:"код"}` со строковыми
-кодами машиночитаем, в отличие от их человекочитаемых сообщений.
-
-Чего нет: валидации входных данных вообще. Тела читаются как `c.req.json<T>()` — это
-приведение типа, а не проверка. Ограничений длины нет нигде: `displayName`, `bio`,
-`title`, `description`, размер загружаемого блоба — всё принимается как есть.
-`/api/chats/:id/settings` пробрасывает тело в DO целиком. `app.onError` не задан, поэтому
-непойманное исключение отдаёт клиенту непрозрачную 500 не в нашем формате. Регистрация
-открыта: `/api/register` без какого-либо барьера пишет в D1, никакой верификации нет.
-OpenAPI нет.
-
-**Вывод.** Из этой темы стоит взять ровно одно: валидацию тел схемой на входе, до
-обработчика, с единым форматом ошибки. Обработка ошибок и коды у нас уже лучше, а
-OpenAPI при одном клиенте, живущем в том же репозитории, пока не окупается.
+**Conclusion.** Pushes to all devices and server-side mute are better on our
+side. Three things are missing, each of them cheap: parsing the APNs response
+and deleting dead tokens, a retry cancelled by the receipt, and an owner for the
+JWT with the cache in storage instead of an isolate variable.
 
 ---
 
-## Что стоит изменить
+## 5. Data schema
 
-### Критично
+**How it is there.** D1 has seven tables and nineteen migrations with a numeric
+prefix, applied by the standard `wrangler d1 migrations apply`; the config sets
+`migrations_dir` and `migrations_table`. There is no home-grown runner.
 
-1. **Перевести `sync` на pull.** Сейчас доигрывание крутится в сокетном обработчике
-   `UserSessionDO`, блокируя единственный поток объекта для всех остальных событий
-   пользователя, и оборвавшийся посередине проход начинается заново.
-2. **Персистентная очередь событий с ретраями.** `.catch(() => {})` в `fanout` означает,
-   что `receipt`, `typing`, `presence` и `chat` теряются молча и не восстанавливаются
-   ничем.
-3. **Срок жизни и отзыв токена устройства.** Токен бессрочен, логаута нет, списка
-   устройств нет: утёкший токен действителен навсегда, и погасить его нечем.
-4. **Миграции D1.** `schema.sql` без `migrations_dir` — первое же изменение схемы в проде
-   некуда положить.
-5. **Блокировка внутри существующего чата.** Проверка есть только при создании direct'а,
-   в открытом чате заблокированный пишет свободно.
+Inside DOs, SQLite is enabled only for keys and stories. The schema of those
+tables evolves by introspection in code, without a version, which is the weakest
+part of their design. The remaining DOs are key-value with tolerant reads (new
+key, fallback to the old one) instead of migrations.
 
-### Важно
+What they have on the server and we do not:
 
-6. **Убрать полный скан журнала в `/events` и `/delete`.** Перебор всех ключей `msg:` на
-   каждый sync по каждому чату; заодно выкинуть мёртвый `msgIdx`.
-7. **Разбирать ответ APNs.** `410 Unregistered` не удаляет токен: мёртвые токены копятся
-   и каждый раз тратят подзапрос.
-8. **Повтор пуша с отменой по квитанции доставки.** Сейчас одна попытка, результат
-   игнорируется.
-9. **Владелец APNs JWT вместо переменной модуля.** Кэш в изоляте пересоздаётся на каждом
-   холодном старте; Apple ограничивает частоту генерации.
-10. **Валидация тел и лимиты длины** на всех POST, плюс `app.onError` для единого формата
-    ответа при исключении.
-11. **Окружения и наблюдаемость.** Раздельные D1 и APNs-топики для dev и прода,
-    `[observability]` и logpush: сейчас в проде не видно ничего.
-12. **Барьер на регистрации.** `/api/register` открыт, скрипт может создавать
-    пользователей и prekey-бандлы без ограничений.
-13. **Квитанция доставки из NSE.** Эндпоинт, который NSE дёргает до показа баннера; тогда
-    `delivered` перестаёт зависеть от того, открыто ли приложение.
-14. **Серверная чистка.** Тумбстоуны, дедуп-ключи, TTL сообщений и осиротевшие блобы R2
-    сейчас не удаляются никогда, а обещание исчезающих сообщений живёт только на клиенте.
-15. **Механизм жалоб на контент.** Требование App Review к приложениям с пользовательским
-    контентом; блокировка у нас есть, жалобы нет.
+- **Privacy**: nine options (phone, username, online, avatar, forwarding, calls,
+  voice messages, messages, invitations) on a five-level scale from "nobody" to
+  "everyone". With us, presence and lastSeen are visible to every participant of
+  a shared chat, with no setting.
+- **Pins**: up to three, with a TTL. We have one `pinnedMsgId`.
+- **Mentions**: an event and fields in the chat-list row. We have none.
+- **Invite links**: TTL, use limit, approval requirement, counter. We have a code
+  with no expiry, no limit, no revocation, creatable by any participant.
+- **Auto-deletion in groups**: a setting in days and a mark on the message. Our
+  TTL lives on the client only: the server never deletes ciphertext.
+- **Roles and admin rights**: separate flags (edit the group, invite, appoint
+  admins, payments). We have a boolean admin.
+- **Reports**: primitive, but present.
+- Plus stories, stickers, subscriptions, paid chats, AI chats, collections, which
+  are product features outside our perimeter.
 
-### На будущее
+Neither they nor we have drafts or full-text search.
 
-16. **Диспетчер задач поверх единственного alarm-слота** — до того, как понадобится
-    второй таймер, а не после.
-17. **Отдельный DO под пуш-ретраи и бейдж**, чтобы они не делили поток с сокетами.
-18. **Приватность presence и lastSeen** как настройка пользователя.
-19. **Резолв чата за одной функцией, возвращающей стаб**, чтобы вынос каналов в отдельный
-    воркер был правкой одной функции. То же самое нужно и для уже принятого решения
-    вынести группы в собственный Durable Object.
-20. **`locationHint` для стабов DO**, чтобы убрать межрегиональные RTT из цепочки доставки.
-21. **Инвайты с TTL, лимитом и отзывом**; раздельные права админа вместо булева флага.
-22. **Упоминания** и серверный сигнал разрыва последовательности (`prevId`) как страховка
-   для ratchet поверх клиентского `pendingDecrypt`.
+**How it is with us.** One `schema.sql` with seven tables, and no migration
+mechanism at all: no directory, no `migrations_dir` in `wrangler.jsonc`. There is
+nowhere to put the first `ALTER TABLE` in production.
 
-### Что у нас лучше или достаточно, менять не надо
+Reactions, edits and TTL toggling are implemented as service E2E messages with
+the `service` flag. Under end-to-end encryption that is the only honest option
+and it is the right one, but it has a price: every reaction takes a `seq` and
+stays in the chat log forever.
 
-- Идемпотентность отправки на durable-ключе `cmid:` надёжнее, чем поиск по массиву в
-  памяти.
-- Mute гасит пуш на сервере; в референсе он только едет клиенту и всё равно жжёт APNs.
-- Пуш уходит на все устройства пользователя, а не на одно последнее.
-- Строковые коды ошибок машиночитаемы, в отличие от человекочитаемых сообщений.
-- Граница авторизации задана middleware по префиксу пути, а не позицией строки в файле.
-- Флаги чата (pinned/muted/archived) вместо системы папок с зарезервированными именами —
-  для нашего объёма достаточно.
-- Смоук в гейте коммита полезнее, чем неидемпотентные E2E-скрипты против общего стенда;
-  расширять надо его, а не заводить второй слой.
-- Два DO вместо четырнадцати соразмерны объёму функций. Дробить надо по конкретной
-  причине (пуши, каналы), а не ради симметрии.
+Blocks live in D1 and are checked only when a direct chat is created. Inside an
+existing chat a blocked user writes freely and gets receipts: `/send` only looks
+at membership.
+
+The device token is a SHA-256 in D1 with no expiry. There is no logout, no
+revocation, no device list, no lifetime.
+
+There is no server-side cleanup of any kind: tombstones and dedup keys pile up in
+the DOs, orphaned blobs in R2 are never collected, and the `media` registry only
+grows.
+
+**Conclusion.** The absence of D1 migrations is not a matter of style but a dead
+end at the very first schema change; it is fixed by one config edit and moving
+`schema.sql` into a numbered file. Blocks that do not apply inside a chat are a
+straight hole in what the feature promises. Presence privacy and admin rights are
+product gaps rather than architectural ones, but both are cheaper to do before
+the `chat` frame format sets in the clients.
 
 ---
 
-Наша часть проверена чтением всего `server/src` (1606 строк), `docs/protocol.md` и
-`ARCHITECTURE.md`. Часть по референсу собрана четырьмя параллельными проходами по
-репозиторию; отдельные утверждения о его внутренностях помечены в тексте там, где
-уверенность ниже.
+## 6. Operations
+
+**How it is there.** Four configs (dev, stage, pp, prod) with different D1, R2,
+queues, routes and APNs topics. `logpush` and `[observability]` are on
+everywhere, and there is a tail consumer, a separate worker receiving traces of
+all requests. `[placement] mode = "off"`, because the state is in DOs anyway, and
+stubs are taken with a `locationHint` to Western Europe: the whole messaging
+plane is pinned to one region to take cross-region RTT out of the sender → chat →
+recipient chain. The price is permanent latency for non-European clients.
+
+The weak spots are worth naming honestly, because they should not be copied.
+`deploy.sh` is seven lines: tmux with two panes, `wrangler deploy` for core and
+for calls. It applies no migrations, pushes no secrets, checks no types, runs no
+tests and does not look at the exit code. DO migration tags have drifted apart
+between environments: dev is on v92, stage sits on a ladder of v74 to v86, pp was
+recreated from scratch, prod is on v1 to v2, and the same DO class is declared
+with a SQLite backend in three environments and a regular one in prod. There is
+no single command to reproduce prod on stage.
+
+Tests: 33 spec files, about 25 thousand lines, of which 15 thousand are one load
+scenario with a single `it()`. These are not unit tests but E2E scripts against a
+live dev backend with real registration on test numbers. They are not idempotent,
+they depend on the backend being up, and DO logic is not tested directly.
+`vitest-pool-workers` and miniflare are not wired in. The only isolated unit test
+covers the ULID generator. There is no CI, neither GitHub Actions nor anything
+else. ESLint is noticeably relaxed (`no-console` off, `no-explicit-any` off,
+unused variables at warn), and `typecheck` is not called from any script.
+
+**How it is with us.** One `wrangler.jsonc` with
+`database_id: "REPLACE_ON_DEPLOY"`, which means environments do not exist as a
+concept. No
+`[observability]`, no logpush, no tail, so we will see nothing in production. No
+`locationHint`. Deployment is `wrangler deploy` from an npm script.
+
+Tests: `server/test/smoke.mjs` is 390 lines with about sixty checks, an
+end-to-end run of the protocol against a local `wrangler dev`, covering WS
+frames, idempotency, message requests, invites, sync beyond a single batch and
+pushes through the APNs mock. It is part of `make check` as the gate before a
+commit.
+
+**Conclusion.** Here we are better on discipline and worse on coverage. One
+deterministic smoke test in the commit gate is more useful than twenty-five
+thousand lines of non-idempotent scripts against a shared backend: running those
+changes the backend's state and does not reproduce. What should grow is the smoke
+test, not a second, "real" layer of tests.
+
+Worth taking: environments with separate D1 and APNs topics (otherwise the first
+real user ends up in the same database as the test runs), `[observability]` and
+logpush (otherwise diagnostics in production are impossible), and `locationHint`
+for DO stubs. Not worth taking: `deploy.sh` as it stands, and migration tags
+drifting apart between environments.
+
+---
+
+## 7. Errors, middleware, validation
+
+**How it is there.** The router is `@cloudflare/itty-router-openapi`. Every
+handler is a class with a static Zod schema: path parameters, query and body are
+validated before the handler runs, and what arrives inside is already parsed and
+typed. The base class overrides the validation error handler, flattening Zod
+issues into one string and returning 400 in the same JSON format as application
+errors. Responses are not validated against the schema, only described. OpenAPI
+is assembled at runtime from those same schemas; the snapshot committed to the
+repository is updated by hand.
+
+The order of route registration carries meaning: the line with the authorization
+middleware divides the file into a public and a private half. Debug endpoints are
+registered bypassing the OpenAPI wrapper and hidden behind long random prefixes,
+and some of them live in production too.
+
+Authorization: JWT HS256, an access token lifetime of 300 days, signature
+verification with no database lookup at all. The direct consequence: a token
+cannot be revoked, and logout does not invalidate it. The refresh token is not a
+JWT but a string with the userId baked in, so the right DO can be found without a
+database query; rotation lives in a separate DO, one active refresh per user. The
+WebSocket upgrade is authorized by the same `Authorization` header, which shuts
+out browser clients and clearly assumes native apps. The middleware writes user
+data straight into the `env` object, an "env as request context" pattern best
+given a wide berth.
+
+Error handling is weaker than one might expect: three exception classes, no
+machine-readable codes, no global error boundary, and the HTTP status field
+inside the exception is used in three handlers out of more than two hundred. The
+practical consequence: a "not found" from deep inside usually reaches the client
+as a 500. Logging is `console.log`, there is no Sentry, and observability rests
+entirely on platform logpush and tail.
+
+**How it is with us.** Hono, with authorization in a single `app.use("/api/*")`,
+so the boundary is explicit and reads better than the position of a line in a
+file. The error format `{ok:false, error:"code"}` with string codes is
+machine-readable, unlike their human-readable messages.
+
+What is missing: input validation, entirely. Bodies are read as
+`c.req.json<T>()`, which is a type assertion, not a check. There are no length
+limits anywhere: `displayName`, `bio`, `title`, `description`, the size of an
+uploaded blob, all taken as they come. `/api/chats/:id/settings` forwards the
+whole body into the DO. `app.onError` is not set, so an uncaught exception hands
+the client an opaque 500 that is not in our format. Registration is open:
+`/api/register` writes to D1 with no barrier of any kind and no verification.
+There is no OpenAPI.
+
+**Conclusion.** Exactly one thing is worth taking from this topic: schema
+validation of bodies at the entrance, before the handler, with a single error
+format. Our error handling and codes are already better, and OpenAPI does not yet
+pay for itself with a single client living in the same repository.
+
+---
+
+## What is worth changing
+
+### Critical
+
+1. **Move `sync` to pull.** Replay currently runs in the socket handler of
+   `UserSessionDO`, blocking the object's single thread for all the user's other
+   events, and a pass interrupted halfway starts over.
+2. **A persistent event queue with retries.** `.catch(() => {})` in `fanout`
+   means `receipt`, `typing`, `presence` and `chat` are lost silently and
+   recovered by nothing.
+3. **Lifetime and revocation for the device token.** The token never expires,
+   there is no logout and no device list: a leaked token is valid forever and
+   there is nothing to kill it with.
+4. **D1 migrations.** `schema.sql` without `migrations_dir` leaves nowhere to put
+   the first schema change in production.
+5. **Blocking inside an existing chat.** The check exists only when a direct chat
+   is created; in an open chat a blocked user writes freely.
+
+### Important
+
+6. **Remove the full log scan in `/events` and `/delete`.** All `msg:` keys are
+   walked on every sync for every chat; throw out the dead `msgIdx` while there.
+7. **Parse the APNs response.** `410 Unregistered` does not delete the token:
+   dead tokens accumulate and burn a subrequest every time.
+8. **Push retry cancelled by the delivery receipt.** Right now there is one
+   attempt and the result is ignored.
+9. **An owner for the APNs JWT instead of a module variable.** The cache in the
+   isolate is recreated on every cold start, and Apple limits how often the token
+   may be generated.
+10. **Body validation and length limits** on all POSTs, plus `app.onError` for a
+    single response format when an exception escapes.
+11. **Environments and observability.** Separate D1 and APNs topics for dev and
+    prod, `[observability]` and logpush: right now nothing is visible in
+    production.
+12. **A barrier on registration.** `/api/register` is open, so a script can create
+    users and prekey bundles without limit.
+13. **A delivery receipt from the NSE.** An endpoint the NSE calls before showing
+    the banner; then `delivered` stops depending on whether the app is open.
+14. **Server-side cleanup.** Tombstones, dedup keys, message TTL and orphaned R2
+    blobs are never deleted today, and the promise of disappearing messages lives
+    on the client only.
+15. **A content reporting mechanism.** An App Review requirement for apps with
+    user-generated content; we have blocking but no reports.
+
+### Later
+
+16. **A task dispatcher on top of the single alarm slot**, before a second timer
+    is needed rather than after.
+17. **A separate DO for push retries and the badge**, so they do not share a
+    thread with the sockets.
+18. **Presence and lastSeen privacy** as a user setting.
+19. **Chat resolution behind a single function returning a stub**, so that moving
+    channels into a separate worker is an edit to one function. The same is
+    needed for the already accepted decision to move groups into their own
+    Durable Object.
+20. **`locationHint` for DO stubs**, to take cross-region RTT out of the delivery
+    chain.
+21. **Invites with TTL, a use limit and revocation**; separate admin rights
+    instead of a boolean flag.
+22. **Mentions** and a server-side sequence-break signal (`prevId`) as a
+    safeguard for the ratchet on top of the client's `pendingDecrypt`.
+
+### Where we are better or good enough, leave alone
+
+- Send idempotency on the durable `cmid:` key is more reliable than a lookup over
+  an in-memory array.
+- Mute suppresses the push on the server; in the reference it only travels to the
+  client and burns APNs anyway.
+- The push goes to all of the user's devices, not just the last one.
+- String error codes are machine-readable, unlike human-readable messages.
+- The authorization boundary is set by path-prefix middleware, not by the
+  position of a line in a file.
+- Chat flags (pinned/muted/archived) instead of a folder system with reserved
+  names is enough at our scale.
+- A smoke test in the commit gate is more useful than non-idempotent E2E scripts
+  against a shared backend; that is what should grow, rather than a second layer.
+- Two DOs instead of fourteen match our feature volume. Splitting should happen
+  for a concrete reason (pushes, channels), not for symmetry.
+
+---
+
+Our side was checked by reading all of `server/src` (1606 lines),
+`docs/protocol.md` and `ARCHITECTURE.md`. The reference side was assembled by
+four parallel passes over its repository; individual claims about its internals
+are marked in the text wherever confidence is lower.

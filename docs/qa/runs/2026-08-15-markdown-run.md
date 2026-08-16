@@ -1,31 +1,51 @@
-# Прогон: мини-маркдаун в сообщениях (задача #46)
+# Mini-markdown in messages
 
-Стенд: временный симулятор md-agent (iPhone 17, создан и удалён в рамках прогона),
-свой `wrangler dev` на :8799 с изолированным state (`scratchpad/md46/wstate`,
-схема залита `wrangler d1 execute --file schema.sql`), приложение запущено с
-`SIMCTL_CHILD_MSNGR_SERVER=http://localhost:8799`. Юзеры: mdagent2 (в приложении),
-bobby11 (через `POST /api/register`), чат создан `POST /api/chats` токеном mdagent2
-из session.json. Текст сообщений вводился через пастборд симулятора
-(`simctl pbcopy` + «Paste»): раскладка клавиатуры симулятора — русская, `idb ui text`
-превращает латиницу в кириллицу.
+Task #46.
 
-| Что проверено | Результат | Скриншот |
-|---|---|---|
-| «Копировать» | В пастборде исходный текст с маркерами (` ```swift ... ``` ` целиком) | — |
+## Stand
 
-Тесты: MsngrCoreTests/MarkdownTests — 28 кейсов парсера (все виды разметки,
-вложенность, экранирование, незакрытые маркеры, ссылка внутри форматирования,
-многострочный блок, пустая строка, текст без разметки); MsngrTests/BubbleLayoutTests
-— 6 новых (баббл с блоком кода выше обычного, рост по строкам, время под блоком,
-маркеры не попадают в баббл, атрибут ссылки, совпадение замера и текстового фрейма).
-`swift test` — 81 зелёный, MsngrTests — 62 зелёных, сборка Msngr зелёная.
-Серверный смоук против :8799 — 47 проверок пройдено, дальше падает на секции пушей
-(порт 9871 занят юзерским apns-mock).
+One throwaway simulator `md-agent` (iPhone 17), created and deleted within the
+run. Own `wrangler dev` on :8799 over isolated state (`scratchpad/md46/wstate`,
+schema loaded with `wrangler d1 execute --file schema.sql`), app launched with
+`SIMCTL_CHILD_MSNGR_SERVER=http://localhost:8799`. Users: `mdagent2` in the app,
+`bobby11` through `POST /api/register`, the chat created by `POST /api/chats`
+with mdagent2's token from `session.json`.
 
-## Найдено попутно (вне задачи)
+Message text was typed through the simulator pasteboard (`simctl pbcopy` then
+paste) because the simulator's keyboard layout is Russian and `idb ui text`
+turns Latin letters into Cyrillic.
 
-Сессия не сохраняется на свежей установке: `AppState.saveSession` пишет
-session.json в Application Support, а этой директории в контейнере нет и
-`try?` глотает ошибку — после перезапуска приложение снова показывает регистрацию.
-Воспроизведено дважды на чистом симуляторе; после ручного `mkdir` каталога
-session.json пишется и переживает перезапуск.
+## Run
+
+| Checked | Result |
+|---|---|
+| `**жирный**`, `_курсив_`, `*курсив*`, `~~зачёркнут~~`, and the escape `\*` | styles applied, markers hidden, `\*не курсив\*` rendered as `*не курсив*` |
+| `` `моноширинный` `` | inline monospace, time on the last line |
+| autolinks for http, https and a bare domain | underlined, legible against the outgoing bubble |
+| a ```` ``` ```` block with a language, followed by text | padded backing, monospace, trailing paragraph below it with the time inline |
+| a long line inside a code block | wrapped by character inside the bubble, time on its own line under the backing |
+| tapping a link | `SFSafariViewController` opened (ya.ru → sso.ya.ru), closed by the cross |
+| long press on a formatted message | context menu and reaction bar, same as any message |
+| «Копировать» | pasteboard holds the source text with its markers, the ` ```swift … ``` ` block whole |
+| dark theme | code backing and links legible, layout unchanged |
+
+## Tests
+
+`MsngrCoreTests/MarkdownTests` — 28 parser cases: every kind of markup, nesting,
+escaping, unclosed markers, a link inside formatting, a multi-line block, an
+empty line, and text with no markup at all. `MsngrTests/BubbleLayoutTests` — six
+new ones: a bubble with a code block is taller than a plain one, it grows by
+line, the time sits under the block, markers never reach the bubble, the link
+attribute survives, and the measurement matches the text frame.
+
+`swift test` 81 green, MsngrTests 62 green, the Msngr build green. The server
+smoke against :8799 passed 47 checks and then fell over on the push section
+because port 9871 was held by the shared apns-mock.
+
+## Found along the way, outside the task
+
+The session is not saved on a fresh install. `AppState.saveSession` writes
+`session.json` into Application Support, that directory does not exist in the
+container, and the `try?` swallows the error, so after a restart the app asks
+for registration again. Reproduced twice on a clean simulator; creating the
+directory by hand makes `session.json` stick and survive a restart.

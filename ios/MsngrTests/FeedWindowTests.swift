@@ -24,9 +24,9 @@ final class FeedWindowTests: XCTestCase {
         XCTAssertTrue(window.plan().recompute)
     }
 
-    /// Переход к сообщению глубже окна: граница встаёт на него, а вместимость
-    /// растягивается так, что новейшее сообщение остаётся в окне — иначе из
-    /// точки перехода не было бы дороги вниз.
+    /// Jumping to a message deeper than the window: the floor lands on it and the
+    /// capacity stretches so the newest message stays inside, otherwise there would
+    /// be no way back down from the landing point.
     func testAnchorPutsTheFloorOnTheMessageAndKeepsTheNewestInside() {
         let window = FeedWindow(capacity: 60)
         window.set(1_900)
@@ -35,8 +35,8 @@ final class FeedWindowTests: XCTestCase {
         XCTAssertEqual(window.plan().capacity, 1_996)
     }
 
-    /// Вместимость только растёт: переход к соседнему сообщению не сжимает
-    /// окно, набранное листанием.
+    /// Capacity only grows: a jump to a nearby message does not shrink a window that
+    /// paging had already built up.
     func testAnchorNeverShrinksTheWindow() {
         let window = FeedWindow(capacity: 600)
         window.anchor(floor: 10, capacity: 20)
@@ -50,9 +50,9 @@ final class FeedWindowTests: XCTestCase {
         XCTAssertEqual(window.plan().capacity, 240)
     }
 
-    /// Потолок не даёт окну расти вслед за чатом: сколько бы сообщений ни
-    /// пришло, выборка по пересчитанной границе остаётся размером с вместимость,
-    /// а её верх — самые новые сообщения.
+    /// The ceiling keeps the window from growing along with the chat: however many
+    /// messages arrive, the fetch from the recomputed floor stays the size of the
+    /// capacity and its top holds the newest messages.
     func testCeilingBoundsTheWindowOverALongChat() throws {
         let db = try AppDatabase.openInMemory()
         try db.write { dbc in

@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// Сборка отстала от того, с чем работает: сервер уже не обслуживает её версию
-/// протокола или хранилище на устройстве записано более новой версией. И то и
-/// другое — тупик, из которого приложение само не выходит, поэтому вместо
-/// бесконечного «подключение…» показывается состояние.
+/// The build fell behind what it works with: either the server no longer
+/// serves its protocol version, or the storage on the device was written by a
+/// newer build. Neither is something the app can get out of on its own, so it
+/// shows the state instead of an endless «Подключение…».
 struct AppOutdatedView: View {
     @EnvironmentObject var app: AppState
     let reason: OutdatedBuild
@@ -40,9 +40,9 @@ struct AppOutdatedView: View {
         }
     }
 
-    /// Кнопка есть только там, где действие правда что-то меняет: хранилище
-    /// новее сборки открывается заново с нуля. Устаревший протокол так не
-    /// лечится, и кнопки там нет.
+    /// The button is here only because the action really changes something:
+    /// storage newer than the build can be reopened from scratch. An outdated
+    /// protocol is not cured that way, so that case gets no button.
     private var startOverButton: some View {
         Button(role: .destructive) {
             confirmingStartOver = true

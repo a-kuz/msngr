@@ -1,14 +1,14 @@
 import Foundation
 
-/// Заявка на переписку: пока получатель не нажал «Принять», он видит только факт
-/// заявки и профиль отправителя. Текст, медиа, превью и счётчики скрыты на всех
-/// поверхностях — лента чата, строка чат-листа, in-app баннер, тело пуша, бейдж.
-/// После принятия содержимое раскрывается: сообщения уже лежат в локальной БД.
+/// A chat request: until the recipient accepts it, all they see is that a request
+/// exists and who sent it. Text, media, previews and counters are hidden on every
+/// surface — the chat feed, the chat list row, the in-app banner, the push body, the badge.
+/// Accepting reveals the content; the messages are already in the local database.
 public enum ChatPrivacy {
-    /// Текст вместо превью там, где содержимое скрыто.
+    /// Stand-in text wherever the preview is hidden.
     public static let requestPlaceholder = "Новая заявка"
 
-    /// Скрыто ли содержимое чата от текущего пользователя.
+    /// Whether the chat's content is hidden from the current user.
     public static func hidesContent(isRequest: Bool, iAccepted: Bool) -> Bool {
         isRequest && !iAccepted
     }
@@ -18,13 +18,13 @@ public enum ChatPrivacy {
         return hidesContent(isRequest: chat.isRequest, iAccepted: chat.iAccepted)
     }
 
-    /// Превью последнего сообщения: у скрытого чата — плашка заявки.
+    /// Last-message preview; a hidden chat shows the request stand-in instead.
     public static func preview(isRequest: Bool, iAccepted: Bool, content: String?) -> String? {
         hidesContent(isRequest: isRequest, iAccepted: iAccepted) ? requestPlaceholder : content
     }
 
-    /// Счётчик непрочитанного, который можно показать: скрытый чат не раскрывает,
-    /// сколько сообщений уже написали.
+    /// The unread count that may be shown: a hidden chat does not reveal how many
+    /// messages have already arrived.
     public static func visibleUnread(isRequest: Bool, iAccepted: Bool, unreadCount: Int) -> Int {
         hidesContent(isRequest: isRequest, iAccepted: iAccepted) ? 0 : unreadCount
     }

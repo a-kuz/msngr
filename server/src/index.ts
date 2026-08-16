@@ -24,7 +24,7 @@ app.get("/api/version", (c) =>
   json({ ok: true, protocol: PROTOCOL_VERSION, minProtocol: MIN_CLIENT_PROTOCOL })
 );
 
-// --- регистрация (без auth) ---
+// --- registration (no auth) ---
 app.post("/api/register", async (c) => {
   const b = await c.req.json<{
     username: string; displayName: string; device?: { name?: string };
@@ -67,7 +67,7 @@ app.post("/api/register", async (c) => {
   return json({ ok: true, userId, deviceId, token });
 });
 
-// --- всё остальное под auth ---
+// --- everything below is authenticated ---
 app.use("/api/*", async (c, next) => {
   const auth = await authenticate(c.env, c.req.raw);
   if (!auth) return err("unauthorized", 401);
@@ -83,9 +83,9 @@ app.get("/api/me", async (c) => {
   return json({ ok: true, user: u, deviceId });
 });
 
-// --- активные устройства и отзыв токена ---
+// --- active devices and token revocation ---
 
-// Отзывает токен устройства: закрывает его сокеты и гасит его APNs-токен.
+// Revoking a device also closes its sockets and forgets its APNs token.
 async function revokeDevice(env: Env, userId: string, deviceId: string) {
   await env.DB.prepare(
     "UPDATE devices SET revoked_at = ?, apns_token = NULL, apns_env = NULL WHERE id = ? AND user_id = ?"
@@ -118,14 +118,12 @@ app.get("/api/sessions", async (c) => {
   });
 });
 
-// Логаут текущего устройства: его токен перестаёт действовать сразу.
 app.post("/api/logout", async (c) => {
   const { userId, deviceId } = c.get("auth");
   await revokeDevice(c.env, userId, deviceId);
   return json({ ok: true });
 });
 
-// Отзыв конкретного устройства того же пользователя.
 app.post("/api/sessions/:deviceId/revoke", async (c) => {
   const { userId } = c.get("auth");
   const target = c.req.param("deviceId");
@@ -138,10 +136,10 @@ app.post("/api/sessions/:deviceId/revoke", async (c) => {
 });
 
 app.get("/api/users", async (c) => {
-  // юзернейм могут ввести с @ и лишними пробелами
+  // a username gets typed with a leading @ and stray spaces often enough
   const q = (c.req.query("q") ?? "").trim().replace(/^@+/, "");
   if (q.length < 2) return json({ ok: true, users: [] });
-  // LOWER() для регистронезависимости и по не-ASCII именам тоже
+  // LOWER() on both sides keeps the match case-insensitive, non-ASCII names included
   const like = `%${q.toLowerCase()}%`;
   const rows = await c.env.DB.prepare(
     `SELECT u.id, u.username, u.display_name, u.avatar_id
@@ -153,9 +151,9 @@ app.get("/api/users", async (c) => {
   return json({ ok: true, users: rows.results });
 });
 
-// Профиль пользователя. Presence отдаётся только тому, кому этот пользователь
-// уже виден: у них есть общий direct-чат и запрашиваемый его принял. Автор
-// заявки до принятия presence получателя не видит — так же, как по WS.
+// A user profile. Presence comes with it only for someone this user is already visible
+// to: they share a direct chat and the target has accepted it. Until then the person who
+// sent the request sees no presence, same as over WS.
 app.get("/api/users/:id", async (c) => {
   const { userId } = c.get("auth");
   const targetId = c.req.param("id");
@@ -171,8 +169,8 @@ app.get("/api/users/:id", async (c) => {
   return json({ ok: true, user: u, presence });
 });
 
-/// Виден ли presence target'а запрашивающему: общий direct-чат, в котором
-/// target принял переписку. Себя видно всегда.
+/// Whether the viewer may see the target's presence: they share a direct chat the
+/// target has accepted. Everyone always sees their own.
 async function presenceVisible(env: Env, viewerId: string, targetId: string): Promise<boolean> {
   if (viewerId === targetId) return true;
   const r = await convStub(env, directChatName(viewerId, targetId)).fetch("https://do/state");
@@ -181,8 +179,8 @@ async function presenceVisible(env: Env, viewerId: string, targetId: string): Pr
   return j.state.members.some((m) => m.userId === targetId && m.accepted);
 }
 
-// Устройства и identity-ключи списка пользователей (?ids=uid1,uid2).
-// Ничего не потребляет — в отличие от /prekeys, который выдаёт one-time prekey.
+// Devices and identity keys for a list of users (?ids=uid1,uid2). Consumes nothing,
+// unlike /prekeys, which hands out a one-time prekey.
 app.get("/api/devices", async (c) => {
   const ids = [...new Set((c.req.query("ids") ?? "").split(",").filter(Boolean))].slice(0, 100);
   if (!ids.length) return json({ ok: true, devices: [] });
@@ -204,7 +202,7 @@ app.get("/api/devices", async (c) => {
   });
 });
 
-// Остаток собственных one-time prekeys (клиент пополняет при < 20)
+// How many one-time prekeys this device has left; the client tops up below 20
 app.get("/api/prekeys/count", async (c) => {
   const { deviceId } = c.get("auth");
   const row = await c.env.DB.prepare(
@@ -213,7 +211,7 @@ app.get("/api/prekeys/count", async (c) => {
   return json({ ok: true, count: row?.n ?? 0 });
 });
 
-// X3DH prekey-бандлы всех устройств пользователя (one-time prekey выдаётся и удаляется)
+// X3DH prekey bundles for every device of a user; a one-time prekey is handed out and deleted
 app.get("/api/users/:id/prekeys", async (c) => {
   const targetId = c.req.param("id");
   const devices = await c.env.DB.prepare(
@@ -269,14 +267,14 @@ app.post("/api/profile", async (c) => {
   return json({ ok: true });
 });
 
-// --- чаты ---
+// --- chats ---
 app.post("/api/chats", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{ kind: "direct" | "group"; memberIds: string[]; title?: string }>();
   const members = [...new Set(b.memberIds)].filter((m) => m !== userId);
   if (b.kind === "direct" && members.length !== 1) return err("direct_needs_one_peer");
 
-  // блокировки: нельзя создать direct с тем, кто тебя заблокировал
+  // a block in either direction forbids opening the direct chat
   if (b.kind === "direct") {
     const blocked = await c.env.DB.prepare(
       "SELECT 1 FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)"
@@ -306,7 +304,6 @@ app.get("/api/chats", async (c) => {
       if (sj.ok && sj.state) states.push({ flags, state: sj.state });
     })
   );
-  // профили участников одним запросом
   const memberIds = [...new Set(states.flatMap((s) => s.state.members.map((m) => m.userId)))];
   let users: unknown[] = [];
   if (memberIds.length) {
@@ -443,7 +440,7 @@ app.post("/api/chats/:id/flags", async (c) => {
 app.post("/api/chats/:id/invite", async (c) => {
   const { userId } = c.get("auth");
   const chatId = c.req.param("id");
-  // инвайт может создать только участник чата
+  // only a member of the chat may mint an invite
   const sr = await convStub(c.env, chatId).fetch("https://do/state");
   const sj = (await sr.json()) as { ok: boolean; state?: ChatState };
   if (!sj.ok || !sj.state?.members.some((m) => m.userId === userId))
@@ -470,7 +467,7 @@ app.post("/api/join/:code", async (c) => {
   return json({ ok: true, chatId: inv.chat_id });
 });
 
-// --- медиа (E2E: сервер хранит только ciphertext-блобы) ---
+// --- media (E2E: the server keeps ciphertext blobs and nothing else) ---
 app.post("/api/media", async (c) => {
   const { userId } = c.get("auth");
   const mediaId = ulid();
@@ -503,8 +500,8 @@ app.get("/api/media/:id", async (c) => {
   return new Response(obj.body, { headers });
 });
 
-// аватары — не E2E, публичные. Без ?chatId — свой профиль, с ним — аватар чата
-// (права те же, что у /chats/:id/settings: в группе только админ).
+// Avatars are public, not E2E. Without ?chatId this is the caller's own profile, with it
+// the chat avatar, under the same rights as /chats/:id/settings: in a group, admins only.
 app.post("/api/avatar", async (c) => {
   const { userId } = c.get("auth");
   const chatId = c.req.query("chatId");
@@ -544,7 +541,7 @@ app.get("/api/avatar/:id", async (c) => {
   return new Response(obj.body, { headers });
 });
 
-// --- пуш-токены / блокировки ---
+// --- push tokens / blocks ---
 app.post("/api/push-token", async (c) => {
   const { userId, deviceId } = c.get("auth");
   const b = await c.req.json<{ apnsToken: string; env: string }>();
@@ -558,7 +555,7 @@ app.post("/api/push-token", async (c) => {
   return json({ ok: true });
 });
 
-// contact discovery: клиент шлёт SHA-256(E.164), сервер отвечает совпадениями
+// contact discovery: the client sends SHA-256(E.164), the server answers with matches
 app.post("/api/contacts/discover", async (c) => {
   const b = await c.req.json<{ hashes: string[] }>();
   const hashes = [...new Set(b.hashes)].slice(0, 5000);
@@ -595,7 +592,7 @@ app.post("/api/block", async (c) => {
       "DELETE FROM blocks WHERE user_id = ? AND blocked_id = ?"
     ).bind(userId, b.userId).run();
   }
-  // сбросить кэш блокировок в direct-чате пары (чат может ещё не существовать)
+  // drop the cached block state in the pair's direct chat, which may not exist yet
   await convStub(c.env, directChatName(userId, b.userId))
     .fetch("https://do/block-changed", { method: "POST" });
   return json({ ok: true });
@@ -613,7 +610,7 @@ export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
 
-    // WS: авторизуем здесь, апгрейд делает UserSessionDO
+    // WS: authenticated here, the upgrade itself is done by UserSessionDO
     if (url.pathname === "/ws") {
       if (req.headers.get("upgrade")?.toLowerCase() !== "websocket")
         return err("expected_websocket", 426);

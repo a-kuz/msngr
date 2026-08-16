@@ -178,7 +178,7 @@ struct SettingsView: View {
         }
     }
 
-    /// Размер кэша по-русски: ByteCountFormatter пишет «Zero KB» на системной локали.
+    /// Cache size in Russian: ByteCountFormatter writes "Zero KB" under the system locale.
     static func sizeLabel(_ bytes: Int64) -> String {
         let kb = Double(bytes) / 1024
         switch kb {
@@ -190,8 +190,9 @@ struct SettingsView: View {
     }
 }
 
-/// Карточка пресета палитры: мини-мокап чата (фон, входящий и исходящий бабблы,
-/// акцентная кнопка) + название; текущий пресет обведён акцентом с галочкой.
+/// A palette preset card: a miniature chat mock-up (background, incoming and
+/// outgoing bubbles, accent button) with the preset's name. The current preset
+/// is outlined in the accent colour and carries a checkmark.
 struct PaletteCard: View {
     let palette: Palette
     let selected: Bool
@@ -254,7 +255,7 @@ struct PinSetupView: View {
     var onCancel: () -> Void
     @State private var first = ""
     @State private var entered = ""
-    @State private var stage = 0 // 0 = ввод, 1 = повтор
+    @State private var stage = 0 // 0 = entry, 1 = confirmation
 
     var body: some View {
         VStack(spacing: 28) {

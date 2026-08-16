@@ -26,9 +26,9 @@ struct Session: Codable {
 final class AppState: ObservableObject {
     static let shared = AppState()
 
-    // Конфиг сервера: для локальной разработки — wrangler dev. Схема сборки
-    // подставляет в MSNGR_SERVER пустую строку, когда стенд не задан, поэтому
-    // адрес берётся из переменной только когда он разбирается в URL
+    // Server config: wrangler dev for local development. The build scheme puts
+    // an empty string into MSNGR_SERVER when no stand is set, so the variable is
+    // used only when it parses into a URL
     static let httpBase: URL = {
         let fallback = URL(string: "http://localhost:8787")!
         guard let raw = ProcessInfo.processInfo.environment["MSNGR_SERVER"],
@@ -39,10 +39,10 @@ final class AppState: ObservableObject {
     @Published var session: Session?
     @Published var isLocked = false
     @Published var obscured = false
-    /// true, когда db/engine инициализированы (bootstrap завершён)
+    /// true once db/engine are initialised (bootstrap finished)
     @Published var ready = false
-    /// устройство отключено от аккаунта с другого устройства: поверх всего
-    /// показывается экран «Сессия завершена»
+    /// the device was cut off from the account from another device; the
+    /// «Сессия завершена» screen covers everything else
     @Published var sessionRevoked = false
     /// this build is behind what it has to work with; the screen states it
     @Published var outdated: OutdatedBuild?
@@ -69,7 +69,7 @@ final class AppState: ObservableObject {
         do {
             s = try JSONDecoder().decode(Session.self, from: Data(contentsOf: url))
         } catch {
-            MsngrLog.session.error("не удалось прочитать \(url.path): \(error)")
+            MsngrLog.session.error("failed to read \(url.path): \(error)")
             return
         }
         session = s
@@ -77,35 +77,38 @@ final class AppState: ObservableObject {
         if PinStore.hasPin() { isLocked = true }
     }
 
-    /// Сохраняет сессию на диск и поднимает ядро. Ошибка записи означает, что
-    /// после перезапуска пользователь окажется на экране регистрации, поэтому
-    /// она пробрасывается вызывающему, а не глотается.
+    /// Writes the session to disk and brings the core up. A failed write leaves
+    /// the user on the registration screen after a restart, so the error goes to
+    /// the caller instead of being swallowed.
     func saveSession(_ s: Session) throws {
-        // размещение готовится при первом обращении к storage, но каталог могли
-        // удалить снаружи, а запись в несуществующий каталог падает
+        // the location is prepared on the first use of storage, but the
+        // directory can be removed from outside, and writing into a directory
+        // that is not there fails
         try AppContainer.prepare(Self.storage)
-        // защита как у мастер-ключа: файл доступен после первой разблокировки,
-        // иначе запуск в фоне на заблокированном устройстве не увидит сессию
+        // same protection as the master key: the file is readable after the
+        // first unlock, otherwise a background launch on a locked device sees
+        // no session
         try JSONEncoder().encode(s).write(
             to: sessionFileURL, options: [.completeFileProtectionUntilFirstUserAuthentication, .atomic])
         session = s
         Task { await bootstrap(s) }
     }
 
-    /// Общее с NSE размещение данных: контейнер app group, куда при первом запуске
-    /// переезжает содержимое Application Support.
+    /// Data location shared with the NSE: the app group container, into which
+    /// the contents of Application Support move on first launch.
     static let storage: StorageLocation = AppContainer.resolve()
 
-    /// Выход из аккаунта: сервер отзывает токен устройства, локально стираются
-    /// сессия, БД и ключи. Ответ сервера не блокирует выход — токен всё равно
-    /// остаётся только у нас, а данные уходят.
+    /// Signing out: the server revokes the device token, and the session, the
+    /// database and the keys are erased locally. The server's answer does not
+    /// hold the logout back, since the token is ours alone and the data goes
+    /// either way.
     func logout() async {
         try? await api?.logout()
         await resetToRegistration()
     }
 
-    /// Возврат к чистому листу без перезапуска: движок остановлен, ссылки на БД
-    /// отпущены, файлы хранилища и локальные настройки сессии стёрты.
+    /// Back to a clean slate without a restart: the engine is stopped, database
+    /// references are released, storage files and local session settings erased.
     func resetToRegistration() async {
         revokedTask?.cancel()
         revokedTask = nil
@@ -150,7 +153,7 @@ final class AppState: ObservableObject {
             return
         }
         OwnUser.id = s.userId
-        // NSE читает эти значения из shared defaults
+        // the NSE reads these values from the shared defaults
         UserDefaults(suiteName: AppGroup.identifier)?.set(s.userId, forKey: "ownUserId")
         do {
             db = try AppDatabase.open(at: storage.databaseURL)
@@ -161,8 +164,8 @@ final class AppState: ObservableObject {
             // gate is what keeps the two of them out of one step
             e2ee = E2EEManager(store: store, api: api, ownUserId: s.userId, ownDeviceId: s.deviceId,
                                gate: CryptoGate.shared(location: storage))
-            // pendingDir — в постоянном контейнере: исходники офлайн-вложений
-            // должны пережить чистку Caches до выгрузки
+            // pendingDir sits in the permanent container: originals of offline
+            // attachments have to survive a Caches purge until they are uploaded
             media = MediaManager(api: api,
                                  cacheDir: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
                                      .appendingPathComponent("media"),
@@ -179,11 +182,12 @@ final class AppState: ObservableObject {
             objectWillChange.send()
             NotificationCoordinator.shared.attach(db: db, engine: engine, ownUserId: s.userId)
             #if targetEnvironment(simulator)
-            // симулятору APNs недоступен: дев-стенд шлёт пуши через `simctl push`
-            // по UDID, он же регистрируется на сервере вместо APNs-токена
+            // no APNs on the simulator: the dev stand delivers pushes with
+            // `simctl push` by UDID, and that UDID is registered on the server
+            // in place of an APNs token
             let udid = ProcessInfo.processInfo.environment["SIMULATOR_UDID"] ?? "unknown-simulator"
             try? await api.registerPushToken(udid, env: "dev-sim")
-            // APNs симулятору недоступен: баннер в фоне постит приложение
+            // with no push arriving, the app posts the background banner itself
             NotificationCoordinator.shared.apnsAvailable = false
             #else
             UIApplication.shared.registerForRemoteNotifications()
@@ -223,8 +227,8 @@ final class AppState: ObservableObject {
 
     private var revokedTask: Task<Void, Never>?
 
-    /// Сервер отключил устройство от аккаунта: переподключаться некуда,
-    /// показываем экран завершённой сессии.
+    /// The server has cut this device off the account: there is nothing left to
+    /// reconnect to, so the session-ended screen goes up.
     private func observeSessionRevoked(_ engine: SyncEngine) {
         revokedTask?.cancel()
         revokedTask = Task { [weak self] in
@@ -235,8 +239,8 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Уход с экрана «Сессия завершена»: локальные данные отозванного
-    /// устройства стираются, пользователь возвращается к регистрации.
+    /// Leaving the «Сессия завершена» screen: the revoked device's local data is
+    /// wiped and the user is taken back to registration.
     func finishRevokedSession() async {
         await resetToRegistration()
         sessionRevoked = false
@@ -269,7 +273,8 @@ final class AppState: ObservableObject {
             obscured = false
             endBackgroundWork()
             if let engine { Task { await engine.appBecameActive() } }
-            // авто-лок: пин есть и в фоне были дольше грейс-периода
+            // auto-lock: there is a PIN and the app sat in the background longer
+            // than the grace period
             if PinStore.hasPin(), let t = backgroundedAt,
                Date().timeIntervalSince(t) > PinStore.autolockInterval {
                 isLocked = true
@@ -280,9 +285,10 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Без этого процесс усыпляют сразу после сворачивания, и сообщение,
-    /// пришедшее по живому WS, остаётся без уведомления. Система даёт около
-    /// 30 секунд — этого хватает дочитать входящие и поднять баннер.
+    /// Without this the process is suspended as soon as the app is backgrounded,
+    /// and a message arriving over the live WS never raises a notification. The
+    /// system grants around 30 seconds, enough to finish reading the incoming
+    /// messages and put up the banner.
     private func beginBackgroundWork() {
         guard backgroundTask == .invalid else { return }
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "ws-incoming") { [weak self] in

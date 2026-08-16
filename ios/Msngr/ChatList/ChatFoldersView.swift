@@ -1,13 +1,13 @@
 import SwiftUI
 import MsngrCore
 
-/// Список папок: порядок вкладок, переименование, удаление, создание.
-/// Папки живут на этом устройстве — про это сказано строкой внизу, чтобы
-/// разложенные вкладки не ждали на другом телефоне.
+/// The folder list: tab order, renaming, deleting, creating. Folders live on
+/// this device, and the footer says so, so nobody waits for the tabs they laid
+/// out here to turn up on another phone.
 struct ChatFoldersView: View {
     @ObservedObject var model: ChatListModel
     @Environment(\.dismiss) private var dismiss
-    /// Папка, открытая в редакторе; nil в `editing` при создании новой.
+    /// The folder open in the editor; a target holding no folder creates a new one.
     @State private var editing: EditorTarget?
 
     private struct EditorTarget: Identifiable {
@@ -84,7 +84,7 @@ struct ChatFoldersView: View {
     }
 }
 
-/// Одна папка: имя, правила и её состав. Всё уходит одним сохранением.
+/// A single folder: name, rules and contents. It all goes in one save.
 struct ChatFolderEditorView: View {
     @ObservedObject var model: ChatListModel
     let folder: ChatFolder?
@@ -95,9 +95,9 @@ struct ChatFolderEditorView: View {
     @State private var groups = false
     @State private var unread = false
     @State private var peerIds: Set<String> = []
-    /// Расхождения с правилом: что добавлено руками и что руками убрано.
-    /// Правило считается на лету, поэтому его галочки переезжают вслед за
-    /// переключателем, а решения пользователя переживают его.
+    /// Where the contents diverge from the rule: added by hand, removed by hand.
+    /// The rule is evaluated live, so its checkmarks move with the toggles while
+    /// the user's own decisions outlive them.
     @State private var handAdded: Set<String> = []
     @State private var handRemoved: Set<String> = []
     @State private var loaded = false
@@ -175,7 +175,7 @@ struct ChatFolderEditorView: View {
         }
     }
 
-    /// Что даёт правило прямо сейчас, с учётом переключателей на экране.
+    /// What the rule brings in right now, with the toggles as they stand on screen.
     private var broughtByRules: Set<String> { brought(by: rules) }
 
     private func brought(by rules: ChatFolderRules) -> Set<String> {

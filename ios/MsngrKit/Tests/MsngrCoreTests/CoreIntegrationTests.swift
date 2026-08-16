@@ -3,10 +3,10 @@ import GRDB
 import MsngrCrypto
 @testable import MsngrCore
 
-/// E2E-тест ядра против локального сервера (wrangler dev на :8787).
-/// Пропускается, если сервер не поднят.
+/// End-to-end test of the core against a local server (wrangler dev on :8787).
+/// Skipped when nothing is listening there.
 final class CoreIntegrationTests: XCTestCase {
-    /// Адрес dev-сервера; переопределяется переменной окружения MSNGR_TEST_BASE.
+    /// Dev server address; override with the MSNGR_TEST_BASE environment variable.
     static let base = URL(string: ProcessInfo.processInfo.environment["MSNGR_TEST_BASE"]
                           ?? "http://localhost:8787")!
 
@@ -68,44 +68,44 @@ final class CoreIntegrationTests: XCTestCase {
 
     func testDirectChatE2E() async throws {
         guard await Self.serverUp() else {
-            throw XCTSkip("wrangler dev не запущен")
+            throw XCTSkip("wrangler dev is not running")
         }
         let suffix = String(UUID().uuidString.prefix(6)).lowercased().replacingOccurrences(of: "-", with: "x")
         let alice = try await Self.makeClient(username: "ca_\(suffix)")
         let bob = try await Self.makeClient(username: "cb_\(suffix)")
 
-        // Алиса создаёт direct-чат и шлёт зашифрованное сообщение
+        // Alice creates a direct chat and sends an encrypted message
         let chatId = try await alice.api.createChat(kind: "direct", memberIds: [bob.userId], title: nil)
         try await alice.engine.refreshSnapshot()
         var content = ContentPayload(kind: "text")
         content.text = "привет, это e2e"
         try await alice.engine.enqueue(content: content, chatId: chatId)
 
-        // у Алисы сообщение получает seq и статус sent
+        // on Alice's side the message gets a seq and the sent status
         let acked = try await waitUntil {
             try await alice.db.read { dbc in
                 try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND seq IS NOT NULL AND status >= 1",
                                  arguments: [chatId]) == 1
             }
         }
-        XCTAssertTrue(acked, "ack не пришёл")
+        XCTAssertTrue(acked, "no ack arrived")
 
-        // Боб получает чат и расшифровывает сообщение
+        // Bob receives the chat and decrypts the message
         let received = try await waitUntil {
             try await bob.db.read { dbc in
                 (try String.fetchOne(dbc, sql: "SELECT text FROM message WHERE chatId = ?",
                                      arguments: [chatId])) == "привет, это e2e"
             }
         }
-        XCTAssertTrue(received, "Боб не расшифровал сообщение")
+        XCTAssertTrue(received, "Bob did not decrypt the message")
 
-        // чат у Боба помечен как заявка (message request)
+        // for Bob the chat is marked as a message request
         let isRequest = try await bob.db.read { dbc in
             try Bool.fetchOne(dbc, sql: "SELECT isRequest FROM chat WHERE id = ?", arguments: [chatId]) ?? false
         }
-        XCTAssertTrue(isRequest, "чат должен быть заявкой до accept")
+        XCTAssertTrue(isRequest, "the chat must be a request until it is accepted")
 
-        // Боб отвечает (после accept) — ratchet в обратную сторону
+        // Bob replies after accepting, which ratchets in the other direction
         try await bob.api.acceptChat(chatId)
         var reply = ContentPayload(kind: "text")
         reply.text = "ответ боба"
@@ -117,9 +117,9 @@ final class CoreIntegrationTests: XCTestCase {
                                  arguments: [chatId]) == 1
             }
         }
-        XCTAssertTrue(gotReply, "Алиса не получила ответ")
+        XCTAssertTrue(gotReply, "Alice did not get the reply")
 
-        // read receipt: Боб читает → у Алисы статус read
+        // read receipt: Bob reads, and Alice's message turns to read
         let lastSeq = try await bob.db.read { dbc in
             try Int.fetchOne(dbc, sql: "SELECT lastSeq FROM chat WHERE id = ?", arguments: [chatId]) ?? 0
         }
@@ -130,21 +130,21 @@ final class CoreIntegrationTests: XCTestCase {
                                  arguments: [chatId]) ?? 0 >= 1
             }
         }
-        XCTAssertTrue(readMark, "read receipt не дошёл")
+        XCTAssertTrue(readMark, "the read receipt never arrived")
 
         await alice.engine.stop()
         await bob.engine.stop()
     }
 
-    /// Оба пишут друг другу первыми (одновременная инициация сессии).
-    /// Ни одно сообщение не должно потеряться ни у одной стороны.
+    /// Both sides write first, initiating the session at the same time. Neither
+    /// side may lose a message.
     func testSimultaneousFirstMessagesBothDecrypt() async throws {
-        guard await Self.serverUp() else { throw XCTSkip("wrangler dev не запущен") }
+        guard await Self.serverUp() else { throw XCTSkip("wrangler dev is not running") }
         let suffix = String(UUID().uuidString.prefix(6)).lowercased().replacingOccurrences(of: "-", with: "x")
         let a = try await Self.makeClient(username: "ga_\(suffix)")
         let b = try await Self.makeClient(username: "gb_\(suffix)")
 
-        // A создаёт чат и пишет; B независимо пишет в тот же чат
+        // A creates the chat and writes; B writes into the same chat independently
         let chatId = try await a.api.createChat(kind: "direct", memberIds: [b.userId], title: nil)
         try await a.engine.refreshSnapshot()
         try await b.engine.refreshSnapshot()
@@ -167,10 +167,10 @@ final class CoreIntegrationTests: XCTestCase {
                                  arguments: [chatId]) == 1
             }
         }
-        XCTAssertTrue(bGotA, "B не расшифровал сообщение A")
-        XCTAssertTrue(aGotB, "A не расшифровал сообщение B")
+        XCTAssertTrue(bGotA, "B did not decrypt A's message")
+        XCTAssertTrue(aGotB, "A did not decrypt B's message")
 
-        // и дальше переписка продолжается в обе стороны
+        // and the conversation keeps flowing both ways
         var m3 = ContentPayload(kind: "text"); m3.text = "ответ A"
         try await a.engine.enqueue(content: m3, chatId: chatId)
         let bGotReply = try await waitUntil(12) {
@@ -179,10 +179,10 @@ final class CoreIntegrationTests: XCTestCase {
                                  arguments: [chatId]) == 1
             }
         }
-        XCTAssertTrue(bGotReply, "переписка развалилась после встречной инициации")
+        XCTAssertTrue(bGotReply, "the conversation fell apart after the crossing initiation")
 
-        // ни одного нечитаемого на обеих сторонах: ни отложенного конверта,
-        // ни записи о пропавшем seq
+        // nothing unreadable on either side: no parked envelope and no record of
+        // a missing seq
         for (name, c) in [("A", a), ("B", b)] {
             let bad = try await c.db.read { dbc in
                 try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingDecrypt")! +
@@ -190,7 +190,7 @@ final class CoreIntegrationTests: XCTestCase {
                         SELECT COUNT(*) FROM historyGap WHERE reason NOT IN ('service','sender_key')
                         """)!
             }
-            XCTAssertEqual(bad, 0, "у \(name) есть нечитаемые сообщения")
+            XCTAssertEqual(bad, 0, "\(name) has unreadable messages")
         }
 
         await a.engine.stop()
@@ -199,7 +199,7 @@ final class CoreIntegrationTests: XCTestCase {
 
     func testGroupChatSenderKeys() async throws {
         guard await Self.serverUp() else {
-            throw XCTSkip("wrangler dev не запущен")
+            throw XCTSkip("wrangler dev is not running")
         }
         let suffix = String(UUID().uuidString.prefix(6)).lowercased().replacingOccurrences(of: "-", with: "x")
         let alice = try await Self.makeClient(username: "ga_\(suffix)")
@@ -215,7 +215,7 @@ final class CoreIntegrationTests: XCTestCase {
         content.text = "групповое сообщение"
         try await alice.engine.enqueue(content: content, chatId: chatId)
 
-        // оба участника расшифровывают через sender key
+        // both members decrypt through the sender key
         for (name, client) in [("bob", bob), ("carol", carol)] {
             let ok = try await waitUntil {
                 try await client.db.read { dbc in
@@ -223,10 +223,10 @@ final class CoreIntegrationTests: XCTestCase {
                                          arguments: [chatId])) == "групповое сообщение"
                 }
             }
-            XCTAssertTrue(ok, "\(name) не расшифровал групповое сообщение")
+            XCTAssertTrue(ok, "\(name) did not decrypt the group message")
         }
 
-        // ответ Боба: его sender key раздаётся, Алиса и Кэрол читают
+        // Bob replies: his sender key is distributed, Alice and Carol can read it
         var reply = ContentPayload(kind: "text")
         reply.text = "ответ в группе"
         try await bob.engine.enqueue(content: reply, chatId: chatId)
@@ -237,10 +237,10 @@ final class CoreIntegrationTests: XCTestCase {
                                      arguments: [chatId]) == 1
                 }
             }
-            XCTAssertTrue(ok, "\(name) не получил ответ в группе")
+            XCTAssertTrue(ok, "\(name) did not get the group reply")
         }
 
-        // реакция: Кэрол ставит ❤️ на сообщение Алисы
+        // reaction: Carol puts a heart on Alice's message
         let targetId = try await carol.db.read { dbc in
             try String.fetchOne(dbc, sql: "SELECT msgId FROM message WHERE chatId = ? AND text = 'групповое сообщение'",
                                 arguments: [chatId])
@@ -256,10 +256,10 @@ final class CoreIntegrationTests: XCTestCase {
                 return r.contains("❤️")
             }
         }
-        XCTAssertTrue(reacted, "реакция не дошла до Алисы")
+        XCTAssertTrue(reacted, "the reaction never reached Alice")
 
-        // forward secrecy: удаляем Кэрол, Алиса ротирует sender key и шлёт новое.
-        // Боб читает, Кэрол — уже нет.
+        // forward secrecy: Carol is removed, Alice rotates the sender key and
+        // sends again. Bob can read it, Carol cannot.
         try await alice.api.updateMembers(chatId, add: [], remove: [carol.userId])
         _ = try await waitUntil {
             try await alice.db.read { dbc in
@@ -276,14 +276,14 @@ final class CoreIntegrationTests: XCTestCase {
                                  arguments: [chatId]) == 1
             }
         }
-        XCTAssertTrue(bobGot, "Боб должен получить сообщение после ротации")
-        // дать времени на возможную (нежелательную) доставку Кэрол
+        XCTAssertTrue(bobGot, "Bob must receive the message sent after the rotation")
+        // leave time for a delivery to Carol that must not happen
         try await Task.sleep(nanoseconds: 1_500_000_000)
         let carolLeaked = try await carol.db.read { dbc in
             try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'после удаления Кэрол'",
                              arguments: [chatId]) ?? 0
         }
-        XCTAssertEqual(carolLeaked, 0, "удалённый участник не должен читать новые сообщения")
+        XCTAssertEqual(carolLeaked, 0, "a removed member must not read new messages")
 
         await alice.engine.stop()
         await bob.engine.stop()
@@ -292,7 +292,7 @@ final class CoreIntegrationTests: XCTestCase {
 
     func testOfflineOutboxAndResync() async throws {
         guard await Self.serverUp() else {
-            throw XCTSkip("wrangler dev не запущен")
+            throw XCTSkip("wrangler dev is not running")
         }
         let suffix = String(UUID().uuidString.prefix(6)).lowercased().replacingOccurrences(of: "-", with: "x")
         let alice = try await Self.makeClient(username: "oa_\(suffix)")
@@ -301,7 +301,7 @@ final class CoreIntegrationTests: XCTestCase {
         let chatId = try await alice.api.createChat(kind: "direct", memberIds: [bob.userId], title: nil)
         try await alice.engine.refreshSnapshot()
 
-        // Боб уходит в офлайн
+        // Bob goes offline
         await bob.engine.stop()
 
         var m1 = ContentPayload(kind: "text"); m1.text = "пока ты офлайн 1"
@@ -315,7 +315,7 @@ final class CoreIntegrationTests: XCTestCase {
             }
         }
 
-        // Боб возвращается → sync по курсорам доставляет пропущенное
+        // Bob comes back: the cursor sync delivers what he missed
         await bob.engine.start()
         let caught = try await waitUntil(10) {
             try await bob.db.read { dbc in
@@ -323,18 +323,19 @@ final class CoreIntegrationTests: XCTestCase {
                                  arguments: [chatId]) == 2
             }
         }
-        XCTAssertTrue(caught, "offline-сообщения не доехали после reconnect")
+        XCTAssertTrue(caught, "the offline messages did not arrive after the reconnect")
 
         await alice.engine.stop()
         await bob.engine.stop()
     }
 
-    /// Состояние сессии у получателя испорчено: ни один конверт отправителя
-    /// больше не открывается. Устройство чинит это само — просит копию, поднимает
-    /// сессию заново и ставит сообщение в ленту под исходным msgId, без дубля.
+    /// The recipient's session state is corrupted, so no envelope from the sender
+    /// opens any more. The device repairs itself: it asks for a copy, rebuilds
+    /// the session and puts the message into the feed under the original msgId,
+    /// without a duplicate.
     func testCorruptedSessionIsRepairedThroughSender() async throws {
         guard await Self.serverUp() else {
-            throw XCTSkip("wrangler dev не запущен")
+            throw XCTSkip("wrangler dev is not running")
         }
         let suffix = String(UUID().uuidString.prefix(6)).lowercased().replacingOccurrences(of: "-", with: "x")
         let alice = try await Self.makeClient(username: "ra_\(suffix)")
@@ -351,13 +352,14 @@ final class CoreIntegrationTests: XCTestCase {
                                  arguments: [chatId]) == 1
             }
         }
-        XCTAssertTrue(gotFirst, "первое сообщение не доехало")
-        // до принятия заявки ремонт молчит: он выдал бы автору, что получатель
-        // на месте. Дальше чат обычный
+        XCTAssertTrue(gotFirst, "the first message never arrived")
+        // while the chat is an unaccepted request the repair stays quiet: it would
+        // tell the author that the recipient is there. After the accept it is an
+        // ordinary chat
         try await bob.api.acceptChat(chatId)
         try await bob.engine.refreshSnapshot()
 
-        // состояние сессии Боба подменяется мусором: расшифровать нечем
+        // Bob's session state is overwritten with garbage: nothing left to decrypt with
         try await bob.db.write { dbc in
             try dbc.execute(sql: "UPDATE ratchetSession SET state = ?, archived = NULL",
                             arguments: [Data(repeating: 0x7f, count: 48)])
@@ -372,13 +374,13 @@ final class CoreIntegrationTests: XCTestCase {
                                  arguments: [chatId]) == 1
             }
         }
-        XCTAssertTrue(recorded, "нечитаемый конверт не сохранён")
+        XCTAssertTrue(recorded, "the unreadable envelope was not kept")
         let keptEnvelope = try await bob.db.read { dbc in
             (try Row.fetchOne(dbc, sql: "SELECT body FROM pendingDecrypt")?["body"] as Data?) ?? Data()
         }
-        XCTAssertFalse(keptEnvelope.isEmpty, "конверт сохранён пустым — повторить нечем")
+        XCTAssertFalse(keptEnvelope.isEmpty, "the envelope was kept empty, nothing left to retry")
 
-        // срок ожидания ключа выдержан → проход просит копию у отправителя
+        // the key grace period has passed, so the sweep asks the sender for a copy
         try await bob.db.write { dbc in
             try dbc.execute(sql: "UPDATE pendingDecrypt SET firstSeenAt = ?, lastTriedAt = 0",
                             arguments: [Date().timeIntervalSince1970 - MessageRepair.repairGrace - 1])
@@ -391,23 +393,23 @@ final class CoreIntegrationTests: XCTestCase {
                                     arguments: [chatId]) != nil
             }
         }
-        XCTAssertTrue(repaired, "сообщение не починилось")
+        XCTAssertTrue(repaired, "the message was never repaired")
 
-        // ровно одна строка на сообщение и ни одной записи о пропаже
+        // exactly one row per message and no record of a gap
         let rows = try await bob.db.read { dbc in
             try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'после поломки'",
                              arguments: [chatId])!
         }
-        XCTAssertEqual(rows, 1, "починенное сообщение продублировалось")
+        XCTAssertEqual(rows, 1, "the repaired message was duplicated")
         let leftovers = try await bob.db.read { dbc in
             try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingDecrypt")! +
                 Int.fetchOne(dbc, sql: """
                     SELECT COUNT(*) FROM historyGap WHERE reason NOT IN ('service','sender_key')
                     """)!
         }
-        XCTAssertEqual(leftovers, 0, "после починки остались следы пропажи")
+        XCTAssertEqual(leftovers, 0, "traces of the gap survived the repair")
 
-        // сессия поднята заново: следующее сообщение читается без ремонта
+        // the session is rebuilt: the next message reads without any repair
         var after = ContentPayload(kind: "text")
         after.text = "после починки"
         try await alice.engine.enqueue(content: after, chatId: chatId)
@@ -417,14 +419,14 @@ final class CoreIntegrationTests: XCTestCase {
                                  arguments: [chatId]) == 1
             }
         }
-        XCTAssertTrue(flows, "переписка не восстановилась после ремонта")
+        XCTAssertTrue(flows, "the conversation did not resume after the repair")
 
         await alice.engine.stop()
         await bob.engine.stop()
     }
 
-    /// Устройство вернулось после долгого офлайна: та же база и те же ключи,
-    /// новый сокет. Догон продолжается с курсоров, записанных в базу.
+    /// The device is back after a long time offline: same database, same keys, a
+    /// new socket. Catch-up resumes from the cursors stored in the database.
     static func restarted(_ c: TestClient) async -> SyncEngine {
         var comps = URLComponents(url: base.appendingPathComponent("ws"), resolvingAgainstBaseURL: false)!
         comps.scheme = "ws"
@@ -435,10 +437,10 @@ final class CoreIntegrationTests: XCTestCase {
         return engine
     }
 
-    /// Долгий офлайн: накопленное за это время доезжает порциями — все
-    /// сообщения, по одному разу, курсор доходит до конца журнала.
+    /// A long time offline: what piled up arrives in batches, every message
+    /// exactly once, and the cursor reaches the end of the log.
     func testLongOfflineCatchesUpInPortions() async throws {
-        guard await Self.serverUp() else { throw XCTSkip("wrangler dev не запущен") }
+        guard await Self.serverUp() else { throw XCTSkip("wrangler dev is not running") }
         let suffix = String(UUID().uuidString.prefix(6)).lowercased().replacingOccurrences(of: "-", with: "x")
         let alice = try await Self.makeClient(username: "pa_\(suffix)")
         let bob = try await Self.makeClient(username: "pb_\(suffix)")
@@ -454,10 +456,10 @@ final class CoreIntegrationTests: XCTestCase {
                                  arguments: [chatId]) == 1
             }
         }
-        XCTAssertTrue(opened, "первое сообщение не дошло")
+        XCTAssertTrue(opened, "the first message never arrived")
         try await bob.api.acceptChat(chatId)
 
-        // Боб офлайн, Алиса пишет 300 сообщений
+        // Bob is offline while Alice sends 300 messages
         await bob.engine.stop()
         let total = 300
         for i in 1...total {
@@ -471,9 +473,9 @@ final class CoreIntegrationTests: XCTestCase {
                                  arguments: [chatId]) == total + 1
             }
         }
-        XCTAssertTrue(allAcked, "не все сообщения получили seq")
+        XCTAssertTrue(allAcked, "not every message got a seq")
 
-        // Боб возвращается: догон крутится порциями, пока не закончится
+        // Bob comes back: catch-up runs batch after batch until it is done
         let engine = await Self.restarted(bob)
         let caughtUp = try await waitUntil(180) {
             try await bob.db.read { dbc in
@@ -481,7 +483,7 @@ final class CoreIntegrationTests: XCTestCase {
                                  arguments: [chatId]) == total + 1
             }
         }
-        XCTAssertTrue(caughtUp, "догон не довёз всю историю")
+        XCTAssertTrue(caughtUp, "catch-up did not deliver the whole history")
 
         let state = try await bob.db.read { dbc -> (Int, Int, Int, Int, Int, Int) in
             let distinct = try Int.fetchOne(dbc, sql: """
@@ -501,13 +503,13 @@ final class CoreIntegrationTests: XCTestCase {
                     """, arguments: [])!
             return (distinct, minSeq, maxSeq, synced, cursor, unreadable)
         }
-        // ни дублей, ни дыр: seq идут подряд от первого до последнего
-        XCTAssertEqual(state.0, total + 1, "порядок или дедуп нарушены")
+        // no duplicates and no holes: the seqs run back to back from first to last
+        XCTAssertEqual(state.0, total + 1, "ordering or deduplication is broken")
         XCTAssertEqual(state.1, 1)
         XCTAssertEqual(state.2, total + 1)
-        XCTAssertEqual(state.3, total + 1, "непрерывный префикс не дошёл до конца")
-        XCTAssertEqual(state.4, total + 1, "курсор догона не дошёл до конца журнала")
-        XCTAssertEqual(state.5, 0, "после догона остались нечитаемые")
+        XCTAssertEqual(state.3, total + 1, "the continuous prefix did not reach the end")
+        XCTAssertEqual(state.4, total + 1, "the catch-up cursor did not reach the end of the log")
+        XCTAssertEqual(state.5, 0, "unreadable messages were left after the catch-up")
 
         await alice.engine.stop()
         await engine.stop()

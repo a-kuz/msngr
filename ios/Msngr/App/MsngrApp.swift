@@ -22,28 +22,26 @@ struct MsngrApp: App {
                     RegisterView()
                         .environmentObject(app)
                 }
-                // отозванное устройство: тупик поверх всего, кроме пин-кода
+                // revoked device: a dead end on top of everything but the passcode
                 if app.sessionRevoked {
                     SessionEndedView()
                         .environmentObject(app)
                         .transition(.opacity)
                         .zIndex(8)
                 }
-                // сборка отстала от сервера или от собственного хранилища
+                // build fell behind the server or its own storage
                 if let reason = app.outdated {
                     AppOutdatedView(reason: reason)
                         .environmentObject(app)
                         .transition(.opacity)
                         .zIndex(8)
                 }
-                // пин-код: оверлей поверх всего
                 if app.isLocked {
                     LockScreenView()
                         .environmentObject(app)
                         .transition(.opacity)
                         .zIndex(10)
                 }
-                // блюр в app switcher
                 if app.obscured && !app.isLocked {
                     PrivacyShieldView().zIndex(9)
                 }

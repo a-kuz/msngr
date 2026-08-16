@@ -22,7 +22,8 @@ final class StorageMigrationTests: XCTestCase {
         try? fm.removeItem(at: tmp)
     }
 
-    /// Заполняет размещение: БД с записью, мастер-ключ, исходник офлайн-вложения.
+    /// Fills a location: a database with one row, the master key, and a pending
+    /// outgoing attachment.
     @discardableResult
     private func seed(_ location: StorageLocation, userId: String) throws -> Data {
         let db = try AppDatabase.open(at: location.databaseURL)
@@ -49,7 +50,7 @@ final class StorageMigrationTests: XCTestCase {
 
         let outcome = try StorageMigration.run(from: old, to: new, fileManager: fm)
 
-        guard case .migrated(let names) = outcome else { return XCTFail("ожидался перенос, получено \(outcome)") }
+        guard case .migrated(let names) = outcome else { return XCTFail("expected a migration, got \(outcome)") }
         XCTAssertTrue(names.contains(StorageLocation.databaseFileName))
         XCTAssertTrue(names.contains(StorageLocation.masterKeyFileName))
 
@@ -63,11 +64,11 @@ final class StorageMigrationTests: XCTestCase {
         XCTAssertFalse(fm.fileExists(atPath: old.masterKeyURL.path))
         XCTAssertFalse(fm.fileExists(atPath: old.pendingMediaDir.path))
         XCTAssertTrue(try fm.contentsOfDirectory(atPath: new.root.path)
-            .allSatisfy { !$0.hasPrefix(".migration-") }, "временный каталог переноса остался")
+            .allSatisfy { !$0.hasPrefix(".migration-") }, "the migration staging directory was left behind")
     }
 
     func testWriteAheadLogMovesWithDatabase() throws {
-        // открытая в WAL база: -wal и -shm рядом с файлом БД
+        // a database open in WAL mode: -wal and -shm sit next to the database file
         let db = try AppDatabase.open(at: old.databaseURL)
         try db.write { dbc in
             try dbc.execute(sql: "INSERT INTO user (id, username, displayName) VALUES ('bob','bob','Bob')")
@@ -78,7 +79,7 @@ final class StorageMigrationTests: XCTestCase {
         let outcome = try StorageMigration.run(from: old, to: new, fileManager: fm)
         try db.close()
 
-        guard case .migrated(let names) = outcome else { return XCTFail("ожидался перенос") }
+        guard case .migrated(let names) = outcome else { return XCTFail("expected a migration") }
         XCTAssertTrue(names.contains(StorageLocation.databaseFileName + "-wal"))
         XCTAssertEqual(try storedUserIds(new), ["bob"])
         XCTAssertFalse(fm.fileExists(atPath: old.databaseURL.path + "-wal"))
@@ -108,15 +109,16 @@ final class StorageMigrationTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: old.masterKeyURL), oldKey)
     }
 
-    /// Перенос прервали между файлами: в новом размещении лежит ключ, БД ещё
-    /// в старом. Следующий запуск доводит перенос до конца.
+    /// The migration was interrupted between files: the key is already in the
+    /// new location, the database is still in the old one. The next run
+    /// finishes the job.
     func testInterruptedMigrationCompletes() throws {
         let key = try seed(old, userId: "alice")
         try fm.moveItem(at: old.masterKeyURL, to: new.masterKeyURL)
 
         let outcome = try StorageMigration.run(from: old, to: new, fileManager: fm)
 
-        guard case .migrated = outcome else { return XCTFail("ожидался перенос, получено \(outcome)") }
+        guard case .migrated = outcome else { return XCTFail("expected a migration, got \(outcome)") }
         XCTAssertEqual(try storedUserIds(new), ["alice"])
         XCTAssertEqual(try Data(contentsOf: new.masterKeyURL), key)
         XCTAssertFalse(fm.fileExists(atPath: old.databaseURL.path))
@@ -140,8 +142,8 @@ final class StorageMigrationTests: XCTestCase {
         XCTAssertTrue(fm.fileExists(atPath: fresh.avatarsDir.path))
     }
 
-    /// Свежая установка: корня размещения ещё нет, запись сессии в него падает,
-    /// пока каталог не создан.
+    /// Fresh install: the location root does not exist yet, so writing the
+    /// session there fails until the directory is created.
     func testSessionWriteNeedsPreparedRoot() throws {
         let fresh = StorageLocation(root: tmp.appendingPathComponent("fresh-session"))
         let payload = Data(#"{"userId":"u1"}"#.utf8)
@@ -160,13 +162,14 @@ final class StorageMigrationTests: XCTestCase {
 
         let outcome = try StorageMigration.run(from: old, to: new, fileManager: fm)
 
-        guard case .migrated(let names) = outcome else { return XCTFail("ожидался перенос, получено \(outcome)") }
+        guard case .migrated(let names) = outcome else { return XCTFail("expected a migration, got \(outcome)") }
         XCTAssertTrue(names.contains(StorageLocation.sessionFileName))
         XCTAssertEqual(try Data(contentsOf: new.sessionURL), payload)
         XCTAssertFalse(fm.fileExists(atPath: old.sessionURL.path))
     }
 
-    /// Логаут: данные размещения стёрты, само размещение годится для новой регистрации.
+    /// Logout: the location's data is erased and the location itself is still
+    /// usable for a new registration.
     func testWipeRemovesDataAndKeepsLocationUsable() throws {
         try seed(old, userId: "alice")
         try Data(#"{"token":"t"}"#.utf8).write(to: old.sessionURL)
@@ -178,6 +181,6 @@ final class StorageMigrationTests: XCTestCase {
         XCTAssertFalse(fm.fileExists(atPath: old.masterKeyURL.path))
         XCTAssertFalse(fm.fileExists(atPath: old.pendingMediaDir.path))
         XCTAssertTrue(fm.fileExists(atPath: old.root.path))
-        XCTAssertEqual(try storedUserIds(old), [], "новая БД открывается пустой")
+        XCTAssertEqual(try storedUserIds(old), [], "a fresh database opens empty")
     }
 }

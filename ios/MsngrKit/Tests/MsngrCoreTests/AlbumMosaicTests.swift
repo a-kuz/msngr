@@ -7,7 +7,7 @@ final class AlbumMosaicTests: XCTestCase {
     private let maxWidth: CGFloat = 320
     private let spacing: CGFloat = 2
 
-    // Фиксированные наборы аспектов для n = 1...10.
+    // Fixed aspect-ratio sets for n = 1...10.
     private let fixtures: [[CGFloat]] = [
         [1.33],
         [0.7, 0.7],
@@ -32,30 +32,30 @@ final class AlbumMosaicTests: XCTestCase {
             XCTAssertEqual(size.width, maxWidth, accuracy: 0.5, label)
             XCTAssertGreaterThan(size.height, 0, label)
 
-            // Все тайлы внутри контейнера (допуск 0.5pt).
+            // Every tile stays inside the container (0.5pt tolerance).
             let container = CGRect(origin: .zero, size: size)
             for r in rects {
                 XCTAssertTrue(container.insetBy(dx: -0.5, dy: -0.5).contains(r.frame),
-                              "\(label): тайл \(r.index) вне контейнера \(r.frame) / \(size)")
+                              "\(label): tile \(r.index) outside the container \(r.frame) / \(size)")
             }
 
-            // Попарно не пересекаются (допуск 0.5pt).
+            // No two tiles overlap (0.5pt tolerance).
             for i in rects.indices {
                 for j in rects.indices where j > i {
                     let a = rects[i].frame.insetBy(dx: 0.25, dy: 0.25)
                     let b = rects[j].frame.insetBy(dx: 0.25, dy: 0.25)
                     XCTAssertFalse(a.intersects(b),
-                                   "\(label): тайлы \(rects[i].index) и \(rects[j].index) пересекаются")
+                                   "\(label): tiles \(rects[i].index) and \(rects[j].index) overlap")
                 }
             }
 
-            // Нет дыр: непокрытая площадь (это только зазоры) ≤ 2% площади контейнера.
+            // No holes: the uncovered area is only the gaps, at most 2% of the container.
             let containerArea = size.width * size.height
             let tilesArea = rects.reduce(CGFloat(0)) { $0 + $1.frame.width * $1.frame.height }
             XCTAssertLessThanOrEqual(containerArea - tilesArea, containerArea * 0.02,
-                                     "\(label): дыры в раскладке, покрыто \(tilesArea / containerArea)")
+                                     "\(label): holes in the layout, covered \(tilesArea / containerArea)")
 
-            // Каждая строка (группа тайлов с одинаковым minY) доходит до правого края.
+            // Every row, meaning every group of tiles sharing a minY, reaches the right edge.
             var rowsByY: [Int: CGFloat] = [:]
             for r in rects {
                 let key = Int((r.frame.minY * 2).rounded())
@@ -63,7 +63,7 @@ final class AlbumMosaicTests: XCTestCase {
             }
             for (y, maxX) in rowsByY {
                 XCTAssertEqual(maxX, maxWidth, accuracy: 0.5,
-                               "\(label): строка y=\(CGFloat(y) / 2) не доходит до правого края")
+                               "\(label): row y=\(CGFloat(y) / 2) stops short of the right edge")
             }
         }
     }
@@ -73,7 +73,7 @@ final class AlbumMosaicTests: XCTestCase {
         let (rects, _) = AlbumMosaic.layout(items: items, maxWidth: maxWidth, spacing: spacing)
         XCTAssertEqual(rects.count, 2)
         for r in rects {
-            XCTAssertEqual(r.frame.minY, 0, "портреты должны стоять бок о бок")
+            XCTAssertEqual(r.frame.minY, 0, "portraits should stand side by side")
         }
     }
 }

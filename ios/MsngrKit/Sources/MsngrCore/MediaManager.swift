@@ -2,10 +2,10 @@ import Foundation
 import CryptoKit
 import MsngrCrypto
 
-/// Шифрованные медиа: upload (encrypt → R2), download (R2 → verify → decrypt → кэш).
-/// Кэш плоский на диске: ключ = mediaId, значение = plaintext.
-/// pendingDir — постоянная (не Caches) папка исходников медиа, приложенных офлайн:
-/// файл живёт там до успешной выгрузки outbox-воркером.
+/// Encrypted media: upload (encrypt → R2), download (R2 → verify → decrypt → cache).
+/// The disk cache is flat: mediaId is the key, plaintext is the value.
+/// pendingDir is a permanent directory (not Caches) holding originals attached while offline;
+/// a file stays there until the outbox worker has uploaded it.
 public final class MediaManager: @unchecked Sendable {
     public enum MediaError: Error { case pendingFileMissing }
 
@@ -24,8 +24,8 @@ public final class MediaManager: @unchecked Sendable {
         try? FileManager.default.createDirectory(at: self.pendingDir, withIntermediateDirectories: true)
     }
 
-    /// AVPlayer определяет контейнер по расширению файла: без него видео/аудио
-    /// не открываются (картинки декодируются по содержимому и не страдают).
+    /// AVPlayer picks the container from the file extension, so video and audio will not
+    /// open without one. Images are decoded by content and do not care.
     public static func fileExtension(forMime mime: String?) -> String {
         switch mime?.lowercased() {
         case "video/mp4": return "mp4"
@@ -48,9 +48,9 @@ public final class MediaManager: @unchecked Sendable {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
-    // MARK: - Локальные исходники (ещё не выгруженные медиа)
+    // MARK: - Local originals (media not uploaded yet)
 
-    /// Кладёт plaintext в pendingDir; возвращает имя файла для MediaInfo.localPath.
+    /// Writes the plaintext into pendingDir and returns the file name for MediaInfo.localPath.
     public func stash(_ plaintext: Data, mime: String? = nil) throws -> String {
         let name = UUID().uuidString + "." + Self.fileExtension(forMime: mime)
         try plaintext.write(to: pendingDir.appendingPathComponent(name), options: .atomic)
@@ -62,7 +62,7 @@ public final class MediaManager: @unchecked Sendable {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
-    /// Выгружает локальный исходник; вызывается outbox-воркером перед шифрованием конверта.
+    /// Uploads a local original; called by the outbox worker before it encrypts the envelope.
     public func uploadPending(localName: String, mime: String? = nil) async throws -> (mediaId: String, key: String, hash: String, size: Int) {
         guard let url = pendingURL(for: localName) else { throw MediaError.pendingFileMissing }
         return try await upload(try Data(contentsOf: url), mime: mime)
@@ -72,8 +72,8 @@ public final class MediaManager: @unchecked Sendable {
         try? FileManager.default.removeItem(at: pendingDir.appendingPathComponent(localName))
     }
 
-    /// Шифрует и выгружает; возвращает поля для MediaInfo. Plaintext кладётся в кэш сразу
-    /// (отправитель видит своё медиа мгновенно).
+    /// Encrypts and uploads, returning the fields for MediaInfo. The plaintext goes into the
+    /// cache right away so the sender sees their own media without a round trip.
     public func upload(_ plaintext: Data, mime: String? = nil) async throws -> (mediaId: String, key: String, hash: String, size: Int) {
         let enc = try MediaCrypto.encrypt(plaintext)
         let res = try await api.uploadMedia(enc.ciphertext)
@@ -82,8 +82,8 @@ public final class MediaManager: @unchecked Sendable {
         return (res.mediaId, enc.key.base64EncodedString(), enc.sha256.base64EncodedString(), plaintext.count)
     }
 
-    /// Скачивает, проверяет хэш, расшифровывает, кэширует. Дедуп одновременных запросов.
-    /// Ещё не выгруженное своё медиа (mediaId пустой) отдаётся из pendingDir.
+    /// Downloads, verifies the hash, decrypts and caches; concurrent requests are deduplicated.
+    /// Our own media that has not been uploaded yet (empty mediaId) is served from pendingDir.
     public func fetch(_ media: MediaInfo) async throws -> URL {
         if media.mediaId.isEmpty {
             guard let name = media.localPath, let url = pendingURL(for: name) else {
@@ -118,7 +118,7 @@ public final class MediaManager: @unchecked Sendable {
         return try await task.value
     }
 
-    /// Превью-блоб (thumb видео) по отдельным полям MediaInfo.
+    /// The preview blob (a video's thumbnail), addressed by its own fields in MediaInfo.
     public func fetchThumb(_ media: MediaInfo) async throws -> URL? {
         guard let id = media.thumbMediaId, let keyB64 = media.thumbKey, let hashB64 = media.thumbHash else { return nil }
         var t = MediaInfo(type: "photo", mediaId: id, key: keyB64, hash: hashB64, size: 0, mime: "image/jpeg")

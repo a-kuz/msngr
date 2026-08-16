@@ -22,7 +22,7 @@ struct MsngrMacApp: App {
     }
 }
 
-/// Состояние macOS-клиента: то же ядро (MsngrCore), тот же протокол и E2EE.
+/// State of the macOS client: the same core (MsngrCore), protocol and E2EE as iOS.
 @MainActor
 final class MacAppState: ObservableObject {
     static let httpBase: URL = {
@@ -84,7 +84,7 @@ final class MacAppState: ObservableObject {
             },
             phoneHash: nil))
         let s = Session(userId: reg.userId, deviceId: reg.deviceId, token: reg.token, username: username)
-        // отказ записи означает потерю сессии после перезапуска — не глотаем
+        // a failed write loses the session on the next launch, so don't swallow it
         try JSONEncoder().encode(s).write(to: sessionURL, options: .atomic)
         session = s
         await bootstrap(s)
@@ -117,7 +117,7 @@ final class MacAppState: ObservableObject {
     }
 }
 
-/// userId для фоновых замеров (общий enum с iOS-версией по имени).
+/// userId for background work; the iOS target declares an enum of the same name.
 enum OwnUser {
     nonisolated(unsafe) static var id: String = ""
 }

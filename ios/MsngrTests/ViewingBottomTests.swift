@@ -1,8 +1,8 @@
 import XCTest
 @testable import Msngr
 
-/// «Лента у низа»: критерий для кнопки «вниз» и отметки прочтения.
-/// Список инвертирован — самый новый элемент лежит в item 0.
+/// "The feed is at the bottom": the criterion behind the scroll-to-bottom button
+/// and the read mark. The list is inverted, so the newest item is item 0.
 final class ViewingBottomTests: XCTestCase {
     func testNewestVisibleMeansBottom() {
         XCTAssertTrue(MessagesViewController.isAtBottom(visibleItems: [0, 1, 2], totalItems: 3))
@@ -12,13 +12,14 @@ final class ViewingBottomTests: XCTestCase {
         XCTAssertFalse(MessagesViewController.isAtBottom(visibleItems: [7, 8, 9], totalItems: 40))
     }
 
-    /// Открытие чата с непрочитанными: лента встаёт на плашку, до низа ленты
-    /// остаётся несколько сотен точек, но самые новые сообщения на экране.
+    /// Opening a chat with unread messages: the feed stops at the marker with a few
+    /// hundred points left below it, yet the newest messages are on screen.
     func testUnreadMarkerOnScreenWithNewestVisible() {
         XCTAssertTrue(MessagesViewController.isAtBottom(visibleItems: [0, 1, 2, 3, 4], totalItems: 120))
     }
 
-    /// Непрочитанных больше экрана: плашка вверху, конец ленты за экраном.
+    /// More unread than fits the screen: the marker is up top and the end of the feed
+    /// is off screen.
     func testUnreadMarkerAboveScreenWithNewestHidden() {
         XCTAssertFalse(MessagesViewController.isAtBottom(visibleItems: [10, 11, 12, 13], totalItems: 120))
     }
@@ -27,7 +28,7 @@ final class ViewingBottomTests: XCTestCase {
         XCTAssertTrue(MessagesViewController.isAtBottom(visibleItems: [], totalItems: 0))
     }
 
-    /// Ячеек ещё нет (раскладка не прогнана), а элементы есть — это не низ.
+    /// There are items but no cells yet (layout has not run): that is not the bottom.
     func testNoVisibleCellsWithItemsIsNotBottom() {
         XCTAssertFalse(MessagesViewController.isAtBottom(visibleItems: [], totalItems: 5))
     }
