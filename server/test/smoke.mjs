@@ -1300,9 +1300,10 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
 // when it writes a message from a push and the app has no socket up.
 {
   const gina = await api("/api/register", { body: {
-    username: "gina_" + suffix, displayName: "Gina", ...fakeKeys("g") } });
+    username: "rita_" + suffix, displayName: "Rita", ...fakeKeys("u") } });
   const hugo = await api("/api/register", { body: {
-    username: "hugo_" + suffix, displayName: "Hugo", ...fakeKeys("h") } });
+    username: "sven_" + suffix, displayName: "Sven", ...fakeKeys("v") } });
+  check("receipt pair registered", gina.ok && hugo.ok, JSON.stringify([gina, hugo]));
   const rchat = await api("/api/chats", { token: gina.token,
     body: { kind: "direct", memberIds: [hugo.userId] } });
   const cgi = new Client("gina", gina.token);
@@ -1327,7 +1328,7 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
 
   // a stranger holding the chat id marks nothing
   const nosy = await api("/api/register", { body: {
-    username: "nosy_" + suffix, displayName: "Nosy", ...fakeKeys("q") } });
+    username: "tess_" + suffix, displayName: "Tess", ...fakeKeys("w") } });
   await api(`/api/chats/${rchat.chatId}/recv`, { token: nosy.token, body: { seqs: [1] } });
   const rstate = await api("/api/chats", { token: gina.token });
   const rc = rstate.chats.find((c2) => c2.state.chatId === rchat.chatId);
