@@ -129,6 +129,25 @@ What does grow without bound is scratch: `scratchpad/` held 2.35 GB from runs
 that ended days ago. The sweep does not take it, because a run report may still
 be half-written in there; it is the first thing the escalation report offers.
 
+## The gate
+
+`make check DEV_UDID=74B78AFC-E8D7-4317-B16F-E51A65504B2D` is red on one test:
+
+```
+ios/MsngrUITests/SmokeTests.swift:141: error:
+  -[MsngrUITests.SmokeTests testF_StatusBarTapGoesToChatStart] :
+  Failed to tap StatusBar (First Match): No matches found
+```
+
+That test is being deleted in main while this ran, as unreachable from
+XCUITest, with the check moved to `MsngrTests/StatusBarTapTests`. The other five
+UI tests pass. `xcodegen`, the app build, `swift test` in MsngrKit and
+MsngrTests all passed in the same run; the server smoke
+(`bash scripts/smoke-stand.sh`, ALL PASS) and the crash collection
+(`--since 240`, no crashes) were run separately, because `make` stops at the
+first failure and never reached them. Nothing here touches app code: the change
+is two scripts, a plist, `.gitignore` and documentation.
+
 ## What the run did not cover
 
 The five-minute job is not switched on. Branches here are merged by the owner,
