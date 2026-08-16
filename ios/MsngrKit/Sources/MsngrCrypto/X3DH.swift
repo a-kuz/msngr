@@ -1,10 +1,10 @@
 import CryptoKit
 import Foundation
 
-/// X3DH (Signal): установление общего секрета через prekey-бандл.
+/// X3DH (Signal): agreeing on a shared secret from a prekey bundle.
 public enum X3DH {
     static let info = Data("MsngrX3DH".utf8)
-    static let f = Data(repeating: 0xFF, count: 32) // префикс по спеке X3DH
+    static let f = Data(repeating: 0xFF, count: 32) // prefix required by the X3DH spec
 
     public struct InitiatorResult: Sendable {
         public let sharedSecret: SymmetricKey
@@ -12,7 +12,7 @@ public enum X3DH {
         public let associatedData: Data // IK_a || IK_b
     }
 
-    /// Инициатор: Алиса начинает сессию с бандлом Боба.
+    /// Initiator: Alice opens a session from Bob's bundle.
     public static func initiate(
         our: IdentityKeyPair,
         their: PreKeyBundle
@@ -54,7 +54,7 @@ public enum X3DH {
         public let associatedData: Data
     }
 
-    /// Ответчик: Боб восстанавливает секрет из PreKey-сообщения Алисы.
+    /// Responder: Bob recovers the same secret from Alice's prekey message.
     public static func respond(
         our: IdentityKeyPair,
         ourSignedPreKey: Curve25519.KeyAgreement.PrivateKey,

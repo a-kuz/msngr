@@ -1,13 +1,14 @@
 import CryptoKit
 import Foundation
 
-/// Шифрование медиа: файл → ChaChaPoly случайным ключом; ключ и SHA-256
-/// ciphertext'а едут внутри E2E-сообщения, сервер видит только блоб.
+/// Media encryption: the file is sealed with ChaChaPoly under a fresh random
+/// key. The key and the SHA-256 of the ciphertext travel inside the E2E
+/// message, so the server only ever holds an opaque blob.
 public enum MediaCrypto {
     public struct Encrypted: Sendable {
         public let ciphertext: Data
-        public let key: Data      // 32 байта
-        public let sha256: Data   // хэш ciphertext — верификация после скачивания
+        public let key: Data      // 32 bytes
+        public let sha256: Data   // ciphertext hash, verified after download
     }
 
     public static func encrypt(_ plaintext: Data) throws -> Encrypted {
@@ -28,15 +29,15 @@ public enum MediaCrypto {
     }
 }
 
-/// Safety numbers: 60 цифр из отпечатков identity-ключей обеих сторон
-/// (5200 итераций SHA-512, как в Signal) — сверка личности вне канала.
+/// Safety numbers: 60 digits built from both sides' identity key fingerprints
+/// (5200 SHA-512 iterations, as in Signal), for verifying identity out of band.
 public enum SafetyNumbers {
     private static func fingerprint(identity: Data, userId: String) -> String {
         var digest = Data([0, 0]) + identity + Data(userId.utf8)
         for _ in 0..<5200 {
             digest = Data(SHA512.hash(data: digest + identity))
         }
-        // 30 цифр из первых 20 байт
+        // 30 digits per side: five from each 5-byte chunk of the digest
         var out = ""
         for i in 0..<6 {
             let chunk = digest.subdata(in: (i * 5)..<(i * 5 + 5))
