@@ -20,14 +20,10 @@ working tree. Users `repalice` (A, sender) and `repbob` (B, receiver). The
 
 | Step | Expectation | Fact |
 |------|-------------|------|
-| A sends «First message», B accepts the request | message readable | as expected (`01-before-break.png`) |
 | B's app is closed and its ratchet session state is overwritten with random bytes | nothing decrypts from A any more | `ratchetSession.state` replaced, archive cleared |
 | A sends «Broken session message» | B records the failure and keeps the envelope | `unreadable … seq=2 reason=exception attempts=1` at 12:26:18, `pendingDecrypt` holds the envelope |
-| B's feed right after | no placeholder — repair has not given up yet | message simply absent (`02-message-missing.png`) |
 | background sweep after the grace period | copy asked from the sender, once | `repair asked … seq=2 reason=exception attempt=1` at 12:27:32 |
 | sender answers | copy applied under the original msgId | `repaired … seq=2` at 12:27:32, 64 ms after the request |
-| B's feed | message in its own place, one row, original time | as expected (`03-repaired.png`) |
-| A sends «After repair» | conversation flows without repair | read straight away (`04-conversation-continues.png`) |
 
 Nothing was tapped between the break and the repair: the request, the answer and
 the replacement all ran in the background.

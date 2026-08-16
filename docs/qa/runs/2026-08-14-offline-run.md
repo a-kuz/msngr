@@ -8,12 +8,6 @@
 
 | # | Сценарий | Статус | Скриншоты |
 |---|----------|--------|-----------|
-| 1 | Текст в офлайне → мгновенно с часиками → сеть → доставлен | PASS (снят предыдущим прогоном, стенд погибшего агента) | 01-text-a-offline.png, 01-text-a-offline-pending.png, 01-text-a-online-delivered.png, 01-text-b-received.png |
-| 2 | Фото в офлайне → превью мгновенно (часики) → сеть → доставлено у off-b | PASS | 02-photo-a-offline-pending.png, 02-photo-a-online-delivered.png, 02-photo-b-received.png |
-| 3 | Голосовое в офлайне → баббл мгновенно → сеть → играет у off-b | PASS | 03-voice-a-offline-pending.png, 03-voice-a-online-delivered.png, 03-voice-b-received.png, 03-voice-b-playing.png |
-| 4 | Kill приложения в офлайне с неотправленным → запуск → сообщение на месте → сеть → доставлено | PASS | 04-kill-a-offline-pending.png, 04-kill-a-after-restart-chatlist.png, 04-kill-a-after-restart-chat.png, 04-kill-a-online-delivered.png, 04-kill-b-received.png |
-| 5 | Черновик: текст без отправки, выход из чата, kill, запуск → текст в поле | PASS | 05-draft-a-typed.png, 05-draft-a-after-restart.png |
-| 6 | Реакция в офлайне → видна сразу → сеть → дошла до off-b | PASS | 06-reaction-a-offline.png, 06-reaction-b-received.png |
 
 ## Детали
 

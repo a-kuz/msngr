@@ -17,17 +17,17 @@ turns Latin letters into Cyrillic.
 
 ## Run
 
-| Checked | Result | Screenshot |
-|---|---|---|
-| `**жирный**`, `_курсив_`, `*курсив*`, `~~зачёркнут~~`, and the escape `\*` | styles applied, markers hidden, `\*не курсив\*` rendered as `*не курсив*` | inline-styles.png |
-| `` `моноширинный` `` | inline monospace, time on the last line | inline-styles.png |
-| autolinks for http, https and a bare domain | underlined, legible against the outgoing bubble | inline-styles.png |
-| a ```` ``` ```` block with a language, followed by text | padded backing, monospace, trailing paragraph below it with the time inline | code-block.png |
-| a long line inside a code block | wrapped by character inside the bubble, time on its own line under the backing | code-long-line.png |
-| tapping a link | `SFSafariViewController` opened (ya.ru → sso.ya.ru), closed by the cross | link-safari.png |
-| long press on a formatted message | context menu and reaction bar, same as any message | context-menu.png |
-| «Копировать» | pasteboard holds the source text with its markers, the ` ```swift … ``` ` block whole | — |
-| dark theme | code backing and links legible, layout unchanged | dark.png |
+| Checked | Result |
+|---|---|
+| `**жирный**`, `_курсив_`, `*курсив*`, `~~зачёркнут~~`, and the escape `\*` | styles applied, markers hidden, `\*не курсив\*` rendered as `*не курсив*` |
+| `` `моноширинный` `` | inline monospace, time on the last line |
+| autolinks for http, https and a bare domain | underlined, legible against the outgoing bubble |
+| a ```` ``` ```` block with a language, followed by text | padded backing, monospace, trailing paragraph below it with the time inline |
+| a long line inside a code block | wrapped by character inside the bubble, time on its own line under the backing |
+| tapping a link | `SFSafariViewController` opened (ya.ru → sso.ya.ru), closed by the cross |
+| long press on a formatted message | context menu and reaction bar, same as any message |
+| «Копировать» | pasteboard holds the source text with its markers, the ` ```swift … ``` ` block whole |
+| dark theme | code backing and links legible, layout unchanged |
 
 ## Tests
 

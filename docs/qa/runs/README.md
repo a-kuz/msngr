@@ -1,17 +1,11 @@
 # Run reports
 
-One file per run, `YYYY-MM-DD-topic-run.md`. Screenshots and recordings go in a
-directory named for the same topic, without the suffix:
+One file per run, `YYYY-MM-DD-topic-run.md`. Text only — screenshots and
+recordings are not kept here. They age within a day, they weighed more than a
+hundred megabytes, and nothing was ever read from them twice. Take them while
+you work, look at them, describe what you saw.
 
-    2026-08-15-20k-chat-run.md
-    2026-08-15-20k-chat/01-feed.png
-    2026-08-15-20k-chat/02-marker.png
-
-English, like everything else in the repository. Numbered file names keep the
-pictures in the order they were taken.
-
-A few older reports predate this and are named without the suffix or carry no
-directory; they are being renamed as they are touched.
+English, like everything else in the repository.
 
 ## What a report says
 
@@ -25,7 +19,7 @@ sentence and a silent omission is not.
 
 Numbers where there are numbers: rates, counts, durations, sizes. "Faster" is
 not a result; "19 to 26 messages a second before, 1540 after, same snapshot"
-is one.
+is one. A screenshot cannot carry a number into the future, but a sentence can.
 
 Defects found along the way belong here too, including the ones left unfixed.
 If something looked wrong and turned out to be fine, that is worth a line as

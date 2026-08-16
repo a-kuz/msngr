@@ -11,27 +11,23 @@ messages from Alpha and two incoming from Beta.
 
 ## Run
 
-1. `01-context-menu.png` — the context menu of your own message: «Выделить
-   текст», «Выбрать», and «Удалить» as a single item.
-2. `02-selection-mode.png` — selection mode: a checkbox on every row, incoming
-   bubbles pushed right, a cross at the left of the header, the counter
-   «2 сообщения», and a «Удалить / Переслать / Копировать» bar in place of the
-   input field.
-3. `03-delete-confirm-own.png` — the confirmation for two of your own messages
-   offers «Удалить у всех» and «Удалить у меня».
-4. `04-delete-confirm-foreign.png` — the same with one of Beta's messages
-   selected offers only «Удалить у меня»; there is no delete-for-everyone.
-5. `05-deleted-result-sender.png` — after «Удалить у всех» both bubbles read
-   «Сообщение удалено» and selection mode closed.
-6. `06-deleted-result-peer.png` — the same two messages read «Сообщение
-   удалено» on Beta.
-7. `07-text-selection.png` — «Выделить текст» opens a separate screen with the
-   message text selected whole, with the system handles.
-8. `08-text-selection-copy.png` — tapping the selection brings up the system
-   menu with Copy.
-9. `09-forward-picker.png`, `10-forward-result.png` — «Переслать» from the
-   selection bar: the chat picker, and the result on Beta reading «Переслано от
-   Alpha».
+1. The context menu of your own message offers «Выделить текст», «Выбрать», and
+   «Удалить» as a single item.
+2. Selection mode puts a checkbox on every row, pushes incoming bubbles right,
+   places a cross at the left of the header, shows the counter «2 сообщения»,
+   and replaces the input field with a «Удалить / Переслать / Копировать» bar.
+3. The delete confirmation for two of your own messages offers «Удалить у всех»
+   and «Удалить у меня».
+4. With one of Beta's messages selected it offers only «Удалить у меня»; there
+   is no delete-for-everyone.
+5. After «Удалить у всех» both bubbles read «Сообщение удалено» and selection
+   mode closed.
+6. The same two messages read «Сообщение удалено» on Beta.
+7. «Выделить текст» opens a separate screen with the message text selected
+   whole, with the system handles.
+8. Tapping that selection brings up the system menu with Copy.
+9. «Переслать» from the selection bar opens the chat picker, and the forwarded
+   message arrives on Beta reading «Переслано от Alpha».
 
 ## The server-side access check
 

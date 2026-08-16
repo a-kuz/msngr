@@ -22,9 +22,6 @@ group, каталог которого создаёт `AppContainer.resolve()`. 
 
 ## Прогон до фикса (код HEAD 8c30820)
 
-1. `01-before-register-screen.png` — чистая установка, экран регистрации.
-2. `02-before-registered.png` — регистрация `sessfix1`, открылся список чатов.
-3. `03-before-relaunch-lost-session.png` — `simctl terminate` + `launch`, снова
    экран регистрации. В контейнере группы: `.masterkey`, `msngr.sqlite`,
    `avatars`, `media-outgoing`; `session.json` отсутствует.
 
@@ -32,7 +29,5 @@ group, каталог которого создаёт `AppContainer.resolve()`. 
 
 Контейнер снесён (`simctl uninstall`), поставлена сборка с фиксом.
 
-4. `04-after-registered.png` — регистрация `sessfix2`. В контейнере группы
    появился `session.json` (155 байт).
-5. `05-after-relaunch-session-kept.png` — `simctl terminate` + `launch`,
    пользователь на месте, открывается список чатов.
