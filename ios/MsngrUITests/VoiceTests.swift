@@ -42,9 +42,11 @@ final class VoiceTests: XCTestCase {
         if field.waitForExistence(timeout: 5) {
             field.tap()
             field.typeText(username)
+            // the display name is the username: the chat row shows the name, so this is
+            // what lets the other device recognise the chat with the peer
             let displayName = app.textFields["reg.displayName"]
             displayName.tap()
-            displayName.typeText("UI Tester")
+            displayName.typeText(username)
             app.buttons["reg.submit"].tap()
         }
         // key generation on a loaded simulator takes its time, and the empty list keeps
@@ -52,8 +54,12 @@ final class VoiceTests: XCTestCase {
         XCTAssertTrue(chatList.waitForExistence(timeout: 120), "the chat list never opened")
     }
 
+    /// The row of a direct chat is titled with the peer's display name; a device
+    /// registered by an earlier run of this suite carries "UI Tester" instead of its
+    /// username, and is recognised by that name too.
     private func openPeerChat() {
-        let existing = app.cells.containing(NSPredicate(format: "label CONTAINS[c] %@", peer)).firstMatch
+        let byTitle = NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS 'UI Tester'", peer)
+        let existing = app.cells.containing(byTitle).firstMatch
         if existing.waitForExistence(timeout: 3) {
             existing.tap()
         } else {
@@ -99,12 +105,15 @@ final class VoiceTests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: "voice.play").firstMatch
     }
 
-    /// The newest message is the one lowest on the screen: the order of the bubbles in
-    /// the accessibility tree says nothing about the order they were sent in.
+    /// The play buttons on screen, oldest message first: the order of the bubbles in the
+    /// accessibility tree says nothing about the order they were sent in, the screen does.
+    private func playButtons() -> [XCUIElement] {
+        app.descendants(matching: .any).matching(identifier: "voice.play")
+            .allElementsBoundByIndex.sorted { $0.frame.maxY < $1.frame.maxY }
+    }
+
     private var newestPlay: XCUIElement {
-        let all = app.descendants(matching: .any)
-            .matching(identifier: "voice.play").allElementsBoundByIndex
-        return all.max { $0.frame.maxY < $1.frame.maxY } ?? play
+        playButtons().last ?? play
     }
 
     private var newestWave: XCUIElement {
@@ -280,5 +289,49 @@ final class VoiceTests: XCTestCase {
         wave.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5)).tap()
         Thread.sleep(forTimeInterval: 0.3)
         XCTAssertLessThan(progress(), 45, "a tap further back along the wave did not move the position")
+    }
+
+    /// The speed belongs to the player, not to the bubble: what the reader chose on one
+    /// message is what the next one starts at.
+    func testI_SpeedHoldsBetweenMessages() {
+        openPeerChat()
+        XCTAssertTrue(play.waitForExistence(timeout: 15), "no voice message in the chat")
+        let all = playButtons()
+        guard all.count >= 2 else {
+            return XCTFail("the chat needs two voice messages, it has \(all.count)")
+        }
+        all[all.count - 1].tap()
+        XCTAssertTrue(rateButton.waitForExistence(timeout: 5),
+                      "the message being played has no speed button")
+        rateButton.tap()
+        XCTAssertEqual(rateButton.label, "Скорость 1,5×", "the speed button did not step to 1,5×")
+        // the buttons move as the speed button appears next to the duration, so ask again
+        playButtons()[0].tap()
+        Thread.sleep(forTimeInterval: 0.7)
+        XCTAssertEqual(rateButton.label, "Скорость 1,5×",
+                       "the speed went back to 1× when another message started")
+        XCTAssertGreaterThan(progress(), 0, "the other message never started")
+    }
+
+    /// The receiving side of the same rule: a message that came in goes on playing while
+    /// the reader walks out to the list and back. The take is not recorded here, it is the
+    /// one the peer sent, which is the whole point of running this on the second device.
+    func testJ_IncomingPlaybackSurvivesTheList() {
+        openPeerChat()
+        XCTAssertTrue(play.waitForExistence(timeout: 15), "no voice message in the chat")
+        newestPlay.tap()
+        XCTAssertTrue(pauseButton.waitForExistence(timeout: 5), "the message never started")
+        Thread.sleep(forTimeInterval: 1)
+        let left = progress()
+        XCTAssertGreaterThan(left, 0, "the position stayed at the start")
+
+        app.buttons["chat.back"].tap()
+        XCTAssertTrue(chatList.waitForExistence(timeout: 10), "never got back to the list")
+        Thread.sleep(forTimeInterval: 1.5)
+        openPeerChat()
+        XCTAssertTrue(pauseButton.waitForExistence(timeout: 3),
+                      "the message stopped playing on the way out of the chat")
+        XCTAssertGreaterThan(progress(), left,
+                             "the position did not move while the chat was closed")
     }
 }
