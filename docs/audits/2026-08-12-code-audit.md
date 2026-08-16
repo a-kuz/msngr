@@ -20,7 +20,7 @@ with what the check found. Fixes made during that sweep are in
 | 10 | fixed | expiresAt никогда не применяется — автоудаление не работает |
 | 11 | fixed | identityChanged в группе: outbox blocked, но баннер только для direct |
 | 12 | fixed | Push не шлётся пока жив подвешенный сокет (live.length === 0) |
-| 13 | confirmed | Реакции/edit/skd растят unreadCount — бейдж без сообщения |
+| 13 | fixed | Реакции/edit/skd растят unreadCount — бейдж без сообщения |
 | 14 | fixed | Возврат из фона: нет форс-реконнекта/ресинка, stale connected |
 | 15 | fixed | Accept заявки офлайн: try? глотает, снапшот воскрешает заявку |
 | 16 | fixed | Краш: Dictionary(uniqueKeysWithValues:) на дубликатах id (дата-сепараторы) |
@@ -75,7 +75,7 @@ with what the check found. Fixes made during that sweep are in
 12. `UserSessionDO.ts:102` — push только при `live.length === 0`; iOS держит WS живым минуты после сворачивания.
     2026-08-16: fixed earlier. The push goes out for every non-service, non-muted, non-echo `msg` regardless of live sockets (`UserSessionDO.ts:168-187`). Test `server/test/smoke.mjs:750-752`.
 13. Каждый send получает seq (`ConversationDO.ts:167`), а `applyIncomingMessage` (`SyncEngine.swift:217-227`) растит `lastSeq`/`unreadCount` для любых фреймов.
-    2026-08-16: the client half was fixed earlier (`SyncEngine.advanceChat`, test `ServiceFrameTests.testServiceFrameDoesNotGrowUnread`), but the badge is the server's number and `/unread-count` counted `lastSeq − readMark`, service frames included. Fix pending.
+    2026-08-16: the client half was fixed earlier (`SyncEngine.advanceChat`, test `ServiceFrameTests.testServiceFrameDoesNotGrowUnread`), but the badge is the server's number and `/unread-count` counted `lastSeq − readMark`, service frames included — and the author's own messages with them. The chat now keeps a counting mark of its own, moved by the same rules the client moves its cursor by, while read receipts keep going by `readMarks` alone. Tests `server/test/smoke.mjs` ("service frame does not grow the badge", "own messages do not grow the author's badge").
 14. `AppState.scenePhaseChanged:105` только обнуляет лок; мёртвый сокет обнаружится через ping-таймаут или backoff до 30с (`WSClient.swift:139`).
     2026-08-16: fixed earlier. Foreground calls `appBecameActive` → `ws.nudge()`, which cancels the backoff and reconnects at once (`AppState.swift:259-281`, `SyncEngine.swift:143-157`, `WSClient.swift:238-248`); the backoff cap is 12 s.
 15. `ChatViewModel.acceptRequest:267` — `try? api.acceptChat` молча падает, локально `isRequest=0`; следующий снапшот вернёт `isRequest`.
