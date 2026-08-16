@@ -249,11 +249,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         if let tf = plan.textFrame, let text = plan.text {
             textView.isHidden = false
             textView.frame = tf
-            let color: UIColor = msg.deletedForAll
-                ? (plan.isOutgoing ? UIColor(Theme.outgoingMeta) : .secondaryLabel)
-                : (plan.isOutgoing ? UIColor(Theme.outgoingText) : .label)
-            textView.configure(text, color: color,
-                               linkColor: plan.isOutgoing ? UIColor(Theme.outgoingText) : UIColor(Theme.accent),
+            let colors = Self.textColors(plan: plan, deleted: msg.deletedForAll)
+            textView.configure(text, color: colors.text, linkColor: colors.link,
                                codeBackground: Self.codeBackground(outgoing: plan.isOutgoing))
         } else {
             textView.isHidden = true
@@ -446,6 +443,14 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
     /// Подложка блока кода: на исходящем баббле — светлее фона, на входящем —
     /// затемнение, различимое и в тёмной теме.
+    /// Цвета текста баббла: ими же красит свой живой текст приподнятое меню.
+    static func textColors(plan: BubbleLayoutPlan, deleted: Bool) -> (text: UIColor, link: UIColor) {
+        let text: UIColor = deleted
+            ? (plan.isOutgoing ? UIColor(Theme.outgoingMeta) : .secondaryLabel)
+            : (plan.isOutgoing ? UIColor(Theme.outgoingText) : .label)
+        return (text, plan.isOutgoing ? UIColor(Theme.outgoingText) : UIColor(Theme.accent))
+    }
+
     static func codeBackground(outgoing: Bool) -> UIColor {
         if outgoing { return UIColor(Theme.outgoingText).withAlphaComponent(0.16) }
         return UIColor { trait in
@@ -462,8 +467,13 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         false
     }
 
+    /// Ширина левой кромки экрана, принадлежащей возврату по свайпу.
+    static let backSwipeEdge: CGFloat = 24
+
     override func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
         guard let pan = g as? UIPanGestureRecognizer else { return true }
+        // жест от левой кромки экрана — это возврат: свайп-ответ его не перехватывает
+        if pan.location(in: nil).x < Self.backSwipeEdge { return false }
         let v = pan.velocity(in: contentView)
         return abs(v.x) > abs(v.y) && v.x > 0
     }
@@ -784,9 +794,21 @@ extension MessageCell {
         })
 
         let mine = msg.reactions.first(where: { $0.value.contains(OwnUser.id) })?.key
+        // текст приподнятого баббла выделяется протяжкой, поэтому он уходит
+        // в меню живым, а снимок рендерится без него
+        var selectable: MessageContextOverlay.SelectableText?
+        if let plan, let tf = plan.textFrame, let text = plan.text, !msg.deletedForAll {
+            let colors = Self.textColors(plan: plan, deleted: msg.deletedForAll)
+            selectable = .init(attributed: text, frame: tf, color: colors.text,
+                               linkColor: colors.link,
+                               codeBackground: Self.codeBackground(outgoing: plan.isOutgoing))
+        }
+        let textWasHidden = textView.isHidden
+        textView.isHidden = selectable != nil || textWasHidden
         MessageContextOverlay.present(over: bubbleView, in: window, isOutgoing: msg.isOutgoing,
-                                      myReaction: mine, items: items,
+                                      myReaction: mine, items: items, selectableText: selectable,
                                       onReact: { [weak self] emoji in self?.onReact?(emoji) })
+        textView.isHidden = textWasHidden
     }
 }
 
