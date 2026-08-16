@@ -28,7 +28,9 @@ struct SessionEndedView: View {
                 } label: {
                     Group {
                         if busy { ProgressView().tint(.white) }
-                        else { Text("Создать аккаунт заново").bold() }
+                        // the start screen offers both: a new account and
+                        // signing back in from a device still on this one
+                        else { Text("Начать заново").bold() }
                     }
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)

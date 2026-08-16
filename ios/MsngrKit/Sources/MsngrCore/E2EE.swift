@@ -181,6 +181,14 @@ public final class E2EEManager: @unchecked Sendable {
         try store.deleteSenderKeyOut(chatId: chatId)
     }
 
+    /// A device of ours is no longer ours: every group chain it was handed is
+    /// dropped, so the next group message runs on one it never held. The server
+    /// stops delivering to a revoked device, but a chain it already has would
+    /// still open a copy that reached it another way.
+    public func rotateAllSenderKeys() throws {
+        try store.deleteAllSenderKeyOut()
+    }
+
     /// Devices of every user in a single /devices call, grouped by userId. This asks for
     /// no prekey bundles, so it spends no one-time prekeys.
     private func deviceMap(userIds: Set<String>) async throws -> [String: [APIClient.DeviceDTO]] {
@@ -320,18 +328,3 @@ public final class E2EEManager: @unchecked Sendable {
 
 }
 
-// MARK: - base64url helpers
-
-extension Data {
-    public init?(base64urlEncoded s: String) {
-        var b = s.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        while b.count % 4 != 0 { b += "=" }
-        self.init(base64Encoded: b)
-    }
-    public func base64urlEncodedString() -> String {
-        base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-    }
-}

@@ -726,6 +726,120 @@ check("lg_revoked device token dead", lg_ginaAfter.status === 401);
 const lg_aliceStill = await api("/api/me", { token: alice.token });
 check("foreign device untouched", lg_aliceStill.ok && lg_aliceStill.user.id === alice.userId);
 
+// 21b. Linking a second device
+//
+// The server carries the sealed bundle without reading it, so the checks are
+// about the state machine: who may look a code up, who may approve, who may
+// claim, and that the account's keys are what a claimed device must present.
+async function provisionStart(name = "iPhone", platform = "ios", key = "eph_pub") {
+  return api("/api/provision/start", { body: { ephemeralKey: key, device: { name, platform } } });
+}
+async function provisionGet(id, provisionToken) {
+  return (await fetch(`${BASE}/api/provision/${id}`, {
+    headers: { "x-provision-token": provisionToken },
+  })).json();
+}
+async function provisionPost(id, path, provisionToken, body) {
+  return (await fetch(`${BASE}/api/provision/${id}/${path}`, {
+    method: "POST",
+    headers: { "x-provision-token": provisionToken, "content-type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+  })).json();
+}
+
+const lk_owner = await api("/api/register", { body: {
+  username: "link_" + suffix, displayName: "Hana", ...fakeKeys("h") } });
+const lk_ownerKeys = fakeKeys("h");
+
+const lk_start = await provisionStart();
+check("provision session opens without auth",
+  lk_start.ok && !!lk_start.provisionId && !!lk_start.provisionToken
+  && lk_start.code?.length === 8, JSON.stringify(lk_start));
+check("provision session starts pending",
+  (await provisionGet(lk_start.provisionId, lk_start.provisionToken)).status === "pending");
+const lk_wrongToken = await provisionGet(lk_start.provisionId, "not-the-token");
+check("provision status needs the session token", lk_wrongToken.error === "unauthorized");
+
+const lk_look = await api("/api/provision/lookup", {
+  token: lk_owner.token, body: { code: lk_start.code.toLowerCase() } });
+check("lookup resolves the code to the waiting device",
+  lk_look.ok && lk_look.provisionId === lk_start.provisionId
+  && lk_look.ephemeralKey === "eph_pub" && lk_look.device.name === "iPhone",
+  JSON.stringify(lk_look));
+const lk_lookMiss = await api("/api/provision/lookup", {
+  token: lk_owner.token, body: { code: "ZZZZZZZZ" } });
+check("unknown code is not found", lk_lookMiss.error === "provision_not_found");
+
+const lk_claimEarly = await provisionPost(lk_start.provisionId, "claim", lk_start.provisionToken,
+  { ...lk_ownerKeys, device: { name: "iPhone" } });
+check("claim before approval is refused", lk_claimEarly.error === "provision_not_approved");
+
+const lk_approve = await api(`/api/provision/${lk_start.provisionId}/approve`, {
+  token: lk_owner.token, body: { envelope: "sealed-bundle" } });
+check("approve accepted", lk_approve.ok, JSON.stringify(lk_approve));
+const lk_status = await provisionGet(lk_start.provisionId, lk_start.provisionToken);
+check("approved session hands the envelope to the new device",
+  lk_status.status === "approved" && lk_status.envelope === "sealed-bundle",
+  JSON.stringify(lk_status));
+const lk_reapprove = await api(`/api/provision/${lk_start.provisionId}/approve`, {
+  token: alice.token, body: { envelope: "someone-elses-bundle" } });
+check("an approved session cannot be approved again",
+  lk_reapprove.error === "provision_claimed", JSON.stringify(lk_reapprove));
+check("lookup no longer resolves an approved session",
+  (await api("/api/provision/lookup", { token: alice.token, body: { code: lk_start.code } }))
+    .error === "provision_claimed");
+
+const lk_alienKeys = fakeKeys("zz");
+const lk_alienClaim = await provisionPost(lk_start.provisionId, "claim", lk_start.provisionToken,
+  { ...lk_alienKeys, device: { name: "iPhone" } });
+check("a device presenting other identity keys is refused",
+  lk_alienClaim.error === "identity_mismatch", JSON.stringify(lk_alienClaim));
+
+const lk_claim = await provisionPost(lk_start.provisionId, "claim", lk_start.provisionToken,
+  { ...lk_ownerKeys, device: { name: "iPhone" } });
+check("claim mints a device on the approving account",
+  lk_claim.ok && lk_claim.userId === lk_owner.userId && !!lk_claim.deviceId
+  && lk_claim.deviceId !== lk_owner.deviceId && !!lk_claim.token, JSON.stringify(lk_claim));
+check("the new token is the account's",
+  (await api("/api/me", { token: lk_claim.token })).user.id === lk_owner.userId);
+const lk_sessions = await api("/api/sessions", { token: lk_owner.token });
+check("both devices are listed", lk_sessions.sessions.length === 2, JSON.stringify(lk_sessions));
+const lk_devices = await api(`/api/devices?ids=${lk_owner.userId}`, { token: alice.token });
+check("a peer sees both devices under one identity key",
+  lk_devices.devices.length === 2
+  && new Set(lk_devices.devices.map((d) => d.identitySignKey)).size === 1,
+  JSON.stringify(lk_devices));
+check("a spent session cannot be claimed twice",
+  (await provisionPost(lk_start.provisionId, "claim", lk_start.provisionToken,
+    { ...lk_ownerKeys })).error === "provision_claimed");
+
+// cancel takes the session down before anyone approves it
+const lk_cancelled = await provisionStart("Mac", "macos");
+check("cancel drops the session",
+  (await provisionPost(lk_cancelled.provisionId, "cancel", lk_cancelled.provisionToken)).ok);
+check("a cancelled code resolves to nothing",
+  (await api("/api/provision/lookup", { token: lk_owner.token, body: { code: lk_cancelled.code } }))
+    .error === "provision_not_found");
+
+// revocation takes the device's keys with it: the peer stops addressing it
+const lk_revoke = await api(`/api/sessions/${lk_claim.deviceId}/revoke`, {
+  token: lk_owner.token, body: {} });
+check("second device revoked", lk_revoke.ok, JSON.stringify(lk_revoke));
+const lk_devicesAfter = await api(`/api/devices?ids=${lk_owner.userId}`, { token: alice.token });
+check("a revoked device leaves the peer's device list",
+  lk_devicesAfter.devices.length === 1
+  && lk_devicesAfter.devices[0].deviceId === lk_owner.deviceId,
+  JSON.stringify(lk_devicesAfter));
+const lk_bundlesAfter = await api(`/api/users/${lk_owner.userId}/prekeys`, { token: alice.token });
+check("a revoked device hands out no more prekey bundles",
+  lk_bundlesAfter.bundles.length === 1
+  && lk_bundlesAfter.bundles[0].deviceId === lk_owner.deviceId,
+  JSON.stringify(lk_bundlesAfter));
+check("the revoked device's token is dead",
+  (await apiRaw("/api/me", { token: lk_claim.token })).status === 401);
+check("the remaining device is untouched",
+  (await api("/api/me", { token: lk_owner.token })).ok);
+
 // 22. Push path: a tiny receiver instead of APNs (port from PUSH_PORT, where APNS_HOST points)
 const pushes = [];
 // the receiver plays APNs: dead-token answers 410, flaky-token answers 429 on the
