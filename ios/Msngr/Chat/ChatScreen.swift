@@ -11,8 +11,6 @@ struct ChatScreen: View {
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showFilePicker = false
     @State private var forwardMessage: Message?
-    /// сообщение, для которого открыт режим выделения текста
-    @State private var selectingText: Message?
     @State private var forwardingSelection = false
     @State private var messagesVC = MessagesViewController()
     @EnvironmentObject var app: AppState
@@ -158,9 +156,6 @@ struct ChatScreen: View {
                 forwardingSelection = false
             }
         }
-        .sheet(item: $selectingText) { msg in
-            TextSelectionView(text: msg.text ?? "")
-        }
         .onReceive(NotificationCenter.default.publisher(for: .forwardRequested)) { note in
             forwardMessage = note.object as? Message
         }
@@ -260,7 +255,6 @@ struct ChatScreen: View {
                      onTapMedia: { (msg: Message, idx: Int, _: UIView) in
                          MediaViewerPresenter.present(message: msg, startIndex: idx)
                      },
-                     selectingText: $selectingText,
                      showScrollDown: $showScrollDown,
                      onSwipeBack: { dismiss() })
     }
@@ -682,7 +676,6 @@ struct MessagesView: UIViewControllerRepresentable {
     let selecting: Bool
     let selectedIds: Set<String>
     var onTapMedia: (Message, Int, UIView) -> Void
-    @Binding var selectingText: Message?
     @Binding var showScrollDown: Bool
     /// свайп от левой кромки: возврат к списку чатов
     var onSwipeBack: () -> Void
@@ -742,7 +735,6 @@ struct MessagesView: UIViewControllerRepresentable {
             switch action {
             case .reply: withAnimation(Theme.springFast) { model.replyingTo = msg }
             case .copy: MessageClipboard.copy(msg)
-            case .selectText: selectingText = msg
             case .edit: withAnimation(Theme.springFast) { model.editing = msg }
             case .pin: model.pin(msg)
             case .forward: NotificationCenter.default.post(name: .forwardRequested, object: msg)
