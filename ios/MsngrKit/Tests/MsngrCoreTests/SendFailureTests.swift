@@ -76,6 +76,22 @@ final class SendFailureTests: XCTestCase {
         XCTAssertEqual(state, "ready")
     }
 
+    /// Throwing the failed message away takes its queue entry with it: nothing
+    /// is left to send, and nothing holds on to the attachment it carried.
+    func testDeletingAFailedMessageDropsItsQueueEntry() async throws {
+        let db = try AppDatabase.openInMemory()
+        let engine = try makeEngine(db: db)
+        try await seedOutgoing(db, clientMsgId: "cm1")
+        await engine.apply(try errorFrame(SendFailure.sendFailed, clientMsgId: "cm1"))
+
+        await engine.deleteMessages(chatId: "c1", msgIds: ["cm1"], forAll: false)
+
+        let left = try await db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM outbox WHERE clientMsgId = 'cm1'")
+        }
+        XCTAssertEqual(left, 0)
+    }
+
     /// A message with no queue entry cannot be repeated, and says so instead of
     /// pretending it went out.
     func testRetrySendWithoutQueueEntryIsRefused() async throws {
