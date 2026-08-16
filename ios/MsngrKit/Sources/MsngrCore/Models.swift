@@ -36,29 +36,29 @@ public struct Chat: Codable, Identifiable, Equatable, FetchableRecord, Persistab
     public var createdBy: String
     public var createdAt: Double
     public var pinnedMsgId: String?
-    /// последний seq на сервере (из state) и последний локально применённый
+    /// last seq on the server (from state) and the last one applied locally
     public var lastSeq: Int
     public var syncedSeq: Int
-    /// докуда сервер доиграл журнал чата: подтверждённая порциями граница
-    /// догона, с неё он продолжается после обрыва
+    /// how far the server has replayed the chat journal: the catch-up boundary
+    /// acknowledged batch by batch, from which it resumes after a drop
     public var syncCursor: Int = 0
-    // локальные атрибуты
+    // local attributes
     public var unreadCount: Int = 0
     public var pinned: Bool = false
     public var muted: Bool = false
-    /// момент снятия mute; nil при muted — бессрочно
+    /// when mute expires; nil while muted means indefinitely
     public var mutedUntil: Double?
     public var archived: Bool = false
     public var draft: String?
     public var myReadUpTo: Int = 0
-    public var peerReadUpTo: Int = 0       // max по остальным участникам
+    public var peerReadUpTo: Int = 0       // max over the other members
     public var peerDeliveredUpTo: Int = 0
     public var ttlSeconds: Int = 0          // disappearing messages
-    /// message request: чат в «Заявках» (для получателя, пока не принял)
+    /// message request: the chat sits in Requests for the recipient until they accept
     public var isRequest: Bool = false
-    /// принял ли я этот чат (для direct-получателя)
+    /// whether I accepted this chat (recipient side of a direct chat)
     public var iAccepted: Bool = true
-    /// сортировка чат-листа
+    /// orders the chat list
     public var lastActivityAt: Double
 
     public init(id: String, kind: ChatKind, title: String?, createdBy: String,
@@ -106,7 +106,7 @@ public enum MessageKind: String, Codable {
 public struct MediaInfo: Codable, Equatable {
     public var type: String        // photo|video|file|voice
     public var mediaId: String
-    public var key: String         // b64 ключ
+    public var key: String         // b64 key
     public var hash: String        // b64 sha256 ciphertext
     public var size: Int
     public var mime: String
@@ -114,13 +114,14 @@ public struct MediaInfo: Codable, Equatable {
     public var w: Int?
     public var h: Int?
     public var dur: Double?
-    public var waveform: [Int]?    // 0..31, до 100 бакетов
+    public var waveform: [Int]?    // 0..31, up to 100 buckets
     public var blurhash: String?
-    public var thumbMediaId: String?  // превью-кадр видео (отдельный блоб)
+    public var thumbMediaId: String?  // video preview frame, a blob of its own
     public var thumbKey: String?
     public var thumbHash: String?
-    /// имя локального файла в MediaManager.pendingDir, пока медиа не выгружено
-    /// (mediaId пустой); outbox-воркер выгружает и заполняет mediaId/key/hash
+    /// name of the local file in MediaManager.pendingDir while the media is not
+    /// uploaded yet (mediaId empty); the outbox worker uploads it and fills in
+    /// mediaId, key and hash
     public var localPath: String?
     public var thumbLocalPath: String?
 
@@ -137,7 +138,7 @@ public struct MediaInfo: Codable, Equatable {
 public struct ReplyPreview: Codable, Equatable {
     public var msgId: String
     public var authorId: String
-    public var text: String     // короткое превью
+    public var text: String     // short preview
     public var kind: String
 
     public init(msgId: String, authorId: String, text: String, kind: String) {
@@ -159,11 +160,11 @@ public struct ForwardInfo: Codable, Equatable {
 
 public struct Message: Codable, Identifiable, Equatable, FetchableRecord, PersistableRecord {
     public static let databaseTableName = "message"
-    /// локальный id = clientMsgId для своих, msgId для чужих
+    /// local id: clientMsgId for own messages, msgId for everyone else's
     public var id: String
-    public var msgId: String?          // серверный id (null до ack)
+    public var msgId: String?          // server id, null until ack
     public var chatId: String
-    public var seq: Int?               // null до ack
+    public var seq: Int?               // null until ack
     public var clientMsgId: String?
     public var fromUserId: String
     public var sentAt: Double
@@ -181,7 +182,7 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
     /// reactions: emoji -> [userId]
     public var reactions: [String: [String]] = [:]
     public var expiresAt: Double?      // disappearing
-    /// причина отказа при status == .failed (коды в SendFailure)
+    /// why it failed when status == .failed (codes live in SendFailure)
     public var failReason: String?
 
     public init(id: String, chatId: String, fromUserId: String, sentAt: Double,
@@ -196,7 +197,7 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
         self.isOutgoing = isOutgoing
     }
 
-    // JSON-колонки
+    // JSON columns
     enum CodingKeys: String, CodingKey {
         case id, msgId, chatId, seq, clientMsgId, fromUserId, sentAt, serverTs,
              kind, text, media, album, replyTo, forward, edited, deletedForAll,
@@ -210,9 +211,9 @@ public struct OutboxItem: Codable, FetchableRecord, PersistableRecord {
     public var chatId: String
     public var createdAt: Double
     public var attempts: Int = 0
-    /// plaintext-контент (JSON ContentPayload) — шифруется при отправке
+    /// plaintext content (ContentPayload as JSON), encrypted when it is sent
     public var payload: Data
-    /// ready (ждёт отправки) | inflight (отправлено, ждёт ack)
+    /// ready (waiting to be sent) | inflight (sent, waiting for the ack)
     public var state: String = "ready"
 
     public init(clientMsgId: String, chatId: String, createdAt: Double, payload: Data, state: String = "ready") {
@@ -224,7 +225,7 @@ public struct OutboxItem: Codable, FetchableRecord, PersistableRecord {
     }
 }
 
-/// Расшифрованный контент сообщения (внутри E2E-конверта).
+/// Decrypted message content, the thing an E2E envelope carries.
 public struct ContentPayload: Codable {
     public var kind: String
     public var text: String?
@@ -233,7 +234,7 @@ public struct ContentPayload: Codable {
     public var replyTo: ReplyPreview?
     public var fwd: ForwardInfo?
     public var targetMsgId: String?   // edit / reaction / repairRequest
-    public var emoji: String?         // reaction (nil = снять)
+    public var emoji: String?         // reaction (nil clears it)
     public var ttlSeconds: Int?       // disappearing setting
     /// Encrypt pairwise to this user alone, whatever kind the chat is. Repair
     /// traffic concerns two devices, so it never travels on a group chain.
@@ -256,14 +257,14 @@ public struct ContentPayload: Codable {
     public init(kind: String) { self.kind = kind }
 }
 
-/// Сервисное действие, ждущее сети: read receipt, delete-for-all, accept заявки.
-/// Дренится воркером SyncEngine при connected; все действия идемпотентны.
+/// A service action waiting for the network: read receipt, delete-for-all, accepting
+/// a request. Drained by the SyncEngine worker once connected; all of them are idempotent.
 public struct PendingAction: Codable, FetchableRecord, PersistableRecord {
     public static let databaseTableName = "pendingAction"
     public var id: String
     public var type: String     // read | delete | accept
     public var chatId: String
-    public var payload: String  // JSON, формат зависит от type
+    public var payload: String  // JSON, shape depends on type
     public var createdAt: Double
     public var attempts: Int = 0
 

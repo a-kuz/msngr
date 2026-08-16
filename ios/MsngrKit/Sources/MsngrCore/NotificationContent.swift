@@ -1,13 +1,13 @@
 import Foundation
 
-/// Текстовая часть уведомления о сообщении: то, что видно в баннере и в шторке.
+/// The text of a message notification: what shows up in the banner and in the tray.
 public struct NotificationContent: Equatable, Sendable {
-    /// имя отправителя (в баннере его заменяет собой Communication Notification)
+    /// sender name (in the banner a Communication Notification takes its place)
     public var title: String
-    /// название группы; у 1:1 — nil
+    /// group title; nil for 1:1
     public var subtitle: String?
     public var body: String
-    /// группировка уведомлений одного чата = chatId
+    /// notifications of one chat are grouped by chatId
     public var threadIdentifier: String
 
     public init(title: String, subtitle: String?, body: String, threadIdentifier: String) {
@@ -18,11 +18,11 @@ public struct NotificationContent: Equatable, Sendable {
     }
 }
 
-/// Собирает уведомление из расшифрованного контента сообщения. Общий код
-/// приложения (локальные уведомления при живом WS) и NSE (мутация APNs-пуша),
-/// поэтому без UIKit и без обращений к БД: всё нужное приходит аргументами.
+/// Builds a notification out of decrypted message content. Shared by the app (local
+/// notifications while the socket is up) and the extension (mutating an APNs push),
+/// hence no UIKit and no database access: everything it needs arrives as arguments.
 public enum NotificationContentBuilder {
-    /// Чат, в который пришло сообщение.
+    /// The chat the message arrived in.
     public struct ChatInfo: Equatable, Sendable {
         public var chatId: String
         public var isGroup: Bool
@@ -35,7 +35,7 @@ public enum NotificationContentBuilder {
         }
     }
 
-    /// Отправитель сообщения.
+    /// Who sent the message.
     public struct SenderInfo: Equatable, Sendable {
         public var userId: String
         public var displayName: String
@@ -48,21 +48,21 @@ public enum NotificationContentBuilder {
         }
     }
 
-    /// Максимальная длина превью текста.
+    /// Longest text preview.
     public static let textLimit = 200
 
-    /// Тело уведомления, когда показ текста выключен настройкой приватности.
+    /// Notification body when the privacy setting hides message text.
     public static let hiddenTextBody = "Новое сообщение"
 
-    /// Виды контента, о которых уведомление не показывается: правка, реакция,
-    /// смена таймера, служебная запись ленты и уже удалённое сообщение.
+    /// Content kinds that raise no notification: an edit, a reaction, a timer change,
+    /// a service row of the feed and a message already deleted.
     public static let silentKinds: Set<String> = ["edit", "reaction", "disappearing", "system", "deleted"]
 
-    /// nil — уведомления по этому сообщению быть не должно.
+    /// nil means this message must raise no notification.
     /// - Parameters:
-    ///   - showsMessageText: настройка «показывать текст в уведомлениях»;
-    ///     при false остаются имя отправителя, название группы и аватар.
-    ///   - isDeleted: сообщение удалено для всех.
+    ///   - showsMessageText: the "show text in notifications" setting; when false the
+    ///     sender name, the group title and the avatar still show.
+    ///   - isDeleted: the message was deleted for everyone.
     public static func build(payload: ContentPayload,
                              chat: ChatInfo,
                              sender: SenderInfo,
@@ -79,7 +79,7 @@ public enum NotificationContentBuilder {
             threadIdentifier: chat.chatId)
     }
 
-    /// Заявка до принятия: имя отправителя и аватар остаются, содержимого нет.
+    /// A request before it is accepted: sender name and avatar stay, content does not.
     public static func requestContent(chat: ChatInfo, sender: SenderInfo) -> NotificationContent {
         let name = sender.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         return NotificationContent(
@@ -89,7 +89,7 @@ public enum NotificationContentBuilder {
             threadIdentifier: chat.chatId)
     }
 
-    /// Тот же билдер для строки сообщения из локальной БД (текст уже расшифрован).
+    /// The same builder over a message row from the local database, already decrypted.
     public static func build(message: Message,
                              chat: ChatInfo,
                              sender: SenderInfo,
@@ -102,7 +102,7 @@ public enum NotificationContentBuilder {
                      showsMessageText: showsMessageText, isDeleted: message.deletedForAll)
     }
 
-    /// Однострочное превью контента: текст или плейсхолдер медиа с подписью.
+    /// One-line preview of the content: the text, or a media placeholder plus caption.
     public static func preview(_ payload: ContentPayload) -> String {
         let caption = truncate(payload.text ?? "")
         switch payload.kind {
@@ -123,13 +123,13 @@ public enum NotificationContentBuilder {
         caption.isEmpty ? placeholder : "\(placeholder): \(caption)"
     }
 
-    /// Схлопывает переносы и обрезает по границе слова, добавляя многоточие.
+    /// Collapses line breaks and cuts on a word boundary, adding an ellipsis.
     public static func truncate(_ text: String, limit: Int = textLimit) -> String {
         let flat = text.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).joined(separator: " ")
         guard flat.count > limit else { return flat }
         let head = String(flat.prefix(limit))
-        // граница слова: последний пробел в отрезанном куске; если слово одно —
-        // режем по лимиту, иначе уведомление осталось бы без текста
+        // word boundary: the last space in the cut-off piece. A single long word is cut
+        // at the limit instead, otherwise the notification would come out with no text
         if let space = head.lastIndex(of: " ") {
             let word = head[head.startIndex..<space]
                 .trimmingCharacters(in: CharacterSet(charactersIn: " ,;:-—"))
@@ -139,12 +139,12 @@ public enum NotificationContentBuilder {
     }
 }
 
-/// Настройки приватности уведомлений. Хранятся в defaults группы приложения,
-/// чтобы их видел и NSE.
+/// Notification privacy settings. They live in the app group defaults so that the
+/// extension sees them too.
 public enum NotificationPreferences {
     public static let showsMessageTextKey = "notifications.showsMessageText"
 
-    /// По умолчанию текст показывается.
+    /// Text is shown by default.
     public static func showsMessageText(in defaults: UserDefaults) -> Bool {
         defaults.object(forKey: showsMessageTextKey) as? Bool ?? true
     }

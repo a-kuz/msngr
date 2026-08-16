@@ -1,7 +1,7 @@
 import Foundation
 
-/// Размещение постоянных данных: БД, мастер-ключ, аватары для уведомлений,
-/// исходники офлайн-вложений. Все пути считаются от одного корня.
+/// Where persistent data lives: the database, the master key, avatars for
+/// notifications, sources of offline attachments. Every path hangs off one root.
 public struct StorageLocation: Sendable, Equatable {
     public let root: URL
 
@@ -13,21 +13,21 @@ public struct StorageLocation: Sendable, Equatable {
 
     public var databaseURL: URL { root.appendingPathComponent(Self.databaseFileName) }
     public var masterKeyURL: URL { root.appendingPathComponent(Self.masterKeyFileName) }
-    /// Сессия клиента: userId, deviceId, токен.
+    /// Client session: userId, deviceId, token.
     public var sessionURL: URL { root.appendingPathComponent(Self.sessionFileName) }
-    /// Аватары файлами: NSE читает байты локально, без сети.
+    /// Avatars as files, so the extension reads the bytes locally without the network.
     public var avatarsDir: URL { root.appendingPathComponent("avatars") }
-    /// Исходники вложений, приложенных офлайн: переживают чистку Caches.
+    /// Sources of attachments picked while offline: these survive a Caches purge.
     public var pendingMediaDir: URL { root.appendingPathComponent("media-outgoing") }
-    /// Трасса расширения уведомлений: его процесс не виден ни отладчику, ни
-    /// консоли приложения.
+    /// Trace of the notification extension: its process shows up neither in the
+    /// debugger nor in the app's console.
     public var nseJournalURL: URL { root.appendingPathComponent(NotificationJournal.fileName) }
     /// The file the crypto gate is locked on: the app and the extension step
     /// one ratchet, and the lock is what keeps them from stepping it at once.
     public var cryptoGateURL: URL { root.appendingPathComponent(CryptoGate.fileName) }
 
-    /// Содержимое размещения, которое переносится при смене корня. Файл БД —
-    /// последний: его наличие в новом размещении означает, что перенос завершён.
+    /// What moves when the root changes. The database file goes last: its presence
+    /// in the new location is what marks the move as finished.
     public static let movableItems = [
         sessionFileName,
         masterKeyFileName,
@@ -40,29 +40,25 @@ public struct StorageLocation: Sendable, Equatable {
     ]
 }
 
-/// Единая точка вычисления путей хранилища.
-///
-/// Приложение и Notification Service Extension работают с одними и теми же
-/// файлами через контейнер app group. Там, где группа недоступна (macOS,
-/// юнит-тесты), используется Application Support.
+/// The single place storage paths are computed. Where the app group container is
+/// unavailable (macOS, unit tests), Application Support stands in for it.
 public enum AppContainer {
     public static let appGroupIdentifier = "group.ai.enface.msngr"
 
-    /// Application Support: размещение до перехода в группу и фолбэк без группы.
+    /// Application Support: the location used before the group, and the fallback without it.
     public static func legacyLocation(fileManager: FileManager = .default) -> StorageLocation {
         StorageLocation(root: fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0])
     }
 
-    /// Контейнер app group, если entitlement выдан и контейнер создан системой.
+    /// The app group container, if the entitlement is granted and the system created it.
     public static func groupLocation(fileManager: FileManager = .default) -> StorageLocation? {
         fileManager.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)
             .map(StorageLocation.init(root:))
     }
 
-    /// Возвращает размещение, с которым работает приложение: контейнер группы,
-    /// если он доступен, иначе Application Support. Данные из Application Support
-    /// переносятся в группу; если перенос не удался, работа продолжается со
-    /// старого размещения.
+    /// The location the app works with: the group container when it is available,
+    /// Application Support otherwise. Data in Application Support is moved into the
+    /// group; if the move fails, work continues from the old location.
     public static func resolve(fileManager: FileManager = .default) -> StorageLocation {
         let legacy = legacyLocation(fileManager: fileManager)
         if let group = groupLocation(fileManager: fileManager) {
@@ -72,21 +68,22 @@ public enum AppContainer {
                 try prepare(group, fileManager: fileManager)
                 return group
             } catch {
-                MsngrLog.storage.error("контейнер группы недоступен, работаем в Application Support: \(error)")
+                MsngrLog.storage.error("group container unavailable, staying in Application Support: \(error)")
             }
         }
-        // Application Support в свежем контейнере не существует: каталог создаётся здесь,
-        // иначе запись мастер-ключа, БД и сессии упадёт на первом же обращении.
+        // Application Support does not exist in a fresh container: the directory is
+        // created here, otherwise writing the master key, the database and the session
+        // fails on the very first access.
         do {
             try prepare(legacy, fileManager: fileManager)
         } catch {
-            MsngrLog.storage.error("не удалось подготовить \(legacy.root.path): \(error)")
+            MsngrLog.storage.error("failed to prepare \(legacy.root.path): \(error)")
         }
         return legacy
     }
 
-    /// Создаёт каталоги размещения и выставляет защиту данных, при которой файлы
-    /// доступны расширению после первой разблокировки устройства.
+    /// Creates the directories and sets the data protection class that keeps the files
+    /// readable by the extension after the device has been unlocked once.
     public static func prepare(_ location: StorageLocation, fileManager: FileManager = .default) throws {
         try fileManager.createDirectory(at: location.root, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: location.avatarsDir, withIntermediateDirectories: true)
@@ -99,15 +96,15 @@ public enum AppContainer {
         }
     }
 
-    /// Стирает данные размещения: БД, мастер-ключ, аватары, исходники вложений.
-    /// Каталоги остаются пустыми и готовыми к работе, поэтому после логаута
-    /// приложение регистрируется заново без перезапуска.
+    /// Erases the data: database, master key, avatars, attachment sources. The
+    /// directories stay in place and ready, so after a logout the app can register
+    /// again without a restart.
     public static func wipe(_ location: StorageLocation, fileManager: FileManager = .default) {
         for name in StorageLocation.movableItems {
             try? fileManager.removeItem(at: location.root.appendingPathComponent(name))
         }
-        // каталоги пересоздаются под новую регистрацию; отказ здесь означает
-        // недоступное размещение — тогда следующая запись сессии сообщит об этом
+        // the directories are recreated for the next registration; a failure here means
+        // the location is unreachable, and the next session write reports that
         try? prepare(location, fileManager: fileManager)
     }
 
@@ -120,22 +117,22 @@ public enum AppContainer {
     }
 }
 
-/// Перенос данных между размещениями при смене корня хранилища.
+/// Moves data between locations when the storage root changes.
 public enum StorageMigration {
     public enum Outcome: Sendable, Equatable {
         case notNeeded
         case migrated([String])
     }
 
-    /// Копирует содержимое старого размещения во временный каталог внутри нового,
-    /// перемещает на место и только после этого удаляет оригиналы. Ошибка на любом
-    /// шаге оставляет старое размещение нетронутым и пробрасывается наверх.
+    /// Copies the old location into a staging directory inside the new one, moves it
+    /// into place, and only then removes the originals. A failure at any step leaves the
+    /// old location untouched and is rethrown.
     ///
-    /// Ничего не делает, если новое размещение уже занято (там есть БД) или если
-    /// переносить нечего — повторный запуск безопасен. Прерванный перенос
-    /// доводится до конца на следующем запуске: БД перемещается последней, так
-    /// что до неё новое размещение считается незанятым, а остатки в нём
-    /// заменяются оригиналами.
+    /// Does nothing if the new location is already taken (a database is there) or if
+    /// there is nothing to move, so running it again is safe. An interrupted move is
+    /// finished on the next launch: the database moves last, so until it lands the new
+    /// location still counts as free and whatever is left there is overwritten by the
+    /// originals.
     @discardableResult
     public static func run(from old: StorageLocation,
                            to new: StorageLocation,

@@ -13,15 +13,16 @@ public enum AppDatabaseError: Error {
 }
 
 public enum AppDatabase {
-    /// Открывает (и мигрирует) БД. Файл шифруется на уровне FS (Data Protection),
-    /// ratchet-состояния дополнительно шифруются ключом из Keychain (см. CryptoStore).
+    /// Opens the database and migrates it. The file itself is protected by the
+    /// filesystem (Data Protection); ratchet state is sealed on top of that with the
+    /// master key.
     ///
     /// Throws `AppDatabaseError.schemaFromNewerVersion` when the file is ahead
     /// of this build.
     public static func open(at url: URL) throws -> DatabaseQueue {
         var config = Configuration()
-        // приложение и расширение уведомлений пишут в один файл из разных
-        // процессов: без ожидания чужой транзакции запись падает сразу
+        // the app and the notification extension write to one file from separate
+        // processes: without waiting on the other's transaction a write fails at once
         config.busyMode = .timeout(5)
         // A write transaction takes its lock at the start rather than upgrading
         // to it halfway: the extension reads a ratchet session and stores the
@@ -127,14 +128,14 @@ public enum AppDatabase {
             try db.create(table: "ratchetSession") { t in
                 t.column("peerUserId", .text).notNull()
                 t.column("peerDeviceId", .text).notNull()
-                t.column("state", .blob).notNull()   // зашифрованный JSON DoubleRatchetSession
+                t.column("state", .blob).notNull()   // sealed JSON of DoubleRatchetSession
                 t.column("theirIdentityDH", .text).notNull()
                 t.primaryKey(["peerUserId", "peerDeviceId"])
             }
             try db.create(table: "senderKeyOut") { t in
                 t.column("chatId", .text).primaryKey()
                 t.column("state", .blob).notNull()
-                // кому цепочка уже доставлена: JSON ["userId/deviceId"]
+                // who already has the chain: JSON ["userId/deviceId"]
                 t.column("distributedTo", .text).notNull().defaults(to: "[]")
             }
             try db.create(table: "senderKeyIn") { t in
@@ -145,17 +146,17 @@ public enum AppDatabase {
                 t.primaryKey(["chatId", "senderUserId", "keyId"])
             }
             try db.create(table: "trustedIdentity") { t in
-                // TOFU: первый увиденный identity-ключ; смена → предупреждение
+                // TOFU: the first identity key seen; a change raises a warning
                 t.column("userId", .text).primaryKey()
                 t.column("identitySigning", .text).notNull()
                 t.column("verified", .boolean).notNull().defaults(to: false)
-                t.column("changedPending", .text) // новый ключ, ждущий подтверждения
+                t.column("changedPending", .text) // the new key, awaiting acceptance
             }
             try db.create(table: "kv") { t in
                 t.column("key", .text).primaryKey()
                 t.column("value", .text).notNull()
             }
-            // FTS-поиск по тексту сообщений
+            // full-text search over message text
             try db.create(virtualTable: "messageFts", using: FTS4()) { t in
                 t.synchronize(withTable: "message")
                 t.tokenizer = .unicode61()
@@ -163,15 +164,15 @@ public enum AppDatabase {
             }
         }
         m.registerMigration("v3-sessionArchive") { db in
-            // при одновременной инициации (glare) сессий может быть несколько:
-            // активная для отправки + архивные, которыми ещё расшифровываются входящие
+            // when both sides initiate at once (glare) there can be several sessions:
+            // the active one for sending, plus archived ones that still open incoming
             try db.alter(table: "ratchetSession") { t in
                 t.add(column: "archived", .blob)
             }
         }
         m.registerMigration("v2-pendingDecrypt") { db in
-            // сообщения, пришедшие раньше своего ключа (напр. групповое до sender-key):
-            // хранятся сырыми и переобрабатываются, когда ключ приходит
+            // messages that arrived ahead of their key (a group message before the
+            // sender key): kept raw and processed again once the key shows up
             try db.create(table: "pendingDecrypt") { t in
                 t.column("chatId", .text).notNull().indexed()
                 t.column("msgId", .text).notNull()
@@ -180,13 +181,13 @@ public enum AppDatabase {
                 t.column("fromDevice", .text).notNull()
                 t.column("sentAt", .double).notNull()
                 t.column("ts", .double).notNull()
-                t.column("body", .blob).notNull()  // JSON-конверт
+                t.column("body", .blob).notNull()  // the envelope as JSON
                 t.primaryKey(["chatId", "msgId"])
             }
         }
         m.registerMigration("v4-pendingAction") { db in
-            // сервисные действия (read receipt, delete-for-all, accept заявки),
-            // ждущие сети: дренятся воркером при connected
+            // service actions waiting for the network (read receipt, delete-for-all,
+            // accepting a request): drained by the worker once connected
             try db.create(table: "pendingAction") { t in
                 t.column("id", .text).primaryKey()
                 t.column("type", .text).notNull()
@@ -197,29 +198,30 @@ public enum AppDatabase {
             }
         }
         m.registerMigration("v5-pendingApply") { db in
-            // edit/reaction/deleted, чьё целевое сообщение ещё не в БД
-            // (например, оригинал ждёт ключа в pendingDecrypt):
-            // применяются, когда строка сообщения появляется
+            // edit, reaction or deletion whose target message is not in the database
+            // yet (the original may be waiting for its key in pendingDecrypt):
+            // applied once the message row appears
             try db.create(table: "pendingApply") { t in
                 t.column("chatId", .text).notNull()
                 t.column("targetMsgId", .text).notNull()
                 t.column("kind", .text).notNull()    // edit | reaction | deleted
                 t.column("fromUserId", .text).notNull()
-                t.column("payload", .text).notNull() // JSON ContentPayload; для deleted — "{}"
+                t.column("payload", .text).notNull() // ContentPayload as JSON; "{}" for deleted
                 t.column("seq", .integer)
                 t.primaryKey(["chatId", "targetMsgId", "kind", "fromUserId"])
             }
         }
         m.registerMigration("v6-failReason") { db in
-            // причина, по которой исходящее осталось неотправленным (коды в SendFailure):
-            // UI объясняет отказ вместо вечного «отправляется»
+            // why an outgoing message was never sent (codes live in SendFailure), so the
+            // UI can state what happened instead of showing "sending" forever
             try db.alter(table: "message") { t in
                 t.add(column: "failReason", .text)
             }
         }
 
         m.registerMigration("v7-mutedUntil") { db in
-            // mute со сроком: до этого момента чат молчит, дальше флаг снимается
+            // mute with an expiry: the chat stays silent until that moment, then the
+            // flag comes off
             try db.alter(table: "chat") { t in
                 t.add(column: "mutedUntil", .double)
             }
@@ -381,7 +383,7 @@ extension DatabaseMigrator {
     }
 }
 
-// JSON-кодирование сложных колонок Message
+// JSON encoding for the composite columns of Message
 extension Message {
     public init(row: Row) throws {
         let dec = JSONDecoder()
