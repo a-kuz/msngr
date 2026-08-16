@@ -225,11 +225,13 @@ struct InputBar: View {
                 let images = pendingImages
                 text = ""
                 withAnimation(Theme.springFast) { pendingImages = [] }
+                // emptying the field from code raises no delegate callback, so the
+                // typing indicator on the other side is taken down by hand
+                model.textChanged("")
                 guard !images.isEmpty else {
                     withAnimation(Theme.springFast) { model.send(text: t) }
                     return
                 }
-                model.textChanged("")
                 onSendImages(images, t.trimmingCharacters(in: .whitespacesAndNewlines))
             } label: {
                 Image(systemName: "arrow.up.circle.fill")

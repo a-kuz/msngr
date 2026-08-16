@@ -125,7 +125,10 @@ final class ChatListModel: ObservableObject {
                         self.refreshTyping()
                     }
                 } else {
-                    self.typing.removeValue(forKey: ev.chatId)
+                    // a stop for a chat that was not typing costs nothing: every
+                    // incoming message brings one, and rebuilding the list on each
+                    // would put the whole catch-up through the main thread
+                    guard self.typing.removeValue(forKey: ev.chatId) != nil else { continue }
                     self.typingClearTasks[ev.chatId]?.cancel()
                     self.typingClearTasks[ev.chatId] = nil
                 }
@@ -140,11 +143,15 @@ final class ChatListModel: ObservableObject {
     }
 
     private func refreshTyping() {
-        items = items.map { item in
-            var it = item
-            it.typingText = typingLabel(it.chat.id, it.peer)
-            return it
+        func relabel(_ list: [ChatListItem]) -> [ChatListItem] {
+            list.map { item in
+                var it = item
+                it.typingText = typingLabel(it.chat.id, it.peer)
+                return it
+            }
         }
+        items = relabel(items)
+        archived = relabel(archived)
     }
 
     // MARK: - Folders

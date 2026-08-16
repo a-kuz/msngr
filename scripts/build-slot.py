@@ -29,17 +29,25 @@ def take():
     waited = 0
     while True:
         for n in range(SLOTS):
-            handle = (DIR / f"slot{n}").open("w")
+            # opened for update rather than truncated: "w" would empty the file
+            # before the lock is even attempted, wiping the holder that is still
+            # in there
+            handle = (DIR / f"slot{n}").open("a+")
             try:
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
                 handle.close()
                 continue
+            handle.seek(0)
+            handle.truncate()
             handle.write(f"{os.getpid()} {' '.join(sys.argv[1:])[:200]}\n")
             handle.flush()
             return handle
         if waited % REPORT_EVERY == 0:
-            print(f"waiting for a build slot ({SLOTS} in use), {waited}s", file=sys.stderr)
+            held = " | ".join(
+                (DIR / f"slot{n}").read_text().strip()[:90] for n in range(SLOTS)
+                if (DIR / f"slot{n}").exists())
+            print(f"waiting {waited}s for a build slot; held by: {held}", file=sys.stderr)
         time.sleep(1)
         waited += 1
 

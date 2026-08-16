@@ -9,6 +9,10 @@ struct RootView: View {
     }
 }
 
+/// The archive as a point on the navigation path; a chat is a String there, so
+/// the archive needs a type of its own.
+struct ArchiveRoute: Hashable {}
+
 struct ChatListView: View {
     @EnvironmentObject var app: AppState
     @StateObject private var model = ChatListModel()
@@ -75,6 +79,9 @@ struct ChatListView: View {
             }
             .navigationDestination(for: String.self) { chatId in
                 ChatScreen(chatId: chatId)
+            }
+            .navigationDestination(for: ArchiveRoute.self) { _ in
+                ArchiveView(model: model)
             }
             .sheet(isPresented: $showNewChat) {
                 NewChatView { chatId in
@@ -305,7 +312,9 @@ struct ChatListView: View {
                 ChatRow(chatId: item.chat.id) {
                     ChatRowView(item: item, ownUserId: app.session?.userId ?? "")
                 }
-                .swipeActions(edge: .trailing) {
+                // no full swipe: the same distance switches the tab, and blocking
+                // by accident takes the chat away for good
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                     Button { model.blockRequest(item) } label: {
                         Label("Заблокировать", systemImage: "hand.raised.fill")
                     }.tint(.red)
@@ -319,10 +328,11 @@ struct ChatListView: View {
         }
     }
 
+    /// The archive goes onto the same path as the chats: a link that carries its
+    /// destination in itself puts the stack out of step with the path, and a chat
+    /// opened out of the archive then arrives one tap late or not at all.
     private var archiveRow: some View {
-        NavigationLink {
-            ArchiveView(model: model)
-        } label: {
+        NavigationLink(value: ArchiveRoute()) {
             HStack {
                 Image(systemName: "archivebox")
                     .foregroundStyle(.secondary)
@@ -372,10 +382,10 @@ struct ArchiveView: View {
     var body: some View {
         List {
             ForEach(model.archived) { item in
-                NavigationLink(value: item.chat.id) {
+                ChatRow(chatId: item.chat.id) {
                     ChatRowView(item: item, ownUserId: app.session?.userId ?? "")
                 }
-                .swipeActions(edge: .trailing) {
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                     Button { model.toggleArchive(item) } label: {
                         Label("Из архива", systemImage: "tray.and.arrow.up.fill")
                     }.tint(.blue)
@@ -383,6 +393,15 @@ struct ArchiveView: View {
             }
         }
         .listStyle(.plain)
+        .overlay {
+            if model.archived.isEmpty {
+                ContentUnavailableView {
+                    Label("В архиве пусто", systemImage: "archivebox")
+                } description: {
+                    Text("Чаты, убранные в архив, будут здесь")
+                }
+            }
+        }
         .navigationTitle("Архив")
     }
 }
