@@ -1,4 +1,4 @@
-import type { Env, ChatState, ChatMember, StoredMsg, ServerFrame } from "../types";
+import type { Env, ChatState, ChatMember, StoredMsg, ServerFrame, PublicUser } from "../types";
 import { ulid, json, err, seqKey, nowSec, shouldArmAlarm } from "../util";
 import {
   newCounters, snapshot, diff, logPerf, wrapState, wrapDB, wrapStub, type PerfCounters,
@@ -842,6 +842,20 @@ export class ConversationDO implements DurableObject {
         this.meta = meta;
         await this.state.storage.put("meta", meta);
         await this.broadcastChat("pinned");
+        return json({ ok: true });
+      }
+
+      case "/profile": {
+        // from UserSessionDO: a member's card changed. Unlike presence this is
+        // public, so an unaccepted request sees it too — the request screen
+        // already shows the sender's name and avatar.
+        const b = (await req.json()) as { userId: string; user: PublicUser };
+        const members = await this.loadMembers();
+        if (!members.has(b.userId)) return json({ ok: true });
+        await this.fanout(
+          { t: "profile", user: b.user },
+          { except: b.userId, skip: await this.blockedPeers(b.userId) }
+        );
         return json({ ok: true });
       }
 
