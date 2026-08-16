@@ -6,16 +6,20 @@ import MsngrCore
 struct ChatScreen: View {
     let chatId: String
     @StateObject private var model: ChatViewModel
+    /// Search inside this chat: the field in the header, the matches over the feed.
+    @StateObject private var search: ChatSearchSession
+    @State private var searching = false
+    @FocusState private var searchFocused: Bool
+    /// The message the reader was looking at when search opened; nil means they
+    /// were at the end of the conversation.
+    @State private var searchReturn: String?
+    /// A match was actually opened, so leaving search has somewhere to go back from.
+    @State private var searchMoved = false
     @State private var text = ""
     @State private var showScrollDown = false
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showFilePicker = false
     @State private var forwardMessage: Message?
-    /// message whose text selection sheet is open
-    @State private var selectingText: Message?
-    /// message the delete confirmation is asked for
-    @State private var deleteCandidate: Message?
-    @State private var confirmDeleteSelection = false
     @State private var forwardingSelection = false
     @State private var messagesVC = MessagesViewController()
     @EnvironmentObject var app: AppState
@@ -25,6 +29,7 @@ struct ChatScreen: View {
     init(chatId: String) {
         self.chatId = chatId
         _model = StateObject(wrappedValue: ChatViewModel(chatId: chatId))
+        _search = StateObject(wrappedValue: ChatSearchSession(chatId: chatId))
     }
 
     var body: some View {
@@ -35,20 +40,38 @@ struct ChatScreen: View {
                 if model.contentHidden {
                     requestCard
                 } else {
-                    if let pinned = model.pinnedMessage {
+                    if searching { searchHeader }
+                    if let pinned = model.pinnedMessage, !searching {
                         pinnedBar(pinned)
                     }
                     messagesList
+                        // the feed runs under the header: a message leaving it
+                        // dissolves in its band instead of breaking off at the
+                        // edge. The feed's insets are still counted from the safe
+                        // area, so at rest the messages stay below the header
+                        .ignoresSafeArea(.container, edges: .top)
                         .overlay {
                             if model.chat != nil, model.feed.isEmpty {
                                 emptyChatHint
                             }
                         }
-                    if model.keyChangePending && !model.selecting {
+                        .overlay {
+                            if searching, search.resultsShown, !search.query.isEmpty {
+                                searchResults
+                            }
+                        }
+                    if model.keyChangePending && !model.selecting && !searching {
                         keyChangeBanner
                     }
                     if model.selecting {
-                        selectionActionBar
+                        if model.confirmingDelete {
+                            deleteConfirmBar
+                        } else {
+                            selectionActionBar
+                        }
+                    } else if searching {
+                        ChatSearchMatchBar(session: search, onStep: stepSearch,
+                                           onShowList: { search.resultsShown = true })
                     } else {
                         InputBar(model: model, text: $text,
                                  onAttachPhoto: { photoPickerPresented = true },
@@ -61,10 +84,15 @@ struct ChatScreen: View {
                 }
             }
             if !model.selecting { scrollDownButton }
-            headerFade
+            // the fade dissolves bubbles running under the navigation bar; while
+            // searching the bar is gone and the field stands in its own row
+            if !searching { headerFade }
         }
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
+        // the search field lives in the screen itself: focus does not reach a text
+        // field hosted by the navigation bar, and the keyboard has to come up with it
+        .toolbar(searching ? .hidden : .visible, for: .navigationBar)
         .toolbar {
             if model.selecting {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -80,21 +108,31 @@ struct ChatScreen: View {
                         .textRole(Theme.Text.headerTitle)
                         .accessibilityIdentifier("chat.selection.count")
                 }
-            } else {
+            } else if !searching {
                 // own button instead of the system one: going back is the header's
                 // primary action and has to read before anything else in it
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button { dismiss() } label: {
-                        Image(systemName: "chevron.left")
-                            .font(Theme.glyph(22, max: 28).weight(.semibold))
+                        Image(systemName: "chevron.backward")
+                            .font(Theme.glyph(34, max: 40).weight(.bold))
                             .foregroundStyle(Theme.accent)
-                            .frame(width: 44, height: 44)
+                            .frame(width: 56, height: 44)
                             .contentShape(Rectangle())
                     }
                     .accessibilityLabel("Назад")
                     .accessibilityIdentifier("chat.back")
                 }
                 ToolbarItem(placement: .principal) { header }
+                if !model.contentHidden {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button { openSearch() } label: {
+                            Image(systemName: "magnifyingglass")
+                                .font(Theme.glyph(17, max: 24))
+                        }
+                        .accessibilityLabel("Поиск по чату")
+                        .accessibilityIdentifier("chat.search.open")
+                    }
+                }
             }
         }
         .onAppear {
@@ -112,6 +150,11 @@ struct ChatScreen: View {
         // in once the chat has actually arrived (and still only into an empty field)
         .onChange(of: model.chat?.id) { _, _ in
             if text.isEmpty, let draft = model.chat?.draft { text = draft }
+        }
+        // back into the field from a match: the matches are what the reader wants
+        // to see again
+        .onChange(of: searchFocused) { _, focused in
+            if focused { search.resultsShown = true }
         }
         .onDisappear {
             let draft = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -159,9 +202,6 @@ struct ChatScreen: View {
                 forwardingSelection = false
             }
         }
-        .sheet(item: $selectingText) { msg in
-            TextSelectionView(text: msg.text ?? "")
-        }
         .onReceive(NotificationCenter.default.publisher(for: .forwardRequested)) { note in
             forwardMessage = note.object as? Message
         }
@@ -177,34 +217,6 @@ struct ChatScreen: View {
         } message: {
             Text(model.sendFailure ?? "")
         }
-        // deleting a single message from the context menu
-        .confirmationDialog("Удалить сообщение?", isPresented: deleteCandidateBinding,
-                            titleVisibility: .visible) {
-            if deleteCandidate?.isOutgoing == true {
-                Button("Удалить у всех", role: .destructive) {
-                    if let msg = deleteCandidate { model.delete(msg, forAll: true) }
-                    deleteCandidate = nil
-                }
-            }
-            Button("Удалить у меня", role: .destructive) {
-                if let msg = deleteCandidate { model.delete(msg, forAll: false) }
-                deleteCandidate = nil
-            }
-            Button("Отмена", role: .cancel) { deleteCandidate = nil }
-        }
-        // deleting the messages picked in multi-select
-        .confirmationDialog(deleteSelectionTitle, isPresented: $confirmDeleteSelection,
-                            titleVisibility: .visible) {
-            if model.canDeleteSelectedForAll {
-                Button("Удалить у всех", role: .destructive) {
-                    withAnimation(Theme.springFast) { model.deleteSelected(forAll: true) }
-                }
-            }
-            Button("Удалить у меня", role: .destructive) {
-                withAnimation(Theme.springFast) { model.deleteSelected(forAll: false) }
-            }
-            Button("Отмена", role: .cancel) {}
-        }
     }
 
     private var sendFailureBinding: Binding<Bool> {
@@ -212,20 +224,45 @@ struct ChatScreen: View {
                 set: { if !$0 { model.sendFailure = nil } })
     }
 
-    private var deleteCandidateBinding: Binding<Bool> {
-        Binding(get: { deleteCandidate != nil },
-                set: { if !$0 { deleteCandidate = nil } })
-    }
-
-    private var deleteSelectionTitle: String {
-        "Удалить " + MessageSelection.title(count: model.selection.count) + "?"
+    /// Подтверждение удаления: два действия внизу, сами сообщения видны и
+    /// к выбору можно добавить ещё.
+    private var deleteConfirmBar: some View {
+        VStack(spacing: 8) {
+            Text("Удалить " + MessageSelection.title(count: model.selection.count) + "?")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            if model.canDeleteSelectedForAll {
+                Button("Удалить у всех", role: .destructive) {
+                    withAnimation(Theme.springFast) { model.deleteSelected(forAll: true) }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .controlSize(.large)
+                .frame(maxWidth: .infinity)
+                .accessibilityIdentifier("chat.delete.forAll")
+            }
+            Button("Удалить у меня", role: .destructive) {
+                withAnimation(Theme.springFast) { model.deleteSelected(forAll: false) }
+            }
+            .buttonStyle(.bordered)
+            .tint(.red)
+            .controlSize(.large)
+            .frame(maxWidth: .infinity)
+            .accessibilityIdentifier("chat.delete.forMe")
+        }
+        .disabled(model.selection.isEmpty)
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .background(.bar)
+        .transition(.move(edge: .bottom))
     }
 
     /// Multi-select action bar shown in place of the composer.
     private var selectionActionBar: some View {
         HStack(spacing: 0) {
             selectionAction("Удалить", icon: "trash", destructive: true) {
-                confirmDeleteSelection = true
+                withAnimation(Theme.springFast) { model.confirmingDelete = true }
             }
             selectionAction("Переслать", icon: "arrowshape.turn.up.right") {
                 forwardingSelection = true
@@ -259,12 +296,13 @@ struct ChatScreen: View {
 
     private var messagesList: MessagesView {
         MessagesView(vc: messagesVC, model: model, items: model.feed,
+                     sendTick: model.sendTick,
                      selecting: model.selecting, selectedIds: model.selection.ids,
                      onTapMedia: { (msg: Message, idx: Int, _: UIView) in
                          MediaViewerPresenter.present(message: msg, startIndex: idx)
                      },
-                     selectingText: $selectingText, deleteCandidate: $deleteCandidate,
-                     showScrollDown: $showScrollDown)
+                     showScrollDown: $showScrollDown,
+                     onSwipeBack: { dismiss() })
     }
 
     /// Empty chat: a centred hint instead of a bare background.
@@ -295,7 +333,8 @@ struct ChatScreen: View {
                 AvatarView(name: model.headerTitle,
                            avatarId: model.chat?.kind == .group ? model.chat?.avatarId : model.peer?.avatarId,
                            online: model.peer?.online ?? false)
-                    .frame(width: 40, height: 40)
+                    // the back chevron leads the header, so the avatar stays under it
+                    .frame(width: 34, height: 34)
                 VStack(alignment: .leading, spacing: 0) {
                     // the toolbar can hand the principal view less than the ideal width,
                     // and even a short name gets truncated («4455…»). The text holds its
@@ -322,13 +361,90 @@ struct ChatScreen: View {
     /// Shortens a header string with an ellipsis to the width the principal view has
     /// (the screen minus the back button, the avatar and the padding).
     private static func fitted(_ s: String, font: UIFont) -> String {
-        let maxWidth = UIScreen.main.bounds.width - 190
+        // the principal view is centred, so the wider back button costs it twice
+        let maxWidth = UIScreen.main.bounds.width - 208
         guard s.size(withAttributes: [.font: font]).width > maxWidth else { return s }
         var t = s
         while !t.isEmpty, (t + "…").size(withAttributes: [.font: font]).width > maxWidth {
             t.removeLast()
         }
         return t + "…"
+    }
+
+    // MARK: - Search inside the chat
+
+    /// The header while the chat is being searched: the field takes the row it
+    /// can, with only «Отмена» beside it.
+    private var searchHeader: some View {
+        HStack(spacing: 8) {
+            ChatSearchField(text: $search.query, focused: $searchFocused)
+            Button("Отмена") { closeSearch() }
+                .textRole(Theme.Text.body)
+                .tint(Theme.accent)
+                .accessibilityIdentifier("chat.search.cancel")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
+    private var searchResults: some View {
+        ChatSearchResultsList(session: search, members: model.members,
+                              ownUserId: model.ownUserId) { hit in
+            search.select(hit)
+            searchFocused = false
+            show(hit)
+        }
+        .transition(.opacity)
+    }
+
+    /// Opening search remembers where the reader is, so that leaving it can put
+    /// them back even after a walk through the whole conversation.
+    private func openSearch() {
+        searchReturn = messagesVC.topVisibleMessageId()
+        searchMoved = false
+        withAnimation(Theme.springFast) { searching = true }
+    }
+
+    /// Leaving search: the query goes, and the feed returns to the message the
+    /// reader came from. Nothing is fetched for that — search only ever grew the
+    /// window, so the message is still in it.
+    private func closeSearch() {
+        searchFocused = false
+        withAnimation(Theme.springFast) { searching = false }
+        search.reset()
+        let anchor = searchReturn
+        searchReturn = nil
+        guard searchMoved else { return }
+        searchMoved = false
+        guard let anchor else {
+            messagesVC.scrollToBottom(animated: false)
+            return
+        }
+        if messagesVC.scrollTo(msgId: anchor, animated: false) { return }
+        Task {
+            guard await model.ensureLoaded(msgId: anchor) else { return }
+            MessagesView.scrollWhenReady(vc: messagesVC, msgId: anchor, highlight: false)
+        }
+    }
+
+    /// One step through the matches, back in time or towards the end.
+    private func stepSearch(by offset: Int) {
+        Task {
+            guard let hit = await search.step(by: offset) else {
+                Haptics.rigid()
+                return
+            }
+            searchFocused = false
+            show(hit)
+        }
+    }
+
+    /// Shows a found message. A match already in the window costs a scroll and
+    /// nothing else; only one that sits deeper makes the feed load history.
+    private func show(_ hit: MessageSearchHit) {
+        searchMoved = true
+        if messagesVC.scrollTo(msgId: hit.messageId, highlight: true) { return }
+        jump(to: hit.messageId)
     }
 
     /// Carries the feed to a message: the screens above it close and history is
@@ -452,24 +568,11 @@ struct ChatScreen: View {
         .background(.bar)
     }
 
-    /// A message scrolling away dissolves into the header instead of being clipped by
-    /// it: the background tone builds up towards the top edge over the header's height.
+    /// A message leaving the feed dissolves into the header instead of being cut by it.
     private var headerFade: some View {
-        VStack(spacing: 0) {
-            LinearGradient(stops: [
-                // opaque down to the bottom edge of the header, then a long falloff:
-                // a short gradient cuts the bubble with a visible edge instead of dissolving it
-                .init(color: Theme.chatBackground, location: 0),
-                .init(color: Theme.chatBackground, location: 0.42),
-                .init(color: Theme.chatBackground.opacity(0.75), location: 0.62),
-                .init(color: Theme.chatBackground.opacity(0.3), location: 0.82),
-                .init(color: Theme.chatBackground.opacity(0), location: 1),
-            ], startPoint: .top, endPoint: .bottom)
-                .frame(height: 150)
-            Spacer()
-        }
-        .ignoresSafeArea(edges: .top)
-        .allowsHitTesting(false)
+        HeaderFade(tone: Theme.chatBackground)
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
     }
 
     private var scrollDownButton: some View {
@@ -690,13 +793,15 @@ struct MessagesView: UIViewControllerRepresentable {
     /// the feed is passed by value as well: changing the array changes the value of the
     /// represented view, so SwiftUI is guaranteed to call updateUIViewController
     let items: [ChatFeedItem]
+    /// the count of our own sends, passed by value for the same reason as the feed
+    let sendTick: Int
     /// selection mode and contents are passed by value for the same reason as the feed
     let selecting: Bool
     let selectedIds: Set<String>
     var onTapMedia: (Message, Int, UIView) -> Void
-    @Binding var selectingText: Message?
-    @Binding var deleteCandidate: Message?
     @Binding var showScrollDown: Bool
+    /// свайп от левой кромки: возврат к списку чатов
+    var onSwipeBack: () -> Void
 
     func makeUIViewController(context: Context) -> MessagesViewController {
         vc.onAtBottomChanged = { [weak model] atBottom in
@@ -728,6 +833,22 @@ struct MessagesView: UIViewControllerRepresentable {
         vc.onToggleSelection = { [weak model] msg in
             withAnimation(Theme.springFast) { model?.toggleSelection(msg) }
         }
+        // a status bar tap: to the start of the chat, loading everything the device holds
+        vc.onScrollToStart = { [weak model, weak vc] in
+            guard let model, let vc else { return }
+            Haptics.light()
+            Task {
+                await model.loadDeviceHistory()
+                // the window arrives through the database observation, so the feed gets it
+                // a moment later; on a chat of tens of thousands that moment is seconds,
+                // and scrolling before it lands leaves the reader in the middle
+                for _ in 0..<160 {
+                    if model.isAtDeviceStart { break }
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+                vc.scrollToStart()
+            }
+        }
         return vc
     }
 
@@ -739,14 +860,21 @@ struct MessagesView: UIViewControllerRepresentable {
             switch action {
             case .reply: withAnimation(Theme.springFast) { model.replyingTo = msg }
             case .copy: MessageClipboard.copy(msg)
-            case .selectText: selectingText = msg
             case .edit: withAnimation(Theme.springFast) { model.editing = msg }
             case .pin: model.pin(msg)
             case .forward: NotificationCenter.default.post(name: .forwardRequested, object: msg)
             case .select: withAnimation(Theme.springFast) { model.beginSelection(with: msg) }
-            case .delete: deleteCandidate = msg
+            // удаление начинается с выбора: сообщение видно, к нему можно
+            // добавить ещё, подтверждение стоит внизу
+            case .delete:
+                withAnimation(Theme.springFast) {
+                    model.beginSelection(with: msg, confirmingDelete: true)
+                }
             }
         }
+        // замыкание с dismiss живёт не дольше тела body — переустанавливаем
+        vc.onSwipeBack = onSwipeBack
+        vc.noteSendTick(sendTick)
         vc.apply(items)
         vc.setSelection(mode: selecting, ids: selectedIds)
     }
@@ -754,11 +882,12 @@ struct MessagesView: UIViewControllerRepresentable {
     /// Fetched history reaches the list through updateUIViewController, so the scroll
     /// happens as soon as the message shows up in the feed. The jump from the gallery
     /// arrives the same way, only there the screens on top have to close first.
-    static func scrollWhenReady(vc: MessagesViewController, msgId: String, attempts: Int = 16) {
-        if vc.scrollTo(msgId: msgId, highlight: true) { return }
+    static func scrollWhenReady(vc: MessagesViewController, msgId: String,
+                                highlight: Bool = true, attempts: Int = 16) {
+        if vc.scrollTo(msgId: msgId, highlight: highlight) { return }
         guard attempts > 0 else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            scrollWhenReady(vc: vc, msgId: msgId, attempts: attempts - 1)
+            scrollWhenReady(vc: vc, msgId: msgId, highlight: highlight, attempts: attempts - 1)
         }
     }
 }

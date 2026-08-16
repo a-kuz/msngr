@@ -252,11 +252,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         if let tf = plan.textFrame, let text = plan.text {
             textView.isHidden = false
             textView.frame = tf
-            let color: UIColor = msg.deletedForAll
-                ? (plan.isOutgoing ? UIColor(Theme.outgoingMeta) : .secondaryLabel)
-                : (plan.isOutgoing ? UIColor(Theme.outgoingText) : .label)
-            textView.configure(text, color: color,
-                               linkColor: plan.isOutgoing ? UIColor(Theme.outgoingText) : UIColor(Theme.accent),
+            let colors = Self.textColors(plan: plan, deleted: msg.deletedForAll)
+            textView.configure(text, color: colors.text, linkColor: colors.link,
                                codeBackground: Self.codeBackground(outgoing: plan.isOutgoing))
         } else {
             textView.isHidden = true
@@ -452,6 +449,14 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         onTapLink?(url)
     }
 
+    /// The bubble's text colours; the lifted menu paints its live text with the same ones.
+    static func textColors(plan: BubbleLayoutPlan, deleted: Bool) -> (text: UIColor, link: UIColor) {
+        let text: UIColor = deleted
+            ? (plan.isOutgoing ? UIColor(Theme.outgoingMeta) : .secondaryLabel)
+            : (plan.isOutgoing ? UIColor(Theme.outgoingText) : .label)
+        return (text, plan.isOutgoing ? UIColor(Theme.outgoingText) : UIColor(Theme.accent))
+    }
+
     /// Backdrop for a code block: lighter than the bubble on an outgoing one, and on an
     /// incoming one a darkening that stays visible in the dark theme too.
     static func codeBackground(outgoing: Bool) -> UIColor {
@@ -470,8 +475,13 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         false
     }
 
+    /// Ширина левой кромки экрана, принадлежащей возврату по свайпу.
+    static let backSwipeEdge: CGFloat = 24
+
     override func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
         guard let pan = g as? UIPanGestureRecognizer else { return true }
+        // жест от левой кромки экрана — это возврат: свайп-ответ его не перехватывает
+        if pan.location(in: nil).x < Self.backSwipeEdge { return false }
         let v = pan.velocity(in: contentView)
         return abs(v.x) > abs(v.y) && v.x > 0
     }
@@ -771,11 +781,6 @@ extension MessageCell {
                 self?.onContextAction?(.copy)
             })
         }
-        if msg.text?.isEmpty == false {
-            items.append(.init(title: "Выделить текст", icon: "selection.pin.in.out") { [weak self] in
-                self?.onContextAction?(.selectText)
-            })
-        }
         items.append(.init(title: "Переслать", icon: "arrowshape.turn.up.right") { [weak self] in
             self?.onContextAction?(.forward)
         })
@@ -795,9 +800,21 @@ extension MessageCell {
         })
 
         let mine = msg.reactions.first(where: { $0.value.contains(OwnUser.id) })?.key
+        // текст приподнятого баббла выделяется протяжкой, поэтому он уходит
+        // в меню живым, а снимок рендерится без него
+        var selectable: MessageContextOverlay.SelectableText?
+        if let plan, let tf = plan.textFrame, let text = plan.text, !msg.deletedForAll {
+            let colors = Self.textColors(plan: plan, deleted: msg.deletedForAll)
+            selectable = .init(attributed: text, frame: tf, color: colors.text,
+                               linkColor: colors.link,
+                               codeBackground: Self.codeBackground(outgoing: plan.isOutgoing))
+        }
+        let textWasHidden = textView.isHidden
+        textView.isHidden = selectable != nil || textWasHidden
         MessageContextOverlay.present(over: bubbleView, in: window, isOutgoing: msg.isOutgoing,
-                                      myReaction: mine, items: items,
+                                      myReaction: mine, items: items, selectableText: selectable,
                                       onReact: { [weak self] emoji in self?.onReact?(emoji) })
+        textView.isHidden = textWasHidden
     }
 }
 

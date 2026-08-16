@@ -10,6 +10,8 @@ export interface Env {
   APNS_HOST?: string;
   /// Artificial delay in ms before fanout in ConversationDO /send (dev only).
   DEV_WS_LATENCY_MS?: string;
+  /// Dev only: log what each object invocation costs (see src/perf.ts).
+  PERF_LOG?: string;
   APNS_KEY_P8?: string;
   APNS_KEY_ID?: string;
   APNS_TEAM_ID?: string;

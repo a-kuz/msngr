@@ -121,4 +121,8 @@ final class SmokeTests: XCTestCase {
                       "the attachment menu never opened")
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).tap()
     }
+
+    // A status bar tap goes to the beginning of the conversation. The touch is
+    // SpringBoard's, and no way of aiming one at the status bar from XCUITest reaches the
+    // app's delegate on the simulator, so the check lives in MsngrTests/StatusBarTapTests.
 }

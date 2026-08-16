@@ -225,11 +225,13 @@ struct InputBar: View {
                 let images = pendingImages
                 text = ""
                 withAnimation(Theme.springFast) { pendingImages = [] }
+                // emptying the field from code raises no delegate callback, so the
+                // typing indicator on the other side is taken down by hand
+                model.textChanged("")
                 guard !images.isEmpty else {
                     withAnimation(Theme.springFast) { model.send(text: t) }
                     return
                 }
-                model.textChanged("")
                 onSendImages(images, t.trimmingCharacters(in: .whitespacesAndNewlines))
             } label: {
                 Image(systemName: "arrow.up.circle.fill")
@@ -425,6 +427,9 @@ struct GrowingTextView: UIViewRepresentable {
         tv.textContainer.lineFragmentPadding = 2
         tv.delegate = context.coordinator
         tv.isScrollEnabled = false
+        // тап по статус-бару принадлежит ленте: пока на экране два скролла,
+        // готовых его принять, система не отдаёт его никому
+        tv.scrollsToTop = false
         tv.accessibilityIdentifier = "chat.input"
         tv.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         // a long unbroken string inflates the UITextView's intrinsic width and the field

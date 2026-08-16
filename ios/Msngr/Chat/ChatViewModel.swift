@@ -53,9 +53,14 @@ final class ChatViewModel: ObservableObject {
     /// Multi-select mode: checkboxes on the bubbles, an action bar in place of the input.
     @Published var selecting = false
     @Published var selection = MessageSelection()
+    /// At the bottom, in place of the action bar, the confirmation for deleting the
+    /// selection. The messages stay visible and more can be added to the selection.
+    @Published var confirmingDelete = false
     /// The message never reached the send queue. Shown as an alert: otherwise the
     /// typed text or the attachment would vanish without a word.
     @Published var sendFailure: String?
+    /// Счётчик своих отправок: каждая ведёт ленту к концу чата.
+    @Published private(set) var sendTick = 0
 
     /// Unread banner: the state lives from the moment the chat is opened, and the
     /// feed is rebuilt from the last database snapshot whenever it changes.
@@ -144,7 +149,7 @@ final class ChatViewModel: ObservableObject {
                         try? await Task.sleep(nanoseconds: 5_000_000_000)
                         self.typingUsers.removeAll()
                     }
-                } else {
+                } else if self.typingUsers.contains(ev.userId) {
                     self.typingUsers.removeAll { $0 == ev.userId }
                 }
             }
@@ -496,6 +501,10 @@ final class ChatViewModel: ObservableObject {
     /// the message is lost, which is worth telling the user about.
     func enqueue(_ content: ContentPayload, chatId: String? = nil) {
         let target = chatId ?? self.chatId
+        if Self.movesFeedToEnd(kind: content.kind, target: target, chatId: self.chatId) {
+            returnToBottom()
+            sendTick &+= 1
+        }
         Task { [weak self] in
             do {
                 try await app.engine.enqueue(content: content, chatId: target)
@@ -531,6 +540,12 @@ final class ChatViewModel: ObservableObject {
         Haptics.light()
     }
 
+    /// Отправка, у которой в этом чате появляется свой баббл: только она ведёт
+    /// ленту к концу. Правка, реакция и пересылка в другой чат — нет.
+    nonisolated static func movesFeedToEnd(kind: String, target: String, chatId: String) -> Bool {
+        target == chatId && !SyncEngine.serviceKinds.contains(kind)
+    }
+
     static func previewText(_ m: Message) -> String {
         switch m.kind {
         case .photo: return "Фото"
@@ -553,10 +568,6 @@ final class ChatViewModel: ObservableObject {
         Haptics.medium()
     }
 
-    func delete(_ msg: Message, forAll: Bool) {
-        Task { await app.engine.deleteMessages(chatId: chatId, msgIds: [msg.msgId ?? msg.id], forAll: forAll) }
-    }
-
     // MARK: - Multi-select
 
     /// Selected messages in feed order, newest first.
@@ -564,20 +575,26 @@ final class ChatViewModel: ObservableObject {
 
     var canDeleteSelectedForAll: Bool { MessageSelection.canDeleteForAll(selectedMessages) }
 
-    func beginSelection(with msg: Message) {
+    /// confirmingDelete — вход сразу к подтверждению удаления: сообщение
+    /// выбрано, внизу два действия, а не всплывающее меню поверх самого баббла.
+    func beginSelection(with msg: Message, confirmingDelete: Bool = false) {
         selection.clear()
         selection.select(msg)
         selecting = true
+        self.confirmingDelete = confirmingDelete
         Haptics.light()
     }
 
     func toggleSelection(_ msg: Message) {
         selection.toggle(msg)
+        // выбор опустел — подтверждать нечего
+        if selection.isEmpty { confirmingDelete = false }
         Haptics.light()
     }
 
     func endSelection() {
         selecting = false
+        confirmingDelete = false
         selection.clear()
     }
 
@@ -706,11 +723,15 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    /// The reader asked for the newest messages: the window leaves the history it was
-    /// standing in and comes back to a page at the end of the chat.
+    /// Back to the newest messages: the window leaves the history it was standing in
+    /// and comes back to a page at the end of the chat. Both the scroll-down button
+    /// and a send of our own go through here — a window standing in the history holds
+    /// its capacity upwards from its floor, so in a chat that has since piled up that
+    /// many messages the new outgoing one does not fall into the window at all.
     func returnToBottom() {
         windowFloor.reset()
         reachedStart = false
+        isViewingBottom = true
         observeChat()
     }
 
@@ -734,6 +755,25 @@ final class ChatViewModel: ObservableObject {
     func loadOlder() {
         Task { await expandWindow() }
     }
+
+    /// The start of the chat: the window's floor moves to the oldest message the device
+    /// holds, in one move. The server is not asked here — the start is what the device
+    /// already stores.
+    func loadDeviceHistory() async {
+        guard let db = app.db else { return }
+        let oldest = try? await db.read { [chatId] dbc in
+            try String.fetchOne(dbc, sql: """
+                SELECT id FROM message
+                WHERE chatId = ? AND seq IS NOT NULL
+                ORDER BY seq ASC LIMIT 1
+                """, arguments: [chatId])
+        }
+        guard let oldest = oldest ?? nil else { return }
+        _ = await anchorWindow(to: oldest)
+    }
+
+    /// The window has reached the oldest message on the device.
+    var isAtDeviceStart: Bool { atHistoryStart }
 
     /// One page up. The messages are already decrypted and stored, so the page comes
     /// from the database; the server is only asked about an open seq gap, the part
