@@ -13,7 +13,9 @@ happened — that is the whole reason this exists.
 
 An agent owns a simulator whose name is its own name or starts with it and a
 dash: `perfdb` owns `perfdb-a` and `perfdb-b`. Agents are listed in
-.claude/agents.tsv; a name nobody in that file claims is a name nobody will miss.
+.claude/agents.tsv, and an agent that never got there is still recognised by a
+session writing into a worktree of that name. A name neither of those claims is
+left alone for as long as its app keeps writing, and taken once it stops.
 
 Two things are never touched: the owner's two devices with the gate runner, and
 the shared stand on :8787 with the conversations and keys in server/.wrangler.
@@ -333,8 +335,18 @@ def sweep():
     agents = disk.registry()
     working = disk.live_worktrees()
     sims, busy = stale_simulators(agents, working)
-    plan = (sims + stale_stands(working) + orphan_stand_processes()
-            + merged_worktrees(agents, working) + orphan_derived_data() + old_logs())
+    plan = list(sims)
+    # One rule tripping over a file that moved under it must not cost the run:
+    # this is a cron job, and the next thing after it is the escalation check.
+    for rule in (lambda: stale_stands(working),
+                 orphan_stand_processes,
+                 lambda: merged_worktrees(agents, working),
+                 orphan_derived_data,
+                 old_logs):
+        try:
+            plan += rule()
+        except OSError as err:
+            log(f"rule failed, skipped: {err}")
     freed = 0
     for item in plan:
         size = f"{item['bytes'] / 2**30:.2f}G" if item["bytes"] else "—"
