@@ -34,6 +34,15 @@ export type ClientFrame =
   | { t: "bg" }   // app went to background: presence goes offline at once
   | { t: "fg" };  // app came back: presence goes online
 
+/// A user card as everyone may see it: the columns GET /api/users/:id serves.
+export interface PublicUser {
+  id: string;
+  username: string;
+  display_name: string;
+  bio: string | null;
+  avatar_id: string | null;
+}
+
 // --- WS frames: server -> client ---
 export type ServerFrame =
   | { t: "hello"; serverTime: number; protocol: number; minProtocol: number }
@@ -42,6 +51,9 @@ export type ServerFrame =
   | { t: "receipt"; chatId: string; kind: "delivered" | "read"; upToSeq?: number; seqs?: number[]; by: string }
   | { t: "typing"; chatId: string; from: string; kind: string | null }
   | { t: "presence"; userId: string; online: boolean; lastSeen: number }
+  /// someone's card changed: name, bio, avatar or username. The profile is
+  /// public, so the frame carries the whole row rather than a hint to refetch
+  | { t: "profile"; user: PublicUser }
   /// state is absent only for event "removed": the addressee is no longer a
   /// member, so the roster is not handed to them
   | { t: "chat"; chatId: string; event: string; state?: ChatState }

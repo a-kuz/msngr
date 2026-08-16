@@ -461,9 +461,6 @@ public final class APIClient: @unchecked Sendable {
                                     rawBody: jpeg, contentType: "image/jpeg")
         return try JSONDecoder().decode(AvatarResponse.self, from: raw).avatarId
     }
-    public func avatarURL(_ avatarId: String) -> URL {
-        baseURL.appendingPathComponent("api/avatar/\(avatarId)")
-    }
     /// Avatar bytes; the request carries the token.
     public func avatarData(_ avatarId: String) async throws -> Data {
         try await request("api/avatar/\(avatarId)")
@@ -474,6 +471,13 @@ public final class APIClient: @unchecked Sendable {
     public func updateProfile(displayName: String? = nil, bio: String? = nil, avatarId: String? = nil) async throws {
         struct Body: Encodable { let displayName: String?; let bio: String?; let avatarId: String? }
         _ = try await request("api/profile", method: "POST", jsonBody: Body(displayName: displayName, bio: bio, avatarId: avatarId))
+    }
+
+    /// A rename. Throws `APIError("username_taken")` when the handle is
+    /// somebody else's; the old one is free the moment this returns.
+    public func updateUsername(_ username: String) async throws {
+        struct Body: Encodable { let username: String }
+        _ = try await request("api/username", method: "POST", jsonBody: Body(username: username))
     }
 
     public struct DiscoverResponse: Decodable {

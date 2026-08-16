@@ -15,6 +15,8 @@ struct SettingsView: View {
     @State private var biometrics = PinStore.biometricsEnabled()
     @State private var showsMessageText = NotificationPreferences.showsMessageText(in: AppGroup.defaults)
     @State private var showLogoutConfirm = false
+    @State private var uploadingAvatar = false
+    @State private var nameError: String?
 
     var body: some View {
         NavigationStack {
@@ -29,17 +31,25 @@ struct SettingsView: View {
                                     // avatar it sits on, not to the type scale.
                                     Image(systemName: "camera.fill")
                                         .font(.system(size: 11))
-                                        .foregroundStyle(.white)
+                                        .foregroundStyle(Theme.controlLabel)
                                         .frame(width: 22, height: 22)
                                         .accessibilityHidden(true)
                                         .background(Theme.accent, in: Circle())
                                 }
+                                .overlay {
+                                    if uploadingAvatar {
+                                        Circle().fill(.black.opacity(0.35))
+                                            .overlay(ProgressView().tint(.white))
+                                    }
+                                }
                         }
+                        .accessibilityIdentifier("settings.avatar")
                         VStack(alignment: .leading, spacing: 4) {
                             // A text field cannot wrap, so its size is capped:
                             // .headline would truncate the name at large sizes.
                             TextField("Имя", text: $displayName)
                                 .textRole(Theme.Text.rowTitle)
+                                .accessibilityIdentifier("settings.displayName")
                             Text("@\(app.session?.username ?? "")")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
@@ -47,6 +57,23 @@ struct SettingsView: View {
                     }
                     TextField("О себе", text: $bio, axis: .vertical)
                         .lineLimit(1...3)
+                    NavigationLink {
+                        UsernameView()
+                    } label: {
+                        HStack {
+                            Text("Юзернейм")
+                            Spacer()
+                            Text("@\(app.session?.username ?? "")")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.username")
+                } footer: {
+                    if let hint = nameError {
+                        Text(hint).foregroundStyle(.red)
+                    } else {
+                        Text("Имя видят собеседники в списке чатов и в шапке переписки.")
+                    }
                 }
 
                 Section("Оформление") {
@@ -130,31 +157,15 @@ struct SettingsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Готово") {
-                        Task {
-                            try? await app.api.updateProfile(
-                                displayName: displayName.isEmpty ? nil : displayName,
-                                bio: bio.isEmpty ? nil : bio)
-                            dismiss()
-                        }
-                    }
+                    Button("Готово") { Task { await saveProfile() } }
+                        .accessibilityIdentifier("settings.done")
                 }
             }
-            .task {
-                me = try? await app.db.read { [id = app.session?.userId ?? ""] dbc in
-                    try User.fetchOne(dbc, key: id)
-                }
-                displayName = me?.displayName ?? ""
-                bio = me?.bio ?? ""
-            }
+            .task { await loadMe() }
+            .onChange(of: displayName) { _, _ in nameError = nil }
             .onChange(of: avatarItem) { _, item in
                 guard let item else { return }
-                Task {
-                    if let data = try? await item.loadTransferable(type: Data.self),
-                       let prepared = ImageProcessor.prepareForSending(data, maxDimension: 640) {
-                        _ = try? await app.api.uploadAvatar(prepared.data)
-                    }
-                }
+                Task { await uploadAvatar(item) }
             }
             .confirmationDialog("Выйти из аккаунта?", isPresented: $showLogoutConfirm,
                                 titleVisibility: .visible) {
@@ -176,6 +187,49 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    private func loadMe() async {
+        me = try? await app.db.read { [id = app.session?.userId ?? ""] dbc in
+            try User.fetchOne(dbc, key: id)
+        }
+        displayName = me?.displayName ?? ""
+        bio = me?.bio ?? ""
+    }
+
+    /// A name has to be there: it is what a peer reads instead of a handle.
+    /// An emptied field keeps the screen open with the reason under it.
+    private func saveProfile() async {
+        guard AccountValidator.isValidName(displayName) else {
+            nameError = AccountValidator.nameHint(displayName) ?? "Имя не может быть пустым"
+            return
+        }
+        let name = AccountValidator.trimmedName(displayName)
+        try? await app.api.updateProfile(displayName: name, bio: bio)
+        // the row the screens read is ours to keep in step: the frame the
+        // server sends out over this change goes to everyone but us
+        if let id = app.session?.userId {
+            try? await app.db.write { dbc in
+                try dbc.execute(sql: "UPDATE user SET displayName = ?, bio = ? WHERE id = ?",
+                                arguments: [name, bio, id])
+            }
+        }
+        dismiss()
+    }
+
+    private func uploadAvatar(_ item: PhotosPickerItem) async {
+        uploadingAvatar = true
+        defer { uploadingAvatar = false }
+        guard let data = try? await item.loadTransferable(type: Data.self),
+              let prepared = ImageProcessor.prepareForSending(data, maxDimension: 640),
+              let avatarId = try? await app.api.uploadAvatar(prepared.data) else { return }
+        if let id = app.session?.userId {
+            try? await app.db.write { dbc in
+                try dbc.execute(sql: "UPDATE user SET avatarId = ? WHERE id = ?",
+                                arguments: [avatarId, id])
+            }
+        }
+        await loadMe()
     }
 
     /// Cache size in Russian: ByteCountFormatter writes "Zero KB" under the system locale.
