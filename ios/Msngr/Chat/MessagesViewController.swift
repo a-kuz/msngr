@@ -88,8 +88,25 @@ final class MessagesViewController: UIViewController {
         updateAtBottom(layoutFirst: true)
     }
 
+    /// Frame clock of the measurement run: every screen refresh is recorded, so
+    /// a gap in the trace is a frame the feed missed.
+    private var frameLink: CADisplayLink?
+    private var lastFrame: CFTimeInterval = 0
+
+    @objc private func frameTick(_ link: CADisplayLink) {
+        if lastFrame > 0 {
+            PerfTrace.shared.span("frame", duration: link.timestamp - lastFrame)
+        }
+        lastFrame = link.timestamp
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        if PerfTrace.shared.isEnabled, frameLink == nil {
+            let link = CADisplayLink(target: self, selector: #selector(frameTick(_:)))
+            link.add(to: .main, forMode: .common)
+            frameLink = link
+        }
         // the chat header draws its own back button and the system one is hidden;
         // hiding it also disables the swipe-back gesture, so bring it back by
         // dropping the delegate that suppresses it
@@ -97,6 +114,14 @@ final class MessagesViewController: UIViewController {
             pop.delegate = nil
             pop.isEnabled = true
         }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        frameLink?.invalidate()
+        frameLink = nil
+        lastFrame = 0
+        PerfTrace.shared.flush()
     }
 
     override func viewDidLayoutSubviews() {
@@ -156,6 +181,12 @@ final class MessagesViewController: UIViewController {
     /// performBatchUpdates so that the content above does not jump when a message
     /// arrives while the reader is in the history.
     func apply(_ newItems: [ChatFeedItem]) {
+        PerfTrace.shared.measure("feed.ui.apply", info: ["items": Double(newItems.count)]) {
+            applyDiff(newItems)
+        }
+    }
+
+    private func applyDiff(_ newItems: [ChatFeedItem]) {
         let old = items
         guard isViewLoaded else { items = newItems; return }
         // the feed went empty (history cleared): a diff would delete every position
