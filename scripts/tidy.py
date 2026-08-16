@@ -47,6 +47,9 @@ BUDGET = int(os.environ.get("TIDY_BUDGET_GB", 85)) * 2**30  # what we said we'd 
 # A thing has to be still for this long before it counts as litter. Lowering it
 # is how the sweep gets tested without waiting half an hour for the clock.
 SETTLE = int(os.environ.get("TIDY_SETTLE_MIN", 30)) * 60
+# A live agent's simulator is shut down (not deleted) after this much quiet: it
+# holds gigabytes of memory while it is up, and booting it back costs seconds.
+IDLE_BOOT = int(os.environ.get("TIDY_IDLE_BOOT_MIN", 20)) * 60
 SNAPSHOT_MAX_AGE = 15 * 60
 
 APPLY = "--apply" in sys.argv
@@ -159,6 +162,34 @@ def delete_device(udid):
     subprocess.run(["xcrun", "simctl", "delete", udid], capture_output=True)
 
 
+def idle_booted(agents, working):
+    """Booted simulators of live agents that nobody has touched for a while.
+
+    A simulator costs two to four gigabytes of memory while it is up, and a host
+    running five agents ran out: free memory fell to sixty megabytes and the
+    machine spent its time swapping, with the CPU idle. Shutting one down loses
+    nothing — the device, its app and its data stay, and the next `simctl boot`
+    brings it back — so an agent that comes back to a still simulator pays a boot
+    and the rest of the host gets its memory back.
+    """
+    out = []
+    for dev in disk.devices():
+        if dev.get("state") != "Booted" or dev["udid"] in disk.KEEP_DEVICES:
+            continue
+        note, loose = disk.claim(dev, agents, working)
+        if loose:
+            continue  # the litter rules own this one
+        idle = app_quiet_for(dev["udid"])
+        if idle < IDLE_BOOT:
+            continue
+        out.append({"what": f"simulator {dev['name']}", "bytes": 0,
+                    "why": f"{note}, app quiet for {int(idle / 60)}m",
+                    "verb": ("shut down", "would shut down"),
+                    "do": lambda u=dev["udid"]: subprocess.run(
+                        ["xcrun", "simctl", "shutdown", u], capture_output=True)})
+    return out
+
+
 def stale_stands(working):
     """Stand state directories with no wrangler pointing at them."""
     live = {Path(p).resolve() for p in disk.persist_paths() if Path(p).is_dir()}
@@ -221,6 +252,36 @@ def orphan_stand_processes():
                     "bytes": 0, "why": "it is holding files that no longer exist",
                     "do": lambda p=pids: kill(p)})
     return out
+
+
+def socket_hogs(limit=2000):
+    """Stands that have stopped closing their sockets.
+
+    One seeding run left a workerd holding 26 854 loopback sockets, 14 485 of them
+    in CLOSE_WAIT, against the 16 384 ephemeral ports the machine has. Everything
+    that needed a new connection then hung, the shared stand included, and the
+    host looked like it was out of memory. A stand past this many sockets is
+    already broken, so killing it takes nothing away and gives the ports back.
+    """
+    try:
+        out = subprocess.run(["lsof", "-nP", "-i", "TCP"], capture_output=True,
+                             text=True, timeout=120).stdout
+    except subprocess.SubprocessError:
+        return []
+    count = {}
+    for line in out.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) > 1 and parts[0] == "workerd":
+            count[int(parts[1])] = count.get(int(parts[1]), 0) + 1
+    plan = []
+    for pid, sockets in sorted(count.items()):
+        if sockets < limit:
+            continue
+        plan.append({"what": f"stand process {pid}", "bytes": 0,
+                     "verb": ("killed", "would kill"),
+                     "why": f"holding {sockets} sockets, the host has 16384 ports",
+                     "do": lambda p=pid: kill([p])})
+    return plan
 
 
 def has_clients(port):
@@ -338,7 +399,9 @@ def sweep():
     plan = list(sims)
     # One rule tripping over a file that moved under it must not cost the run:
     # this is a cron job, and the next thing after it is the escalation check.
-    for rule in (lambda: stale_stands(working),
+    for rule in (lambda: idle_booted(agents, working),
+                 socket_hogs,
+                 lambda: stale_stands(working),
                  orphan_stand_processes,
                  lambda: merged_worktrees(agents, working),
                  orphan_derived_data,
@@ -350,16 +413,17 @@ def sweep():
     freed = 0
     for item in plan:
         size = f"{item['bytes'] / 2**30:.2f}G" if item["bytes"] else "—"
+        did, would = item.get("verb", ("removed", "would remove"))
         if APPLY:
             try:
                 item["do"]()
             except OSError as err:
-                log(f"could not remove {item['what']}: {err}")
+                log(f"could not touch {item['what']}: {err}")
                 continue
-            log(f"removed {item['what']} ({size}) — {item['why']}")
+            log(f"{did} {item['what']} ({size}) — {item['why']}")
             freed += item["bytes"]
         else:
-            log(f"would remove {item['what']} ({size}) — {item['why']}")
+            log(f"{would} {item['what']} ({size}) — {item['why']}")
     return plan, busy, freed
 
 

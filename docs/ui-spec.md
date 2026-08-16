@@ -250,6 +250,22 @@ or «был(а) …».
 
 A pinned message gets a bar at the top, and tapping it scrolls to the message.
 
+A magnifier in the header opens search over this chat. The field stands where the
+header was, with the keyboard up and «Отмена» beside it; the matches cover the
+feed, newest first, each row carrying the author, the time and a slice of the
+text with the word highlighted. Tapping a row shows that message in the feed and
+leaves a bar in place of the input field: the position in the result («3 из 47»)
+and two arrows, up towards older matches and down towards newer ones. Tapping the
+position brings the list back. The bar reads «Ищем в переписке…» until both the
+first page and the count of all matches are in, «Ничего не нашлось» when the chat
+has no such text. «Отмена» closes search and puts the reader back on the message
+they were reading when they opened it.
+
+The matches come from the same paged full-text query the chat list runs, scoped
+to this chat. A match already in the feed window costs a scroll; one deeper than
+it makes the feed load the history between it and the end, so search asks for
+that only when a match is chosen.
+
 A message request takes the whole screen in place of the feed: a 96×96 avatar,
 the name, the username, «хочет вам написать», the explanation «Сообщения
 откроются после принятия», and the buttons «Принять» and «Заблокировать». There
