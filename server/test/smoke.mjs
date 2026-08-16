@@ -306,9 +306,9 @@ check("group message delivered", !!gmsg);
 const snap = await api("/api/chats", { token: bob.token });
 check("chats snapshot", snap.ok && snap.chats.length === 2 && snap.users.length >= 3);
 
-// 10a. Состав, пропущенный офлайн. Живой chat-фрейм об уходе участника получают
-// только подключённые; остальные узнают о нём при догоне, иначе оставшийся
-// продолжал бы шифровать в цепочку, которая есть у ушедшего.
+// 10a. A roster change missed while offline. The live chat frame about a member
+// leaving reaches only those connected; the rest learn about it on catch-up, or
+// whoever stayed would keep encrypting into a chain the departed member holds.
 const mgrp = await api("/api/chats", { token: alice.token,
   body: { kind: "group", memberIds: [bob.userId, carol.userId], title: "Roster" } });
 check("create roster group", mgrp.ok, JSON.stringify(mgrp));
@@ -320,7 +320,7 @@ const rm = await api(`/api/chats/${mgrp.chatId}/members`, { token: alice.token,
   body: { add: [], remove: [carol.userId] } });
 check("admin removes member", rm.ok, JSON.stringify(rm));
 
-// оставшийся участник догоняет: состав приезжает вместе с хвостом чата
+// the remaining member catches up: the roster arrives with the tail of the chat
 const cbR = new Client("bob-roster", bob.token);
 await cbR.connect();
 const bobRosterMark = cbR.mark();
@@ -334,7 +334,7 @@ check("replayed roster has the removed member out",
   JSON.stringify(rosterFrame?.state?.members ?? null));
 cbR.ws.close();
 
-// убранный участник узнаёт об этом при догоне, состав ему не отдаётся
+// the removed member learns about it on catch-up, and gets no roster
 const ccR = new Client("carol-roster", carol.token);
 await ccR.connect();
 const carolRosterMark = ccR.mark();
@@ -480,11 +480,11 @@ check("join into direct rejected", !djoin.ok && djoin.error === "not_group");
 
 // 16a. Group settings: only an admin changes the title and avatar, members see a chat frame
 const titleByMember = await api(`/api/chats/${grp.chatId}/settings`, { token: dave.token,
-  body: { title: "Захвачено" } });
+  body: { title: "Hijacked" } });
 check("group title by non-admin rejected",
   !titleByMember.ok && titleByMember.error === "not_admin");
 
-const newTitle = "Команда " + suffix;
+const newTitle = "Team " + suffix;
 const titleByAdmin = await api(`/api/chats/${grp.chatId}/settings`, { token: alice.token,
   body: { title: newTitle } });
 const titleFrame = await cb2.waitFor((f) =>
