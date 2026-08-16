@@ -3,7 +3,8 @@ import Foundation
 import GRDB
 import MsngrCrypto
 
-/// Оркестратор: WS ↔ БД ↔ E2EE. UI никогда не ждёт сеть — читает только БД.
+/// Orchestrator: socket ↔ database ↔ E2EE. The UI never waits on the network,
+/// it reads the database only.
 public actor SyncEngine {
     public let db: DatabaseQueue
     public let api: APIClient
@@ -16,19 +17,19 @@ public actor SyncEngine {
     private var eventTask: Task<Void, Never>?
     private var outboxTask: Task<Void, Never>?
     private var actionTask: Task<Void, Never>?
-    /// периодические фоновые проходы: снятие истёкшего mute и очередь нечитаемых
+    /// periodic background passes: expired mutes and the unreadable queue
     private var maintenanceTask: Task<Void, Never>?
     private var outboxWakeup = AsyncStream<Void>.makeStream()
     private var actionWakeup = AsyncStream<Void>.makeStream()
     private var connected = false
 
-    /// typing-события не пишутся в БД — транслируются подписчикам UI
+    /// typing events are never stored, they go straight to UI subscribers
     public nonisolated let typingStream = Broadcast<(chatId: String, userId: String, kind: String?)>()
-    /// состояние соединения для UI (сабтайтл «подключение…» вместо стейл-презенса);
-    /// подписчик сразу получает текущее состояние
+    /// connection state for the UI (the "connecting…" subtitle instead of stale
+    /// presence); a subscriber gets the current state immediately
     public nonisolated let connectionStream = Broadcast<Bool>(initial: false)
-    /// устройство отключено от аккаунта (токен отозван): переподключений больше
-    /// не будет, приложению остаётся увести пользователя на регистрацию
+    /// The device is detached from the account (its token was revoked). No
+    /// reconnect will help, so the app takes the user back to registration.
     public nonisolated let sessionRevokedStream = Broadcast<Void>()
     /// The server no longer serves this build's protocol version. Reconnecting
     /// changes nothing, so the app states that it has to be updated. The
@@ -36,14 +37,14 @@ public actor SyncEngine {
     /// the stream replays it to whoever subscribes next.
     public nonisolated let protocolOutdatedStream = Broadcast<Void>(replayLast: true)
 
-    /// Новое сообщение, принятое по WS (msg-фрейм, не повтор): для in-app уведомлений.
+    /// A message the socket delivered for the first time: what in-app banners run on.
     public struct IncomingMessage: Sendable {
         public let chatId: String
         public let msgId: String
         public let fromUserId: String
-        /// служебный фрейм (skd/edit/reaction/disappearing) — не растит unread
+        /// service frame (skd/edit/reaction/disappearing)
         public let isService: Bool
-        /// собственное эхо с другого устройства
+        /// our own message echoed back from another device
         public let isOwn: Bool
     }
     public nonisolated let incomingMessageStream = Broadcast<IncomingMessage>()
@@ -62,8 +63,7 @@ public actor SyncEngine {
     // MARK: - Lifecycle
 
     public func start() async {
-        // отправки, убитые до ack (state='inflight'), возвращаются в очередь;
-        // сервер дедуплицирует возможный повтор по clientMsgId
+        // sends killed before their ack (state='inflight') go back into the queue
         try? await db.write { dbc in
             try dbc.execute(sql: "UPDATE outbox SET state = 'ready' WHERE state = 'inflight'")
         }
@@ -87,7 +87,7 @@ public actor SyncEngine {
                 await self.drainActions()
             }
         }
-        // начальный снапшот — не блокирует UI, БД уже показывает старое
+        // the first snapshot never holds the UI up: the database already has something to show
         Task { try? await self.refreshSnapshot() }
         Task { await self.replenishPrekeysIfNeeded() }
         Task { await self.refreshBlocked() }
@@ -95,9 +95,9 @@ public actor SyncEngine {
         maintenanceTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.sweepExpiredMutes()
-                // очередь нечитаемых переигрывается и при старте, и дальше по
-                // кругу: запись, ждущая ключа, иначе ждала бы следующего
-                // удачного фрейма в том же чате — то есть могла не дождаться
+                // the unreadable queue is replayed at start and then on a loop:
+                // an envelope waiting for its key would otherwise wait for the
+                // next frame that opens in the same chat, which may never come
                 await self?.sweepUnreadable()
                 try? await Task.sleep(nanoseconds: 30_000_000_000)
             }
@@ -106,8 +106,8 @@ public actor SyncEngine {
 
     private var prekeysChecked = false
 
-    /// Раз в сессию: если на сервере осталось < 20 своих one-time prekeys —
-    /// догенерировать до 100 и дозалить.
+    /// Once per session: if fewer than 20 of our one-time prekeys are left on
+    /// the server, make up the difference to 100 and upload the new ones.
     private func replenishPrekeysIfNeeded() async {
         guard !prekeysChecked else { return }
         prekeysChecked = true
@@ -119,7 +119,7 @@ public actor SyncEngine {
                 .init(id: $0.id, key: $0.key.publicKey.rawRepresentation.base64urlEncodedString())
             })
         } catch {
-            prekeysChecked = false // сети не было — проверим при следующем start()
+            prekeysChecked = false // no network, so the next start() checks again
         }
     }
 
@@ -134,12 +134,13 @@ public actor SyncEngine {
 
     public var isConnected: Bool { connected }
 
-    /// Приложение ушло в фон: presence offline немедленно, не дожидаясь TTL.
+    /// The app went to the background: presence drops to offline at once,
+    /// without waiting for the TTL.
     public func appEnteredBackground() async {
         try? await ws.sendRaw(Data(#"{"t":"bg"}"#.utf8))
     }
 
-    /// Вернулось на экран: presence online + пинок реконнекту и outbox.
+    /// Back on screen: presence online, plus a nudge to the reconnect and the outbox.
     public func appBecameActive() async {
         // While the app was away the notification service extension wrote
         // messages of its own into this file, and an observation only hears the
@@ -156,9 +157,9 @@ public actor SyncEngine {
         await sweepExpiredMutes()
     }
 
-    /// Снимает mute у чатов, чей срок вышел: локально и на сервере.
-    /// Сервер считает истёкший mute снятым сам, но без явного снятия флаг
-    /// вернулся бы в клиент со следующим снапшотом.
+    /// Unmutes the chats whose mute has run out, here and on the server.
+    /// The server treats an expired mute as lifted on its own, but without
+    /// clearing it the flag would come back with the next snapshot.
     public func sweepExpiredMutes() async {
         let now = Date().timeIntervalSince1970
         let expired: [String] = (try? await db.write { dbc in
@@ -178,7 +179,7 @@ public actor SyncEngine {
         }
     }
 
-    /// Список заблокированных с сервера в локальный флаг user.isBlocked.
+    /// Pulls the server's block list into the local user.isBlocked flag.
     public func refreshBlocked() async {
         guard let ids = try? await api.blockedUsers() else { return }
         try? await db.write { dbc in
@@ -189,7 +190,7 @@ public actor SyncEngine {
         }
     }
 
-    /// Блокировка собеседника: сервер + локальный флаг, который гасит инпут-бар.
+    /// Blocks a peer: the server, plus the local flag that disables the input bar.
     public func setBlocked(userId: String, blocked: Bool) async throws {
         try await api.setBlocked(userId, blocked: blocked)
         try await db.write { dbc in
@@ -206,14 +207,14 @@ public actor SyncEngine {
             await sendSyncCursors()
             outboxWakeup.continuation.yield()
             actionWakeup.continuation.yield()
-            // связь вернулась: ключи, которых не хватало, могли доехать, а
-            // запросы отправителю — уйти
+            // the link is back: keys that were missing may have arrived, and a
+            // repair request now has somewhere to go
             Task { await self.sweepUnreadable() }
         case .disconnected:
             connected = false
             connectionStream.send(false)
-            // порция оборвалась: следующее подключение начнёт догон
-            // с подтверждённых курсоров в БД
+            // the portion broke off: the next connection restarts the catch-up
+            // from the cursors confirmed in the database
             catchupPending = []
             catchupSent = [:]
         case .unauthorized:
@@ -268,7 +269,7 @@ public actor SyncEngine {
         }
     }
 
-    // MARK: - Снапшот и sync
+    // MARK: - Snapshot and sync
 
     public func refreshSnapshot() async throws {
         let snap = try await api.chatsSnapshot()
@@ -293,13 +294,13 @@ public actor SyncEngine {
         }
     }
 
-    /// Чаты, у которых после последней порции осталась история дальше курсора.
+    /// Chats that still had history past their cursor after the last portion.
     private var catchupPending: Set<String> = []
-    /// Курсоры последней запрошенной порции: следующая уходит только с новыми,
-    /// иначе догон крутил бы порции, не двигаясь с места.
+    /// Cursors of the portion last asked for. The next request only goes out
+    /// with different ones, otherwise the catch-up would spin in place.
     private var catchupSent: [String: Int] = [:]
 
-    /// Начало догона: весь известный клиенту мир с подтверждённых границ.
+    /// Opens the catch-up: every chat the client knows, from its confirmed bounds.
     private func sendSyncCursors() async {
         guard connected else { return }
         let cursors = (try? await db.read { dbc in
@@ -310,9 +311,9 @@ public actor SyncEngine {
         try? await ws.send(.sync(cursors: cursors))
     }
 
-    /// Прогресс догона одного чата. Курсор подтверждается уже после того, как
-    /// порция применена (фреймы порции идут до `syncState`), поэтому обрыв
-    /// посреди догона стоит клиенту одной порции, а не всей истории.
+    /// Catch-up progress for one chat. The cursor is confirmed only once the
+    /// portion has been applied (its frames arrive before `syncState`), so a
+    /// break in the middle of a catch-up costs one portion, not the history.
     private func applySyncState(_ f: WSIncoming) async {
         guard let chatId = f.chatId, let cursor = f.cursor else { return }
         try? await db.write { dbc in
@@ -322,18 +323,18 @@ public actor SyncEngine {
         if f.more == true { catchupPending.insert(chatId) } else { catchupPending.remove(chatId) }
     }
 
-    /// Конец порции: пока сервер сообщает, что доигрывать есть что, клиент
-    /// просит следующую — с курсоров, подтверждённых в базе. Между порциями
-    /// объект сессии свободен для живого трафика, поэтому цикл догона крутится
-    /// фреймами, а не одним запросом.
+    /// End of a portion: while the server says there is more to replay, the
+    /// client asks for the next one from the cursors the database confirmed.
+    /// Between portions the session object is free for live traffic, which is
+    /// why the catch-up runs as a loop of frames rather than one long request.
     private func finishCatchupPortion(more: Bool) async {
         guard more, connected else { return }
         let pending = catchupPending
         let cursors = (try? await db.read { dbc -> [String: Int] in
             let behind = try HistoryWindow.catchupCursors(dbc)
                 .filter { pending.contains($0.key) }
-            // порция кончилась раньше, чем дошла до отставших: спрашиваем те
-            // чаты, чей журнал заведомо длиннее курсора
+            // the portion ran out before it reached the chats that are behind:
+            // ask for those whose journal is known to run past their cursor
             return behind.isEmpty ? try HistoryWindow.catchupCursors(dbc, behindOnly: true) : behind
         }) ?? [:]
         guard !cursors.isEmpty, cursors != catchupSent else { return }
@@ -341,7 +342,7 @@ public actor SyncEngine {
         try? await ws.send(.catchup(cursors: cursors))
     }
 
-    // MARK: - Применение входящих фреймов
+    // MARK: - Applying incoming frames
 
     func apply(_ f: WSIncoming) async {
         switch f.t {
@@ -378,29 +379,30 @@ public actor SyncEngine {
                     }) ?? false
                     if deleted { return }
                 }
-                // старый состав фиксируем ДО перезаписи member-таблицы
+                // the old roster has to be read before the member table is rewritten
                 let previousMembers: [String] = (try? await db.read { dbc in
                     try String.fetchAll(dbc, sql: "SELECT userId FROM member WHERE chatId = ?", arguments: [state.chatId])
                 }) ?? []
                 try? await db.write { [ownUserId] dbc in
                     try SyncEngine.upsertChatState(dbc, state, ownUserId: ownUserId, flags: nil)
                 }
-                // выгнали из чата → чат удаляется локально
+                // removed from the chat: it goes from this device as well
                 if !state.members.contains(where: { $0.userId == ownUserId }) {
                     try? await db.write { dbc in
                         try dbc.execute(sql: "DELETE FROM chat WHERE id = ?", arguments: [state.chatId])
                     }
                 }
-                // кто-то покинул группу → ротация нашей sender-key цепочки,
-                // чтобы ушедший не мог расшифровывать новые сообщения (forward secrecy)
+                // someone left the group: our sender key chain rotates so that
+                // whoever left cannot read what is sent from now on
                 if f.event == "members", state.kind == "group" {
                     let current = Set(state.members.map(\.userId))
                     if !Set(previousMembers).subtracting(current).isEmpty {
                         try? e2ee.rotateSenderKey(chatId: state.chatId)
                     }
                 }
-                // chat-фрейм несёт только userId участников — профили новых
-                // пользователей дотягиваются, иначе UI показывает «…» до рестарта
+                // a chat frame carries member ids only, so profiles of new
+                // users are fetched; without it the UI shows a placeholder
+                // name until the next launch
                 await fetchMissingUsers(state.members.map(\.userId))
             }
         case "syncState":
@@ -419,8 +421,8 @@ public actor SyncEngine {
                             album = NULL, kind = 'text' WHERE chatId = ? AND msgId = ?
                             """,
                             arguments: [chatId, id])
-                        // строки ещё нет (оригинал ждёт ключа в pendingDecrypt или не пришёл) —
-                        // тумбстоун буферизуется и применится при появлении сообщения
+                        // nothing matched: the original has not been stored
+                        // yet, so the tombstone waits for it
                         if dbc.changesCount == 0 {
                             try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetMsgId: id,
                                                               kind: "deleted", fromUserId: f.by ?? "",
@@ -435,11 +437,11 @@ public actor SyncEngine {
     }
 
     private var snapshotRefreshInFlight = false
-    /// userId, по которым запрос профиля уже в полёте (защита от шторма
-    /// одинаковых запросов при пачке фреймов от одного нового пользователя)
+    /// Users whose profile request is already in flight, so a burst of frames
+    /// from one unknown sender does not become a burst of identical requests.
     private var userFetchesInFlight: Set<String> = []
 
-    /// Дотягивает с сервера профили пользователей, которых нет в таблице user.
+    /// Fetches the profiles of users the user table does not hold yet.
     private func fetchMissingUsers(_ ids: [String]) async {
         let missing: [String] = (try? await db.read { dbc in
             try ids.filter { id in
@@ -449,7 +451,8 @@ public actor SyncEngine {
         }) ?? []
         for id in missing where !userFetchesInFlight.contains(id) {
             userFetchesInFlight.insert(id)
-            // сеть — вне пути применения фрейма: сообщение не ждёт профиль
+            // the network stays off the frame-applying path: a message never
+            // waits for a profile
             Task { await self.fetchAndStoreUser(id) }
         }
     }
@@ -497,7 +500,7 @@ public actor SyncEngine {
         guard !items.isEmpty else { return }
         var chatIds = Set(items.map(\.chatId))
 
-        // сообщение в неизвестный чат → мы пропустили создание чата, обновляем снапшот
+        // a message for a chat we do not have means we missed its creation
         func storedChats(_ ids: Set<String>) async -> Set<String> {
             (try? await db.read { dbc in
                 try String.fetchSet(dbc, sql: """
@@ -520,11 +523,11 @@ public actor SyncEngine {
                 chatIds = Set(items.map(\.chatId))
             }
         }
-        // сообщение от пользователя без профиля в БД (свежий участник) —
-        // дотянуть, чтобы имя отправителя отобразилось сразу
+        // a sender with no profile stored yet, so that the name shows on the
+        // message right away
         await fetchMissingUsers([String](Set(items.map(\.from))))
 
-        // моё собственное эхо с другого устройства или ack-путь — дедуп по msgId
+        // own echo from another device, or the ack path: deduplicated by msgId
         let msgIds = items.map(\.msgId)
         let stored = (try? await db.read { dbc in
             try String.fetchSet(dbc, sql: """
@@ -562,7 +565,7 @@ public actor SyncEngine {
             if fresh, let body = item.body {
                 let result: DecryptedIncoming
                 if item.from == ownUserId && item.fromDevice == ownDeviceId {
-                    result = .undecryptable(reason: "own_echo") // своё сообщение уже в БД по clientMsgId
+                    result = .undecryptable(reason: "own_echo") // already stored under its clientMsgId
                 } else {
                     result = (try? e2ee.decrypt(envelopeJSON: body, chatId: item.chatId,
                                                 fromUserId: item.from, fromDeviceId: item.fromDevice))
@@ -582,25 +585,20 @@ public actor SyncEngine {
                     await storeIncoming(result, chatId: item.chatId, msgId: item.msgId, seq: item.seq,
                                         from: item.from, fromDevice: item.fromDevice,
                                         sentAt: item.sentAt, ts: item.ts)
-                    // получили контент/ключ → пробуем переиграть отложенные этого чата
                     await retryPending(chatId: item.chatId)
                     replayed.insert(item.chatId)
                 }
             }
-            // курсор двигаем только по непрерывному префиксу (иначе потеряем историю в дыре);
-            // lastSeq — серверный максимум; своё сообщение поднимает myReadUpTo;
-            // непрочитанное = lastSeq - myReadUpTo (производное, не ручной инкремент)
             cursors.append(item)
             if fresh, item.body != nil { announce.append(item) }
         }
         await flush()
-        // получили контент → пробуем переиграть отложенные этих чатов
         for chatId in touched where !replayed.contains(chatId) {
             await retryPending(chatId: chatId)
         }
 
-        // recv-ack за всю порцию одним фреймом (delivered-галочки автору);
-        // по заявке до принятия не шлём: получатель невидим автору
+        // one recv ack per chat for the whole run (the author's delivered ticks);
+        // an unaccepted request sends none, the recipient is invisible to the author
         for chatId in chatIds {
             let seqs = items.filter { $0.chatId == chatId && $0.from != ownUserId }.map(\.seq)
             guard !seqs.isEmpty else { continue }
@@ -611,7 +609,7 @@ public actor SyncEngine {
             guard !isRequestChat else { continue }
             try? await ws.send(.recv(chatId: chatId, seqs: seqs))
         }
-        // событие для in-app уведомления — после записи в БД (превью уже читается)
+        // the in-app banner is told last, when the row it previews is written
         for item in announce {
             incomingMessageStream.send(IncomingMessage(
                 chatId: item.chatId, msgId: item.msgId, fromUserId: item.from,
@@ -623,9 +621,8 @@ public actor SyncEngine {
     static func advanceChat(_ dbc: GRDB.Database, chatId: String, seq: Int,
                             isOwn: Bool, isService: Bool) throws {
         if isService {
-            // служебный фрейм (skd/reaction/edit): занимает seq, но unread не растит;
-            // в полностью прочитанном чате myReadUpTo поглощает seq, чтобы производный
-            // unread следующих сообщений не считал служебный фрейм непрочитанным
+            // in a chat that is fully read, myReadUpTo swallows the seq, so the
+            // derived unread of later messages does not count a service frame
             try dbc.execute(
                 sql: """
                 UPDATE chat SET
@@ -649,10 +646,10 @@ public actor SyncEngine {
         }
     }
 
-    // MARK: - Нечитаемые сообщения
+    // MARK: - Unreadable messages
 
-    /// Конверт, который устройство прочитать не смогло, вместе со счётчиками
-    /// его обработки.
+    /// An envelope this device could not open, with the counters of what has
+    /// been tried on it.
     private struct PendingEnvelope {
         let chatId: String, msgId: String, seq: Int
         let from: String, fromDevice: String
@@ -664,12 +661,13 @@ public actor SyncEngine {
         let repairAttempts: Int, repairAskedAt: Double
     }
 
-    /// Нечитаемый конверт: сохраняем и записываем его seq.
+    /// Keeps an envelope that did not open, and records the seq it left unfilled.
     ///
-    /// Конверт хранится при любой причине — локальная база единственная копия,
-    /// и после починки сессии повторять было бы нечего. Запись seq выводит отказ
-    /// из молчания: пагинация перестаёт дёргать сервер за этот диапазон, а лента
-    /// знает, что сообщение потеряно, а не отсутствует.
+    /// The envelope is kept whatever the reason: this database is its only copy,
+    /// and once the session is repaired there would otherwise be nothing left to
+    /// retry. Recording the seq takes the failure out of silence: pagination
+    /// stops asking the server for that range, and the feed knows the message is
+    /// lost rather than absent.
     private func recordUnreadable(reason rawReason: String, chatId: String, msgId: String, seq: Int,
                                   from: String, fromDevice: String, sentAt: Double,
                                   ts: Double, body: JSONValue) async {
@@ -680,9 +678,10 @@ public actor SyncEngine {
         guard await !stored(msgId: msgId) else { return }
         let reason: String
         if rawReason == "not_addressed" {
-            // в direct отправитель адресует все устройства обеих сторон, поэтому
-            // отсутствие своего бокса — дефект и чинится; в группе адресные
-            // фреймы (раздача цепочки, ремонт) идут одному участнику по замыслу
+            // in a direct chat the sender addresses every device on both sides,
+            // so a box missing for us is a defect and gets repaired; in a group
+            // an addressed frame (key distribution, repair) goes to one member
+            // by design
             let kind = (try? await db.read { dbc in
                 try String.fetchOne(dbc, sql: "SELECT kind FROM chat WHERE id = ?", arguments: [chatId])
             }) ?? nil
@@ -706,7 +705,7 @@ public actor SyncEngine {
         }) ?? 1
         MsngrLog.repair.error(
             "unreadable chat=\(chatId, privacy: .public) seq=\(seq, privacy: .public) reason=\(reason, privacy: .public) attempts=\(attempts, privacy: .public)")
-        // неустранимая причина сама не пройдёт — просим копию у отправителя сразу
+        // a reason that will not clear on its own: ask the sender for a copy now
         guard !MessageRepair.retryableReasons.contains(reason) else { return }
         let pending = PendingEnvelope(chatId: chatId, msgId: msgId, seq: seq, from: from,
                                       fromDevice: fromDevice, sentAt: sentAt, ts: ts, body: data,
@@ -766,10 +765,10 @@ public actor SyncEngine {
         }) ?? []
     }
 
-    /// Переигрывает отложенные конверты чата немедленно: ключ, который только что
-    /// приехал, открывает всё, что его ждало, поэтому пауза здесь не нужна.
-    /// Раздача sender key разблокирует ещё сообщения, поэтому проход повторяется,
-    /// пока есть прогресс.
+    /// Replays a chat's deferred envelopes at once: the key that has just
+    /// arrived opens everything that was waiting for it, so there is nothing to
+    /// wait for here. One of those envelopes may itself be a key distribution
+    /// that unlocks more, so the pass repeats while it keeps making progress.
     private func retryPending(chatId: String) async {
         for _ in 0..<4 {
             var progress = false
@@ -782,9 +781,9 @@ public actor SyncEngine {
 
     private var sweeping = false
 
-    /// Проход по всем отложенным конвертам: переиграть то, что могло открыться,
-    /// попросить копию того, что не откроется, забыть отжившее. Идёт при старте
-    /// движка, при реконнекте и по кругу в фоне.
+    /// A pass over every deferred envelope: replay what may open now, ask the
+    /// sender for what will not, drop what is out of chances. Runs at engine
+    /// start, on every reconnect, and on a background loop.
     public func sweepUnreadable() async {
         guard !sweeping else { return }
         sweeping = true
@@ -804,8 +803,8 @@ public actor SyncEngine {
         }
     }
 
-    /// Одна попытка расшифровать сохранённый конверт. Успех уносит его в ленту и
-    /// закрывает запись о пропаже, неудача считается попыткой.
+    /// One attempt at a stored envelope. Success moves it into the feed and
+    /// closes the record of the gap; failure counts as an attempt.
     private func replay(_ pending: PendingEnvelope) async -> Bool {
         // The message may already be in the feed: the notification service
         // extension opens the same envelope from the push, and the ratchet moved
@@ -841,8 +840,8 @@ public actor SyncEngine {
         await storeIncoming(result, chatId: pending.chatId, msgId: pending.msgId, seq: pending.seq,
                             from: pending.from, fromDevice: pending.fromDevice,
                             sentAt: pending.sentAt, ts: pending.ts)
-        // seq закрыт: строкой ленты — тогда запись о пропаже не нужна вовсе,
-        // иначе молчаливой причиной, чтобы пагинация не пошла за ним снова
+        // the seq is settled: by a feed row, and then the gap record goes, or
+        // by a silent reason, so pagination does not go after it again
         let settled = Self.settledReason(result)
         try? await db.write { dbc in
             try dbc.execute(sql: "DELETE FROM pendingDecrypt WHERE chatId = ? AND msgId = ?",
@@ -859,8 +858,8 @@ public actor SyncEngine {
         return true
     }
 
-    /// Молчаливая причина для seq, который обработан, но своей строки в ленте не
-    /// получает; nil — строка есть, запись о пропаже больше не нужна.
+    /// The silent reason for a seq that is processed but gets no feed row of its
+    /// own. nil means the row is there and the gap record can go.
     private static func settledReason(_ result: DecryptedIncoming) -> String? {
         switch result {
         case .senderKeyDistribution: return "sender_key"
@@ -871,8 +870,8 @@ public actor SyncEngine {
         }
     }
 
-    /// Конверт отжил своё: сессии, которой он шифровался, давно нет, и попытки
-    /// ремонта потрачены. Запись о пропавшем seq остаётся.
+    /// The envelope is out of chances: the session it was encrypted to is long
+    /// gone and the repair attempts are spent. The record of the seq stays.
     private func dropExpired(_ pending: PendingEnvelope) async {
         try? await db.write { dbc in
             try dbc.execute(sql: "DELETE FROM pendingDecrypt WHERE chatId = ? AND msgId = ?",
@@ -886,22 +885,23 @@ public actor SyncEngine {
             "gave up chat=\(pending.chatId, privacy: .public) seq=\(pending.seq, privacy: .public) reason=\(pending.reason ?? "unknown", privacy: .public) attempts=\(pending.attempts, privacy: .public)")
     }
 
-    /// Просит у отправителя свежую копию сообщения, если по счётчику и паузе
-    /// пора. Пользователя это не касается: запрос уходит сам.
+    /// Asks the sender for a fresh copy once the attempt count and the backoff
+    /// allow it. The user is not part of this: the request goes on its own.
     private func requestRepairIfDue(_ pending: PendingEnvelope, now: Double) async {
         guard MessageRepair.repairDue(reason: pending.reason, firstSeenAt: pending.firstSeenAt,
                                       repairAttempts: pending.repairAttempts,
                                       repairAskedAt: pending.repairAskedAt, now: now) else { return }
-        // заявка до принятия: автор не должен узнать, что на той стороне
-        // кто-то есть, — конверт ждёт принятия, следующий проход попросит копию
+        // an unaccepted request: the author must not learn anyone is on the
+        // other side, so the envelope waits and a later pass asks for the copy
         let isRequest = (try? await db.read { dbc in
             try Bool.fetchOne(dbc, sql: "SELECT isRequest FROM chat WHERE id = ?",
                               arguments: [pending.chatId]) ?? false
         }) ?? false
         guard !isRequest else { return }
         let attempt = pending.repairAttempts + 1
-        // сессия не открыла его конверт — запрос уехал бы в неё же; помечаем её
-        // на пересборку, тогда запрос уйдёт свежим X3DH и ответ придёт в новую
+        // the session failed to open his envelope and the request would leave
+        // through that same session; marking it for rebuild sends the request
+        // over a fresh X3DH, and the answer comes back into the new one
         if let reason = pending.reason, MessageRepair.sessionReasons.contains(reason) {
             try? e2ee.resetPairwiseSession(with: pending.from)
         }
@@ -920,8 +920,8 @@ public actor SyncEngine {
                 WHERE chatId = ? AND msgId = ?
                 """,
                 arguments: [attempt, now, pending.chatId, pending.msgId])
-            // попытка считается и для ленты: нейтральная заглушка появляется,
-            // только когда чинить уже пробовали
+            // the attempt counts for the feed too: the neutral placeholder
+            // appears only once a repair has been tried
             try HistoryWindow.recordGap(dbc, chatId: pending.chatId, seq: pending.seq,
                                         reason: pending.reason ?? "unknown",
                                         msgId: pending.msgId, fromUserId: pending.from,
@@ -931,13 +931,14 @@ public actor SyncEngine {
             "repair asked chat=\(pending.chatId, privacy: .public) seq=\(pending.seq, privacy: .public) reason=\(pending.reason ?? "unknown", privacy: .public) attempt=\(attempt, privacy: .public)")
     }
 
-    // MARK: - Ремонт через отправителя
+    // MARK: - Repair through the sender
 
-    /// Виды контента протокола ремонта: адресный запрос копии, копия и
-    /// подтверждение раздачи sender key. Своей строки в ленте не имеют.
+    /// Content kinds of the repair protocol: the addressed request for a copy,
+    /// the copy itself, and the acknowledgement of a sender key distribution.
+    /// None of them takes a row in the feed.
     static let repairKinds: Set<String> = ["repairRequest", "repair", "skdAck"]
 
-    /// Обрабатывает контент протокола ремонта; false — обычный контент.
+    /// Handles repair protocol content; false means this is ordinary content.
     @discardableResult
     func handleRepairContent(_ content: ContentPayload, chatId: String,
                              from: String, fromDevice: String) async -> Bool {
@@ -957,13 +958,13 @@ public actor SyncEngine {
         return true
     }
 
-    /// Собеседник не смог прочитать наше сообщение: перешифровываем его текущей
-    /// сессией и отправляем ему заново. Копия несёт исходный msgId, поэтому в
-    /// его ленте она встаёт на место пропавшего сообщения, а не рядом с ним.
+    /// The peer could not read our message, so it is encrypted again with the
+    /// current session and sent to him. The copy carries the original msgId, so
+    /// in his feed it lands where the missing message was, not beside it.
     private func answerRepairRequest(_ request: ContentPayload, chatId: String, from: String) async {
         guard let target = request.targetMsgId, from != ownUserId else { return }
-        // группа: цепочка ему не доехала — раздача забывается, следующее
-        // сообщение в чат раздаст её заново
+        // group: the chain never reached him, so the distribution is forgotten
+        // and the next message to the chat hands it out again
         if request.reason == "no_sender_key" {
             try? e2ee.forgetSenderKeyDistribution(chatId: chatId, userId: from)
         }
@@ -977,9 +978,9 @@ public actor SyncEngine {
                 "repair asked for a message we do not hold chat=\(chatId, privacy: .public) msgId=\(target, privacy: .public)")
             return
         }
-        // просить копию можно только того, что и так было адресовано просящему:
-        // вступивший позже участник иначе получил бы историю, закрытую для него
-        // сменой цепочки
+        // a copy is only given for what was addressed to the asker in the first
+        // place: otherwise a member who joined later would be handed history
+        // that the chain rotation closed to him
         let joinedAt = (try? await db.read { dbc in
             try Double.fetchOne(dbc, sql: "SELECT joinedAt FROM member WHERE chatId = ? AND userId = ?",
                                 arguments: [chatId, from])
@@ -1009,15 +1010,15 @@ public actor SyncEngine {
             "repair sent chat=\(chatId, privacy: .public) msgId=\(target, privacy: .public) attempt=\(request.attempt ?? 1, privacy: .public)")
     }
 
-    /// Копия от отправителя: встаёт под исходным msgId и seq, поэтому дубля в
-    /// ленте не появляется, и закрывает запись о пропаже.
+    /// A copy from the sender. It goes in under the original msgId and seq, so
+    /// no duplicate appears in the feed, and it closes the record of the gap.
     private func applyRepair(_ repair: ContentPayload, chatId: String, from: String) async {
         guard let target = repair.repairOf, let json = repair.orig,
               let original = try? JSONDecoder().decode(ContentPayload.self, from: Data(json.utf8)),
               let seq = repair.repairSeq, seq > 0 else { return }
-        // копию принимаем только от автора пропавшего сообщения и только на то,
-        // о пропаже чего у нас есть запись: иначе участник чата мог бы записать
-        // свой текст под чужим msgId
+        // a copy is accepted only from the author of the missing message, and
+        // only where a record of that gap exists: otherwise any member of the
+        // chat could write his own text under someone else's msgId
         let author = (try? await db.read { dbc in
             try String.fetchOne(
                 dbc, sql: "SELECT fromUserId FROM pendingDecrypt WHERE chatId = ? AND msgId = ?",
@@ -1048,14 +1049,14 @@ public actor SyncEngine {
             "repaired chat=\(chatId, privacy: .public) seq=\(seq, privacy: .public)")
     }
 
-    /// Подтверждение раздачи sender key её отправителю: без него он не узнает,
-    /// что цепочка доехала, и будет раздавать её снова.
+    /// Acknowledges a sender key distribution back to whoever sent it: without
+    /// this he never learns the chain arrived and keeps handing it out.
     private func confirmSenderKeyDistribution(chatId: String, keyId: String, to userId: String) async {
         var ack = ContentPayload(kind: "skdAck")
         ack.to = userId
         ack.keyId = keyId
-        // круг подтверждения совпадает с кругом раздачи: повтор той же раздачи
-        // получает новое подтверждение, а не гасится дедупом сервера
+        // the ack round matches the distribution round, so a repeated
+        // distribution gets a new ack instead of being swallowed by the dedup
         let round = Int(Date().timeIntervalSince1970 / MessageRepair.redistributeAfter)
         try? await enqueue(content: ack, chatId: chatId,
                            clientMsgId: "ska:\(chatId):\(keyId):\(ownDeviceId):\(round)")
@@ -1104,8 +1105,7 @@ public actor SyncEngine {
                 try dbc.execute(
                     sql: "UPDATE message SET text = ?, edited = 1 WHERE chatId = ? AND (msgId = ? OR id = ?)",
                     arguments: [content.text, chatId, target, target])
-                // оригинала ещё нет (ждёт ключа в pendingDecrypt) —
-                // правка применится при появлении строки
+                // nothing matched: the original is not stored yet
                 if dbc.changesCount == 0 {
                     try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetMsgId: target,
                                                       kind: "edit", fromUserId: from,
@@ -1139,19 +1139,18 @@ public actor SyncEngine {
             let ttl = try Int.fetchOne(dbc, sql: "SELECT ttlSeconds FROM chat WHERE id = ?", arguments: [chatId]) ?? 0
             if ttl > 0 { msg.expiresAt = Date().timeIntervalSince1970 + Double(ttl) }
             try msg.save(dbc)
-            // edit/reaction/deleted, пришедшие раньше этого сообщения, лежат в буфере
             try SyncEngine.applyBuffered(dbc, chatId: chatId, msgId: msgId)
-            // unreadCount пересчитывается в advanceChat как lastSeq - myReadUpTo
             try dbc.execute(sql: "UPDATE chat SET lastActivityAt = ? WHERE id = ?",
                             arguments: [max(ts, sentAt), chatId])
         }
     }
 
-    /// Применяет сообщение из серверной истории (пагинация вверх).
-    /// Обычный контент апсертится строкой ленты; edit/reaction применяются
-    /// к оригиналу, а если его ещё нет — буферизуются в pendingApply
-    /// (в истории событие может идти раньше своей цели по порядку реплея).
-    /// lastActivityAt не трогается: история старше текущей активности чата.
+    /// Applies a message from server history (upward pagination).
+    ///
+    /// Ordinary content is upserted as a feed row; an edit or a reaction goes
+    /// onto its original, or waits for it when the replay order puts the event
+    /// before its target. lastActivityAt is left alone: history is older than
+    /// whatever the chat is doing now.
     public func storeHistoric(content: ContentPayload, chatId: String, msgId: String,
                               seq: Int, from: String, sentAt: Double, ts: Double) async {
         try? await db.write { [ownUserId] dbc in
@@ -1178,7 +1177,7 @@ public actor SyncEngine {
                     }
                 }
             case "disappearing":
-                break // текущий TTL чата уже в chat-state, историческая смена не переигрывается
+                break // the chat's current TTL is in its state; a historic change is not replayed
             default:
                 var msg = Message(id: msgId, chatId: chatId, fromUserId: from, sentAt: sentAt,
                                   kind: MessageKind(rawValue: content.kind) ?? .text,
@@ -1288,7 +1287,7 @@ public actor SyncEngine {
                 """,
                 arguments: [msgId, seq, f.ts, clientMsgId])
             try dbc.execute(sql: "DELETE FROM outbox WHERE clientMsgId = ?", arguments: [clientMsgId])
-            // своё отправленное считается прочитанным мной → myReadUpTo растёт, бейдж не копится
+            // what we sent counts as read by us, so the badge does not pile up
             try dbc.execute(
                 sql: """
                 UPDATE chat SET
@@ -1300,9 +1299,9 @@ public actor SyncEngine {
         }
     }
 
-    /// Отказ сервера по нашему фрейму. Отправка помечается неотправленной с кодом
-    /// причины и уходит из outbox: то, что сервер отверг, повторять бессмысленно —
-    /// иначе сообщение навсегда остаётся в состоянии «отправляется».
+    /// The server refused one of our frames. The send is marked failed with the
+    /// reason code and leaves the outbox: repeating what the server rejected
+    /// changes nothing and would leave the message sending forever.
     private func applyServerError(_ f: WSIncoming) async {
         guard let clientMsgId = f.clientMsgId else { return }
         let reason = f.error ?? SendFailure.sendFailed
@@ -1336,15 +1335,15 @@ public actor SyncEngine {
         }
     }
 
-    // MARK: - Отправка
+    // MARK: - Sending
 
-    /// Виды контента без собственной строки в ленте; шлются с service-флагом.
+    /// Content kinds with no feed row of their own; they go out service-flagged.
     static let serviceKinds: Set<String> = Set(["edit", "reaction", "disappearing"])
         .union(SyncEngine.repairKinds)
 
-    /// Единственная точка отправки: пишет в БД + outbox, будит воркер. Работает офлайн.
-    /// clientMsgId задаётся явно там, где повтор должен схлопнуться серверным
-    /// дедупом (запрос копии, ответ на него, подтверждение раздачи цепочки).
+    /// The only way out: writes the row and the outbox entry, wakes the worker,
+    /// works offline. clientMsgId is passed in where a repeat has to collapse
+    /// under the server's dedup (a repair request, its answer, a chain ack).
     public func enqueue(content: ContentPayload, chatId: String,
                         clientMsgId: String = UUID().uuidString) async throws {
         let now = Date().timeIntervalSince1970
@@ -1358,14 +1357,13 @@ public actor SyncEngine {
         msg.forward = content.fwd
         let payload = try JSONEncoder().encode(content)
         try await db.write { [msg] dbc in
-            // edit/reaction/disappearing не создают своей строки в ленте
             let visible = !SyncEngine.serviceKinds.contains(content.kind)
             if visible { try msg.save(dbc) }
             try OutboxItem(clientMsgId: clientMsgId, chatId: chatId, createdAt: now, payload: payload).save(dbc)
             if visible {
                 try dbc.execute(sql: "UPDATE chat SET lastActivityAt = ? WHERE id = ?", arguments: [now, chatId])
             }
-            // edit применяем локально сразу
+            // an edit takes effect here before it is sent
             if content.kind == "edit", let target = content.targetMsgId {
                 try dbc.execute(sql: "UPDATE message SET text = ?, edited = 1 WHERE chatId = ? AND (msgId = ? OR id = ?)",
                                 arguments: [content.text, chatId, target, target])
@@ -1397,8 +1395,9 @@ public actor SyncEngine {
             do {
                 try await sendOutboxItem(item)
             } catch {
-                // TOFU: ключ получателя сменился — блокируем до явного принятия,
-                // сообщение показываем как failed (баннер в чате предложит принять ключ)
+                // TOFU: the recipient's identity key changed, so sending stops
+                // until the user accepts it and the message shows as failed
+                // (the chat banner offers that choice)
                 if let ee = error as? E2EEError, case .identityChanged(let uid) = ee {
                     try? await db.write { dbc in
                         try dbc.execute(sql: "UPDATE outbox SET state = 'blocked' WHERE clientMsgId = ?",
@@ -1410,7 +1409,8 @@ public actor SyncEngine {
                     await insertSystemMessage(chatId: item.chatId, text: "identity_changed:\(uid)")
                     continue
                 }
-                // помечаем попытку; ошибка сети → выходим, реконнект разбудит снова
+                // count the attempt; on a network error stop here, the
+                // reconnect wakes the drain again
                 try? await db.write { dbc in
                     try dbc.execute(sql: "UPDATE outbox SET attempts = attempts + 1 WHERE clientMsgId = ?",
                                     arguments: [item.clientMsgId])
@@ -1433,8 +1433,8 @@ public actor SyncEngine {
 
     private func sendOutboxItem(_ item: OutboxItem) async throws {
         var content = try JSONDecoder().decode(ContentPayload.self, from: item.payload)
-        // медиа, приложенные офлайн, выгружаются перед шифрованием конверта;
-        // ошибка сети здесь — обычный ретрай outbox
+        // media attached offline is uploaded before the envelope is encrypted;
+        // a network error here is an ordinary outbox retry
         content = try await uploadPendingMedia(content, item: item)
         let info = try await db.read { dbc -> (kind: String, members: [String])? in
             guard let chat = try Chat.fetchOne(dbc, key: item.chatId) else { return nil }
@@ -1449,12 +1449,10 @@ public actor SyncEngine {
             return
         }
 
-        // edit/reaction/disappearing и протокол ремонта — служебные: сервер не
-        // растит ими unread получателей
         let service = Self.serviceKinds.contains(content.kind)
         if let addressee = content.to {
-            // адресный фрейм (запрос копии, копия, подтверждение цепочки): он
-            // касается двух устройств, поэтому едет pairwise и в группе тоже
+            // an addressed frame (a repair request, a copy, a chain ack)
+            // concerns two devices, so it goes pairwise even in a group
             let env = try await e2ee.encryptDirect(content: content, toUserId: addressee)
             try await ws.send(.send(chatId: item.chatId, clientMsgId: item.clientMsgId,
                                     sentAt: item.createdAt, body: env, service: service))
@@ -1473,13 +1471,15 @@ public actor SyncEngine {
             try await ws.send(.send(chatId: item.chatId, clientMsgId: item.clientMsgId,
                                     sentAt: item.createdAt, body: skm, service: service))
         }
-        // outbox-строка удалится по "sent" ack; здесь только помечаем «в полёте».
-        // attempts НЕ трогаем: успешная отправка без ack — не ошибка (сервер дедуплицирует повтор)
+        // the outbox row goes on the "sent" ack; here it is only marked in
+        // flight. attempts stays put: a frame that left without an ack yet is
+        // not a failed attempt
         try await db.write { dbc in
             try dbc.execute(sql: "UPDATE outbox SET state = 'inflight' WHERE clientMsgId = ?",
                             arguments: [item.clientMsgId])
         }
-        // страховка: если ack не пришёл за 15с — вернуть в ready и разбудить отправку
+        // safety net: no ack within 15s puts the item back to ready and wakes
+        // the sender
         Task { [weak self, db, clientMsgId = item.clientMsgId] in
             try? await Task.sleep(nanoseconds: 15_000_000_000)
             let reverted = (try? await db.write { dbc -> Bool in
@@ -1491,13 +1491,14 @@ public actor SyncEngine {
         }
     }
 
-    // MARK: - Аплоад локальных медиа перед отправкой
+    // MARK: - Uploading local media before sending
 
     struct MediaManagerMissing: Error {}
 
-    /// Выгружает медиа с локальными исходниками (mediaId пустой, файл в pendingDir).
-    /// После каждого выгруженного элемента обновлённый payload сохраняется в outbox
-    /// и в строке сообщения — kill не приводит к повторной выгрузке готовых элементов.
+    /// Uploads attachments that still have a local source (empty mediaId, file
+    /// in pendingDir). After each item the updated payload is written to the
+    /// outbox and to the message row, so being killed mid-way does not upload
+    /// again what already went up.
     private func uploadPendingMedia(_ content: ContentPayload, item: OutboxItem) async throws -> ContentPayload {
         func needsUpload(_ i: MediaInfo) -> Bool { i.mediaId.isEmpty && i.localPath != nil }
         var content = content
@@ -1556,12 +1557,12 @@ public actor SyncEngine {
         }
     }
 
-    // MARK: - Очередь сервисных действий (read / delete-for-all / accept)
+    // MARK: - Action queue (read / delete-for-all / accept)
 
     struct ReadActionPayload: Codable { var upToSeq: Int }
     struct DeleteActionPayload: Codable { var msgIds: [String]; var forAll: Bool }
 
-    /// read-акции схлопываются по чату: одна строка на chatId, побеждает больший upToSeq.
+    /// Read actions collapse per chat: one row per chatId, the larger upToSeq wins.
     static func upsertReadAction(_ dbc: GRDB.Database, chatId: String, upToSeq: Int) throws {
         let id = "read:\(chatId)"
         let prev = try Row.fetchOne(dbc, sql: "SELECT payload FROM pendingAction WHERE id = ?", arguments: [id])
@@ -1580,7 +1581,8 @@ public actor SyncEngine {
 
     private var drainingActions = false
 
-    /// Дренаж очереди действий: FIFO, ошибка сети → выход, реконнект разбудит снова.
+    /// Drains the action queue in order; a network error stops the drain and
+    /// the reconnect wakes it again.
     private func drainActions() async {
         guard connected, !drainingActions else { return }
         drainingActions = true
@@ -1602,11 +1604,12 @@ public actor SyncEngine {
                 case "deleteChat":
                     try await api.deleteChat(a.chatId)
                 default:
-                    break // неизвестный тип удаляется ниже
+                    break // an unknown type is dropped below
                 }
                 try? await db.write { [a] dbc in
-                    // read мог схлопнуться с бо́льшим upToSeq, пока шла отправка, —
-                    // тогда payload изменился и строка остаётся на повторную отправку
+                    // a read may have collapsed with a larger upToSeq while
+                    // this one was in flight: the payload then differs and the
+                    // row stays behind to be sent again
                     try dbc.execute(sql: "DELETE FROM pendingAction WHERE id = ? AND payload = ?",
                                     arguments: [a.id, a.payload])
                 }
@@ -1625,9 +1628,9 @@ public actor SyncEngine {
         }
     }
 
-    // MARK: - Пользовательские действия
+    // MARK: - User actions
 
-    /// Принять новый identity-ключ собеседника и переотправить заблокированные сообщения.
+    /// Accepts the peer's new identity key and releases the blocked messages.
     public func acceptKeyChange(chatId: String, peerUserId: String) async {
         try? e2ee.acceptChangedIdentity(userId: peerUserId)
         try? await db.write { dbc in
@@ -1641,8 +1644,8 @@ public actor SyncEngine {
         wakeOutbox()
     }
 
-    /// Заявку до принятия не отмечаем прочитанной: автор не должен узнать,
-    /// что получатель открывал чат (сервер такую марку тоже отбрасывает).
+    /// An unaccepted request is never marked read: the author must not learn
+    /// that the recipient opened the chat (the server drops such a mark too).
     public func markRead(chatId: String, upToSeq: Int) async {
         let isRequest = (try? await db.read { dbc in
             try Bool.fetchOne(dbc, sql: "SELECT isRequest FROM chat WHERE id = ?", arguments: [chatId]) ?? false
@@ -1656,7 +1659,8 @@ public actor SyncEngine {
         actionWakeup.continuation.yield()
     }
 
-    /// Принятие заявки: локально сразу, серверный accept — через очередь действий.
+    /// Accepting a request: locally at once, the server accept through the
+    /// action queue.
     public func acceptChatRequest(chatId: String) async {
         try? await db.write { dbc in
             try dbc.execute(sql: "UPDATE chat SET isRequest = 0, iAccepted = 1 WHERE id = ?",
@@ -1747,7 +1751,7 @@ public actor SyncEngine {
         }
     }
 
-    // MARK: - Общие апсерты
+    // MARK: - Shared upserts
 
     static func upsertUser(_ dbc: GRDB.Database, _ u: APIClient.UserDTO) throws {
         try dbc.execute(
@@ -1760,7 +1764,7 @@ public actor SyncEngine {
             arguments: [u.id, u.username, u.display_name, u.bio, u.avatar_id])
     }
 
-    /// Локальные флаги чата из снапшота сервера.
+    /// A chat's local flags, as the server snapshot carries them.
     public struct ChatFlags: Sendable {
         public let pinned: Bool
         public let muted: Bool
@@ -1800,8 +1804,8 @@ public actor SyncEngine {
               myReadUpTo = MAX(chat.myReadUpTo, excluded.myReadUpTo),
               peerReadUpTo = MAX(chat.peerReadUpTo, excluded.peerReadUpTo),
               peerDeliveredUpTo = MAX(chat.peerDeliveredUpTo, excluded.peerDeliveredUpTo),
-              -- принятие необратимо: локальный accept не откатывается снапшотом,
-              -- который сервер собрал до доставки нашего /accept
+              -- acceptance is one-way: a local accept is not rolled back by a
+              -- snapshot the server built before our /accept reached it
               isRequest = MIN(chat.isRequest, excluded.isRequest),
               iAccepted = MAX(chat.iAccepted, excluded.iAccepted),
               unreadCount = MAX(0, MAX(chat.lastSeq, excluded.lastSeq) - MAX(chat.myReadUpTo, excluded.myReadUpTo))
@@ -1823,7 +1827,8 @@ public actor SyncEngine {
         }
     }
 
-    /// Возвращает false, если целевого сообщения нет в БД (реакция не применена).
+    /// Returns false when the target message is not stored and the reaction
+    /// went nowhere.
     @discardableResult
     static func applyReaction(_ dbc: GRDB.Database, chatId: String, targetMsgId: String,
                               userId: String, emoji: String?) throws -> Bool {
@@ -1832,7 +1837,7 @@ public actor SyncEngine {
             arguments: [chatId, targetMsgId, targetMsgId]) else { return false }
         var reactions = (try? JSONDecoder().decode([String: [String]].self,
                                                    from: Data((row["reactions"] as String).utf8))) ?? [:]
-        // одна реакция на пользователя: убрать из всех, добавить в новую
+        // one reaction per user: drop him from every emoji, then add the new one
         for (k, users) in reactions {
             reactions[k] = users.filter { $0 != userId }
             if reactions[k]?.isEmpty == true { reactions.removeValue(forKey: k) }
@@ -1846,14 +1851,14 @@ public actor SyncEngine {
         return true
     }
 
-    // MARK: - Буфер edit/reaction/deleted без оригинала
+    // MARK: - Buffer for edit/reaction/deleted with no original yet
 
     static func payloadJSON(_ content: ContentPayload) -> String {
         (try? JSONEncoder().encode(content)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
     }
 
-    /// Откладывает edit/reaction/deleted, чьё целевое сообщение ещё не в БД.
-    /// Повтор от того же автора замещает строку (последняя правка/реакция побеждает).
+    /// Holds an edit, reaction or delete whose target message is not stored
+    /// yet. A repeat from the same author replaces the row, so the last one wins.
     static func bufferPendingApply(_ dbc: GRDB.Database, chatId: String, targetMsgId: String,
                                    kind: String, fromUserId: String, payload: String, seq: Int?) throws {
         try dbc.execute(
@@ -1864,7 +1869,8 @@ public actor SyncEngine {
             arguments: [chatId, targetMsgId, kind, fromUserId, payload, seq])
     }
 
-    /// Применяет отложенные edit/reaction/deleted к только что вставленному сообщению.
+    /// Applies the held edits, reactions and deletes to a message that has just
+    /// been inserted.
     static func applyBuffered(_ dbc: GRDB.Database, chatId: String, msgId: String) throws {
         let rows = try Row.fetchAll(
             dbc, sql: "SELECT kind, fromUserId, payload FROM pendingApply WHERE chatId = ? AND targetMsgId = ? ORDER BY seq",
