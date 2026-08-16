@@ -629,11 +629,14 @@ app.post("/api/chats/:id/flags", async (c) => {
 app.post("/api/chats/:id/invite", async (c) => {
   const { userId } = c.get("auth");
   const chatId = c.req.param("id");
-  // only a member of the chat may mint an invite
+  // only a member of the chat may mint an invite, and only while the group's
+  // rights let them bring anyone in
   const sr = await convStub(c.env, chatId).fetch("https://do/state");
   const sj = (await sr.json()) as { ok: boolean; state?: ChatState };
-  if (!sj.ok || !sj.state?.members.some((m) => m.userId === userId))
-    return err("not_member", 403);
+  const me = sj.state?.members.find((m) => m.userId === userId);
+  if (!sj.ok || !me) return err("not_member", 403);
+  if (sj.state!.kind === "group" && sj.state!.invitePolicy === "admins" && me.role !== "admin")
+    return err("not_allowed", 403);
   const code = b64url(crypto.getRandomValues(new Uint8Array(9)));
   await c.env.DB.prepare(
     "INSERT INTO invites (code, chat_id, created_by, created_at) VALUES (?,?,?,?)"
