@@ -30,6 +30,18 @@ final class MessageTextView: UIView {
     /// keeps the text colourless and survives a change of palette or theme.
     func configure(_ attr: NSAttributedString, color: UIColor, linkColor: UIColor,
                    codeBackground: UIColor) {
+        let mutable = Self.coloured(attr, color: color, linkColor: linkColor)
+        self.codeBackground = codeBackground
+        storage.setAttributedString(mutable)
+        accessibilityLabel = mutable.string
+        applyContainerWidth()
+        setNeedsDisplay()
+    }
+
+    /// Цвета текста и ссылок поверх плана раскладки. Тем же текстом рисует
+    /// приподнятый баббл контекстного меню, поэтому раскраска общая.
+    static func coloured(_ attr: NSAttributedString, color: UIColor,
+                         linkColor: UIColor) -> NSMutableAttributedString {
         let mutable = NSMutableAttributedString(attributedString: attr)
         let full = NSRange(location: 0, length: mutable.length)
         mutable.addAttribute(.foregroundColor, value: color, range: full)
@@ -38,11 +50,7 @@ final class MessageTextView: UIView {
             mutable.addAttributes([.foregroundColor: linkColor,
                                    .underlineStyle: NSUnderlineStyle.single.rawValue], range: range)
         }
-        self.codeBackground = codeBackground
-        storage.setAttributedString(mutable)
-        accessibilityLabel = mutable.string
-        applyContainerWidth()
-        setNeedsDisplay()
+        return mutable
     }
 
     override func layoutSubviews() {
