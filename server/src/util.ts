@@ -36,6 +36,17 @@ export function newToken(): string {
   return b64url(crypto.getRandomValues(new Uint8Array(32)));
 }
 
+/// Code a device being linked shows for its owner to type on a device that is
+/// already on the account. Crockford base32 has no character pair a reader can
+/// confuse, and 32 divides 256, so the bytes map onto it without bias.
+export const PROVISION_CODE_LENGTH = 8;
+export function provisionCode(): string {
+  const rnd = crypto.getRandomValues(new Uint8Array(PROVISION_CODE_LENGTH));
+  let out = "";
+  for (const b of rnd) out += ULID_CHARS[b % 32];
+  return out;
+}
+
 // Все клиент-видимые метки времени — в СЕКУНДАХ (как Date.timeIntervalSince1970 на клиенте).
 // ulid хранит миллисекунды внутри себя отдельно.
 export function nowSec(): number {

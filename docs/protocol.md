@@ -13,13 +13,17 @@
   floor the upgrade answers `426 client_too_old` with both numbers, and the
   client stops reconnecting instead of retrying into silence.
 - Auth: токен устройства (`Authorization: Bearer <token>` или `?token=`),
-  в D1 хранится SHA-256 токена. Логина как отдельной операции нет: восстановление
-  доступа — новая регистрация.
+  в D1 хранится SHA-256 токена. Вход на новом устройстве — не пароль, а согласие
+  устройства, которое уже в аккаунте: `/api/provision/*` (раздел «Вход на новом
+  устройстве»). Ключи сессии провижининга ходят в заголовке
+  `x-provision-token` — у нового устройства ещё нет токена устройства.
 - Отзыв токена: `devices.revoked_at`. Проверяется в middleware авторизации, так
   что отозванный токен даёт 401 и на `/api/*`, и на апгрейде `/ws`. Отзыв рвёт
-  живые сокеты этого устройства (код закрытия 4401) и стирает его APNs-токен,
-  так что до устройства перестают доходить и пуши. Срока жизни у токена нет:
-  он действует, пока не отозван.
+  живые сокеты этого устройства (код закрытия 4401), стирает его APNs-токен и
+  удаляет его `identity_keys` и `one_time_prekeys`: список устройств собеседник
+  перечитывает на каждой отправке, поэтому именно это перестаёт адресовать
+  отозванному устройству конверты. Срока жизни у токена нет: он действует, пока
+  не отозван.
 - Все клиент-видимые метки времени — в секундах (`nowSec()` на сервере,
   `timeIntervalSince1970` на клиенте).
 
@@ -44,6 +48,16 @@ GET  /api/me                      → {user, deviceId}
 GET  /api/sessions                → {sessions:[{deviceId,name,createdAt,lastSeen,hasPushToken,current}]}
 POST /api/logout                  отозвать токен текущего устройства
 POST /api/sessions/:deviceId/revoke   отозвать токен другого своего устройства
+
+POST /api/provision/start         {ephemeralKey, device:{name,platform}}   (без auth)
+                                  → {provisionId, code, provisionToken, expiresIn}
+GET  /api/provision/:id           (x-provision-token) → {status:"pending"|"approved", envelope?}
+POST /api/provision/lookup        {code} → {provisionId, ephemeralKey, device, expiresIn}
+POST /api/provision/:id/approve   {envelope} — согласие с устройства, уже вошедшего в аккаунт
+POST /api/provision/:id/claim     (x-provision-token) {identityKey, identitySignKey,
+                                  signedPrekey, oneTimePrekeys, device:{name}}
+                                  → {userId, deviceId, token}
+POST /api/provision/:id/cancel    (x-provision-token)
 GET  /api/users?q=                поиск по username/displayName (LOWER LIKE, лимит 20)
 GET  /api/users/:id               → {user, presence:{online,lastSeen}}
 GET  /api/devices?ids=a,b,c       устройства и identity-ключи; ничего не расходует
@@ -89,6 +103,26 @@ POST /api/dev/fault               {failEvents} — dev hook: the caller's own se
 может админ, а не-админ — только самого себя; вступление по инвайт-ссылке
 разрешено не-участнику (`viaInvite`); создать инвайт может любой участник чата.
 Блокировки — в разделе ниже.
+
+## Вход на новом устройстве
+
+Пароля нет, номера нет: новое устройство пускает в аккаунт то, которое уже в нём.
+Новое устройство открывает сессию провижининга и показывает восьмизначный код
+(Crockford base32), владелец набирает код на старом устройстве, старое
+запечатывает бандл аккаунта на эфемерный ключ сессии и кладёт его на сервер.
+Сервер внутрь `envelope` не заглядывает.
+
+- `provisionToken` выдаётся один раз тому устройству, которое открыло сессию, и
+  хранится хэшем: код называет сессию, токен делает право на неё именным.
+- Сессия одноразовая и живёт 120 секунд. Одобренную нельзя одобрить ещё раз, а
+  `lookup` её больше не находит.
+- `claim` заводит устройство под тем аккаунтом, чьё устройство одобрило сессию, и
+  требует те же `identityKey`/`identitySignKey`, что уже записаны у аккаунта:
+  identity принадлежит аккаунту, а не устройству (`docs/crypto-flows.md`).
+  Расхождение — `identity_mismatch`.
+
+Подробности решения и то, чего этот механизм не защищает, —
+`docs/research/2026-08-16-second-device.md`.
 
 ## Блокировки
 
