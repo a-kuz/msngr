@@ -286,14 +286,9 @@ def proposals(snap, busy):
     test users in it, caches whose loss is measured in build minutes.
     """
     out = []
-    for dev, why in busy:
-        out.append((dev["bytes"], f"simulator `{dev['name']}` — {why}. "
-                    "Nobody in the registry claims it; if the agent really is "
-                    "gone, `xcrun simctl delete` takes it."))
-
     for group in snap["groups"]:
         for item in group["items"]:
-            if item.get("loose"):
+            if item.get("loose") or item["bytes"] < 200 * 2**20:
                 continue
             name, size = item["name"], item["bytes"]
             if group["name"] == "derived data" and name.endswith(".noindex"):
@@ -303,33 +298,35 @@ def proposals(snap, busy):
                 out.append((size, f"derived data `{name}` — costs one cold "
                             "build of that project."))
             elif group["name"] == "simulators" and item["note"].startswith("agent "):
-                out.append((size, f"simulator `{name}` belongs to a working "
-                            f"{item['note']}. Ask it to finish first."))
+                out.append((size, f"simulator `{item.get('device', name)}` "
+                            f"belongs to a working {item['note']}. Ask it to "
+                            "finish first."))
             elif group["name"] == "logs and scratch":
-                out.append((size, f"`{name}` — a finished run's scratch."))
+                out.append((size, f"`{name}` — scratch of a run that ended."))
             elif name == "swiftpm cache":
                 out.append((size, "the SwiftPM cache — costs one re-resolve of "
                             "the packages."))
-            elif name == "the shared :8787 stand" or name.endswith("server/.wrangler"):
+            elif name.endswith("server/.wrangler"):
                 out.append((size, "`server/.wrangler` — the shared stand. It "
                             "holds the conversations and keys of the test "
                             "users; deleting it means registering them again."))
+    out.sort(key=lambda p: -p[0])
+
+    # A simulator nobody claims that is still being written to comes first
+    # whatever its size: it is the one thing here that should not exist at all.
+    head = [(dev["bytes"], f"simulator `{dev['name']}` — {why}. Nothing in the "
+             "registry claims it, so either an agent is running unregistered or "
+             "it was left behind. `xcrun simctl delete` takes it.")
+            for dev, why in busy]
 
     dead = snap.get("held_by_dead_files", {}).get("bytes", 0)
     if dead > 2 * 2**30:
         who = ", ".join(p["name"] for p in snap["held_by_dead_files"]["processes"][:3])
-        out.append((dead, f"{gb(dead)} is held by deleted files still open "
-                    f"({who}). Restarting those processes returns it and "
-                    "deletes nothing."))
-
-    for item in (snap.get("outside") or {}).get("items", []):
-        theirs = item["bytes"] - item.get("mine", 0)
-        if theirs > 8 * 2**30 and not item["name"].startswith("~/ws"):
-            out.append((theirs, f"`{item['name']}` holds {gb(theirs)} that is "
-                        "not this project at all."))
-
-    out.sort(key=lambda p: -p[0])
-    return [(size, text) for size, text in out if size > 200 * 2**20][:10]
+        head.append((dead, f"{gb(dead)} is held by deleted files still open "
+                     f"({who}). Restarting those processes returns it and "
+                     "deletes nothing."))
+    head.sort(key=lambda p: -p[0])
+    return (head + out)[:10]
 
 
 def escalate(snap, busy, freed):
@@ -339,8 +336,9 @@ def escalate(snap, busy, freed):
         "",
         f"Written by `scripts/tidy.py` at {time.strftime('%Y-%m-%d %H:%M')}. "
         f"Free space is {gb(avail)} of {gb(total)}, and the floor this asks at "
-        f"is {gb(FLOOR)}. The sweep just before this took back {gb(freed)}; "
-        "everything left needs somebody to decide.",
+        f"is {gb(FLOOR)}. The sweep just before this "
+        + (f"took back {gb(freed)}" if APPLY else "was a dry run")
+        + "; everything left needs somebody to decide.",
         "",
         "## Where the space is",
         "",
@@ -352,12 +350,14 @@ def escalate(snap, busy, freed):
         biggest = sorted(group["items"], key=lambda i: -i["bytes"])[:3]
         detail = ", ".join(f"{i['name']} {gb(i['bytes'])}" for i in biggest)
         lines.append(f"- **{group['name']}** {gb(size)} — {detail}")
-    beyond = snap.get("outside") or {}
-    if beyond.get("items"):
-        top = beyond["items"][0]
-        lines += ["", f"Our whole footprint is {gb(snap['footprint'])}. The "
-                  f"largest directory on the disk is `{top['name']}` at "
-                  f"{gb(top['bytes'])}, of which {gb(top.get('mine', 0))} is ours."]
+    beyond = (snap.get("outside") or {}).get("items") or []
+    if beyond:
+        theirs = ", ".join(
+            f"`{i['name']}` {gb(i['bytes'] - i.get('mine', 0))}"
+            for i in beyond[:3] if i["bytes"] - i.get("mine", 0) > 2**30)
+        lines += ["", f"Our whole footprint is {gb(snap['footprint'])} of the "
+                  f"{gb(total - avail)} in use on this disk. The rest is "
+                  f"somebody else's: {theirs}."]
 
     lines += ["", "## What could go next", ""]
     for size, text in proposals(snap, busy):
