@@ -563,15 +563,15 @@ final class ChatViewModel: ObservableObject {
     }
 
     /// Отклонение заявки: отправитель в блок, чат и его сообщения удаляются локально.
+    /// Отклонённая заявка уходит с устройства так же, как удалённый чат: через
+    /// очередь, с тумбстоуном. Иначе снапшот приносил бы её обратно, а
+    /// вернувшийся чат заводил бы курсоры с нуля.
     func blockRequest() {
         guard let peerId = peer?.id else { return }
         stop()
         Task { [chatId] in
-            try? await app.api.setBlocked(peerId, blocked: true)
-            try? await app.db.write { dbc in
-                try dbc.execute(sql: "DELETE FROM chat WHERE id = ?", arguments: [chatId])
-                try dbc.execute(sql: "DELETE FROM message WHERE chatId = ?", arguments: [chatId])
-            }
+            await app.engine.deleteChat(chatId: chatId)
+            try? await app.engine.setBlocked(userId: peerId, blocked: true)
         }
     }
 

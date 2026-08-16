@@ -183,21 +183,42 @@ public actor SyncEngine {
     /// Список заблокированных с сервера в локальный флаг user.isBlocked.
     public func refreshBlocked() async {
         guard let ids = try? await api.blockedUsers() else { return }
-        try? await db.write { dbc in
-            try dbc.execute(sql: "UPDATE user SET isBlocked = 0 WHERE isBlocked = 1")
-            for id in ids {
-                try dbc.execute(sql: "UPDATE user SET isBlocked = 1 WHERE id = ?", arguments: [id])
-            }
+        try? await db.write { dbc in try SyncEngine.applyBlockedList(dbc, serverIds: ids) }
+    }
+
+    /// Серверный список поверх локальных флагов. Блокировка, ещё не доехавшая
+    /// до сервера, им не отменяется: иначе решение пользователя откатывалось бы
+    /// само на первом же обновлении.
+    static func applyBlockedList(_ dbc: GRDB.Database, serverIds: [String]) throws {
+        let queued = try String.fetchAll(
+            dbc, sql: "SELECT payload FROM pendingAction WHERE type = 'block'")
+            .compactMap { try? JSONDecoder().decode(BlockActionPayload.self, from: Data($0.utf8)) }
+        var blocked = Set(serverIds)
+        for q in queued {
+            if q.blocked { blocked.insert(q.userId) } else { blocked.remove(q.userId) }
+        }
+        try dbc.execute(sql: "UPDATE user SET isBlocked = 0 WHERE isBlocked = 1")
+        for id in blocked {
+            try dbc.execute(sql: "UPDATE user SET isBlocked = 1 WHERE id = ?", arguments: [id])
         }
     }
 
-    /// Блокировка собеседника: сервер + локальный флаг, который гасит инпут-бар.
+    /// Блокировка собеседника: локальный флаг сразу (он гасит инпут-бар),
+    /// сервер — через очередь действий, поэтому решение переживает офлайн.
     public func setBlocked(userId: String, blocked: Bool) async throws {
-        try await api.setBlocked(userId, blocked: blocked)
+        let payload = String(data: try JSONEncoder().encode(
+            BlockActionPayload(userId: userId, blocked: blocked)), encoding: .utf8)!
         try await db.write { dbc in
             try dbc.execute(sql: "UPDATE user SET isBlocked = ? WHERE id = ?",
                             arguments: [blocked, userId])
+            try dbc.execute(
+                sql: """
+                INSERT INTO pendingAction (id, type, chatId, payload, createdAt) VALUES (?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, attempts = 0
+                """,
+                arguments: ["block:\(userId)", "block", nil, payload, Date().timeIntervalSince1970])
         }
+        actionWakeup.continuation.yield()
     }
 
     private func handle(_ ev: WSEvent) async {
@@ -1616,6 +1637,7 @@ public actor SyncEngine {
 
     struct ReadActionPayload: Codable { var upToSeq: Int }
     struct DeleteActionPayload: Codable { var msgIds: [String]; var forAll: Bool }
+    struct BlockActionPayload: Codable { var userId: String; var blocked: Bool }
 
     /// read-акции схлопываются по чату: одна строка на chatId, побеждает больший upToSeq.
     static func upsertReadAction(_ dbc: GRDB.Database, chatId: String, upToSeq: Int) throws {
@@ -1649,14 +1671,17 @@ public actor SyncEngine {
                 switch a.type {
                 case "read":
                     let p = try JSONDecoder().decode(ReadActionPayload.self, from: Data(a.payload.utf8))
-                    try await ws.send(.read(chatId: a.chatId, upToSeq: p.upToSeq))
+                    try await ws.send(.read(chatId: a.chatId ?? "", upToSeq: p.upToSeq))
                 case "delete":
                     let p = try JSONDecoder().decode(DeleteActionPayload.self, from: Data(a.payload.utf8))
-                    try await ws.send(.delete(chatId: a.chatId, msgIds: p.msgIds, forAll: p.forAll))
+                    try await ws.send(.delete(chatId: a.chatId ?? "", msgIds: p.msgIds, forAll: p.forAll))
                 case "accept":
-                    try await api.acceptChat(a.chatId)
+                    try await api.acceptChat(a.chatId ?? "")
                 case "deleteChat":
-                    try await api.deleteChat(a.chatId)
+                    try await api.deleteChat(a.chatId ?? "")
+                case "block":
+                    let p = try JSONDecoder().decode(BlockActionPayload.self, from: Data(a.payload.utf8))
+                    try await api.setBlocked(p.userId, blocked: p.blocked)
                 default:
                     break // неизвестный тип удаляется ниже
                 }
