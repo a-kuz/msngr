@@ -254,6 +254,36 @@ def orphan_stand_processes():
     return out
 
 
+def socket_hogs(limit=2000):
+    """Stands that have stopped closing their sockets.
+
+    One seeding run left a workerd holding 26 854 loopback sockets, 14 485 of them
+    in CLOSE_WAIT, against the 16 384 ephemeral ports the machine has. Everything
+    that needed a new connection then hung, the shared stand included, and the
+    host looked like it was out of memory. A stand past this many sockets is
+    already broken, so killing it takes nothing away and gives the ports back.
+    """
+    try:
+        out = subprocess.run(["lsof", "-nP", "-i", "TCP"], capture_output=True,
+                             text=True, timeout=120).stdout
+    except subprocess.SubprocessError:
+        return []
+    count = {}
+    for line in out.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) > 1 and parts[0] == "workerd":
+            count[int(parts[1])] = count.get(int(parts[1]), 0) + 1
+    plan = []
+    for pid, sockets in sorted(count.items()):
+        if sockets < limit:
+            continue
+        plan.append({"what": f"stand process {pid}", "bytes": 0,
+                     "verb": ("killed", "would kill"),
+                     "why": f"holding {sockets} sockets, the host has 16384 ports",
+                     "do": lambda p=pid: kill([p])})
+    return plan
+
+
 def has_clients(port):
     """Whether anybody is connected to the port a stand serves.
 
@@ -370,6 +400,7 @@ def sweep():
     # One rule tripping over a file that moved under it must not cost the run:
     # this is a cron job, and the next thing after it is the escalation check.
     for rule in (lambda: idle_booted(agents, working),
+                 socket_hogs,
                  lambda: stale_stands(working),
                  orphan_stand_processes,
                  lambda: merged_worktrees(agents, working),
