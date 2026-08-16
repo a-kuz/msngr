@@ -64,6 +64,16 @@ struct RegisterView: View {
                 .disabled(busy || !formValid)
                 .accessibilityIdentifier("reg.submit")
                 .padding(.horizontal, 32)
+
+                // there is no password to log in with: an account is reached
+                // again only from a device already on it
+                NavigationLink {
+                    LinkDeviceView()
+                } label: {
+                    Text("Уже есть аккаунт — войти по коду")
+                        .font(.footnote)
+                }
+                .accessibilityIdentifier("reg.link")
                 Spacer()
                 Spacer()
             }
