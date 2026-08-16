@@ -209,6 +209,44 @@ final class MessageSearchTests: XCTestCase {
         XCTAssertEqual(page.hits.first?.id, "m20000")
         XCTAssertFalse(page.reachedEnd)
         XCTAssertLessThan(elapsed, 1.0, "first page took \(elapsed)s")
+
+        // counting every match is what the bar under the feed waits for, and it
+        // waits on the reader's screen: joined to the index instead of reading it
+        // through a subquery, this same count took nineteen seconds
+        let countStarted = Date()
+        let total = try db.read { dbc in try MessageSearch.count(dbc, query: "trip", chatId: "c1") }
+        let counting = Date().timeIntervalSince(countStarted)
+        XCTAssertEqual(total, 20_000)
+        XCTAssertLessThan(counting, 1.0, "counting took \(counting)s")
+    }
+
+    // MARK: - Counting
+
+    /// Walking the matches one by one needs the size of the whole result, and it
+    /// is counted over the same messages the pages deliver: this chat, nothing
+    /// deleted, nothing system, no unaccepted request.
+    func testCountsWhatThePagesWouldDeliver() throws {
+        let db = try AppDatabase.openInMemory()
+        try seedChat(db, id: "c1")
+        try seedChat(db, id: "c2")
+        try seedChat(db, id: "req", isRequest: true, iAccepted: false)
+        for i in 1...30 {
+            try seedMessage(db, id: "m\(i)", chatId: "c1", text: "estimate \(i)", at: Double(i))
+        }
+        try seedMessage(db, id: "other", chatId: "c2", text: "estimate elsewhere", at: 40)
+        try seedMessage(db, id: "hidden", chatId: "req", text: "estimate hidden", at: 50)
+        try seedMessage(db, id: "gone", chatId: "c1", text: "estimate deleted", at: 60,
+                        deletedForAll: true)
+        try seedMessage(db, id: "note", chatId: "c1", text: "estimate system", at: 70, kind: .system)
+
+        try db.read { dbc in
+            XCTAssertEqual(try MessageSearch.count(dbc, query: "estimate", chatId: "c1"), 30)
+            XCTAssertEqual(try MessageSearch.count(dbc, query: "estimate"), 31)
+            XCTAssertEqual(try MessageSearch.count(dbc, query: "estimate", chatId: "req"), 0)
+            XCTAssertEqual(try MessageSearch.count(dbc, query: "nothing", chatId: "c1"), 0)
+            // spaces and punctuation alone are not a search here either
+            XCTAssertEqual(try MessageSearch.count(dbc, query: " ", chatId: "c1"), 0)
+        }
     }
 
     // MARK: - Snippet
