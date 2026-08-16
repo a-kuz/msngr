@@ -482,6 +482,11 @@ def main():
         snap = disk.scan()
 
     avail, _ = disk.free_bytes()
+    if APPLY:
+        # One line every run, even an empty one: a cron that prints nothing when
+        # it works reads exactly like a cron that is not running.
+        took = f"took back {gb(freed)}" if freed else "nothing to take"
+        log(f"swept: {took}, {len(busy)} left for the report, free {gb(avail)}")
     over_budget = snap and snap["footprint"] > BUDGET
     if avail < FLOOR or over_budget or "--report" in sys.argv:
         # The report is about to name the biggest directories on the disk, so

@@ -102,9 +102,16 @@ scripts/tidy.py            # what would be taken back; --apply to take it
 `scripts/disk.py` prints in a moment because it prints a stored snapshot and
 says how old it is; only free space is read live. `--scan` takes a new one, and
 `--wide` also walks the home directory to say how much of the disk is not this
-project at all. The launchd job `ai.enface.msngr.tidy` runs `scripts/tidy.py
---apply` every five minutes and refreshes the snapshot as it goes; its output is
-in `.claude/tidy.log`.
+project at all.
+
+The sweep runs from launchd every five minutes and refreshes the snapshot as it
+goes; its output is in `.claude/tidy.log`. The job is installed with
+
+```bash
+cp scripts/launchd/ai.enface.msngr.tidy.plist ~/Library/LaunchAgents/
+launchctl unload ~/Library/LaunchAgents/ai.enface.msngr.tidy.plist 2>/dev/null
+launchctl load ~/Library/LaunchAgents/ai.enface.msngr.tidy.plist
+```
 
 The sweep only takes what nothing alive is holding: a simulator whose agent has
 finished, a stand no wrangler points at, a wrangler still running for a worktree
