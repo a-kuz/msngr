@@ -3,7 +3,7 @@ import { json, err, nowSec } from "../util";
 import { sendPush, envelopeForDevice } from "../push/apns";
 import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "../version";
 
-/// Presence-TTL: клиент пингует каждые ~12с; тишина дольше — офлайн.
+/// Presence TTL: the client pings every ~12s, so silence longer than this reads as offline.
 const PRESENCE_TTL_MS = 35_000;
 const PRESENCE_TTL = PRESENCE_TTL_MS / 1000;
 
@@ -20,13 +20,13 @@ const SYNC_CHATS = 32;
 interface ChatFlags {
   pinned: boolean;
   muted: boolean;
-  /// момент снятия mute (сек); не задан — mute бессрочный
+  /// when the mute lifts, in seconds; unset means it never does on its own
   mutedUntil?: number;
   archived: boolean;
   joinedAt: number;
 }
 
-/// Mute со сроком: истёкший считается снятым.
+/// A mute with a deadline counts as lifted once that deadline has passed.
 function muteActive(flags: ChatFlags | undefined, now: number): boolean {
   if (!flags?.muted) return false;
   return !flags.mutedUntil || flags.mutedUntil > now;
@@ -38,11 +38,11 @@ function muteExpired(flags: ChatFlags | undefined, now: number): boolean {
 
 interface SocketAttachment {
   deviceId: string;
-  // время последнего ping (сек); сокет без свежего ping считается подвешенным
+  // time of the last ping, in seconds; a socket without a fresh one counts as hung
   lastPing: number;
 }
 
-// Один DO на пользователя: все WS его устройств, чат-лист, presence, пуши.
+// One object per user: the sockets of all their devices, the chat list, presence, pushes.
 export class UserSessionDO implements DurableObject {
   private userId: string | null = null;
   /// Dev test hook (/dev-fault): how many frame deliveries to reject next.
@@ -64,15 +64,15 @@ export class UserSessionDO implements DurableObject {
   }
 
   private send(ws: WebSocket, frame: ServerFrame) {
-    try { ws.send(JSON.stringify(frame)); } catch { /* сокет умер — hibernation API сам почистит */ }
+    try { ws.send(JSON.stringify(frame)); } catch { /* socket is gone; the hibernation API sweeps it */ }
   }
 
   private broadcast(frame: ServerFrame) {
     for (const ws of this.sockets()) this.send(ws, frame);
   }
 
-  // есть ли сокет с живым клиентом (ping в пределах TTL);
-  // формально открытый, но подвешенный сокет свежим не считается
+  // whether any socket has a live client behind it, meaning a ping within the TTL;
+  // a socket that is open but hung does not count
   private presenceFresh(): boolean {
     const cutoff = nowSec() - PRESENCE_TTL;
     return this.sockets().some((ws) => {
@@ -81,7 +81,7 @@ export class UserSessionDO implements DurableObject {
     });
   }
 
-  /// Снимает mute, у которого истёк срок, и отдаёт актуальные флаги чата.
+  /// Lifts a mute whose deadline has passed and returns the chat's current flags.
   private async clearExpiredMute(chatId: string): Promise<ChatFlags | undefined> {
     const key = "chat:" + chatId;
     const flags = await this.state.storage.get<ChatFlags>(key);
@@ -151,7 +151,6 @@ export class UserSessionDO implements DurableObject {
 
       await this.state.storage.setAlarm(Date.now() + PRESENCE_TTL_MS);
       if (this.sockets().length === 1) {
-        // первое устройство онлайн
         await this.broadcastPresence(true);
       }
       return new Response(null, { status: 101, webSocket: client });
@@ -169,15 +168,12 @@ export class UserSessionDO implements DurableObject {
           // a chat this user deleted comes back on the next message written to
           // it; a service frame does not bring it back, having nothing to show
           await this.relistChat(frame.chatId);
-          // контентное сообщение меняет unread чата → кэш бейджа устарел
+          // a content message moves the chat's unread, so the cached badge is stale
           await this.invalidateUnread(frame.chatId);
           const flags = await this.clearExpiredMute(frame.chatId);
           const muted = muteActive(flags, nowSec());
           const userId = await this.getUserId();
           const isOwnEcho = userId !== null && frame.from === userId;
-          // APNs уходит всегда и сразу, независимо от live-сокетов:
-          // доставка по WS не гарантирована, дубль гасит клиент
-          // (willPresent по chatId/msgId).
           // The call is awaited here rather than deferred: waitUntil gives no
           // timing guarantee. The sender is not waiting on it — his ack left
           // ConversationDO before this delivery was queued.
@@ -230,8 +226,8 @@ export class UserSessionDO implements DurableObject {
         const flags = await this.state.storage.get<ChatFlags>(key);
         if (!flags) return err("chat_not_found", 404);
         if (b.pinned !== undefined) flags.pinned = b.pinned;
-        // срок живёт только вместе со своим включением mute: muted без mutedUntil
-        // (или mutedUntil: null) — бессрочно, muted:false — снятие
+        // a deadline lives only with the mute that set it: muted with no mutedUntil
+        // (or a null one) is indefinite, muted:false lifts it
         if (b.muted !== undefined) {
           flags.muted = b.muted;
           delete flags.mutedUntil;
@@ -246,7 +242,7 @@ export class UserSessionDO implements DurableObject {
         const b = (await req.json()) as {
           deviceId: string; apnsToken: string; env: string; userId?: string;
         };
-        // userId нужен для /unread-count даже до первого WS-коннекта
+        // /unread-count needs the userId even before the first WS connection
         if (b.userId) {
           await this.state.storage.put("userId", b.userId);
           this.userId = b.userId;
@@ -258,13 +254,12 @@ export class UserSessionDO implements DurableObject {
         return json({ ok: true });
       }
 
-      // токен устройства отозван: рвём его сокеты и убираем его APNs-токен
       case "/revoke-device": {
         const b = (await req.json()) as { deviceId: string };
         for (const ws of this.sockets()) {
           const att = ws.deserializeAttachment() as SocketAttachment | null;
           if (att?.deviceId !== b.deviceId) continue;
-          try { ws.close(4401, "revoked"); } catch { /* уже закрыт */ }
+          try { ws.close(4401, "revoked"); } catch { /* already closed */ }
         }
         const tokens =
           (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
@@ -293,10 +288,10 @@ export class UserSessionDO implements DurableObject {
     }
   }
 
-  // --- бейдж: суммарный unread по чатам ---
-  // Кэш unread в storage ("unreadCache"), инвалидация по входящим msg и
-  // собственным read; ленивый пересчёт через ConversationDO /unread-count
-  // в момент отправки пуша — N запросов только по инвалидированным чатам.
+  // --- badge: unread summed over the chats ---
+  // Per-chat unread is cached in storage ("unreadCache") and invalidated by an incoming
+  // msg or by this user's own read. Recount is lazy, through ConversationDO
+  // /unread-count at push time, and only for the chats whose entry was dropped.
 
   private async invalidateUnread(chatId: string) {
     const cache =
@@ -433,12 +428,12 @@ export class UserSessionDO implements DurableObject {
         scanned?: number; lastScannedSeq?: number | null;
       };
       if (!r.ok) {
-        // чата больше нет — клиенту нечего догонять, курсор остаётся на месте
+        // the chat is gone: nothing to catch up on, and the cursor stays where it was
         this.send(ws, { t: "syncState", chatId, cursor: from, more: false });
         continue;
       }
       for (const m of r.msgs ?? []) {
-        // тумбстоуны уходят deleted-фреймами ниже
+        // tombstones travel as deleted frames in the tail below
         if (m.deleted) continue;
         this.send(ws, {
           t: "msg", chatId,
@@ -450,9 +445,8 @@ export class UserSessionDO implements DurableObject {
       }
       const scanned = r.scanned ?? 0;
       budget -= scanned;
-      // курсор двигается по просмотренным записям, а не по отданным:
-      // страница, целиком отфильтрованная блокировкой, не должна
-      // останавливать доигрывание
+      // the cursor moves over the records scanned, not the ones sent: a page filtered
+      // out entirely by a block must not stall the replay
       const cursor = scanned ? r.lastScannedSeq ?? from : from;
       // a full page means the journal may hold more; a short one means the
       // range ended, so the chat is caught up and gets its tail
@@ -504,9 +498,9 @@ export class UserSessionDO implements DurableObject {
 
     switch (frame.t) {
       case "ping": {
-        // presence по пинг-понгу: свежий ping = онлайн; тишина дольше TTL
-        // (alarm) или явный "bg" = офлайн. Сам факт живого сокета не значит
-        // ничего: iOS держит его минуты после сворачивания.
+        // presence rides on ping-pong: a fresh ping means online, silence past the TTL
+        // (the alarm) or an explicit "bg" means offline. An open socket says nothing on
+        // its own, since iOS holds it for minutes after the app is backgrounded.
         const wasFresh = this.presenceFresh();
         ws.serializeAttachment({ ...att, lastPing: nowSec() } satisfies SocketAttachment);
         this.send(ws, { t: "pong" });
@@ -563,7 +557,7 @@ export class UserSessionDO implements DurableObject {
           method: "POST",
           body: JSON.stringify({ userId, upToSeq: frame.upToSeq }),
         });
-        // собственный read двигает unread чата → кэш бейджа устарел
+        // this user's own read moves the chat's unread, so the cached badge is stale
         await this.invalidateUnread(frame.chatId);
         return;
 
@@ -585,8 +579,8 @@ export class UserSessionDO implements DurableObject {
       case "catchup": {
         const cursors: Record<string, number> = { ...frame.cursors };
         if (frame.t === "sync") {
-          // чаты, о которых клиент ещё не знает (создан/добавлен, пока был офлайн):
-          // прислать state и историю с нуля
+          // chats the client does not know yet, created or joined while it was offline:
+          // send the state and replay the history from zero
           const known = new Set(Object.keys(frame.cursors));
           const listed = await this.state.storage.list<unknown>({ prefix: "chat:" });
           for (const key of listed.keys()) {
@@ -596,7 +590,7 @@ export class UserSessionDO implements DurableObject {
             const sj = (await sr.json()) as { ok: boolean; state?: unknown };
             if (sj.ok && sj.state) {
               this.send(ws, { t: "chat", chatId, event: "sync", state: sj.state } as ServerFrame);
-              cursors[chatId] = 0; // и доиграть историю ниже
+              cursors[chatId] = 0; // history replayed below
             }
           }
         }
@@ -606,7 +600,7 @@ export class UserSessionDO implements DurableObject {
     }
   }
 
-  /// Тишина дольше TTL — объявляем офлайн, даже если сокет формально жив.
+  /// Silence past the TTL means offline, however open the socket still looks.
   async alarm() {
     if (!this.presenceFresh()) {
       await this.broadcastPresence(false);
@@ -623,7 +617,7 @@ export class UserSessionDO implements DurableObject {
   }
 
   async webSocketError(ws: WebSocket) {
-    try { ws.close(); } catch { /* уже закрыт */ }
+    try { ws.close(); } catch { /* already closed */ }
     if (this.sockets().length === 0) {
       await this.broadcastPresence(false);
     }

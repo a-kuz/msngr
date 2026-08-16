@@ -5,10 +5,10 @@ export interface Env {
   CONV_DO: DurableObjectNamespace;
   APNS_DO: DurableObjectNamespace;
   APNS_ENV: string;
-  /// Переопределение APNs-эндпоинта (dev-мок, например http://localhost:9871);
-  /// не задан — прод/sandbox Apple по apns-env устройства.
+  /// Overrides the APNs endpoint, e.g. the dev mock at http://localhost:9871.
+  /// Unset means Apple's production or sandbox host, picked by the device's apns-env.
   APNS_HOST?: string;
-  /// Искусственная задержка (мс) перед fanout в ConversationDO /send (dev).
+  /// Artificial delay in ms before fanout in ConversationDO /send (dev only).
   DEV_WS_LATENCY_MS?: string;
   APNS_KEY_P8?: string;
   APNS_KEY_ID?: string;
@@ -23,15 +23,14 @@ export type ClientFrame =
   | { t: "sync"; cursors: Record<string, number> }
   // catchup: next portion for the chats that are still behind
   | { t: "catchup"; cursors: Record<string, number> }
-  // service: служебный фрейм (skd/reaction/edit и т.п.) — не должен растить unread/бейдж
   | { t: "send"; chatId: string; clientMsgId: string; sentAt: number; body: unknown; service?: boolean }
   | { t: "recv"; chatId: string; seqs: number[] }
   | { t: "read"; chatId: string; upToSeq: number }
   | { t: "typing"; chatId: string; kind: string | null }
   | { t: "delete"; chatId: string; msgIds: string[]; forAll: boolean }
   | { t: "ping" }
-  | { t: "bg" }   // приложение ушло в фон: presence offline немедленно
-  | { t: "fg" };  // вернулось: presence online
+  | { t: "bg" }   // app went to background: presence goes offline at once
+  | { t: "fg" };  // app came back: presence goes online
 
 // --- WS frames: server -> client ---
 export type ServerFrame =
@@ -48,7 +47,7 @@ export type ServerFrame =
   | { t: "syncState"; chatId: string; cursor: number; more: boolean }
   /// end of one catch-up portion; more — whether another portion is due
   | { t: "syncDone"; more: boolean }
-  /// отказ по клиентскому фрейму: error — машиночитаемый код
+  /// rejection of a client frame; error is a machine-readable code
   | { t: "error"; error: string; chatId?: string; clientMsgId?: string }
   | { t: "pong" };
 
@@ -56,7 +55,8 @@ export interface ChatMember {
   userId: string;
   role: "admin" | "member";
   joinedAt: number;
-  /// message request: false = чат в заявках, receipts/presence автору не идут
+  /// message request: false means the chat sits in requests, and receipts and presence
+  /// are withheld from whoever started it
   accepted: boolean;
 }
 
@@ -87,8 +87,8 @@ export interface StoredMsg {
   service?: boolean;
   deleted?: boolean;
   deletedBy?: string;
-  /// userId получателя, который заблокировал автора: этому участнику сообщение
-  /// не рассылается и не отдаётся в истории
+  /// userId of a recipient who has blocked the sender: this member gets the message
+  /// neither in fanout nor in history
   blockedFor?: string;
 }
 

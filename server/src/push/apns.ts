@@ -16,8 +16,8 @@ async function importP8(p8: string): Promise<CryptoKey> {
   );
 }
 
-/// Подпись APNs-токена (p8, ES256). Единственный вызывающий — ApnsTokenDO:
-/// владелец минтинга должен быть один, Apple ограничивает его частоту.
+/// Signs an APNs provider token (p8, ES256). The only caller is ApnsTokenDO: minting
+/// needs a single owner, because Apple limits how often a token may be issued.
 export async function mintApnsJwt(env: Env, iat: number): Promise<string | null> {
   if (!env.APNS_KEY_P8 || !env.APNS_KEY_ID || !env.APNS_TEAM_ID) return null;
   const enc = new TextEncoder();
@@ -43,9 +43,9 @@ async function apnsJwt(env: Env, force: boolean): Promise<string | null> {
 export interface PushPayload {
   chatId: string;
   msgId?: string;
-  seq?: number; // позиция сообщения в чате: по ней клиент выстраивает порядок показа
-  sentAt?: number; // время отправки, мс: порядок между чатами
-  badge?: number; // суммарный unread пользователя по всем чатам
+  seq?: number; // position of the message in its chat; the client shows a burst in this order
+  sentAt?: number; // send time in ms, which orders messages across chats
+  badge?: number; // the user's total unread over all chats
   /// Position of `badge` in the sequence of numbers this user's object
   /// produced. APNs delivers a burst in an arbitrary order, so the device
   /// needs it to tell a fresh count from one that overtook it.
@@ -113,21 +113,19 @@ export function pushBody(payload: PushPayload): string {
 
 export interface PushResult {
   ok: boolean;
-  /// HTTP-статус APNs; 0 — ответа не было
+  /// APNs HTTP status; 0 means no response arrived
   status: number;
-  /// reason из тела ответа APNs
+  /// reason from the APNs response body
   reason?: string;
-  /// токен устройства больше не действителен, его надо удалить
+  /// the device token is no longer valid and has to be dropped
   dead?: boolean;
 }
 
-// Лестница повторов на 429 и 5xx.
+// Retry ladder for 429 and 5xx.
 const RETRY_DELAYS_MS = [500, 1500];
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// База APNs: env.APNS_HOST (dev-мок вроде http://localhost:9871),
-// иначе прод/sandbox Apple по apns-env устройства.
 function apnsBase(env: Env, apnsEnv: string): string {
   if (env.APNS_HOST) {
     const h = env.APNS_HOST.replace(/\/+$/, "");
@@ -156,7 +154,7 @@ export async function sendPush(
 ): Promise<PushResult> {
   const base = apnsBase(env, apnsEnv);
   const isApple = /\.push\.apple\.com$/.test(new URL(base).hostname);
-  // не-яблочный хост = dev-мок: без JWT-подписи, p8-ключ не нужен
+  // a non-Apple host is the dev mock: it takes no JWT, so no p8 key is needed
   const topic = env.APNS_TOPIC ?? (isApple ? null : "ai.enface.Msngr");
   if (!topic) return { ok: false, status: 0, reason: "no_topic" };
 
@@ -172,7 +170,7 @@ export async function sendPush(
       "apns-priority": "10",
       "content-type": "application/json",
     };
-    // collapse-id = msgId: повторная доставка того же сообщения не плодит баннеры
+    // collapse-id = msgId, so redelivering the same message does not stack up banners
     if (payload.msgId) headers["apns-collapse-id"] = payload.msgId;
     if (isApple) {
       const jwt = await apnsJwt(env, forceJwt);
@@ -188,7 +186,7 @@ export async function sendPush(
         await sleep(RETRY_DELAYS_MS[attempt]);
         continue;
       }
-      console.log(`apns: сеть не ответила после ${attempt + 1} попыток: ${String(e)}`);
+      console.log(`apns: no response after ${attempt + 1} attempts: ${String(e)}`);
       return { ok: false, status: 0, reason: "network" };
     }
 
@@ -196,7 +194,7 @@ export async function sendPush(
     const reason = await readReason(res);
 
     if (res.status === 410) {
-      console.log(`apns: 410 ${reason ?? "Unregistered"} — токен устройства мёртв`);
+      console.log(`apns: 410 ${reason ?? "Unregistered"}, device token is dead`);
       return { ok: false, status: 410, reason, dead: true };
     }
     if (res.status === 403 && reason === "ExpiredProviderToken" && !forceJwt) {
@@ -207,7 +205,7 @@ export async function sendPush(
       await sleep(RETRY_DELAYS_MS[attempt]);
       continue;
     }
-    console.log(`apns: отказ ${res.status} ${reason ?? "без reason"}`);
+    console.log(`apns: rejected ${res.status} ${reason ?? "no reason"}`);
     return { ok: false, status: res.status, reason };
   }
 }

@@ -2,9 +2,9 @@ import type { Env } from "../types";
 import { json, err } from "../util";
 import { mintApnsJwt } from "../push/apns";
 
-/// Apple принимает провайдерский токен до часа; обновляем с запасом.
+/// Apple accepts a provider token for up to an hour; refresh with margin.
 const JWT_TTL_SEC = 3000;
-/// Нижняя граница между перевыпусками даже по force: защита от шторма 403.
+/// Floor between remints even when forced, so a burst of 403s cannot storm Apple.
 const MIN_REMINT_SEC = 60;
 
 interface CachedJwt {
@@ -12,9 +12,9 @@ interface CachedJwt {
   iat: number;
 }
 
-// Синглтон-владелец APNs JWT (адресуется именем "apns-jwt"). Кэш в storage
-// объекта, а не в переменной модуля: изолятов, где живут UserSessionDO, может
-// быть много, и частота генерации токена у Apple ограничена.
+// Sole owner of the APNs JWT, addressed by the name "apns-jwt". The cache lives in
+// object storage rather than a module variable: UserSessionDO can be spread over many
+// isolates, and Apple rate-limits how often a token may be generated.
 export class ApnsTokenDO implements DurableObject {
   constructor(private state: DurableObjectState, private env: Env) {}
 
