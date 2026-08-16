@@ -32,6 +32,15 @@ public enum AppDatabase {
         config.defaultTransactionKind = .immediate
         config.prepareDatabase { db in
             try db.execute(sql: "PRAGMA journal_mode = WAL")
+            // measurement run: every statement is reported with the time SQLite
+            // spent on it (PerfTrace, off without MSNGR_PERF=1)
+            if PerfTrace.shared.isEnabled {
+                db.trace(options: .profile) { event in
+                    if case let .profile(statement, duration) = event {
+                        PerfTrace.shared.sql(statement.sql, duration: duration)
+                    }
+                }
+            }
         }
         let dbQueue = try DatabaseQueue(path: url.path, configuration: config)
         let m = migrator
