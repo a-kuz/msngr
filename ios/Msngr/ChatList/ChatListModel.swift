@@ -138,11 +138,15 @@ final class ChatListModel: ObservableObject {
     }
 
     private func refreshTyping() {
-        items = items.map { item in
-            var it = item
-            it.typingText = typingLabel(it.chat.id, it.peer)
-            return it
+        func relabel(_ list: [ChatListItem]) -> [ChatListItem] {
+            list.map { item in
+                var it = item
+                it.typingText = typingLabel(it.chat.id, it.peer)
+                return it
+            }
         }
+        items = relabel(items)
+        archived = relabel(archived)
     }
 
     // MARK: - Folders

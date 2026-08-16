@@ -305,7 +305,9 @@ struct ChatListView: View {
                 ChatRow(chatId: item.chat.id) {
                     ChatRowView(item: item, ownUserId: app.session?.userId ?? "")
                 }
-                .swipeActions(edge: .trailing) {
+                // no full swipe: the same distance switches the tab, and blocking
+                // by accident takes the chat away for good
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                     Button { model.blockRequest(item) } label: {
                         Label("Заблокировать", systemImage: "hand.raised.fill")
                     }.tint(.red)
@@ -372,10 +374,10 @@ struct ArchiveView: View {
     var body: some View {
         List {
             ForEach(model.archived) { item in
-                NavigationLink(value: item.chat.id) {
+                ChatRow(chatId: item.chat.id) {
                     ChatRowView(item: item, ownUserId: app.session?.userId ?? "")
                 }
-                .swipeActions(edge: .trailing) {
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                     Button { model.toggleArchive(item) } label: {
                         Label("Из архива", systemImage: "tray.and.arrow.up.fill")
                     }.tint(.blue)
@@ -383,6 +385,15 @@ struct ArchiveView: View {
             }
         }
         .listStyle(.plain)
+        .overlay {
+            if model.archived.isEmpty {
+                ContentUnavailableView {
+                    Label("В архиве пусто", systemImage: "archivebox")
+                } description: {
+                    Text("Чаты, убранные в архив, будут здесь")
+                }
+            }
+        }
         .navigationTitle("Архив")
     }
 }
