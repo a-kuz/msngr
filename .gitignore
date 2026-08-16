@@ -13,3 +13,4 @@ scratchpad/
 .claude/agents.tsv
 .claude/disk.json
 .claude/disk-report.md
+__pycache__/
