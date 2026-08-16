@@ -396,10 +396,15 @@ public final class APIClient: @unchecked Sendable {
         _ = try await request("api/chats/\(chatId)/members", method: "POST", jsonBody: Body(add: add, remove: remove))
     }
     public func chatSettings(_ chatId: String, title: String? = nil,
-                             avatarId: String? = nil, description: String? = nil) async throws {
-        struct Body: Encodable { let title: String?; let avatarId: String?; let description: String? }
+                             avatarId: String? = nil, description: String? = nil,
+                             sendPolicy: String? = nil, invitePolicy: String? = nil) async throws {
+        struct Body: Encodable {
+            let title: String?; let avatarId: String?; let description: String?
+            let sendPolicy: String?; let invitePolicy: String?
+        }
         _ = try await request("api/chats/\(chatId)/settings", method: "POST",
-                              jsonBody: Body(title: title, avatarId: avatarId, description: description))
+                              jsonBody: Body(title: title, avatarId: avatarId, description: description,
+                                             sendPolicy: sendPolicy, invitePolicy: invitePolicy))
     }
     public func setAdmin(_ chatId: String, userId: String, admin: Bool) async throws {
         struct Body: Encodable { let userId: String; let admin: Bool }
