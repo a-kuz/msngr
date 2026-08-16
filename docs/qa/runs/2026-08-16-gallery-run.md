@@ -17,17 +17,7 @@ media uploaded (`mediaId` present in every row).
 
 | Step | Evidence |
 | --- | --- |
-| Four tabs on an empty chat | `2026-08-16-gallery/empty-media.png`, `empty-files.png`, `empty-voice.png`, `empty-links.png` |
-| Media grid: photos, album items, videos with duration | `media.png` |
 | Grid paging to the oldest item (40 entries, one page each of photo/video/album) | reached round 1 by scrolling, no gaps or repeats |
-| Files tab | `files.png` |
-| Voice tab | `voice.png` |
-| Links tab, two links out of one message | `links.png` |
-| Show in chat, from the oldest media item | `jump-menu.png` → `jump-feed.png` (feed lands on «Фото 1», below 100 text messages) |
-| Album opens in the viewer | `viewer.png` (three page dots) |
-| Video plays in the viewer | `viewer-video.png` |
-| File opens in QuickLook | `file-preview.png` |
-| Voice plays from the list | `voice-playing.png` (row switches to pause) |
 
 ## Found and fixed during the run
 

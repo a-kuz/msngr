@@ -11,14 +11,6 @@ Screenshots: `docs/qa/runs/2026-08-16-chat-folders/`.
 
 | Step | Evidence |
 | --- | --- |
-| No folders yet: the strip is "Все" plus the button that creates the first folder | `01-no-folders-yet.png` |
-| A rule fills the folder while it is being made: "Люди" checks every one-to-one chat | `02-folder-rule-people.png`, `03-rule-fills-chats.png` |
-| A chat added by hand on top of the rule: the group "Дизайн-ревью" in a folder of people | `04-hand-added-chat.png` |
-| Folder list: order, what each folder holds, and that folders are device-local | `05-folders-list.png` |
-| Tabs above the list; archive and requests stay on "Все" | `06-tabs-all.png` |
-| Switching by swipe: "Все" → "Люди" → "Группы" → "Непрочитанные" | `07-swipe-to-people.png`, `08-swipe-to-groups.png` |
-| Empty folder, with the button that changes it | `09-empty-folder.png` |
-| Row actions inside a folder page, "Из папки" among them | `10-row-actions-in-folder.png` |
 
 ## The swipe, and why the threshold is where it is
 
