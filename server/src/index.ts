@@ -510,10 +510,8 @@ app.get("/api/chats", async (c) => {
 app.get("/api/chats/:id/history", async (c) => {
   const { userId } = c.get("auth");
   const chatId = c.req.param("id");
-  const sr = await convStub(c.env, chatId).fetch("https://do/state");
-  const sj = (await sr.json()) as { ok: boolean; state?: ChatState };
-  if (!sj.ok || !sj.state?.members.some((m) => m.userId === userId))
-    return err("not_member", 403);
+  // membership is checked by the object itself on the read that serves the page:
+  // asking for it first costs a second invocation on every page of history
   const qs = new URL(c.req.url).searchParams;
   qs.set("userId", userId);
   const r = await convStub(c.env, chatId).fetch(
