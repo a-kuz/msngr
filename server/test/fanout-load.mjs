@@ -52,7 +52,7 @@ async function apiOnce(path, { token, body, method } = {}) {
 
 function fakeKeys(n) {
   return {
-    identityKey: "ik_" + n, identitySignKey: "isk_" + n,
+    identityKey: "ik_" + n, identitySignKey: "isk_" + n, identityKeySig: "iksig_" + n,
     signedPrekey: { id: 1, key: "spk_" + n, sig: "sig_" + n },
     oneTimePrekeys: [{ id: 1, key: "otp1_" + n }, { id: 2, key: "otp2_" + n }],
   };
