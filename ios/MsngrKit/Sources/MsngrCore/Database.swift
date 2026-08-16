@@ -402,6 +402,26 @@ public enum AppDatabase {
             // table, so the cost of an answer grows with the size of the chat.
             try db.create(indexOn: "message", columns: ["clientMsgId"])
         }
+        m.registerMigration("v19-ftsOnTextChange") { db in
+            // The search index only has to move when the text moves. The triggers the
+            // virtual table is created with fire on any update of a message row, and
+            // most updates of a message change its status: a delivery receipt over
+            // five thousand rows spent 56 % of its work re-indexing text that stayed
+            // the same. The condition is null-safe, so a text appearing or going away
+            // still reaches the index.
+            try db.execute(sql: """
+                DROP TRIGGER IF EXISTS "__messageFts_bu";
+                DROP TRIGGER IF EXISTS "__messageFts_au";
+                CREATE TRIGGER "__messageFts_bu" BEFORE UPDATE ON "message"
+                WHEN new."text" IS NOT old."text" BEGIN
+                    DELETE FROM "messageFts" WHERE docid=old."rowid";
+                END;
+                CREATE TRIGGER "__messageFts_au" AFTER UPDATE ON "message"
+                WHEN new."text" IS NOT old."text" BEGIN
+                    INSERT INTO "messageFts"("docid", "text") VALUES(new."rowid", new."text");
+                END;
+                """)
+        }
         return m
     }
 }
