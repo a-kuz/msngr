@@ -596,6 +596,16 @@ check("admin mints an invite in a locked group", invByAdmin.ok);
 const rightsLeave = await api(`/api/chats/${rgrp.chatId}/delete`, { token: dave.token, body: {} });
 check("member leaves a locked group", rightsLeave.ok, JSON.stringify(rightsLeave));
 cdave.ws.close();
+// alice never read this group, and the badge checks further down count her unread
+// over every chat she is in
+const rgrpEntry = (await api("/api/chats", { token: alice.token }))
+  .chats.find((e) => e.state.chatId === rgrp.chatId);
+ca.send({ t: "read", chatId: rgrp.chatId, upToSeq: rgrpEntry.state.lastSeq });
+const rgrpRead = (await api("/api/chats", { token: alice.token }))
+  .chats.find((e) => e.state.chatId === rgrp.chatId);
+check("the rights group leaves no unread behind",
+  (rgrpRead.state.readMarks[alice.userId] ?? 0) >= rgrpRead.state.lastSeq,
+  JSON.stringify(rgrpRead.state.readMarks));
 
 // 17. Service frame: the flag reaches the recipient, dedupe by clientMsgId works
 ca.send({ t: "send", chatId: chat.chatId, clientMsgId: "cm-skd-1", sentAt: Date.now(),
