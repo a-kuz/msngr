@@ -574,6 +574,17 @@ public actor SyncEngine {
         guard !items.isEmpty else { return }
         var chatIds = Set(items.map(\.chatId))
 
+        // whoever has just sent a message is no longer typing: the sender's own
+        // stop frame can be late or lost, and the indicator would then cover the
+        // message that has already arrived. One event per sender per batch: a
+        // catch-up of hundreds of messages must not cost hundreds of them
+        var stopped = Set<String>()
+        for item in items where !item.isService {
+            if stopped.insert(item.chatId + "\u{1}" + item.from).inserted {
+                typingStream.send((item.chatId, item.from, nil))
+            }
+        }
+
         // a message for a chat we do not have means we missed its creation
         func storedChats(_ ids: Set<String>) async -> Set<String> {
             (try? await db.read { dbc in

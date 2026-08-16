@@ -146,7 +146,7 @@ final class ChatViewModel: ObservableObject {
                         try? await Task.sleep(nanoseconds: 5_000_000_000)
                         self.typingUsers.removeAll()
                     }
-                } else {
+                } else if self.typingUsers.contains(ev.userId) {
                     self.typingUsers.removeAll { $0 == ev.userId }
                 }
             }
