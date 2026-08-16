@@ -8,3 +8,4 @@ DerivedData/
 .DS_Store
 .build/
 scratchpad/
+.claude/agent-runs/

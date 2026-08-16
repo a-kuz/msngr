@@ -5,7 +5,7 @@
 Статусы: ✅ — есть в коде и подтверждено живым прогоном, скриншотом или
 серверным смоуком; 🟡 — сделано частично или код есть, но живьём не проверялось
 (в скобках чего не хватает); ⬜ — план. Доказательства лежат в `docs/qa/runs/`,
-`docs/qa/design-review/`, `docs/qa/anim-review.md`, `docs/qa/palettes/`,
+`docs/qa/design-review/`, `docs/qa/runs/2026-08-13-anim-review-run.md`, `docs/qa/palettes/`,
 `docs/qa/push-client/` и в `server/test/smoke.mjs`.
 
 **Этот файл обновляется при закрытии каждой фичи** — тем же коммитом, что и код.

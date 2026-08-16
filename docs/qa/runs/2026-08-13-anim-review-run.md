@@ -1,7 +1,7 @@
 # Покадровая верификация анимаций (anim-a/anim-b, iPhone 17, iOS 26.5, палитра graphite)
 
 Дата: 2026-08-13. Сборка main (ba585e8), стенд localhost:8787, юзеры anim7/anim8.
-Ключевые кадры сохранены в `docs/qa/anim-review/`.
+Ключевые кадры сохранены в `docs/qa/runs/2026-08-13-anim-review/`.
 
 Замечание по методике: Slow Animations в Simulator.app на этих симуляторах эффекта не дал
 (чекбокс ✓, но push-переход стабильно ~0.5 с; UIAnimationDragCoefficient=5 с перезапуском
