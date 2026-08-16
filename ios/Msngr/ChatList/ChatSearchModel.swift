@@ -38,7 +38,16 @@ final class ChatSearchModel: ObservableObject {
     private var messagesTask: Task<Void, Never>?
     private var peopleTask: Task<Void, Never>?
 
-    private let app = AppState.shared
+    /// Where the two halves of a result come from. The screen takes the database
+    /// and the server; a test hands over answers whose timing it decides itself.
+    private let pages: (String, MessageSearchCursor?) async -> MessageSearchPage?
+    private let peopleSource: (String) async -> [APIClient.UserDTO]
+
+    init(pages: @escaping (String, MessageSearchCursor?) async -> MessageSearchPage? = ChatSearchModel.databasePage,
+         people: @escaping (String) async -> [APIClient.UserDTO] = ChatSearchModel.serverPeople) {
+        self.pages = pages
+        self.peopleSource = people
+    }
 
     /// A new query. The previous results are cleared at once, so that results
     /// belonging to an older query never sit under a fresh one.
@@ -69,8 +78,8 @@ final class ChatSearchModel: ObservableObject {
         peopleTask = Task { [weak self] in
             try? await Task.sleep(for: Self.debounce)
             guard !Task.isCancelled, let self else { return }
-            let found = (try? await self.app.api.searchUsers(trimmed)) ?? []
-            guard !Task.isCancelled, generation == self.generation else { return }
+            let found = await self.peopleSource(trimmed)
+            guard generation == self.generation else { return }
             self.people = found
             self.searchingPeople = false
         }
@@ -111,10 +120,20 @@ final class ChatSearchModel: ObservableObject {
     }
 
     private func page(query: String, after: MessageSearchCursor?) async -> MessageSearchPage? {
-        guard let db = app.db else { return nil }
+        await pages(query, after)
+    }
+
+    /// The message half of a result: one page of the full-text index.
+    static func databasePage(query: String, after: MessageSearchCursor?) async -> MessageSearchPage? {
+        guard let db = AppState.shared.db else { return nil }
         return try? await db.read { dbc in
             try MessageSearch.page(dbc, query: query, after: after)
         }
+    }
+
+    /// The people half: the same server call the new-chat list makes.
+    static func serverPeople(query: String) async -> [APIClient.UserDTO] {
+        (try? await AppState.shared.api.searchUsers(query)) ?? []
     }
 }
 
