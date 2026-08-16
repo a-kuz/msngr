@@ -6,6 +6,9 @@ import MsngrCore
 struct ChatSearchField: View {
     @Binding var text: String
     @FocusState.Binding var focused: Bool
+    /// The keyboard belongs to the field and can only be asked for once the field
+    /// is on screen: the screen opening search is a run loop too early for it.
+    @State private var keyboardAsked = false
 
     var body: some View {
         HStack(spacing: 6) {
@@ -37,6 +40,13 @@ struct ChatSearchField: View {
         .padding(.vertical, 6)
         .background(Color(.tertiarySystemFill), in: Capsule())
         .frame(maxWidth: .infinity)
+        // the keyboard is raised once, when search opens; a reader who put it away
+        // to read the matches keeps it away
+        .onAppear {
+            guard !keyboardAsked else { return }
+            keyboardAsked = true
+            focused = true
+        }
     }
 }
 
