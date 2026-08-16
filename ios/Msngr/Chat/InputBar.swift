@@ -1,8 +1,8 @@
 import SwiftUI
 import MsngrCore
 
-/// Инпут-бар: растущее поле, morph кнопки (микрофон↔отправить), запись голосового
-/// с slide-to-cancel и lock, плашки reply/edit.
+/// Input bar: a growing field, a button that morphs between microphone and send, voice
+/// recording with slide-to-cancel and lock, and the reply and edit strips.
 struct InputBar: View {
     @ObservedObject var model: ChatViewModel
     @Binding var text: String
@@ -16,7 +16,7 @@ struct InputBar: View {
     @State private var inputHeight: CGFloat = GrowingTextView.minHeight
     @State private var recordingLocked = false
     @State private var dragOffset: CGFloat = 0
-    /// картинки из буфера, ждущие отправки
+    /// images from the clipboard waiting to be sent
     @State private var pendingImages: [UIImage] = []
     @State private var pasteboardHasImage = MessageClipboard.hasImages
     @GestureState private var pressing = false
@@ -29,7 +29,7 @@ struct InputBar: View {
         }
     }
 
-    /// Заблокированному не пишут: вместо поля ввода — плашка со снятием блокировки.
+    /// You do not write to someone you blocked: the composer gives way to a strip that unblocks them.
     private var blockedBar: some View {
         VStack(spacing: 6) {
             Text("Вы заблокировали пользователя.")
@@ -88,15 +88,15 @@ struct InputBar: View {
             .padding(.vertical, 6)
         }
         .background(.bar)
-        // пункт «Вставить» показывается по факту наличия картинки в буфере:
-        // своё копирование даёт changedNotification, чужое видно при возврате в приложение
+        // the «Вставить» item appears when the clipboard really holds an image: a copy made
+        // here raises changedNotification, one made elsewhere shows up on return to the app
         .onReceive(NotificationCenter.default.publisher(for: UIPasteboard.changedNotification)) { _ in
             pasteboardHasImage = MessageClipboard.hasImages
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             pasteboardHasImage = MessageClipboard.hasImages
         }
-        // подсказка механики записи: плавает над баром, пока запись не залочена
+        // the hint about how recording works floats above the bar until recording is locked
         .overlay(alignment: .top) {
             if recorder.isRecording && !recordingLocked {
                 recordingHint
@@ -108,7 +108,7 @@ struct InputBar: View {
         .animation(Theme.springFast, value: recordingLocked)
     }
 
-    /// «Влево — отмена, вверх — замок»: появляется при начале записи.
+    /// «влево — отмена, вверх — замок»: shown as soon as recording starts.
     private var recordingHint: some View {
         HStack(spacing: 10) {
             HStack(spacing: 3) {
@@ -167,7 +167,7 @@ struct InputBar: View {
         }
     }
 
-    /// Превью картинок из буфера: тап по крестику убирает вложение.
+    /// Previews of the pasted images: tapping the cross drops an attachment.
     @ViewBuilder
     private var pendingImagesBar: some View {
         if !pendingImages.isEmpty {
@@ -255,12 +255,12 @@ struct InputBar: View {
                             try? recorder.start()
                         }
                         dragOffset = value.translation.width
-                        // свайп вверх → lock
+                        // swipe up locks the recording
                         if value.translation.height < -70 && !recordingLocked {
                             recordingLocked = true
                             Haptics.success()
                         }
-                        // свайп влево → отмена
+                        // swipe left cancels it
                         if value.translation.width < -110 {
                             recorder.cancel()
                             recordingLocked = false
@@ -310,7 +310,7 @@ struct InputBar: View {
     private func finishRecording() {
         recordingLocked = false
         guard let result = recorder.stop() else {
-            // запись короче 1с отменена — короткий жёсткий хаптик вместо сообщения
+            // a recording shorter than a second is dropped: a short hard haptic instead of a message
             Haptics.rigid()
             return
         }
@@ -319,7 +319,7 @@ struct InputBar: View {
     }
 }
 
-/// Миниатюра вложения в инпут-баре с крестиком удаления.
+/// Attachment thumbnail in the input bar, with a cross to remove it.
 struct PendingImageThumb: View {
     let image: UIImage
     let onRemove: () -> Void
@@ -342,7 +342,7 @@ struct PendingImageThumb: View {
     }
 }
 
-/// Живая волна при записи.
+/// Live waveform while recording.
 struct LiveWaveView: View {
     let amplitudes: [Float]
 
@@ -363,9 +363,9 @@ struct LiveWaveView: View {
     }
 }
 
-/// Растущее текстовое поле (до 6 строк), как в TG.
-/// Высота считается по контенту и отдаётся наружу: без этого SwiftUI растягивает
-/// UITextView на всё свободное место и поле занимает пол-экрана.
+/// A growing text field (up to 6 lines), the way TG has it.
+/// The height is computed from the content and handed back out: without that SwiftUI
+/// stretches the UITextView over all the free space and the field eats half the screen.
 struct GrowingTextView: UIViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
@@ -375,8 +375,8 @@ struct GrowingTextView: UIViewRepresentable {
     /// changes it: the field then re-fonts itself and re-measures its height.
     @Environment(\.dynamicTypeSize) private var typeSize
 
-    /// Поле растёт вместе с текстом: одна строка внизу, шесть — потолок,
-    /// после которого поле начинает скроллиться.
+    /// The field grows with the text: one line at the floor, six at the ceiling, past
+    /// which the field starts scrolling.
     static var minHeight: CGFloat { max(36, ceil(Theme.Text.input.uiFont.lineHeight) + 18) }
     static var maxHeight: CGFloat { 6 * ceil(Theme.Text.input.uiFont.lineHeight) + 16 }
 
@@ -392,8 +392,8 @@ struct GrowingTextView: UIViewRepresentable {
         tv.isScrollEnabled = false
         tv.accessibilityIdentifier = "chat.input"
         tv.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-        // длинная строка без пробелов раздувает intrinsic width UITextView
-        // и поле выталкивает кнопки за экран
+        // a long unbroken string inflates the UITextView's intrinsic width and the field
+        // pushes the buttons off the screen
         tv.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         tv.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
@@ -431,8 +431,8 @@ struct GrowingTextView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    /// Вставка картинки уходит вложением: обычное поле такой буфер просто игнорирует,
-    /// и пункт «Вставить» в нём даже не появляется.
+    /// A pasted image leaves as an attachment: a plain field ignores that kind of clipboard
+    /// altogether and does not even offer «Вставить».
     final class PasteAwareTextView: UITextView {
         var onPasteImages: ([UIImage]) -> Void = { _ in }
 

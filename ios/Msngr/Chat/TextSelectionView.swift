@@ -1,8 +1,8 @@
 import SwiftUI
 import UIKit
 
-/// Режим выделения текста сообщения: системный выбор с лупой, маркерами и
-/// меню «Скопировать». Текст открыт целиком, выделен по умолчанию.
+/// Text selection mode for a message: the system selection with its loupe, its handles
+/// and the «Скопировать» menu. The whole text is shown and selected by default.
 struct TextSelectionView: View {
     let text: String
     @Environment(\.dismiss) private var dismiss
@@ -23,7 +23,7 @@ struct TextSelectionView: View {
     }
 }
 
-/// UITextView только для чтения: редактирование выключено, выделение и меню — нет.
+/// A read-only UITextView: editing is off while selection and its menu stay on.
 private struct SelectableText: UIViewRepresentable {
     let text: String
 
@@ -39,7 +39,7 @@ private struct SelectableText: UIViewRepresentable {
         tv.dataDetectorTypes = [.link, .phoneNumber]
         tv.accessibilityIdentifier = "chat.textSelection"
         tv.text = text
-        // весь текст выделен сразу: длинное нажатие для старта выбора не нужно
+        // the whole text is selected right away, so no long press is needed to start
         DispatchQueue.main.async {
             tv.becomeFirstResponder()
             tv.selectAll(nil)

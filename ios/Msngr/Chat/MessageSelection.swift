@@ -1,7 +1,7 @@
 import Foundation
 import MsngrCore
 
-/// Набор выбранных сообщений и доступность действий над ним.
+/// The set of selected messages and which actions are available on it.
 struct MessageSelection: Equatable {
     private(set) var ids: Set<String> = []
 
@@ -19,19 +19,19 @@ struct MessageSelection: Equatable {
 
     mutating func clear() { ids.removeAll() }
 
-    /// Выбранные сообщения в порядке ленты.
+    /// The selected messages in feed order.
     func messages(in msgs: [Message]) -> [Message] {
         msgs.filter { ids.contains($0.id) }
     }
 
-    /// «Удалить у всех» доступно, только когда все выбранные сообщения свои:
-    /// чужие сервер тумбстоунит лишь администратору группы, в личной переписке
-    /// такой запрос молча ничего не сделает.
+    /// «Удалить у всех» is available only when every selected message is our own: someone
+    /// else's the server tombstones for a group admin alone, and in a direct chat such a
+    /// request silently does nothing.
     static func canDeleteForAll(_ selected: [Message]) -> Bool {
         !selected.isEmpty && selected.allSatisfy(\.isOutgoing)
     }
 
-    /// Счётчик в шапке: «1 сообщение», «2 сообщения», «5 сообщений».
+    /// Counter in the header, with plural forms: «1 сообщение», «2 сообщения», «5 сообщений».
     static func title(count: Int) -> String {
         let mod100 = count % 100
         let mod10 = count % 10

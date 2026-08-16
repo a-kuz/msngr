@@ -1,8 +1,8 @@
 import UIKit
 
-/// Текст сообщения: собственный стек TextKit вместо UILabel. Он же используется
-/// для замера в BubbleLayout, поэтому нарисованное совпадает с посчитанным —
-/// подложки блоков кода и попадание по ссылке считаются по тем же фрагментам строк.
+/// Message text: its own TextKit stack instead of a UILabel. BubbleLayout measures with
+/// the same stack, so what is drawn matches what was computed, and code block backdrops
+/// and link hit-testing are derived from the very same line fragments.
 final class MessageTextView: UIView {
     private let storage = NSTextStorage()
     private let manager = NSLayoutManager()
@@ -26,8 +26,8 @@ final class MessageTextView: UIView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// Цвета накладываются здесь: раскладка от них не зависит, поэтому план
-    /// раскладки хранит текст без цвета и переживает смену палитры и темы.
+    /// Colours are applied here: the layout does not depend on them, so the layout plan
+    /// keeps the text colourless and survives a change of palette or theme.
     func configure(_ attr: NSAttributedString, color: UIColor, linkColor: UIColor,
                    codeBackground: UIColor) {
         let mutable = NSMutableAttributedString(attributedString: attr)
@@ -76,11 +76,11 @@ final class MessageTextView: UIView {
         if previous?.userInterfaceStyle != traitCollection.userInterfaceStyle { setNeedsDisplay() }
     }
 
-    /// Ссылка под точкой в координатах вью; nil — попали мимо ссылки.
+    /// The link under a point in view coordinates; nil when the touch missed one.
     func url(at point: CGPoint) -> URL? {
         guard storage.length > 0 else { return nil }
         let glyph = manager.glyphIndex(for: point, in: container, fractionOfDistanceThroughGlyph: nil)
-        // glyphIndex возвращает ближайший глиф даже при промахе — проверяем попадание
+        // glyphIndex returns the nearest glyph even on a miss, so the hit is verified
         let box = manager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container)
         guard box.insetBy(dx: -3, dy: -3).contains(point) else { return nil }
         let index = manager.characterIndexForGlyph(at: glyph)

@@ -1,31 +1,31 @@
 import Foundation
 
-/// Состояние плашки «N непрочитанных сообщений» внутри открытого чата.
-/// Живёт от входа в чат (в ChatViewModel), правила:
-/// - вход с непрочитанными — плашка над первым непрочитанным;
-/// - входящие при видимом чате увеличивают счётчик активной плашки;
-/// - своя отправка или реакция убирает плашку;
-/// - уход экрана в фон/шторку убирает плашку, входящие за время отсутствия
-///   копятся и при возврате показываются новой плашкой.
+/// State of the «N непрочитанных сообщений» banner inside an open chat.
+/// It lives from the moment the chat is entered (in ChatViewModel); the rules are:
+/// - entering with unread messages puts the banner above the first of them;
+/// - messages arriving while the chat is visible raise the active banner's counter;
+/// - sending something or reacting removes the banner;
+/// - the screen going into the background or under the shade removes the banner, and
+///   messages arriving meanwhile pile up and come back as a new banner on return.
 struct UnreadMarkerState: Equatable {
-    /// seq первого непрочитанного — плашка стоит над ним; nil — плашки нет
+    /// seq of the first unread message, the banner stands above it; nil means no banner
     private(set) var anchorSeq: Int?
     private(set) var count = 0
     private var obscured = false
-    /// накопленное за время obscured: seq первого пришедшего и их число
+    /// piled up while obscured: the seq of the first arrival and how many there were
     private var pendingFirstSeq: Int?
     private var pendingCount = 0
 
     var isActive: Bool { anchorSeq != nil && count > 0 }
 
-    /// Вход в чат: якорь — следующий seq за последним прочитанным.
+    /// Entering the chat: the anchor is the seq right after the last read one.
     mutating func enterChat(unreadCount: Int, myReadUpTo: Int) {
         guard unreadCount > 0 else { return }
         anchorSeq = myReadUpTo + 1
         count = unreadCount
     }
 
-    /// Входящее сообщение собеседника с новым seq.
+    /// An incoming message from the peer with a new seq.
     mutating func incoming(seq: Int) {
         if obscured {
             if pendingFirstSeq == nil { pendingFirstSeq = seq }
@@ -35,13 +35,14 @@ struct UnreadMarkerState: Equatable {
         }
     }
 
-    /// Своя отправка или реакция — плашка убирается.
+    /// Sending something or reacting takes the banner away.
     mutating func dismiss() {
         anchorSeq = nil
         count = 0
     }
 
-    /// Экран ушёл в фон/шторку: плашка убирается, входящие дальше копятся.
+    /// The screen went into the background or under the shade: the banner goes, later
+    /// arrivals pile up.
     mutating func becameObscured() {
         obscured = true
         dismiss()
@@ -49,7 +50,7 @@ struct UnreadMarkerState: Equatable {
         pendingCount = 0
     }
 
-    /// Возврат на экран: накопленное за отсутствие становится новой плашкой.
+    /// Back on screen: what piled up while away becomes a new banner.
     mutating func becameActive() {
         obscured = false
         if pendingCount > 0 {
