@@ -263,6 +263,24 @@ cb2.send({ t: "sync", cursors: { [chat.chatId]: 1 } });
 const missed = await cb2.waitFor((f) => f.t === "msg" && f.seq === 2);
 check("sync backfill", !!missed);
 
+// 8a. Догон чужого чата: id direct-чата выводится из двух пользовательских id,
+// поэтому курсор на него может назвать кто угодно. Журнал по нему не отдаётся.
+const outsider = new Client("carol-outsider", carol.token);
+await outsider.connect();
+const outsiderMark = outsider.mark();
+outsider.send({ t: "sync", cursors: { [chat.chatId]: 0 } });
+await outsider.waitAfter(outsiderMark, (f) => f.t === "syncDone");
+const leaked = outsider.frames.slice(outsiderMark)
+  .filter((f) => (f.t === "msg" || f.t === "deleted" || f.t === "receipt")
+    && f.chatId === chat.chatId);
+check("catch-up of a foreign chat leaks nothing", leaked.length === 0,
+  JSON.stringify(leaked.slice(0, 2)));
+const outsiderHist = await api(`/api/chats/${chat.chatId}/history?fromSeq=0`,
+  { token: carol.token });
+check("history of a foreign chat is refused",
+  !outsiderHist.ok && outsiderHist.error === "not_member", JSON.stringify(outsiderHist));
+outsider.ws.close();
+
 // 9. Группа
 const grp = await api("/api/chats", { token: alice.token,
   body: { kind: "group", memberIds: [bob.userId], title: "Team" } });
