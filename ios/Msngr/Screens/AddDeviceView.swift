@@ -51,14 +51,9 @@ struct AddDeviceView: View {
             Button {
                 Task { await lookup() }
             } label: {
-                Group {
-                    if busy { ProgressView().tint(.white) } else { Text("Далее").bold() }
-                }
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity).frame(height: 48)
-                .background(Theme.accent.opacity(codeValid ? 1 : 0.4),
-                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                if busy { ProgressView() } else { Text("Далее") }
             }
+            .buttonStyle(.primaryAction)
             .disabled(busy || !codeValid)
             .accessibilityIdentifier("adddevice.next")
         }
@@ -81,13 +76,9 @@ struct AddDeviceView: View {
             Button {
                 Task { await approve(found) }
             } label: {
-                Group {
-                    if busy { ProgressView().tint(.white) } else { Text("Подтвердить").bold() }
-                }
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity).frame(height: 48)
-                .background(Theme.accent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                if busy { ProgressView() } else { Text("Подтвердить") }
             }
+            .buttonStyle(.primaryAction)
             .disabled(busy)
             .accessibilityIdentifier("adddevice.approve")
             Button("Отмена") { self.found = nil; self.error = nil }
