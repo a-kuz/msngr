@@ -515,8 +515,13 @@ const meOwn = await api("/api/me", { token: alice.token });
 check("own avatar still updates profile",
   ownAvatar.ok && meOwn.user.avatar_id === ownAvatar.avatarId);
 
-// 16b. Member rights: who may write and who may bring people in
-const policyByMember = await api(`/api/chats/${grp.chatId}/settings`, { token: dave.token,
+// 16b. Member rights: who may write and who may bring people in. Its own group,
+// because the checks below count the frames of grp.
+const rgrp = await api("/api/chats", { token: alice.token,
+  body: { kind: "group", memberIds: [bob.userId, dave.userId], title: "Rights" } });
+check("create rights group", rgrp.ok, JSON.stringify(rgrp));
+
+const policyByMember = await api(`/api/chats/${rgrp.chatId}/settings`, { token: dave.token,
   body: { sendPolicy: "admins" } });
 check("group rights by non-admin rejected",
   !policyByMember.ok && policyByMember.error === "not_admin");
@@ -524,19 +529,19 @@ check("group rights by non-admin rejected",
 const cdave = new Client("dave-rights", dave.token);
 await cdave.connect();
 const daveOpen = cdave.mark();
-cdave.send({ t: "send", chatId: grp.chatId, clientMsgId: "cm-open-1", sentAt: Date.now(),
+cdave.send({ t: "send", chatId: rgrp.chatId, clientMsgId: "cm-open-1", sentAt: Date.now(),
   body: { v: 1, mode: "skm", c: "Zm9v", senderKeyId: "sk1" } });
 check("member writes while the group is open",
   !!(await cdave.waitAfter(daveOpen, (f) => f.t === "sent" && f.clientMsgId === "cm-open-1")));
 
-const readOnly = await api(`/api/chats/${grp.chatId}/settings`, { token: alice.token,
+const readOnly = await api(`/api/chats/${rgrp.chatId}/settings`, { token: alice.token,
   body: { sendPolicy: "admins" } });
 const readOnlyFrame = await cb2.waitFor((f) =>
-  f.t === "chat" && f.chatId === grp.chatId && f.state.sendPolicy === "admins");
+  f.t === "chat" && f.chatId === rgrp.chatId && f.state.sendPolicy === "admins");
 check("admin makes the group read-only", readOnly.ok && !!readOnlyFrame);
 
 const daveMuted = cdave.mark();
-cdave.send({ t: "send", chatId: grp.chatId, clientMsgId: "cm-muted-1", sentAt: Date.now(),
+cdave.send({ t: "send", chatId: rgrp.chatId, clientMsgId: "cm-muted-1", sentAt: Date.now(),
   body: { v: 1, mode: "skm", c: "Zm9v", senderKeyId: "sk1" } });
 const muteErr = await cdave.waitAfter(daveMuted,
   (f) => f.t === "error" && f.clientMsgId === "cm-muted-1");
@@ -545,20 +550,20 @@ check("member cannot write in a read-only group",
 
 // the crypto keeps working: a key handout, a repair, an ack are service frames
 const daveService = cdave.mark();
-cdave.send({ t: "send", chatId: grp.chatId, clientMsgId: "cm-muted-skd", sentAt: Date.now(),
+cdave.send({ t: "send", chatId: rgrp.chatId, clientMsgId: "cm-muted-skd", sentAt: Date.now(),
   service: true, body: { v: 1, mode: "skd", c: "c2tk" } });
 check("service frames pass in a read-only group",
   !!(await cdave.waitAfter(daveService, (f) => f.t === "sent" && f.clientMsgId === "cm-muted-skd")));
 
 const adminWrite = ca.mark();
-ca.send({ t: "send", chatId: grp.chatId, clientMsgId: "cm-muted-admin", sentAt: Date.now(),
+ca.send({ t: "send", chatId: rgrp.chatId, clientMsgId: "cm-muted-admin", sentAt: Date.now(),
   body: { v: 1, mode: "skm", c: "Zm9v", senderKeyId: "sk1" } });
 check("admin writes in a read-only group",
   !!(await ca.waitAfter(adminWrite, (f) => f.t === "sent" && f.clientMsgId === "cm-muted-admin")));
 
-await api(`/api/chats/${grp.chatId}/settings`, { token: alice.token, body: { sendPolicy: "all" } });
+await api(`/api/chats/${rgrp.chatId}/settings`, { token: alice.token, body: { sendPolicy: "all" } });
 const daveAgain = cdave.mark();
-cdave.send({ t: "send", chatId: grp.chatId, clientMsgId: "cm-open-2", sentAt: Date.now(),
+cdave.send({ t: "send", chatId: rgrp.chatId, clientMsgId: "cm-open-2", sentAt: Date.now(),
   body: { v: 1, mode: "skm", c: "Zm9v", senderKeyId: "sk1" } });
 check("the group opens again",
   !!(await cdave.waitAfter(daveAgain, (f) => f.t === "sent" && f.clientMsgId === "cm-open-2")));
@@ -566,28 +571,30 @@ check("the group opens again",
 // inviting: open by default, admins only once the policy says so
 const guest = await api("/api/register", { body: {
   username: "guest" + suffix, displayName: "Guest", device: { name: "iPhone" }, ...fakeKeys("g1") } });
-const addByMember = await api(`/api/chats/${grp.chatId}/members`, { token: dave.token,
+const addByMember = await api(`/api/chats/${rgrp.chatId}/members`, { token: dave.token,
   body: { add: [guest.userId], remove: [] } });
 check("member adds a member while inviting is open", addByMember.ok, JSON.stringify(addByMember));
-const invByMember = await api(`/api/chats/${grp.chatId}/invite`, { token: dave.token, body: {} });
+const invByMember = await api(`/api/chats/${rgrp.chatId}/invite`, { token: dave.token, body: {} });
 check("member mints an invite while inviting is open", invByMember.ok);
 
-const lockInvites = await api(`/api/chats/${grp.chatId}/settings`, { token: alice.token,
+const lockInvites = await api(`/api/chats/${rgrp.chatId}/settings`, { token: alice.token,
   body: { invitePolicy: "admins" } });
 check("admin locks inviting", lockInvites.ok);
 const guest2 = await api("/api/register", { body: {
   username: "guesttwo" + suffix, displayName: "Guest Two", device: { name: "iPhone" }, ...fakeKeys("g2") } });
-const addByMemberLocked = await api(`/api/chats/${grp.chatId}/members`, { token: dave.token,
+const addByMemberLocked = await api(`/api/chats/${rgrp.chatId}/members`, { token: dave.token,
   body: { add: [guest2.userId], remove: [] } });
 check("member cannot add once inviting is locked",
   !addByMemberLocked.ok && addByMemberLocked.error === "not_allowed",
   JSON.stringify(addByMemberLocked));
-const invLocked = await api(`/api/chats/${grp.chatId}/invite`, { token: dave.token, body: {} });
+const invLocked = await api(`/api/chats/${rgrp.chatId}/invite`, { token: dave.token, body: {} });
 check("member cannot mint an invite once inviting is locked",
   !invLocked.ok && invLocked.error === "not_allowed", JSON.stringify(invLocked));
-const invByAdmin = await api(`/api/chats/${grp.chatId}/invite`, { token: alice.token, body: {} });
+const invByAdmin = await api(`/api/chats/${rgrp.chatId}/invite`, { token: alice.token, body: {} });
 check("admin mints an invite in a locked group", invByAdmin.ok);
-await api(`/api/chats/${grp.chatId}/settings`, { token: alice.token, body: { invitePolicy: "all" } });
+// a member still leaves a group they cannot write in: leaving is not a send
+const rightsLeave = await api(`/api/chats/${rgrp.chatId}/delete`, { token: dave.token, body: {} });
+check("member leaves a locked group", rightsLeave.ok, JSON.stringify(rightsLeave));
 cdave.ws.close();
 
 // 17. Service frame: the flag reaches the recipient, dedupe by clientMsgId works
