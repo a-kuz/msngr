@@ -6,6 +6,15 @@ import MsngrCore
 struct ChatScreen: View {
     let chatId: String
     @StateObject private var model: ChatViewModel
+    /// Search inside this chat: the field in the header, the matches over the feed.
+    @StateObject private var search: ChatSearchSession
+    @State private var searching = false
+    @FocusState private var searchFocused: Bool
+    /// The message the reader was looking at when search opened; nil means they
+    /// were at the end of the conversation.
+    @State private var searchReturn: String?
+    /// A match was actually opened, so leaving search has somewhere to go back from.
+    @State private var searchMoved = false
     @State private var text = ""
     @State private var showScrollDown = false
     @State private var photoItems: [PhotosPickerItem] = []
@@ -25,6 +34,7 @@ struct ChatScreen: View {
     init(chatId: String) {
         self.chatId = chatId
         _model = StateObject(wrappedValue: ChatViewModel(chatId: chatId))
+        _search = StateObject(wrappedValue: ChatSearchSession(chatId: chatId))
     }
 
     var body: some View {
@@ -35,7 +45,7 @@ struct ChatScreen: View {
                 if model.contentHidden {
                     requestCard
                 } else {
-                    if let pinned = model.pinnedMessage {
+                    if let pinned = model.pinnedMessage, !searching {
                         pinnedBar(pinned)
                     }
                     messagesList
@@ -44,11 +54,19 @@ struct ChatScreen: View {
                                 emptyChatHint
                             }
                         }
-                    if model.keyChangePending && !model.selecting {
+                        .overlay {
+                            if searching, search.resultsShown, !search.query.isEmpty {
+                                searchResults
+                            }
+                        }
+                    if model.keyChangePending && !model.selecting && !searching {
                         keyChangeBanner
                     }
                     if model.selecting {
                         selectionActionBar
+                    } else if searching {
+                        ChatSearchMatchBar(session: search, onStep: stepSearch,
+                                           onShowList: { search.resultsShown = true })
                     } else {
                         InputBar(model: model, text: $text,
                                  onAttachPhoto: { photoPickerPresented = true },
@@ -80,6 +98,16 @@ struct ChatScreen: View {
                         .textRole(Theme.Text.headerTitle)
                         .accessibilityIdentifier("chat.selection.count")
                 }
+            } else if searching {
+                // the field takes the whole bar: with nothing on its leading side
+                // there is room for a query of a real length
+                ToolbarItem(placement: .principal) {
+                    ChatSearchField(text: $search.query, focused: $searchFocused)
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Отмена") { closeSearch() }
+                        .accessibilityIdentifier("chat.search.cancel")
+                }
             } else {
                 // own button instead of the system one: going back is the header's
                 // primary action and has to read before anything else in it
@@ -95,6 +123,16 @@ struct ChatScreen: View {
                     .accessibilityIdentifier("chat.back")
                 }
                 ToolbarItem(placement: .principal) { header }
+                if !model.contentHidden {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button { openSearch() } label: {
+                            Image(systemName: "magnifyingglass")
+                                .font(Theme.glyph(17, max: 24))
+                        }
+                        .accessibilityLabel("Поиск по чату")
+                        .accessibilityIdentifier("chat.search.open")
+                    }
+                }
             }
         }
         .onAppear {
@@ -111,6 +149,11 @@ struct ChatScreen: View {
         // in once the chat has actually arrived (and still only into an empty field)
         .onChange(of: model.chat?.id) { _, _ in
             if text.isEmpty, let draft = model.chat?.draft { text = draft }
+        }
+        // back into the field from a match: the matches are what the reader wants
+        // to see again
+        .onChange(of: searchFocused) { _, focused in
+            if focused { search.resultsShown = true }
         }
         .onDisappear {
             let draft = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -328,6 +371,69 @@ struct ChatScreen: View {
             t.removeLast()
         }
         return t + "…"
+    }
+
+    // MARK: - Search inside the chat
+
+    private var searchResults: some View {
+        ChatSearchResultsList(session: search, members: model.members,
+                              ownUserId: model.ownUserId) { hit in
+            search.select(hit)
+            searchFocused = false
+            show(hit)
+        }
+        .transition(.opacity)
+    }
+
+    /// Opening search remembers where the reader is, so that leaving it can put
+    /// them back even after a walk through the whole conversation.
+    private func openSearch() {
+        searchReturn = messagesVC.topVisibleMessageId()
+        searchMoved = false
+        withAnimation(Theme.springFast) { searching = true }
+        searchFocused = true
+    }
+
+    /// Leaving search: the query goes, and the feed returns to the message the
+    /// reader came from. Nothing is fetched for that — search only ever grew the
+    /// window, so the message is still in it.
+    private func closeSearch() {
+        searchFocused = false
+        withAnimation(Theme.springFast) { searching = false }
+        search.reset()
+        let anchor = searchReturn
+        searchReturn = nil
+        guard searchMoved else { return }
+        searchMoved = false
+        guard let anchor else {
+            messagesVC.scrollToBottom(animated: false)
+            return
+        }
+        if messagesVC.scrollTo(msgId: anchor, animated: false) { return }
+        Task {
+            guard await model.ensureLoaded(msgId: anchor) else { return }
+            MessagesView.scrollWhenReady(vc: messagesVC, msgId: anchor, highlight: false)
+        }
+    }
+
+    /// One step through the matches, back in time or towards the end.
+    private func stepSearch(by offset: Int) {
+        Task {
+            guard let hit = await search.step(by: offset) else {
+                Haptics.rigid()
+                return
+            }
+            searchFocused = false
+            show(hit)
+        }
+    }
+
+    /// Shows a found message. A match already in the window costs a scroll and
+    /// nothing else; only one that sits deeper makes the feed load history.
+    private func show(_ hit: MessageSearchHit) {
+        searchMoved = true
+        if messagesVC.scrollTo(msgId: hit.messageId, highlight: true) { return }
+        jump(to: hit.messageId)
     }
 
     /// Carries the feed to a message: the screens above it close and history is
@@ -741,11 +847,12 @@ struct MessagesView: UIViewControllerRepresentable {
     /// Fetched history reaches the list through updateUIViewController, so the scroll
     /// happens as soon as the message shows up in the feed. The jump from the gallery
     /// arrives the same way, only there the screens on top have to close first.
-    static func scrollWhenReady(vc: MessagesViewController, msgId: String, attempts: Int = 16) {
-        if vc.scrollTo(msgId: msgId, highlight: true) { return }
+    static func scrollWhenReady(vc: MessagesViewController, msgId: String,
+                                highlight: Bool = true, attempts: Int = 16) {
+        if vc.scrollTo(msgId: msgId, highlight: highlight) { return }
         guard attempts > 0 else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            scrollWhenReady(vc: vc, msgId: msgId, attempts: attempts - 1)
+            scrollWhenReady(vc: vc, msgId: msgId, highlight: highlight, attempts: attempts - 1)
         }
     }
 }
