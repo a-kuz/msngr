@@ -268,19 +268,29 @@ def socket_hogs(limit=2000):
                              text=True, timeout=120).stdout
     except subprocess.SubprocessError:
         return []
-    count = {}
+    count, lines = {}, {}
     for line in out.splitlines()[1:]:
         parts = line.split()
         if len(parts) > 1 and parts[0] == "workerd":
-            count[int(parts[1])] = count.get(int(parts[1]), 0) + 1
+            pid = int(parts[1])
+            count[pid] = count.get(pid, 0) + 1
+            lines.setdefault(pid, []).append(line)
     plan = []
     for pid, sockets in sorted(count.items()):
         if sockets < limit:
             continue
+
+        def take(p=pid):
+            # the process is about to go, so keep what its sockets were: the
+            # peer address and the state say which path stopped closing them
+            (ROOT / ".claude" / f"socket-hog-{p}.txt").write_text(
+                "\n".join(lines[p]) + "\n")
+            kill([p])
+
         plan.append({"what": f"stand process {pid}", "bytes": 0,
                      "verb": ("killed", "would kill"),
                      "why": f"holding {sockets} sockets, the host has 16384 ports",
-                     "do": lambda p=pid: kill([p])})
+                     "do": take})
     return plan
 
 

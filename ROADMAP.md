@@ -284,6 +284,20 @@ A ✅ goes in only together with a link to the evidence.
 - ✅ video in the viewer (media-close-out)
 - ⬜ a hero transition bubble ↔ viewer
 
+## Marking up a picture before it is sent
+
+Screenshot-level tools, not a photo editor: the point is to point at something.
+
+- ⬜ the markup opens from the attachment sheet and from the viewer, over the
+  picture that is already picked
+- ⬜ an arrow, a line, a rectangle and an ellipse, drawn by dragging
+- ⬜ freehand drawing, with a colour and a thickness
+- ⬜ text on the picture with the same palette
+- ⬜ blurring a region, for what should not be readable
+- ⬜ cropping and rotating
+- ⬜ undo and redo of every step, and leaving without saving
+- ⬜ the result is a new image: the original stays untouched in the library
+
 ## E2EE, trust, privacy
 
 - Cryptography
@@ -434,6 +448,36 @@ A ✅ goes in only together with a link to the evidence.
 - ⬜ channel media through CF Stream / Images
 - ⬜ subscriber comments and reactions
 
+## Stories
+
+- ⬜ a story is composed from the library: several photos and videos at once, in
+  the order they were picked
+- ⬜ shooting a video for a story from the camera, without leaving the composer
+- ⬜ text over a story: a style, a colour, a colour for the plate behind it
+- ⬜ the editor from the section above works on a story frame too, so there is one
+  set of tools and not two
+- ⬜ publishing: who sees it, how long it lives, taking it down
+- ⬜ the ring on the avatar in the chat list and the viewer with taps and holds
+- ⬜ who watched it, and answering a story into the chat
+- ⬜ no E2EE: a story is plaintext on the server, the way a channel is. Who may
+  see it is an access rule, not a key, and the composer has to say that plainly
+  before the story goes out.
+- ⬜ a public link, if the creator asks for one: the story opens in a browser
+  with no app and no account, so it can be shared outside msngr
+- ⬜ the page behind that link: the media, the text over it, and nothing that
+  identifies the audience — who watched belongs to the creator alone
+- ⬜ revoking the link, and what a revoked link shows to someone who kept it
+
+## Bots
+
+- ⬜ a bot account: a separate kind, created and owned by a person, with a token
+- ⬜ the API a bot talks over: receiving updates, sending, editing, deleting
+- ⬜ commands with a list and autocomplete in the input
+- ⬜ inline buttons under a message and a reply keyboard
+- ⬜ a bot in a group: what it sees and what rights it needs
+- ⬜ no E2EE with a bot, and the interface has to say so plainly, the way the
+  channel does
+
 ## Calls
 
 - ⬜ 1:1 audio on CF Calls, the provider behind our own protocol
@@ -470,6 +514,22 @@ A ✅ goes in only together with a link to the evidence.
 - 🟡 Data Protection on the storage files (not verified on a locked screen)
 - ⬜ cleaning out stale media by cache size
 - ⬜ deleting messages automatically once their TTL expires (the timer is configurable and synchronized, there is no local cleanup)
+
+- Backup to iCloud
+  - ⬜ the backup itself: the history, the media and the settings, encrypted on
+    the device before anything leaves it
+  - ⬜ the key to the backup. Apple can read what is in iCloud unless Advanced
+    Data Protection is on, so the backup carries its own key that iCloud never
+    sees, and the user has to be able to get that key back on a new device —
+    a passphrase or a recovery code. Undecided which; nothing else in the
+    feature can be designed until it is.
+  - ⬜ what the backup does NOT carry: the ratchet state and the sender keys.
+    Restoring them on a second device would reuse a sending chain position, so a
+    restored device starts its sessions fresh.
+  - ⬜ when it runs: on a charger over Wi-Fi, with the last time shown and its size
+  - ⬜ restoring during registration, and what happens when the restore is
+    interrupted halfway
+  - ⬜ turning it off, and deleting what is already in iCloud
 
 ## The macOS client
 
