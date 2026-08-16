@@ -84,8 +84,43 @@ A simulator is an exclusive resource: at any moment it belongs to one agent.
 - For your own scenarios, create your own simulator
   (`xcrun simctl create <name> "iPhone 17"` → `boot` → `install` → register a
   fresh user) and delete it after yourself (`shutdown` + `delete`).
+- Name it after yourself: `<agent>` or `<agent>-<role>`, the way `perfdb` owns
+  `perfdb-a` and `perfdb-b`. That name is how the housekeeping below tells your
+  simulator from litter.
 - Slow Animations in Simulator.app is a global toggle: if you turned it on, turn
   it off at the end.
+
+## Housekeeping
+
+Two commands, both at the root of the repository:
+
+```bash
+scripts/disk.py            # what our footprint is made of, from the last snapshot
+scripts/tidy.py            # what would be taken back; --apply to take it
+```
+
+`scripts/disk.py` prints in a moment because it prints a stored snapshot and
+says how old it is; only free space is read live. `--scan` takes a new one, and
+`--wide` also walks the home directory to say how much of the disk is not this
+project at all. The launchd job `ai.enface.msngr.tidy` runs `scripts/tidy.py
+--apply` every five minutes and refreshes the snapshot as it goes; its output is
+in `.claude/tidy.log`.
+
+The sweep only takes what nothing alive is holding: a simulator whose agent has
+finished, a stand no wrangler points at, a wrangler still running for a worktree
+that was deleted, a worktree whose branch is in main with nothing uncommitted,
+derived data of a workspace that is gone, logs older than three days. An agent
+counts as alive while its process is in `ps` or its transcript is still being
+written; a name that is in no registry at all is given the benefit of the doubt
+for as long as its app keeps writing.
+
+Below a floor of free space the sweep stops being enough and the decision goes
+to a human: `.claude/disk-report.md` says where the space went and what would be
+next to give up, with the cost of losing each, and a notification points at it.
+Nothing in that report is ever taken automatically.
+
+The owner's two devices, the gate runner, and the shared stand in
+`server/.wrangler` are outside all of this and are never touched.
 
 ## What is easy to break
 
