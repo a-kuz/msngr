@@ -2,7 +2,8 @@
 """What our footprint on this disk is made of.
 
     scripts/disk.py          print the last snapshot (instant)
-    scripts/disk.py --scan   walk the disk and write a new one (a minute or two)
+    scripts/disk.py --scan   walk our own directories and write a new one (~3 s)
+    scripts/disk.py --wide   also walk the home directory (a minute or two)
     scripts/disk.py --json   the snapshot as it is stored
 
 Walking a few hundred thousand simulator files takes long enough that nobody
@@ -54,8 +55,11 @@ KEEP_DEVICES = {
 SHARED_STAND = ROOT / "server" / ".wrangler"
 DEVICES = HOME / "Library" / "Developer" / "CoreSimulator" / "Devices"
 
-RESET, BOLD, DIM = "\033[0m", "\033[1m", "\033[2m"
-RED, YELLOW, GREY, GREEN = "\033[31m", "\033[33m", "\033[90m", "\033[32m"
+if sys.stdout.isatty():
+    RESET, BOLD, DIM = "\033[0m", "\033[1m", "\033[2m"
+    RED, YELLOW, GREY = "\033[31m", "\033[33m", "\033[90m"
+else:
+    RESET = BOLD = DIM = RED = YELLOW = GREY = ""
 
 
 # ---------------------------------------------------------------- measuring
