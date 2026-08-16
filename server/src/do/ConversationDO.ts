@@ -453,6 +453,11 @@ export class ConversationDO implements DurableObject {
         return json({ ok: true, ...(await this.fanoutState()) });
 
       case "/history": {
+        // userId — от чьего лица читаем: журнал отдаётся только участнику,
+        // иначе id чата (в direct он выводится из двух id) хватало бы, чтобы
+        // вычитать чужую переписку конвертами
+        if (!(await this.loadMembers()).has(url.searchParams.get("userId") ?? ""))
+          return err("not_member", 403);
         const fromSeq = Number(url.searchParams.get("fromSeq") ?? "0");
         const toSeq = Number(url.searchParams.get("toSeq") ?? String(meta.lastSeq));
         // one page is one storage batch read: 128 keys is the platform limit
@@ -483,6 +488,7 @@ export class ConversationDO implements DurableObject {
         // тумбстоуны удалённых сообщений и текущие read/delivered-марки —
         // для доигрывания при sync после офлайна
         const viewer = url.searchParams.get("userId");
+        if (!(await this.loadMembers()).has(viewer ?? "")) return err("not_member", 403);
         const deleted: Array<{ msgId: string; by: string }> = [];
         for (const [, m] of await this.state.storage.list<StoredMsg>({ prefix: "msg:" })) {
           if (!m.deleted || m.blockedFor === viewer) continue;
