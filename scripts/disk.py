@@ -285,8 +285,9 @@ def scan(wide=False):
             else:
                 note, loose = f"agent {owner}, gone", True
         sims.append({"name": f"{dev['name']} ({dev['state'].lower()})",
-                     "bytes": dev["bytes"], "note": note, "loose": loose,
-                     "udid": dev["udid"], "path": str(DEVICES / dev["udid"])})
+                     "device": dev["name"], "bytes": dev["bytes"], "note": note,
+                     "loose": loose, "udid": dev["udid"],
+                     "path": str(DEVICES / dev["udid"])})
     groups.append({"name": "simulators", "items": sims})
 
     # Stands, measured before the worktrees so they can be subtracted from them.
