@@ -63,9 +63,11 @@ public actor SyncEngine {
 
     public func start() async {
         // отправки, убитые до ack (state='inflight'), возвращаются в очередь;
-        // сервер дедуплицирует возможный повтор по clientMsgId
+        // сервер дедуплицирует возможный повтор по clientMsgId. Ждавшие ack
+        // своей цели ('waiting') пробуются заново там же: цель за это время
+        // могла и уехать, и окончательно не уехать
         try? await db.write { dbc in
-            try dbc.execute(sql: "UPDATE outbox SET state = 'ready' WHERE state = 'inflight'")
+            try dbc.execute(sql: "UPDATE outbox SET state = 'ready' WHERE state IN ('inflight', 'waiting')")
         }
         let events = await ws.events()
         await ws.start()
@@ -1301,6 +1303,8 @@ public actor SyncEngine {
                 """,
                 arguments: [msgId, seq, f.ts, clientMsgId])
             try dbc.execute(sql: "DELETE FROM outbox WHERE clientMsgId = ?", arguments: [clientMsgId])
+            // правки и реакции, ждавшие серверный id своей цели: теперь он есть
+            try dbc.execute(sql: "UPDATE outbox SET state = 'ready' WHERE state = 'waiting'")
             // своё отправленное считается прочитанным мной → myReadUpTo растёт, бейдж не копится
             try dbc.execute(
                 sql: """
@@ -1311,6 +1315,7 @@ public actor SyncEngine {
                 """,
                 arguments: [seq, seq, seq, seq, f.ts ?? Date().timeIntervalSince1970, chatId])
         }
+        outboxWakeup.continuation.yield()
     }
 
     /// Отказ сервера по нашему фрейму. Отправка помечается неотправленной с кодом
@@ -1423,6 +1428,18 @@ public actor SyncEngine {
                     await insertSystemMessage(chatId: item.chatId, text: "identity_changed:\(uid)")
                     continue
                 }
+                // правка или реакция обогнала ack своей цели: ждёт его, не
+                // занимая очередь и не тратя попытку
+                if let t = error as? TargetNotAcked {
+                    try? await db.write { dbc in
+                        try dbc.execute(
+                            sql: t.gone
+                                ? "DELETE FROM outbox WHERE clientMsgId = ?"
+                                : "UPDATE outbox SET state = 'waiting' WHERE clientMsgId = ?",
+                            arguments: [item.clientMsgId])
+                    }
+                    continue
+                }
                 // помечаем попытку; ошибка сети → выходим, реконнект разбудит снова
                 try? await db.write { dbc in
                     try dbc.execute(sql: "UPDATE outbox SET attempts = attempts + 1 WHERE clientMsgId = ?",
@@ -1444,11 +1461,16 @@ public actor SyncEngine {
         }
     }
 
+    /// Цель служебного фрейма не имеет серверного msgId: либо ack ещё не пришёл
+    /// (`gone == false`, ждём его), либо сообщение так и не ушло.
+    struct TargetNotAcked: Error { let gone: Bool }
+
     private func sendOutboxItem(_ item: OutboxItem) async throws {
         var content = try JSONDecoder().decode(ContentPayload.self, from: item.payload)
         // медиа, приложенные офлайн, выгружаются перед шифрованием конверта;
         // ошибка сети здесь — обычный ретрай outbox
         content = try await uploadPendingMedia(content, item: item)
+        content = try await resolveTarget(content, chatId: item.chatId)
         let info = try await db.read { dbc -> (kind: String, members: [String])? in
             guard let chat = try Chat.fetchOne(dbc, key: item.chatId) else { return nil }
             let members = try String.fetchAll(dbc, sql: "SELECT userId FROM member WHERE chatId = ?",
@@ -1502,6 +1524,27 @@ public actor SyncEngine {
             }) ?? false
             if reverted { await self?.wakeOutbox() }
         }
+    }
+
+    /// Правка и реакция ссылаются на сообщение по id, а у своего сообщения он до
+    /// ack локальный: у собеседника такой строки нет, и событие осело бы у него
+    /// в `pendingApply` под id, который никогда не придёт. Цель разрешается в
+    /// момент отправки; пока ack не пришёл, отправлять нечего.
+    func resolveTarget(_ content: ContentPayload, chatId: String) async throws -> ContentPayload {
+        guard let target = content.targetMsgId else { return content }
+        let row = try await db.read { dbc in
+            try Row.fetchOne(dbc, sql: "SELECT msgId, status FROM message WHERE chatId = ? AND id = ?",
+                             arguments: [chatId, target])
+        }
+        // строки нет — id уже серверный (цель пришла от собеседника)
+        guard let row else { return content }
+        guard let serverId = row["msgId"] as String? else {
+            // цель так и не ушла: на сервере реагировать не на что
+            throw TargetNotAcked(gone: (row["status"] as Int?) == MessageStatus.failed.rawValue)
+        }
+        var resolved = content
+        resolved.targetMsgId = serverId
+        return resolved
     }
 
     // MARK: - Аплоад локальных медиа перед отправкой
