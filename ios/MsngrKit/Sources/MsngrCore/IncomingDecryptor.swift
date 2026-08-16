@@ -93,13 +93,13 @@ public struct IncomingDecryptor: Sendable {
         let current = try store.loadSession(peerUserId: fromUserId, peerDeviceId: fromDeviceId)
         if var existing = current, let plain = try? existing.decrypt(ratchetMsg) {
             try store.saveSession(existing, peerUserId: fromUserId, peerDeviceId: fromDeviceId)
-            return try handleInner(plain, fromUserId: fromUserId, trustIssue: nil)
+            return try handleInner(plain, chatId: chatId, fromUserId: fromUserId, trustIssue: nil)
         }
         var archive = try store.archivedSessions(peerUserId: fromUserId, peerDeviceId: fromDeviceId)
         for i in archive.indices {
             if let plain = try? archive[i].decrypt(ratchetMsg) {
                 try store.saveArchivedSessions(archive, peerUserId: fromUserId, peerDeviceId: fromDeviceId)
-                return try handleInner(plain, fromUserId: fromUserId, trustIssue: nil)
+                return try handleInner(plain, chatId: chatId, fromUserId: fromUserId, trustIssue: nil)
             }
         }
 
@@ -156,7 +156,7 @@ public struct IncomingDecryptor: Sendable {
                     // replacement that has opened something in hand
                     try store.archiveCurrentSession(peerUserId: fromUserId, peerDeviceId: fromDeviceId)
                     try store.saveSession(candidate, peerUserId: fromUserId, peerDeviceId: fromDeviceId)
-                    return try handleInner(plain, fromUserId: fromUserId, trustIssue: trustIssue)
+                    return try handleInner(plain, chatId: chatId, fromUserId: fromUserId, trustIssue: trustIssue)
                 }
             }
             return .undecryptable(reason: "pk_decrypt_failed")
@@ -167,19 +167,26 @@ public struct IncomingDecryptor: Sendable {
         return .undecryptable(reason: "no_session")
     }
 
-    private func handleInner(_ plaintext: Data, fromUserId: String, trustIssue: String?) throws -> DecryptedIncoming {
+    private func handleInner(_ plaintext: Data, chatId: String, fromUserId: String,
+                             trustIssue: String?) throws -> DecryptedIncoming {
         let inner = try JSONDecoder().decode(InnerMessage.self, from: plaintext)
-        if inner.type == "skd", let skd = inner.skd, let chatId = inner.chatId {
+        if inner.type == "skd", let skd = inner.skd, let chainChatId = inner.chatId {
             // Re-distributing the same chain must not roll the receiver back: the stored
             // one may already have stepped forward through several iterations.
-            if try store.loadSenderKeyIn(chatId: chatId, senderUserId: fromUserId, keyId: skd.keyId) == nil {
+            if try store.loadSenderKeyIn(chatId: chainChatId, senderUserId: fromUserId, keyId: skd.keyId) == nil {
                 let receiver = SenderKeyReceiver(distribution: skd)
-                try store.saveSenderKeyIn(chatId: chatId, senderUserId: fromUserId,
+                try store.saveSenderKeyIn(chatId: chainChatId, senderUserId: fromUserId,
                                           keyId: skd.keyId, state: receiver)
             }
-            return .senderKeyDistribution(chatId: chatId, keyId: skd.keyId)
+            return .senderKeyDistribution(chatId: chainChatId, keyId: skd.keyId)
         }
         guard let content = inner.content else { return .undecryptable(reason: "empty_inner") }
+        // The sender named the chat inside the sealed box; the chat the envelope
+        // was delivered in comes from the server. A message put into another
+        // conversation is not a message of this one.
+        guard inner.chatId == chatId else {
+            return .undecryptable(reason: MessageRepair.wrongChatReason)
+        }
         if trustIssue != nil {
             return .identityChanged(userId: fromUserId, content: content)
         }

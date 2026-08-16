@@ -1559,12 +1559,14 @@ public actor SyncEngine {
         if let addressee = content.to {
             // an addressed frame (a repair request, a copy, a chain ack)
             // concerns two devices, so it goes pairwise even in a group
-            let env = try await e2ee.encryptDirect(content: content, toUserId: addressee)
+            let env = try await e2ee.encryptDirect(content: content, chatId: item.chatId,
+                                                   toUserId: addressee)
             try await ws.send(.send(chatId: item.chatId, clientMsgId: item.clientMsgId,
                                     sentAt: item.createdAt, body: env, service: service))
         } else if info.kind == "direct" {
             let peer = info.members.first { $0 != ownUserId } ?? ownUserId
-            let env = try await e2ee.encryptDirect(content: content, toUserId: peer)
+            let env = try await e2ee.encryptDirect(content: content, chatId: item.chatId,
+                                                   toUserId: peer)
             try await ws.send(.send(chatId: item.chatId, clientMsgId: item.clientMsgId,
                                     sentAt: item.createdAt, body: env, service: service))
         } else {
