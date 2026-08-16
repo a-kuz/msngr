@@ -102,6 +102,7 @@ struct ChatScreen: View {
             }
         }
         .onAppear {
+            PerfTrace.shared.mark("chat.open")
             model.start()
             // the draft is restored only into an empty field: coming back from
             // ChatInfo the typed text is still in @State and must not be overwritten
@@ -335,11 +336,13 @@ struct ChatScreen: View {
     /// loaded if the message sits deeper than the window.
     private func jump(to msgId: String) {
         showChatInfo = false
+        PerfTrace.shared.mark("jump.begin")
         Task {
             guard await model.ensureLoaded(msgId: msgId) else {
                 Haptics.rigid()
                 return
             }
+            PerfTrace.shared.mark("jump.loaded")
             MessagesView.scrollWhenReady(vc: messagesVC, msgId: msgId)
         }
     }
@@ -705,14 +708,16 @@ struct MessagesView: UIViewControllerRepresentable {
         vc.onToggleSelection = { [weak model] msg in
             withAnimation(Theme.springFast) { model?.toggleSelection(msg) }
         }
-        // тап по статус-бару: к началу чата, догрузив всё, что хранит устройство
+        // a status bar tap: to the start of the chat, loading everything the device holds
         vc.onScrollToStart = { [weak model, weak vc] in
             guard let model, let vc else { return }
             Haptics.light()
             Task {
                 await model.loadDeviceHistory()
-                // окно приходит из наблюдения БД — ждём, пока лента его получит
-                for _ in 0..<20 {
+                // the window arrives through the database observation, so the feed gets it
+                // a moment later; on a chat of tens of thousands that moment is seconds,
+                // and scrolling before it lands leaves the reader in the middle
+                for _ in 0..<160 {
                     if model.isAtDeviceStart { break }
                     try? await Task.sleep(nanoseconds: 50_000_000)
                 }
