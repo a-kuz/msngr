@@ -47,7 +47,8 @@ Responses: `{ok:true, ...}` or `{ok:false, error}` with a non-2xx HTTP status.
 
 ```
 POST /api/register    {username, displayName, device:{name}, identityKey, identitySignKey,
-                       signedPrekey:{id,key,sig}, oneTimePrekeys:[{id,key}], phoneHash?}
+                       identityKeySig, signedPrekey:{id,key,sig},
+                       oneTimePrekeys:[{id,key}], phoneHash?}
                       → {userId, deviceId, token}    (no auth; username [a-zA-Z0-9_]{3,32})
 GET  /api/me                      → {user, deviceId}
 GET  /api/sessions                → {sessions:[{deviceId,name,createdAt,lastSeen,hasPushToken,current}]}
@@ -60,7 +61,7 @@ GET  /api/provision/:id           (x-provision-token) → {status:"pending"|"app
 POST /api/provision/lookup        {code} → {provisionId, ephemeralKey, device, expiresIn}
 POST /api/provision/:id/approve   {envelope} — consent from a device already in the account
 POST /api/provision/:id/claim     (x-provision-token) {identityKey, identitySignKey,
-                                  signedPrekey, oneTimePrekeys, device:{name}}
+                                  identityKeySig, signedPrekey, oneTimePrekeys, device:{name}}
                                   → {userId, deviceId, token}
 POST /api/provision/:id/cancel    (x-provision-token)
 GET  /api/users?q=                search by username/displayName (LOWER LIKE, limit 20)
@@ -292,9 +293,15 @@ The server does not look inside. Two modes:
 
 ```
 {type:"pk"|"dr", c,        // base64 JSON RatchetMessage {header:{dhPub,pn,n}, ciphertext}
- ik?, isk?, ek?, spkId?, otpId?}   // pk only: our identity DH/Ed25519 pub,
-                                   // the ephemeral and the ids of the prekeys used
+ ik?, isk?, iksig?, ek?, spkId?, otpId?}   // pk only: our identity DH/Ed25519 pub,
+                                           // the Ed25519 signature over the DH pub,
+                                           // the ephemeral and the ids of the prekeys used
 ```
+
+A `pk` box is opened only when `ik`, `isk` and `iksig` are all there and the
+signature holds: the recipient trusts the identity by `isk` and runs X3DH on
+`ik`, so a box that does not sign the two together says nothing about who sent
+it (`docs/crypto-flows.md`).
 
 A sender key handout (`skd`) is not a separate envelope mode: it is an ordinary
 pairwise message carrying an `InnerMessage` with `type:"skd"` inside.

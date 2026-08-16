@@ -6,9 +6,23 @@ Code: `ios/MsngrKit/Sources/MsngrCrypto/*` (primitives), `MsngrCore/E2EE.swift`
 ## Registering a device
 
 `POST /api/register` carries only the public parts: identity DH (X25519),
-identity signing (Ed25519), a signed prekey with its signature and 100 one-time
-prekeys. The private parts sit in the database, encrypted with the master key
-(`StateCrypto`, ChaChaPoly).
+identity signing (Ed25519), the Ed25519 signature over the X25519 key, a signed
+prekey with its signature and 100 one-time prekeys. The private parts sit in the
+database, encrypted with the master key (`StateCrypto`, ChaChaPoly).
+
+## The two halves of an identity
+
+CryptoKit does not convert between the curves, so an identity is two keys rather
+than Signal's one. They are held together by a signature: the Ed25519 key signs
+the X25519 key (`IdentityBinding`), and that signature travels with the pair
+everywhere the pair goes — registration, a linked device's claim, `/devices`,
+`/prekeys` and the `pk` envelope. Every use of a peer's identity verifies it.
+
+Both keys go into the safety number, and trust is pinned on the signing key. The
+binding is what makes those the same statement: it is the X25519 key that
+messages are encrypted under, and without a signature over it, a pinned signing
+key and a verified safety number would both be silent about the key actually in
+use.
 
 ## Whose identity: the account's, not the device's
 
@@ -115,11 +129,20 @@ first. A mismatch is written into `changedPending` and drops the send with
   `verified`, returns the blocked messages to `ready` and wakes the outbox.
 
 In an incoming `pk` a key change does not block decryption: the content is
-applied, but the same system warning is inserted next to it.
+applied, but the same system warning is inserted next to it. A `pk` whose
+identity keys are not signed as a pair is not opened at all — there is nothing
+to warn about when the sender is whoever wrote the envelope.
+
+A `pk` that repeats a handshake this device has already run is refused as well.
+A responder session keeps the initiator's ephemeral key, and a second envelope
+carrying it changes nothing: the session it would build is the one already in
+place. A peer that really started over brings an ephemeral of its own and gets a
+new session, with the previous one moved to the archive once a candidate has
+opened the message.
 
 Verification out of band is the 60-digit safety number in the chat info (5200
 iterations of SHA-512 over each fingerprint, with the two sides sorted, so the
-number is the same for both).
+number is the same for both). A fingerprint covers both identity keys.
 
 ## Groups
 
