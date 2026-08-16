@@ -47,6 +47,16 @@ final class FeedWindow: @unchecked Sendable {
         lock.lock(); capacity += count; lock.unlock()
     }
 
+    /// Переход к сообщению глубже окна: граница встаёт прямо на него, а
+    /// вместимость растягивается до самого свежего сообщения — из точки перехода
+    /// остаётся дорога вниз, к концу переписки.
+    func anchor(floor: Int, capacity: Int) {
+        lock.lock()
+        seq = floor
+        self.capacity = max(self.capacity, capacity)
+        lock.unlock()
+    }
+
     func setAtBottom(_ value: Bool) {
         lock.lock(); atBottom = value; lock.unlock()
     }

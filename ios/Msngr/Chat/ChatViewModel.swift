@@ -710,19 +710,55 @@ final class ChatViewModel: ObservableObject {
         lastMsgs.contains { $0.id == msgId || $0.msgId == msgId }
     }
 
-    /// Расширяет окно страницами, пока сообщение не окажется в ленте:
-    /// переход по цитате к оригиналу за пределами окна.
+    /// Доводит сообщение до ленты: переход по цитате, из галереи или из поиска.
+    ///
+    /// Сообщение, которое лежит в базе, забирается одним движением границы окна —
+    /// сколько бы тысяч сообщений ни было между ним и концом переписки. Страницами
+    /// окно расширяется только там, где движению не на что опереться: у сообщения
+    /// нет seq или его строки ещё нет на устройстве.
     func ensureLoaded(msgId: String, maxPages: Int = 12) async -> Bool {
         if isLoaded(msgId: msgId) { return true }
+        if await anchorWindow(to: msgId), await feedContains(msgId: msgId) { return true }
         for _ in 0..<maxPages {
             guard await expandWindow() else { break }
-            // лента приходит из наблюдения БД асинхронно — ждём появления сообщения
-            for _ in 0..<20 {
-                if isLoaded(msgId: msgId) { return true }
-                try? await Task.sleep(nanoseconds: 50_000_000)
-            }
+            if await feedContains(msgId: msgId) { return true }
         }
         return isLoaded(msgId: msgId)
+    }
+
+    /// Ставит границу окна на сообщение и растягивает вместимость до конца
+    /// переписки: в окне оказывается и само сообщение, и всё, что новее.
+    /// false — опереться не на что: сообщения нет на устройстве или у него нет seq.
+    private func anchorWindow(to msgId: String) async -> Bool {
+        guard let db = app.db else { return false }
+        let current = windowFloor.get()
+        let anchor = try? await db.read { [chatId] dbc -> (floor: Int, count: Int)? in
+            guard let seq = try Int.fetchOne(dbc, sql: """
+                SELECT seq FROM message
+                WHERE chatId = ? AND (msgId = ? OR id = ?) AND seq IS NOT NULL
+                """, arguments: [chatId, msgId, msgId]) else { return nil }
+            // сообщение новее границы уже внутри — окну не хватает только высоты
+            let floor = min(seq, current ?? seq)
+            // своё неотправленное (seq ещё нет) стоит выше всего пронумерованного
+            let count = try Int.fetchOne(dbc, sql: """
+                SELECT COUNT(*) FROM message
+                WHERE chatId = ? AND (seq >= ? OR seq IS NULL)
+                """, arguments: [chatId, floor]) ?? 0
+            return (floor, count)
+        }
+        guard let anchor = anchor ?? nil else { return false }
+        windowFloor.anchor(floor: anchor.floor, capacity: anchor.count)
+        observeChat()
+        return true
+    }
+
+    /// Лента приходит из наблюдения БД асинхронно — ждём появления сообщения.
+    private func feedContains(msgId: String, attempts: Int = 20) async -> Bool {
+        for _ in 0..<attempts {
+            if isLoaded(msgId: msgId) { return true }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return false
     }
 }
 
