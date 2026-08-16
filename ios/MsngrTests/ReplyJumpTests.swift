@@ -2,8 +2,8 @@ import XCTest
 @testable import Msngr
 import MsngrCore
 
-/// Поиск оригинала при переходе по цитате: цитата ссылается на серверный msgId,
-/// а своё сообщение лежит в ленте под clientMsgId.
+/// Finding the original when jumping from a quote: the quote points at the server
+/// msgId, while your own message sits in the feed under its clientMsgId.
 final class ReplyJumpTests: XCTestCase {
     private func item(id: String, msgId: String?, outgoing: Bool) -> ChatFeedItem {
         var m = Message(id: id, chatId: "c", fromUserId: outgoing ? "me" : "peer",
@@ -43,7 +43,7 @@ final class ReplyJumpTests: XCTestCase {
     }
 }
 
-/// Имя файла для QuickLook: тип определяется расширением.
+/// The file name handed to QuickLook: the extension decides the type.
 final class FilePreviewNameTests: XCTestCase {
     func testKeepsOriginalNameWithExtension() {
         XCTAssertEqual(

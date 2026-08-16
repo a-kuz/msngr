@@ -10,7 +10,8 @@ final class LastSeenTests: XCTestCase {
         XCTAssertEqual(text, "был(а) только что")
     }
 
-    /// Часы сервера впереди клиентских: разница отрицательна, «через N сек.» недопустимо.
+    /// The server clock runs ahead of the client one: the difference is negative and
+    /// a text like "in N sec." must never come out of it.
     func testFutureTimestampIsNotFuture() {
         let text = ChatViewModel.lastSeenText(now.timeIntervalSince1970 + 30, now: now)
         XCTAssertEqual(text, "был(а) только что")
