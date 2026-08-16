@@ -395,6 +395,13 @@ public enum AppDatabase {
             try db.drop(table: "pendingAction")
             try db.rename(table: "pendingActionNew", to: "pendingAction")
         }
+        m.registerMigration("v18-messageClientMsgId") { db in
+            // Every answer about a message we sent finds it by clientMsgId: the
+            // ack that writes the server id and the seq, the refusal, the send
+            // that is retried. Without an index each of those reads the whole
+            // table, so the cost of an answer grows with the size of the chat.
+            try db.create(indexOn: "message", columns: ["clientMsgId"])
+        }
         return m
     }
 }
