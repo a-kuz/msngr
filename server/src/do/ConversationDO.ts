@@ -1,5 +1,8 @@
 import type { Env, ChatState, ChatMember, StoredMsg, ServerFrame } from "../types";
 import { ulid, json, err, seqKey, nowSec, shouldArmAlarm } from "../util";
+import {
+  newCounters, snapshot, diff, logPerf, wrapState, wrapDB, wrapStub, type PerfCounters,
+} from "../perf";
 
 /// Fanout queue. A frame is never delivered on the sender's critical path: it
 /// is appended as a job and drained by the alarm loop, so /send answers as soon
@@ -33,6 +36,21 @@ const FANOUT_STALL_MS = 15_000;
 /// Journal records one /history page returns. Durable Objects read at most 128
 /// keys per batch, so a larger page would be served by several reads anyway.
 const HISTORY_PAGE = 128;
+
+/// One record per message removed for everyone, so the chat tail is read
+/// without walking the journal: a client that reconnects asks for the
+/// tombstones of a chat, and there are as many of those as messages were
+/// actually deleted.
+const TOMB_PREFIX = "tomb:";
+
+interface Tombstone {
+  msgId: string;
+  /// who removed it
+  by: string;
+  /// the member the message was withheld from: it never reached them, so its
+  /// tombstone is not theirs either
+  blockedFor?: string;
+}
 
 interface FanoutJob {
   frame: ServerFrame;
@@ -83,7 +101,16 @@ export class ConversationDO implements DurableObject {
   /// /block-changed.
   private blockers: Set<string> | null = null;
 
-  constructor(private state: DurableObjectState, private env: Env) {}
+  /// dev measurement (PERF_LOG); never installed otherwise
+  private perf: PerfCounters | null = null;
+
+  constructor(private state: DurableObjectState, private env: Env) {
+    if (env.PERF_LOG) {
+      this.perf = newCounters();
+      this.state = wrapState(state, this.perf);
+      this.env = { ...env, DB: wrapDB(env.DB, this.perf) };
+    }
+  }
 
   private async loadMeta(): Promise<Meta | null> {
     if (!this.meta) this.meta = (await this.state.storage.get<Meta>("meta")) ?? null;
@@ -100,7 +127,8 @@ export class ConversationDO implements DurableObject {
   }
 
   private userStub(userId: string) {
-    return this.env.USER_DO.get(this.env.USER_DO.idFromName(userId));
+    const stub = this.env.USER_DO.get(this.env.USER_DO.idFromName(userId));
+    return this.perf ? wrapStub(stub, this.perf) : stub;
   }
 
   /// Block state of a direct chat as seen from member `me`. Null for groups and for
@@ -243,6 +271,18 @@ export class ConversationDO implements DurableObject {
   /// Drains the fanout queue. Kept head-of-line so that frames reach a
   /// recipient in the order the chat produced them.
   async alarm() {
+    if (!this.perf) return this.drainAlarm();
+    const before = snapshot(this.perf);
+    const t0 = Date.now();
+    try {
+      return await this.drainAlarm();
+    } finally {
+      logPerf("conv", "alarm", Date.now() - t0, diff(this.perf, before), snapshot(this.perf),
+              { chatId: this.meta?.chatId });
+    }
+  }
+
+  private async drainAlarm() {
     // marked before the first await: from the moment the runtime consumed the
     // alarm, this drain is what the queue is waiting for
     this.draining = true;
@@ -401,6 +441,18 @@ export class ConversationDO implements DurableObject {
   }
 
   async fetch(req: Request): Promise<Response> {
+    if (!this.perf) return this.handle(req);
+    const before = snapshot(this.perf);
+    const t0 = Date.now();
+    try {
+      return await this.handle(req);
+    } finally {
+      logPerf("conv", new URL(req.url).pathname, Date.now() - t0, diff(this.perf, before),
+              snapshot(this.perf), { chatId: this.meta?.chatId, lastSeq: this.meta?.lastSeq });
+    }
+  }
+
+  private async handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const path = url.pathname;
 
@@ -492,9 +544,9 @@ export class ConversationDO implements DurableObject {
         const viewer = url.searchParams.get("userId");
         if (!(await this.loadMembers()).has(viewer ?? "")) return err("not_member", 403);
         const deleted: Array<{ msgId: string; by: string }> = [];
-        for (const [, m] of await this.state.storage.list<StoredMsg>({ prefix: "msg:" })) {
-          if (!m.deleted || m.blockedFor === viewer) continue;
-          deleted.push({ msgId: m.msgId, by: m.deletedBy ?? m.from });
+        for (const [, t] of await this.state.storage.list<Tombstone>({ prefix: TOMB_PREFIX })) {
+          if (t.blockedFor === viewer) continue;
+          deleted.push({ msgId: t.msgId, by: t.by });
         }
         const readMarks =
           (await this.state.storage.get<Record<string, number>>("readMarks")) ?? {};
@@ -665,22 +717,25 @@ export class ConversationDO implements DurableObject {
           const members = await this.loadMembers();
           const actor = members.get(b.userId);
           if (!actor) return err("not_member", 403);
-          // tombstone the ciphertext, found by msgId through the msgId→seq index
-          const idx =
-            (await this.state.storage.get<Record<string, number>>("msgIdx")) ?? {};
+          // tombstone the ciphertext, found by msgId in the journal
           const updates: Record<string, StoredMsg> = {};
+          const marks: Record<string, Tombstone> = {};
           const tombstoned: string[] = [];
           for (const [key, m] of await this.state.storage.list<StoredMsg>({ prefix: "msg:" })) {
             if (b.msgIds.includes(m.msgId)) {
               // only a group admin can remove someone else's message
               if (m.from !== b.userId && actor.role !== "admin") continue;
               updates[key] = { ...m, body: null, deleted: true, deletedBy: b.userId };
+              marks[TOMB_PREFIX + m.msgId] = {
+                msgId: m.msgId, by: b.userId,
+                ...(m.blockedFor ? { blockedFor: m.blockedFor } : {}),
+              };
               tombstoned.push(m.msgId);
             }
           }
-          void idx;
           if (tombstoned.length) {
             await this.state.storage.put(updates);
+            await this.state.storage.put(marks);
             // fan out only what was really removed: otherwise members would lose
             // messages locally that are still on the server
             await this.fanout({
