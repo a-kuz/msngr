@@ -11,11 +11,6 @@ struct ChatScreen: View {
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showFilePicker = false
     @State private var forwardMessage: Message?
-    /// message whose text selection sheet is open
-    @State private var selectingText: Message?
-    /// message the delete confirmation is asked for
-    @State private var deleteCandidate: Message?
-    @State private var confirmDeleteSelection = false
     @State private var forwardingSelection = false
     @State private var messagesVC = MessagesViewController()
     @EnvironmentObject var app: AppState
@@ -39,6 +34,11 @@ struct ChatScreen: View {
                         pinnedBar(pinned)
                     }
                     messagesList
+                        // the feed runs under the header: a message leaving it
+                        // dissolves in its band instead of breaking off at the
+                        // edge. The feed's insets are still counted from the safe
+                        // area, so at rest the messages stay below the header
+                        .ignoresSafeArea(.container, edges: .top)
                         .overlay {
                             if model.chat != nil, model.feed.isEmpty {
                                 emptyChatHint
@@ -48,7 +48,11 @@ struct ChatScreen: View {
                         keyChangeBanner
                     }
                     if model.selecting {
-                        selectionActionBar
+                        if model.confirmingDelete {
+                            deleteConfirmBar
+                        } else {
+                            selectionActionBar
+                        }
                     } else {
                         InputBar(model: model, text: $text,
                                  onAttachPhoto: { photoPickerPresented = true },
@@ -85,10 +89,10 @@ struct ChatScreen: View {
                 // primary action and has to read before anything else in it
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button { dismiss() } label: {
-                        Image(systemName: "chevron.left")
-                            .font(Theme.glyph(22, max: 28).weight(.semibold))
+                        Image(systemName: "chevron.backward")
+                            .font(Theme.glyph(34, max: 40).weight(.bold))
                             .foregroundStyle(Theme.accent)
-                            .frame(width: 44, height: 44)
+                            .frame(width: 56, height: 44)
                             .contentShape(Rectangle())
                     }
                     .accessibilityLabel("Назад")
@@ -158,9 +162,6 @@ struct ChatScreen: View {
                 forwardingSelection = false
             }
         }
-        .sheet(item: $selectingText) { msg in
-            TextSelectionView(text: msg.text ?? "")
-        }
         .onReceive(NotificationCenter.default.publisher(for: .forwardRequested)) { note in
             forwardMessage = note.object as? Message
         }
@@ -176,34 +177,6 @@ struct ChatScreen: View {
         } message: {
             Text(model.sendFailure ?? "")
         }
-        // deleting a single message from the context menu
-        .confirmationDialog("Удалить сообщение?", isPresented: deleteCandidateBinding,
-                            titleVisibility: .visible) {
-            if deleteCandidate?.isOutgoing == true {
-                Button("Удалить у всех", role: .destructive) {
-                    if let msg = deleteCandidate { model.delete(msg, forAll: true) }
-                    deleteCandidate = nil
-                }
-            }
-            Button("Удалить у меня", role: .destructive) {
-                if let msg = deleteCandidate { model.delete(msg, forAll: false) }
-                deleteCandidate = nil
-            }
-            Button("Отмена", role: .cancel) { deleteCandidate = nil }
-        }
-        // deleting the messages picked in multi-select
-        .confirmationDialog(deleteSelectionTitle, isPresented: $confirmDeleteSelection,
-                            titleVisibility: .visible) {
-            if model.canDeleteSelectedForAll {
-                Button("Удалить у всех", role: .destructive) {
-                    withAnimation(Theme.springFast) { model.deleteSelected(forAll: true) }
-                }
-            }
-            Button("Удалить у меня", role: .destructive) {
-                withAnimation(Theme.springFast) { model.deleteSelected(forAll: false) }
-            }
-            Button("Отмена", role: .cancel) {}
-        }
     }
 
     private var sendFailureBinding: Binding<Bool> {
@@ -211,20 +184,45 @@ struct ChatScreen: View {
                 set: { if !$0 { model.sendFailure = nil } })
     }
 
-    private var deleteCandidateBinding: Binding<Bool> {
-        Binding(get: { deleteCandidate != nil },
-                set: { if !$0 { deleteCandidate = nil } })
-    }
-
-    private var deleteSelectionTitle: String {
-        "Удалить " + MessageSelection.title(count: model.selection.count) + "?"
+    /// Подтверждение удаления: два действия внизу, сами сообщения видны и
+    /// к выбору можно добавить ещё.
+    private var deleteConfirmBar: some View {
+        VStack(spacing: 8) {
+            Text("Удалить " + MessageSelection.title(count: model.selection.count) + "?")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            if model.canDeleteSelectedForAll {
+                Button("Удалить у всех", role: .destructive) {
+                    withAnimation(Theme.springFast) { model.deleteSelected(forAll: true) }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .controlSize(.large)
+                .frame(maxWidth: .infinity)
+                .accessibilityIdentifier("chat.delete.forAll")
+            }
+            Button("Удалить у меня", role: .destructive) {
+                withAnimation(Theme.springFast) { model.deleteSelected(forAll: false) }
+            }
+            .buttonStyle(.bordered)
+            .tint(.red)
+            .controlSize(.large)
+            .frame(maxWidth: .infinity)
+            .accessibilityIdentifier("chat.delete.forMe")
+        }
+        .disabled(model.selection.isEmpty)
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .background(.bar)
+        .transition(.move(edge: .bottom))
     }
 
     /// Multi-select action bar shown in place of the composer.
     private var selectionActionBar: some View {
         HStack(spacing: 0) {
             selectionAction("Удалить", icon: "trash", destructive: true) {
-                confirmDeleteSelection = true
+                withAnimation(Theme.springFast) { model.confirmingDelete = true }
             }
             selectionAction("Переслать", icon: "arrowshape.turn.up.right") {
                 forwardingSelection = true
@@ -258,12 +256,13 @@ struct ChatScreen: View {
 
     private var messagesList: MessagesView {
         MessagesView(vc: messagesVC, model: model, items: model.feed,
+                     sendTick: model.sendTick,
                      selecting: model.selecting, selectedIds: model.selection.ids,
                      onTapMedia: { (msg: Message, idx: Int, _: UIView) in
                          MediaViewerPresenter.present(message: msg, startIndex: idx)
                      },
-                     selectingText: $selectingText, deleteCandidate: $deleteCandidate,
-                     showScrollDown: $showScrollDown)
+                     showScrollDown: $showScrollDown,
+                     onSwipeBack: { dismiss() })
     }
 
     /// Empty chat: a centred hint instead of a bare background.
@@ -294,7 +293,8 @@ struct ChatScreen: View {
                 AvatarView(name: model.headerTitle,
                            avatarId: model.chat?.kind == .group ? model.chat?.avatarId : model.peer?.avatarId,
                            online: model.peer?.online ?? false)
-                    .frame(width: 40, height: 40)
+                    // the back chevron leads the header, so the avatar stays under it
+                    .frame(width: 34, height: 34)
                 VStack(alignment: .leading, spacing: 0) {
                     // the toolbar can hand the principal view less than the ideal width,
                     // and even a short name gets truncated («4455…»). The text holds its
@@ -321,7 +321,8 @@ struct ChatScreen: View {
     /// Shortens a header string with an ellipsis to the width the principal view has
     /// (the screen minus the back button, the avatar and the padding).
     private static func fitted(_ s: String, font: UIFont) -> String {
-        let maxWidth = UIScreen.main.bounds.width - 190
+        // the principal view is centred, so the wider back button costs it twice
+        let maxWidth = UIScreen.main.bounds.width - 208
         guard s.size(withAttributes: [.font: font]).width > maxWidth else { return s }
         var t = s
         while !t.isEmpty, (t + "…").size(withAttributes: [.font: font]).width > maxWidth {
@@ -449,24 +450,11 @@ struct ChatScreen: View {
         .background(.bar)
     }
 
-    /// A message scrolling away dissolves into the header instead of being clipped by
-    /// it: the background tone builds up towards the top edge over the header's height.
+    /// A message leaving the feed dissolves into the header instead of being cut by it.
     private var headerFade: some View {
-        VStack(spacing: 0) {
-            LinearGradient(stops: [
-                // opaque down to the bottom edge of the header, then a long falloff:
-                // a short gradient cuts the bubble with a visible edge instead of dissolving it
-                .init(color: Theme.chatBackground, location: 0),
-                .init(color: Theme.chatBackground, location: 0.42),
-                .init(color: Theme.chatBackground.opacity(0.75), location: 0.62),
-                .init(color: Theme.chatBackground.opacity(0.3), location: 0.82),
-                .init(color: Theme.chatBackground.opacity(0), location: 1),
-            ], startPoint: .top, endPoint: .bottom)
-                .frame(height: 150)
-            Spacer()
-        }
-        .ignoresSafeArea(edges: .top)
-        .allowsHitTesting(false)
+        HeaderFade(tone: Theme.chatBackground)
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
     }
 
     private var scrollDownButton: some View {
@@ -677,13 +665,15 @@ struct MessagesView: UIViewControllerRepresentable {
     /// the feed is passed by value as well: changing the array changes the value of the
     /// represented view, so SwiftUI is guaranteed to call updateUIViewController
     let items: [ChatFeedItem]
+    /// the count of our own sends, passed by value for the same reason as the feed
+    let sendTick: Int
     /// selection mode and contents are passed by value for the same reason as the feed
     let selecting: Bool
     let selectedIds: Set<String>
     var onTapMedia: (Message, Int, UIView) -> Void
-    @Binding var selectingText: Message?
-    @Binding var deleteCandidate: Message?
     @Binding var showScrollDown: Bool
+    /// свайп от левой кромки: возврат к списку чатов
+    var onSwipeBack: () -> Void
 
     func makeUIViewController(context: Context) -> MessagesViewController {
         vc.onAtBottomChanged = { [weak model] atBottom in
@@ -715,6 +705,20 @@ struct MessagesView: UIViewControllerRepresentable {
         vc.onToggleSelection = { [weak model] msg in
             withAnimation(Theme.springFast) { model?.toggleSelection(msg) }
         }
+        // тап по статус-бару: к началу чата, догрузив всё, что хранит устройство
+        vc.onScrollToStart = { [weak model, weak vc] in
+            guard let model, let vc else { return }
+            Haptics.light()
+            Task {
+                await model.loadDeviceHistory()
+                // окно приходит из наблюдения БД — ждём, пока лента его получит
+                for _ in 0..<20 {
+                    if model.isAtDeviceStart { break }
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+                vc.scrollToStart()
+            }
+        }
         return vc
     }
 
@@ -726,14 +730,21 @@ struct MessagesView: UIViewControllerRepresentable {
             switch action {
             case .reply: withAnimation(Theme.springFast) { model.replyingTo = msg }
             case .copy: MessageClipboard.copy(msg)
-            case .selectText: selectingText = msg
             case .edit: withAnimation(Theme.springFast) { model.editing = msg }
             case .pin: model.pin(msg)
             case .forward: NotificationCenter.default.post(name: .forwardRequested, object: msg)
             case .select: withAnimation(Theme.springFast) { model.beginSelection(with: msg) }
-            case .delete: deleteCandidate = msg
+            // удаление начинается с выбора: сообщение видно, к нему можно
+            // добавить ещё, подтверждение стоит внизу
+            case .delete:
+                withAnimation(Theme.springFast) {
+                    model.beginSelection(with: msg, confirmingDelete: true)
+                }
             }
         }
+        // замыкание с dismiss живёт не дольше тела body — переустанавливаем
+        vc.onSwipeBack = onSwipeBack
+        vc.noteSendTick(sendTick)
         vc.apply(items)
         vc.setSelection(mode: selecting, ids: selectedIds)
     }

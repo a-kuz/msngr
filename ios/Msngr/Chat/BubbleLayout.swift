@@ -275,8 +275,11 @@ enum BubbleLayout {
                     rx += chip.width + chipGap
                 }
                 contentWidth = max(contentWidth, rx - chipGap - hPadding + gap + statusWidth)
+                // время прижато к низу строки, как и в баббле без реакций: там
+                // статус кончается вместе с текстом, и до низа баббла остаётся
+                // vPadding. Центрирование по капсуле давало другой отступ
                 statusFrame = CGRect(x: hPadding + contentWidth - statusWidth,
-                                     y: baseY + (lineH - statusH) / 2, width: statusWidth, height: statusH)
+                                     y: baseY + lineH - statusH, width: statusWidth, height: statusH)
                 y = baseY + lineH
                 reactionsHeight = 0
             } else {
@@ -298,7 +301,7 @@ enum BubbleLayout {
                 if usedInLastRow + gap + statusWidth <= maxContent {
                     contentWidth = max(contentWidth, usedInLastRow + gap + statusWidth)
                     statusFrame = CGRect(x: hPadding + contentWidth - statusWidth,
-                                         y: ry + (chipH - statusH) / 2, width: statusWidth, height: statusH)
+                                         y: ry + chipH - statusH, width: statusWidth, height: statusH)
                     y = ry + chipH
                 } else {
                     statusFrame = CGRect(x: hPadding + contentWidth - statusWidth,

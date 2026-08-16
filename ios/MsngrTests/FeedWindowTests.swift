@@ -109,5 +109,25 @@ final class FeedWindowTests: XCTestCase {
             XCTAssertEqual(msgs.last?.seq, 1_000, "the frozen floor is still the bottom of the window")
             XCTAssertEqual(msgs.first?.seq, 1_059)
         }
+        // sending from up in the history returns the window to the newest
+        // messages, or the sent message would stay outside it
+        window.setAtBottom(true)
+        let afterSend = window.plan()
+        XCTAssertTrue(afterSend.recompute)
+        try db.read { dbc in
+            let floor = try HistoryWindow.newestFloor(dbc, chatId: "c", limit: afterSend.capacity)
+            let msgs = try HistoryWindow.messages(dbc, chatId: "c", floor: floor)
+            XCTAssertEqual(msgs.first?.seq, 5_000, "the newest message is back in the window")
+        }
+    }
+
+    /// Только своё сообщение с бабблом ведёт ленту к концу чата.
+    func testOnlyOwnBubbleMovesFeedToEnd() {
+        XCTAssertTrue(ChatViewModel.movesFeedToEnd(kind: "text", target: "c", chatId: "c"))
+        XCTAssertTrue(ChatViewModel.movesFeedToEnd(kind: "photo", target: "c", chatId: "c"))
+        XCTAssertFalse(ChatViewModel.movesFeedToEnd(kind: "reaction", target: "c", chatId: "c"))
+        XCTAssertFalse(ChatViewModel.movesFeedToEnd(kind: "edit", target: "c", chatId: "c"))
+        XCTAssertFalse(ChatViewModel.movesFeedToEnd(kind: "text", target: "other", chatId: "c"),
+                       "пересылка в другой чат ленту не двигает")
     }
 }

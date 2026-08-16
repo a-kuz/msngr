@@ -1427,7 +1427,7 @@ public actor SyncEngine {
     // MARK: - Sending
 
     /// Content kinds with no feed row of their own; they go out service-flagged.
-    static let serviceKinds: Set<String> = Set(["edit", "reaction", "disappearing"])
+    public static let serviceKinds: Set<String> = Set(["edit", "reaction", "disappearing"])
         .union(SyncEngine.repairKinds)
 
     /// The only way out: writes the row and the outbox entry, wakes the worker,
