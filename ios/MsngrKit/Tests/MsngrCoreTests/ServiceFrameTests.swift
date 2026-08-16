@@ -94,6 +94,91 @@ final class ServiceFrameTests: XCTestCase {
         XCTAssertEqual(left, 0)
     }
 
+    /// A reaction to our own message placed before the ack: while the target has no
+    /// server msgId there is nothing to send, otherwise the peer would receive a local
+    /// id they will never have.
+    func testReactionToUnackedTargetResolvesAtSendTime() async throws {
+        let db = try AppDatabase.openInMemory()
+        let engine = try makeEngine(db: db)
+        try await db.write { dbc in
+            try dbc.execute(sql: "INSERT INTO chat (id, kind, createdBy, createdAt) VALUES ('c1','direct','me',0)")
+            // our own message, the ack has not arrived: msgId is empty, the id is local
+            try dbc.execute(sql: """
+                INSERT INTO message (id, chatId, clientMsgId, fromUserId, sentAt, kind, status, isOutgoing)
+                VALUES ('local-1','c1','local-1','me',1,'text',0,1)
+                """)
+        }
+        var reaction = ContentPayload(kind: "reaction")
+        reaction.targetMsgId = "local-1"
+        reaction.emoji = "👍"
+
+        do {
+            _ = try await engine.resolveTarget(reaction, chatId: "c1")
+            XCTFail("a reaction must not go out with a local id")
+        } catch let e as SyncEngine.TargetNotAcked {
+            XCTAssertFalse(e.gone, "the target may still go out: wait for the ack instead of dropping it")
+        }
+
+        // the ack arrived, the target is substituted with the server id
+        let ack = try JSONDecoder().decode(WSIncoming.self, from: Data("""
+        {"t":"sent","chatId":"c1","clientMsgId":"local-1","msgId":"srv-1","seq":1,"ts":2}
+        """.utf8))
+        await engine.apply(ack)
+        let resolved = try await engine.resolveTarget(reaction, chatId: "c1")
+        XCTAssertEqual(resolved.targetMsgId, "srv-1")
+    }
+
+    /// A target from the peer: its id is already a server one, substitution changes
+    /// nothing. A target that never went out: the service frame is dropped.
+    func testTargetFromPeerPassesThroughAndFailedTargetIsDropped() async throws {
+        let db = try AppDatabase.openInMemory()
+        let engine = try makeEngine(db: db)
+        try await db.write { dbc in
+            try dbc.execute(sql: "INSERT INTO chat (id, kind, createdBy, createdAt) VALUES ('c1','direct','me',0)")
+            try dbc.execute(sql: """
+                INSERT INTO message (id, chatId, msgId, fromUserId, sentAt, kind, status, isOutgoing)
+                VALUES ('srv-9','c1','srv-9','peer',1,'text',1,0)
+                """)
+            try dbc.execute(sql: """
+                INSERT INTO message (id, chatId, clientMsgId, fromUserId, sentAt, kind, status, isOutgoing)
+                VALUES ('local-2','c1','local-2','me',1,'text',-1,1)
+                """)
+        }
+        var edit = ContentPayload(kind: "edit")
+        edit.targetMsgId = "srv-9"
+        edit.text = "corrected"
+        let fromPeer = try await engine.resolveTarget(edit, chatId: "c1")
+        XCTAssertEqual(fromPeer.targetMsgId, "srv-9")
+
+        edit.targetMsgId = "local-2"
+        do {
+            _ = try await engine.resolveTarget(edit, chatId: "c1")
+            XCTFail("an edit of a message that never went out must not be sent")
+        } catch let e as SyncEngine.TargetNotAcked {
+            XCTAssertTrue(e.gone)
+        }
+    }
+
+    /// The ack releases the service frames that waited for their target's server id.
+    func testAckReleasesWaitingOutboxRows() async throws {
+        let db = try AppDatabase.openInMemory()
+        let engine = try makeEngine(db: db)
+        try await db.write { dbc in
+            try dbc.execute(sql: "INSERT INTO chat (id, kind, createdBy, createdAt) VALUES ('c1','direct','me',0)")
+            try OutboxItem(clientMsgId: "r1", chatId: "c1", createdAt: 2,
+                           payload: Data("{}".utf8), state: "waiting").save(dbc)
+        }
+        let ack = try JSONDecoder().decode(WSIncoming.self, from: Data("""
+        {"t":"sent","chatId":"c1","clientMsgId":"local-1","msgId":"srv-1","seq":1,"ts":2}
+        """.utf8))
+        await engine.apply(ack)
+
+        let state = try await db.read { dbc in
+            try String.fetchOne(dbc, sql: "SELECT state FROM outbox WHERE clientMsgId = 'r1'")
+        }
+        XCTAssertEqual(state, "ready")
+    }
+
     /// A deleted arriving before the original is buffered; a repeated deleted
     /// (sync replay) is idempotent.
     func testDeletedBeforeOriginalAndReplay() async throws {

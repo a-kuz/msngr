@@ -368,6 +368,24 @@ public enum AppDatabase {
                 ON message(chatId, kind, COALESCE(seq, 999999999) DESC, sentAt DESC)
                 """)
         }
+        m.registerMigration("v17-actionWithoutChat") { db in
+            // Блокировка собеседника — тоже действие очереди, но чата у неё нет:
+            // блокировать можно и из профиля. Колонка становится необязательной.
+            try db.create(table: "pendingActionNew") { t in
+                t.column("id", .text).primaryKey()
+                t.column("type", .text).notNull()
+                t.column("chatId", .text)
+                t.column("payload", .text).notNull()
+                t.column("createdAt", .double).notNull()
+                t.column("attempts", .integer).notNull().defaults(to: 0)
+            }
+            try db.execute(sql: """
+                INSERT INTO pendingActionNew (id, type, chatId, payload, createdAt, attempts)
+                SELECT id, type, chatId, payload, createdAt, attempts FROM pendingAction
+                """)
+            try db.drop(table: "pendingAction")
+            try db.rename(table: "pendingActionNew", to: "pendingAction")
+        }
         return m
     }
 }

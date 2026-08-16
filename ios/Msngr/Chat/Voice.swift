@@ -2,6 +2,35 @@ import UIKit
 import AVFoundation
 import MsngrCore
 
+/// What a tap on the microphone does. Kept apart from the recording itself so that
+/// the "ask first, record after" rule holds on its own: a recording started under the
+/// system dialog captures silence, and after a refusal captures nothing at all, which
+/// with no explanation looks like a broken button.
+enum MicGate {
+    enum Permission { case granted, denied, undetermined }
+    enum Decision: Equatable {
+        case record   // permission is granted
+        case ask      // ask, and record according to the answer
+        case explain  // refused: there will be no dialog again, point at Settings
+    }
+
+    static func decide(_ permission: Permission) -> Decision {
+        switch permission {
+        case .granted: return .record
+        case .undetermined: return .ask
+        case .denied: return .explain
+        }
+    }
+
+    static var current: Permission {
+        switch AVAudioApplication.shared.recordPermission {
+        case .granted: return .granted
+        case .denied: return .denied
+        default: return .undetermined
+        }
+    }
+}
+
 /// Voice recording: AAC at 48kbps, with waveform amplitudes produced in real time.
 final class VoiceRecorder: NSObject, ObservableObject {
     @Published var isRecording = false
@@ -11,6 +40,17 @@ final class VoiceRecorder: NSObject, ObservableObject {
     private var recorder: AVAudioRecorder?
     private var timer: Timer?
     private(set) var fileURL: URL?
+
+    /// Доступ к микрофону. Спрашивается до записи, а не одновременно с ней:
+    /// системный диалог перекрывает экран, и дубль, начатый под ним, был бы
+    /// тишиной. Отказ — не ошибка записи, а состояние, о котором экран говорит.
+    static func requestPermission() async -> Bool {
+        switch MicGate.decide(MicGate.current) {
+        case .record: return true
+        case .explain: return false
+        case .ask: return await AVAudioApplication.requestRecordPermission()
+        }
+    }
 
     func start() throws {
         let session = AVAudioSession.sharedInstance()

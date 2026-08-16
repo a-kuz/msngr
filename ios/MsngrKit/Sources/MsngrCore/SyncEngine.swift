@@ -19,6 +19,7 @@ public actor SyncEngine {
     private var actionTask: Task<Void, Never>?
     /// periodic background passes: expired mutes and the unreadable queue
     private var maintenanceTask: Task<Void, Never>?
+    private var expiryTask: Task<Void, Never>?
     private var outboxWakeup = AsyncStream<Void>.makeStream()
     private var actionWakeup = AsyncStream<Void>.makeStream()
     private var connected = false
@@ -63,9 +64,12 @@ public actor SyncEngine {
     // MARK: - Lifecycle
 
     public func start() async {
-        // sends killed before their ack (state='inflight') go back into the queue
+        // sends killed before their ack (state='inflight') go back into the queue;
+        // the server deduplicates the possible repeat by clientMsgId. Those waiting
+        // for their target's ack ('waiting') are retried in the same place: by now
+        // the target may have gone out, or failed for good
         try? await db.write { dbc in
-            try dbc.execute(sql: "UPDATE outbox SET state = 'ready' WHERE state = 'inflight'")
+            try dbc.execute(sql: "UPDATE outbox SET state = 'ready' WHERE state IN ('inflight', 'waiting')")
         }
         let events = await ws.events()
         await ws.start()
@@ -95,6 +99,7 @@ public actor SyncEngine {
         maintenanceTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.sweepExpiredMutes()
+                await self?.sweepExpiredMessages()
                 // the unreadable queue is replayed at start and then on a loop:
                 // an envelope waiting for its key would otherwise wait for the
                 // next frame that opens in the same chat, which may never come
@@ -128,6 +133,7 @@ public actor SyncEngine {
         outboxTask?.cancel()
         actionTask?.cancel()
         maintenanceTask?.cancel()
+        expiryTask?.cancel()
         await ws.stop()
         connected = false
     }
@@ -157,6 +163,40 @@ public actor SyncEngine {
         await sweepExpiredMutes()
     }
 
+    /// Messages past their deadline leave the device together with their attachments.
+    /// The sweep runs on the maintenance loop and is woken for the nearest deadline
+    /// as well: with a short TTL, a half-minute loop would not be enough.
+    public func sweepExpiredMessages() async {
+        let now = Date().timeIntervalSince1970
+        let doomed = (try? await db.read { dbc in
+            try Message.fetchAll(dbc, sql: "SELECT * FROM message WHERE expiresAt IS NOT NULL AND expiresAt <= ?",
+                                 arguments: [now])
+        }) ?? []
+        if !doomed.isEmpty {
+            try? await db.write { dbc in try ChatCleanup.expire(dbc, now: now) }
+            for info in doomed.flatMap({ ($0.media.map { [$0] } ?? []) + ($0.album ?? []) }) {
+                media?.remove(info)
+            }
+        }
+        await scheduleNextExpiry()
+    }
+
+    /// An alarm for the nearest deadline: without it a message with a five-second
+    /// TTL would stay on screen until the next maintenance loop.
+    private func scheduleNextExpiry() async {
+        expiryTask?.cancel()
+        let next = (try? await db.read { dbc in
+            try Double.fetchOne(dbc, sql: "SELECT MIN(expiresAt) FROM message WHERE expiresAt IS NOT NULL")
+        }) ?? nil
+        guard let next else { return }
+        let delay = max(0, next - Date().timeIntervalSince1970)
+        expiryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000) + 200_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.sweepExpiredMessages()
+        }
+    }
+
     /// Unmutes the chats whose mute has run out, here and on the server.
     /// The server treats an expired mute as lifted on its own, but without
     /// clearing it the flag would come back with the next snapshot.
@@ -182,21 +222,42 @@ public actor SyncEngine {
     /// Pulls the server's block list into the local user.isBlocked flag.
     public func refreshBlocked() async {
         guard let ids = try? await api.blockedUsers() else { return }
-        try? await db.write { dbc in
-            try dbc.execute(sql: "UPDATE user SET isBlocked = 0 WHERE isBlocked = 1")
-            for id in ids {
-                try dbc.execute(sql: "UPDATE user SET isBlocked = 1 WHERE id = ?", arguments: [id])
-            }
+        try? await db.write { dbc in try SyncEngine.applyBlockedList(dbc, serverIds: ids) }
+    }
+
+    /// Серверный список поверх локальных флагов. Блокировка, ещё не доехавшая
+    /// до сервера, им не отменяется: иначе решение пользователя откатывалось бы
+    /// само на первом же обновлении.
+    static func applyBlockedList(_ dbc: GRDB.Database, serverIds: [String]) throws {
+        let queued = try String.fetchAll(
+            dbc, sql: "SELECT payload FROM pendingAction WHERE type = 'block'")
+            .compactMap { try? JSONDecoder().decode(BlockActionPayload.self, from: Data($0.utf8)) }
+        var blocked = Set(serverIds)
+        for q in queued {
+            if q.blocked { blocked.insert(q.userId) } else { blocked.remove(q.userId) }
+        }
+        try dbc.execute(sql: "UPDATE user SET isBlocked = 0 WHERE isBlocked = 1")
+        for id in blocked {
+            try dbc.execute(sql: "UPDATE user SET isBlocked = 1 WHERE id = ?", arguments: [id])
         }
     }
 
-    /// Blocks a peer: the server, plus the local flag that disables the input bar.
+    /// Blocks a peer: the local flag right away (it disables the input bar), the
+    /// server through the action queue, so the decision survives being offline.
     public func setBlocked(userId: String, blocked: Bool) async throws {
-        try await api.setBlocked(userId, blocked: blocked)
+        let payload = String(data: try JSONEncoder().encode(
+            BlockActionPayload(userId: userId, blocked: blocked)), encoding: .utf8)!
         try await db.write { dbc in
             try dbc.execute(sql: "UPDATE user SET isBlocked = ? WHERE id = ?",
                             arguments: [blocked, userId])
+            try dbc.execute(
+                sql: """
+                INSERT INTO pendingAction (id, type, chatId, payload, createdAt) VALUES (?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, attempts = 0
+                """,
+                arguments: ["block:\(userId)", "block", nil, payload, Date().timeIntervalSince1970])
         }
+        actionWakeup.continuation.yield()
     }
 
     private func handle(_ ev: WSEvent) async {
@@ -364,6 +425,16 @@ public actor SyncEngine {
                 }
             }
         case "chat":
+            // из чата убрали, пока устройство было офлайн: состав в таком
+            // фрейме не приходит, и догонять больше нечего
+            if f.event == "removed", let chatId = f.chatId {
+                let attachments = await chatMedia(chatId: chatId)
+                try? await db.write { dbc in
+                    try ChatCleanup.deleteChat(dbc, chatId: chatId)
+                }
+                for info in attachments { media?.remove(info) }
+                return
+            }
             if let state = f.state {
                 // a direct chat deleted here keeps its membership on the
                 // server, so events about it still reach this device: a title
@@ -393,8 +464,11 @@ public actor SyncEngine {
                     }
                 }
                 // someone left the group: our sender key chain rotates so that
-                // whoever left cannot read what is sent from now on
-                if f.event == "members", state.kind == "group" {
+                // whoever left cannot read what is sent from now on. The roster is
+                // checked against any frame that carries it: the device may have
+                // missed the live members event, and then learns about the
+                // departure only from the roster replayed while catching up.
+                if state.kind == "group" {
                     let current = Set(state.members.map(\.userId))
                     if !Set(previousMembers).subtracting(current).isEmpty {
                         try? e2ee.rotateSenderKey(chatId: state.chatId)
@@ -1189,6 +1263,12 @@ public actor SyncEngine {
                 msg.album = content.album
                 msg.replyTo = content.replyTo
                 msg.forward = content.fwd
+                // историческая копия исчезающего сообщения помечается так же,
+                // как пришедшая живьём: иначе догрузка вверх возвращала бы то,
+                // чему срок уже вышел, и оно оставалось бы навсегда
+                let ttl = try Int.fetchOne(dbc, sql: "SELECT ttlSeconds FROM chat WHERE id = ?",
+                                           arguments: [chatId]) ?? 0
+                if ttl > 0 { msg.expiresAt = Date().timeIntervalSince1970 + Double(ttl) }
                 try msg.upsert(dbc)
                 try SyncEngine.applyBuffered(dbc, chatId: chatId, msgId: msgId)
             }
@@ -1279,14 +1359,22 @@ public actor SyncEngine {
         guard let clientMsgId = f.clientMsgId, let msgId = f.msgId,
               let seq = f.seq, let chatId = f.chatId else { return }
         try? await db.write { dbc in
+            // срок исчезающего сообщения идёт от момента, когда оно ушло:
+            // лежащее в очереди без сети ещё никому не показано
+            let ttl = try Int.fetchOne(dbc, sql: "SELECT ttlSeconds FROM chat WHERE id = ?",
+                                       arguments: [chatId]) ?? 0
             try dbc.execute(
                 sql: """
                 UPDATE message SET msgId = ?, seq = ?, serverTs = ?, status = MAX(status, 1),
-                  failReason = NULL
+                  failReason = NULL, expiresAt = ?
                 WHERE clientMsgId = ?
                 """,
-                arguments: [msgId, seq, f.ts, clientMsgId])
+                arguments: [msgId, seq, f.ts,
+                            ttl > 0 ? Date().timeIntervalSince1970 + Double(ttl) : nil,
+                            clientMsgId])
             try dbc.execute(sql: "DELETE FROM outbox WHERE clientMsgId = ?", arguments: [clientMsgId])
+            // edits and reactions that waited for their target's server id: it is here now
+            try dbc.execute(sql: "UPDATE outbox SET state = 'ready' WHERE state = 'waiting'")
             // what we sent counts as read by us, so the badge does not pile up
             try dbc.execute(
                 sql: """
@@ -1297,6 +1385,7 @@ public actor SyncEngine {
                 """,
                 arguments: [seq, seq, seq, seq, f.ts ?? Date().timeIntervalSince1970, chatId])
         }
+        outboxWakeup.continuation.yield()
     }
 
     /// The server refused one of our frames. The send is marked failed with the
@@ -1409,6 +1498,18 @@ public actor SyncEngine {
                     await insertSystemMessage(chatId: item.chatId, text: "identity_changed:\(uid)")
                     continue
                 }
+                // an edit or a reaction outran its target's ack: it waits for it
+                // without holding up the queue or spending an attempt
+                if let t = error as? TargetNotAcked {
+                    try? await db.write { dbc in
+                        try dbc.execute(
+                            sql: t.gone
+                                ? "DELETE FROM outbox WHERE clientMsgId = ?"
+                                : "UPDATE outbox SET state = 'waiting' WHERE clientMsgId = ?",
+                            arguments: [item.clientMsgId])
+                    }
+                    continue
+                }
                 // count the attempt; on a network error stop here, the
                 // reconnect wakes the drain again
                 try? await db.write { dbc in
@@ -1431,11 +1532,16 @@ public actor SyncEngine {
         }
     }
 
+    /// Цель служебного фрейма не имеет серверного msgId: либо ack ещё не пришёл
+    /// (`gone == false`, ждём его), либо сообщение так и не ушло.
+    struct TargetNotAcked: Error { let gone: Bool }
+
     private func sendOutboxItem(_ item: OutboxItem) async throws {
         var content = try JSONDecoder().decode(ContentPayload.self, from: item.payload)
         // media attached offline is uploaded before the envelope is encrypted;
         // a network error here is an ordinary outbox retry
         content = try await uploadPendingMedia(content, item: item)
+        content = try await resolveTarget(content, chatId: item.chatId)
         let info = try await db.read { dbc -> (kind: String, members: [String])? in
             guard let chat = try Chat.fetchOne(dbc, key: item.chatId) else { return nil }
             let members = try String.fetchAll(dbc, sql: "SELECT userId FROM member WHERE chatId = ?",
@@ -1489,6 +1595,27 @@ public actor SyncEngine {
             }) ?? false
             if reverted { await self?.wakeOutbox() }
         }
+    }
+
+    /// An edit and a reaction point at a message by id, and for our own message that
+    /// id is local until the ack: the peer has no such row, and the event would settle
+    /// in their `pendingApply` under an id that never arrives. The target is resolved
+    /// at send time; until the ack is in, there is nothing to send.
+    func resolveTarget(_ content: ContentPayload, chatId: String) async throws -> ContentPayload {
+        guard let target = content.targetMsgId else { return content }
+        let row = try await db.read { dbc in
+            try Row.fetchOne(dbc, sql: "SELECT msgId, status FROM message WHERE chatId = ? AND id = ?",
+                             arguments: [chatId, target])
+        }
+        // no row — the id is already a server one (the target came from the peer)
+        guard let row else { return content }
+        guard let serverId = row["msgId"] as String? else {
+            // the target never went out: there is nothing on the server to react to
+            throw TargetNotAcked(gone: (row["status"] as Int?) == MessageStatus.failed.rawValue)
+        }
+        var resolved = content
+        resolved.targetMsgId = serverId
+        return resolved
     }
 
     // MARK: - Uploading local media before sending
@@ -1561,6 +1688,7 @@ public actor SyncEngine {
 
     struct ReadActionPayload: Codable { var upToSeq: Int }
     struct DeleteActionPayload: Codable { var msgIds: [String]; var forAll: Bool }
+    struct BlockActionPayload: Codable { var userId: String; var blocked: Bool }
 
     /// Read actions collapse per chat: one row per chatId, the larger upToSeq wins.
     static func upsertReadAction(_ dbc: GRDB.Database, chatId: String, upToSeq: Int) throws {
@@ -1595,14 +1723,17 @@ public actor SyncEngine {
                 switch a.type {
                 case "read":
                     let p = try JSONDecoder().decode(ReadActionPayload.self, from: Data(a.payload.utf8))
-                    try await ws.send(.read(chatId: a.chatId, upToSeq: p.upToSeq))
+                    try await ws.send(.read(chatId: a.chatId ?? "", upToSeq: p.upToSeq))
                 case "delete":
                     let p = try JSONDecoder().decode(DeleteActionPayload.self, from: Data(a.payload.utf8))
-                    try await ws.send(.delete(chatId: a.chatId, msgIds: p.msgIds, forAll: p.forAll))
+                    try await ws.send(.delete(chatId: a.chatId ?? "", msgIds: p.msgIds, forAll: p.forAll))
                 case "accept":
-                    try await api.acceptChat(a.chatId)
+                    try await api.acceptChat(a.chatId ?? "")
                 case "deleteChat":
-                    try await api.deleteChat(a.chatId)
+                    try await api.deleteChat(a.chatId ?? "")
+                case "block":
+                    let p = try JSONDecoder().decode(BlockActionPayload.self, from: Data(a.payload.utf8))
+                    try await api.setBlocked(p.userId, blocked: p.blocked)
                 default:
                     break // an unknown type is dropped below
                 }
@@ -1630,9 +1761,18 @@ public actor SyncEngine {
 
     // MARK: - User actions
 
-    /// Accepts the peer's new identity key and releases the blocked messages.
-    public func acceptKeyChange(chatId: String, peerUserId: String) async {
-        try? e2ee.acceptChangedIdentity(userId: peerUserId)
+    /// Accepts the new identity keys of the chat's members and resends the blocked
+    /// messages. The key may have changed for any member of a group, so every member
+    /// whose key is awaiting confirmation in this chat is accepted.
+    public func acceptKeyChange(chatId: String) async {
+        let pending: [String] = (try? await db.read { dbc in
+            try String.fetchAll(dbc, sql: """
+                SELECT t.userId FROM trustedIdentity t
+                JOIN member m ON m.userId = t.userId
+                WHERE m.chatId = ? AND t.changedPending IS NOT NULL
+                """, arguments: [chatId])
+        }) ?? []
+        for userId in pending { try? e2ee.acceptChangedIdentity(userId: userId) }
         try? await db.write { dbc in
             try dbc.execute(sql: """
                 UPDATE message SET status = 0, failReason = NULL WHERE clientMsgId IN

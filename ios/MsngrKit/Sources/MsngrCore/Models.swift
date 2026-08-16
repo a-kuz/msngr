@@ -262,13 +262,14 @@ public struct ContentPayload: Codable {
 public struct PendingAction: Codable, FetchableRecord, PersistableRecord {
     public static let databaseTableName = "pendingAction"
     public var id: String
-    public var type: String     // read | delete | accept
-    public var chatId: String
+    public var type: String     // read | delete | accept | deleteChat | block
+    /// nil for actions not tied to a chat (blocking a peer).
+    public var chatId: String?
     public var payload: String  // JSON, shape depends on type
     public var createdAt: Double
     public var attempts: Int = 0
 
-    public init(id: String, type: String, chatId: String, payload: String, createdAt: Double) {
+    public init(id: String, type: String, chatId: String?, payload: String, createdAt: Double) {
         self.id = id
         self.type = type
         self.chatId = chatId

@@ -264,6 +264,24 @@ cb2.send({ t: "sync", cursors: { [chat.chatId]: 1 } });
 const missed = await cb2.waitFor((f) => f.t === "msg" && f.seq === 2);
 check("sync backfill", !!missed);
 
+// 8a. Catching up on a foreign chat: the id of a direct chat is derived from the two
+// user ids, so anyone can name a cursor for it. The journal is not served for it.
+const outsider = new Client("carol-outsider", carol.token);
+await outsider.connect();
+const outsiderMark = outsider.mark();
+outsider.send({ t: "sync", cursors: { [chat.chatId]: 0 } });
+await outsider.waitAfter(outsiderMark, (f) => f.t === "syncDone");
+const leaked = outsider.frames.slice(outsiderMark)
+  .filter((f) => (f.t === "msg" || f.t === "deleted" || f.t === "receipt")
+    && f.chatId === chat.chatId);
+check("catch-up of a foreign chat leaks nothing", leaked.length === 0,
+  JSON.stringify(leaked.slice(0, 2)));
+const outsiderHist = await api(`/api/chats/${chat.chatId}/history?fromSeq=0`,
+  { token: carol.token });
+check("history of a foreign chat is refused",
+  !outsiderHist.ok && outsiderHist.error === "not_member", JSON.stringify(outsiderHist));
+outsider.ws.close();
+
 // 9. Group
 const grp = await api("/api/chats", { token: alice.token,
   body: { kind: "group", memberIds: [bob.userId], title: "Team" } });
@@ -287,6 +305,49 @@ check("group message delivered", !!gmsg);
 // 10. Chats snapshot
 const snap = await api("/api/chats", { token: bob.token });
 check("chats snapshot", snap.ok && snap.chats.length === 2 && snap.users.length >= 3);
+
+// 10a. Состав, пропущенный офлайн. Живой chat-фрейм об уходе участника получают
+// только подключённые; остальные узнают о нём при догоне, иначе оставшийся
+// продолжал бы шифровать в цепочку, которая есть у ушедшего.
+const mgrp = await api("/api/chats", { token: alice.token,
+  body: { kind: "group", memberIds: [bob.userId, carol.userId], title: "Roster" } });
+check("create roster group", mgrp.ok, JSON.stringify(mgrp));
+ca.send({ t: "send", chatId: mgrp.chatId, clientMsgId: "cm-r1", sentAt: Date.now(),
+  body: { v: 1, mode: "skm", c: "Zm9v", senderKeyId: "sk1" } });
+await ca.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-r1");
+
+const rm = await api(`/api/chats/${mgrp.chatId}/members`, { token: alice.token,
+  body: { add: [], remove: [carol.userId] } });
+check("admin removes member", rm.ok, JSON.stringify(rm));
+
+// оставшийся участник догоняет: состав приезжает вместе с хвостом чата
+const cbR = new Client("bob-roster", bob.token);
+await cbR.connect();
+const bobRosterMark = cbR.mark();
+cbR.send({ t: "sync", cursors: { [mgrp.chatId]: 1 } });
+await cbR.waitAfter(bobRosterMark, (f) => f.t === "syncDone");
+const rosterFrame = cbR.frames.slice(bobRosterMark)
+  .find((f) => f.t === "chat" && f.chatId === mgrp.chatId);
+check("catch-up replays the roster", !!rosterFrame?.state, JSON.stringify(rosterFrame ?? null));
+check("replayed roster has the removed member out",
+  !rosterFrame?.state?.members.some((m) => m.userId === carol.userId),
+  JSON.stringify(rosterFrame?.state?.members ?? null));
+cbR.ws.close();
+
+// убранный участник узнаёт об этом при догоне, состав ему не отдаётся
+const ccR = new Client("carol-roster", carol.token);
+await ccR.connect();
+const carolRosterMark = ccR.mark();
+ccR.send({ t: "sync", cursors: { [mgrp.chatId]: 0 } });
+await ccR.waitAfter(carolRosterMark, (f) => f.t === "syncDone");
+const removedFrame = ccR.frames.slice(carolRosterMark)
+  .find((f) => f.t === "chat" && f.chatId === mgrp.chatId);
+check("catch-up tells the removed member", removedFrame?.event === "removed",
+  JSON.stringify(removedFrame ?? null));
+check("removal carries no roster", removedFrame && removedFrame.state === undefined);
+check("removed member gets no history",
+  !ccR.frames.slice(carolRosterMark).some((f) => f.t === "msg" && f.chatId === mgrp.chatId));
+ccR.ws.close();
 
 // 11. delete for all
 ca.send({ t: "delete", chatId: chat.chatId, msgIds: [sent.msgId], forAll: true });
@@ -779,6 +840,22 @@ ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p4", sentAt: Date.n
 const p4 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p4");
 check("no push for service", !(await waitPush(pushFor("eve-sim-udid", p4.msgId), 1200)));
 
+// (c1) A service frame takes a seq but does not grow the badge: in a read chat the read
+// mark absorbs it, exactly the way the client moves the cursor. The server counts the
+// badge, so these two counts must not diverge.
+ce.send({ t: "read", chatId: echat.chatId, upToSeq: p4.seq });
+await ca2.waitFor((f) => f.t === "receipt" && f.kind === "read"
+  && f.by === eve.userId && f.upToSeq === p4.seq);
+ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-svc-1", sentAt: Date.now(),
+  service: true, body: { v: 1, mode: "skd", c: "c2tk" } });
+await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-svc-1");
+ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-svc-2", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const psvc = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-svc-2");
+const pushSvc = await waitPush(pushFor("eve-sim-udid", psvc.msgId));
+check("service frame does not grow the badge", pushSvc?.body.aps.badge === 1,
+  `badge=${pushSvc?.body.aps.badge}`);
+
 // (c2) The push carries the message itself, addressed to the device it goes to:
 // the extension decrypts it and writes it, so a chat opened offline holds what
 // the banner said. A pairwise envelope is trimmed to this device's own box.
@@ -840,6 +917,26 @@ check("expired mute cleared in flags",
 
 // (g) own echo: alice has a token registered, yet her own sends create no push
 check("no push for own echo", !pushes.some((p) => p.url === "/3/device/alice-sim-udid"));
+
+// (d) The server counts the badge, and the author does not count what they sent as
+// unread, exactly as the cursor on the device does. Otherwise the number would grow on
+// what the author wrote themselves.
+ce.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-e1", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const e1 = await ce.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-e1");
+check("author's badge counts the peer's message",
+  (await waitPush(pushFor("alice-sim-udid", e1.msgId)))?.body.aps.badge === 1);
+for (const id of ["cm-p11", "cm-p12", "cm-p13"]) {
+  ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: id, sentAt: Date.now(),
+    body: { v: 1, mode: "pw", msgs: {} } });
+  await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === id);
+}
+ce.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-e2", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const e2 = await ce.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-e2");
+const badgeAfter = (await waitPush(pushFor("alice-sim-udid", e2.msgId)))?.body.aps.badge;
+check("own messages do not grow the author's badge", badgeAfter === 1,
+  `badge=${badgeAfter}`);
 
 // 21. Ack before push: the sender's confirmation does not wait for APNs
 hold = { token: "eve-sim-udid", ms: 1500 };
