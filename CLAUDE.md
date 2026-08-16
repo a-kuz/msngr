@@ -1,198 +1,202 @@
-# Работа в этом репозитории
+# Working in this repository
 
-Мессенджер с E2EE: Swift-клиенты (iOS, macOS) + Cloudflare Worker.
-Прода нет, пользователей нет.
+An E2EE messenger: Swift clients (iOS, macOS) + a Cloudflare Worker.
+There is no production and there are no users.
 
-## Раскладка
+## Layout
 
 ```
-server/src/index.ts        HTTP API (hono) + апгрейд /ws
-server/src/do/             UserSessionDO (сокеты, presence, пуши), ConversationDO (журнал чата),
-                           ApnsTokenDO (синглтон-владелец APNs JWT)
+server/src/index.ts        HTTP API (hono) + the /ws upgrade
+server/src/do/             UserSessionDO (sockets, presence, pushes), ConversationDO (the chat journal),
+                           ApnsTokenDO (the singleton owner of the APNs JWT)
 server/src/push/apns.ts    APNs
-server/migrations/         миграции D1 (wrangler d1 migrations apply)
-ios/MsngrKit/              ядро: MsngrCrypto (примитивы), MsngrCore (БД, WS, SyncEngine, E2EE)
-ios/Msngr/                 iOS-приложение
-ios/NotificationService/   NSE
-ios/project.yml            описание проекта для xcodegen
+server/migrations/         D1 migrations (wrangler d1 migrations apply)
+ios/MsngrKit/              the core: MsngrCrypto (primitives), MsngrCore (database, WS, SyncEngine, E2EE)
+ios/Msngr/                 the iOS app
+ios/NotificationService/   the NSE
+ios/project.yml            the project description for xcodegen
 ```
 
-Документация: `docs/protocol.md` (фреймы и API), `docs/crypto-flows.md`,
-`docs/ui-spec.md`, `docs/PROCESS.md` (процесс и гейт), `docs/audits/`,
-`docs/qa/`, `docs/research/`.
+Documentation: `docs/protocol.md` (frames and API), `docs/crypto-flows.md`,
+`docs/ui-spec.md`, `docs/PROCESS.md` (the process and the gate),
+`docs/localization-catalog.md`, `docs/audits/`, `docs/qa/`, `docs/research/`.
 
-## Сборка и тесты
+## Building and testing
 
 ```bash
-cd ios && xcodegen                                  # обязательно после правки project.yml
+cd ios && xcodegen                                  # required after editing project.yml
 xcodebuild -project ios/Msngr.xcodeproj -scheme Msngr -destination 'id=<UDID>' build
 xcodebuild -project ios/Msngr.xcodeproj -scheme Msngr -destination 'id=<UDID>' \
   test -only-testing:MsngrTests
-cd ios/MsngrKit && swift test                       # ядро
-cd server && node test/smoke.mjs                    # API/DO/пуши, нужен wrangler dev
+cd ios/MsngrKit && swift test                       # the core
+cd server && node test/smoke.mjs                    # API/DO/pushes, needs wrangler dev
 ```
 
-`ios/Msngr.xcodeproj` в `.gitignore` и генерируется из `ios/project.yml`. Руками
-`.pbxproj` не править — правки затрёт следующий `xcodegen`. Entitlements
-приложения и расширения тоже собираются из `project.yml`
-(`entitlements.properties`), редактировать `.entitlements` бессмысленно.
+`ios/Msngr.xcodeproj` is in `.gitignore` and is generated from `ios/project.yml`.
+Do not edit `.pbxproj` by hand — the next `xcodegen` will overwrite the edits. The
+entitlements of the app and the extension are built from `project.yml` too
+(`entitlements.properties`), so editing `.entitlements` is pointless.
 
-`swift test` в MsngrKit: `CoreIntegrationTests` сами пропускаются, если на :8787
-никто не отвечает; остальные тесты сервера не требуют.
+`swift test` in MsngrKit: `CoreIntegrationTests` skip themselves if nothing
+answers on :8787; the rest of the tests need no server.
 
-## Гейт перед сдачей
+## The gate before delivery
 
-`make check` в корне: `xcodegen` → сборка → `swift test` → MsngrTests →
-MsngrUITests → серверный смоук → сбор свежих крешей симулятора (свежий креш
-роняет гейт). UI-тесты и смоук требуют поднятого `wrangler dev`.
+`make check` at the root: `xcodegen` → build → `swift test` → MsngrTests →
+MsngrUITests → the server smoke test → collecting fresh simulator crashes (a
+fresh crash fails the gate). The UI tests and the smoke test need `wrangler dev`
+running.
 
-Makefile по умолчанию собирает на симуляторе владельца, поэтому агент
-запускает гейт со своим симулятором:
+The Makefile builds on the owner's simulator by default, so an agent runs the
+gate with its own:
 
 ```bash
 make check DEV_UDID=74B78AFC-E8D7-4317-B16F-E51A65504B2D   # gate-runner
 ```
 
-## Стенд
+## The stand
 
-- `wrangler dev` на :8787 — общий, живой. Не перезапускать и не сносить его
-  состояние (`server/.wrangler/`) без явной просьбы: там переписки и ключи
-  тестовых пользователей.
-- Дев-мок APNs `node server/tools/apns-mock.mjs` слушает :9871 и доставляет
-  пуши в симулятор через `simctl push`. `node test/smoke.mjs` поднимает на этом
-  же порту собственный приёмник — перед смоуком мок нужно остановить. На своём
-  стенде порт разводится: `wrangler dev --port 8803 --var APNS_HOST:http://localhost:9873`
-  (перекрывает `.dev.vars`) и `PUSH_PORT=9873 node test/smoke.mjs`.
-- `simctl push` не запускает NSE ни в одном состоянии приложения (контрольный
-  эксперимент в `docs/research/nse-simulator-experiment.md`). На симуляторе
-  видно только то, что делает система с сырым payload: бейдж доходит, текст
-  остаётся необработанным, аватар не подставляется. Всё, что проходит через
-  расширение, проверяется на устройстве.
-- «Офлайн» в сценариях — убитый `wrangler dev`, не выключенная сеть.
+- `wrangler dev` on :8787 — shared and live. Do not restart it and do not wipe
+  its state (`server/.wrangler/`) without being asked to: it holds the
+  conversations and keys of the test users.
+- The dev APNs mock `node server/tools/apns-mock.mjs` listens on :9871 and
+  delivers pushes to the simulator through `simctl push`. `node test/smoke.mjs`
+  brings up its own receiver on the same port, so the mock has to be stopped
+  before the smoke test. On your own stand the ports separate:
+  `wrangler dev --port 8803 --var APNS_HOST:http://localhost:9873` (this
+  overrides `.dev.vars`) and `PUSH_PORT=9873 node test/smoke.mjs`.
+- `simctl push` does not launch the NSE in any state of the app (the control
+  experiment is in `docs/research/nse-simulator-experiment.md`). On the simulator
+  you only see what the system does with the raw payload: the badge arrives, the
+  text stays unprocessed, the avatar is not filled in. Everything that goes
+  through the extension is verified on a device.
+- "Offline" in the scenarios means a killed `wrangler dev`, not a disabled
+  network.
 
-## Симуляторы
+## Simulators
 
-Симулятор — эксклюзивный ресурс: в один момент он принадлежит одному агенту.
+A simulator is an exclusive resource: at any moment it belongs to one agent.
 
-- Не трогать симуляторы владельца: `44CE2242-EBB9-48EA-A605-5988A00E4C31`
-  (iPhone 17 dev) и `0E0CF155-B4B7-4794-A963-AD7C76EFDCEA` (iPhone 17 Pro Max).
-  Они выдаются только по явной эксклюзивной броне.
-- `74B78AFC-E8D7-4317-B16F-E51A65504B2D` (gate-runner) — прогон гейта.
-- Для своих сценариев создавать собственный симулятор
-  (`xcrun simctl create <имя> "iPhone 17"` → `boot` → `install` → регистрация
-  свежего юзера) и удалять его за собой (`shutdown` + `delete`).
-- Slow Animations в Simulator.app — глобальный тумблер: включил, значит
-  выключил в конце.
+- Do not touch the owner's simulators: `44CE2242-EBB9-48EA-A605-5988A00E4C31`
+  (iPhone 17 dev) and `0E0CF155-B4B7-4794-A963-AD7C76EFDCEA` (iPhone 17 Pro Max).
+  They are handed out only on an explicit exclusive reservation.
+- `74B78AFC-E8D7-4317-B16F-E51A65504B2D` (gate-runner) — for running the gate.
+- For your own scenarios, create your own simulator
+  (`xcrun simctl create <name> "iPhone 17"` → `boot` → `install` → register a
+  fresh user) and delete it after yourself (`shutdown` + `delete`).
+- Slow Animations in Simulator.app is a global toggle: if you turned it on, turn
+  it off at the end.
 
-## Что легко сломать
+## What is easy to break
 
-- **Порядок и курсоры.** `syncedSeq` двигается только по непрерывному префиксу;
-  `unreadCount` производный (`lastSeq − myReadUpTo`), а не ручной инкремент.
-- **service-флаг.** `edit`, `reaction`, `disappearing` и раздача sender key
-  уходят с `service: true`: они занимают `seq`, но не растят unread и не
-  порождают пуш. Новый служебный вид контента добавляется в
+- **Order and cursors.** `syncedSeq` moves only along a contiguous prefix;
+  `unreadCount` is derived (`lastSeq − myReadUpTo`), not incremented by hand.
+- **The service flag.** `edit`, `reaction`, `disappearing` and the sender key
+  handout go out with `service: true`: they take a `seq`, but they do not grow
+  unread and they raise no push. A new kind of service content is added to
   `SyncEngine.serviceKinds`.
-- **Идемпотентность.** Отправка дедуплицируется сервером по `clientMsgId`;
-  повторная отправка того же — норма, а не ошибка. `clientMsgId` раздачи sender
-  key детерминирован специально.
-- **Отложенное применение.** Сообщение раньше своего ключа идёт в
-  `pendingDecrypt`, правка или реакция без оригинала — в `pendingApply`. Новый
-  путь применения контента должен уметь и то, и другое.
-- **Пути хранилища.** Только через `StorageLocation`/`AppContainer`: приложение
-  и NSE работают с одними файлами в контейнере app group.
-- **Лента.** `reloadData()` на живом чате обрывает анимации; обновление идёт
-  точечным диффом и переконфигурацией ячейки на месте.
-- **Окно ленты.** У окна есть вместимость (`FeedWindow`): пока читатель у низа,
-  нижняя граница пересчитывается и окно скользит, пока читает историю — стоит
-  на месте. Без потолка окно росло всё время, что открыт чат, и каждая вставка
-  перечитывала и пересобирала его целиком.
-- **Перевёрнутый список.** Лента инвертирована через `transform`, поэтому
-  вставка нового сообщения идёт в `item 0` и сдвигает контент выше под
-  неизменным `contentOffset`. Обновление запоминает верхний видимый элемент и
-  возвращает его на место; любой новый путь обновления обязан делать то же.
-- **Размер текста.** Все размеры живут в `Theme.Text` (`ios/Msngr/App/Theme.swift`)
-  именованными ролями; в коде экранов чисел быть не должно. Роль масштабируется
-  через `UIFontMetrics` с потолком: у ленты потолок высокий, у шапки и списка
-  чатов низкий, потому что их высота фиксирована. Замеры ленты идут вне иерархии
-  вью, поэтому категорию размера держит снимок `TypeScale.category`, а не
-  `UITraitCollection.current`. Смена размера сбрасывает кэш планов и
-  перезамеряет ленту, возвращая читателя на прежнее место; шрифты ячеек
-  назначаются в `configure`, а не в `init` — в пуле переиспользования
-  трейт-колбэков не приходит.
-- **Бейдж.** Число считает сервер и штампует счётчиком (`badgeStamp`); на
-  устройстве оно живёт одной строкой (`BadgeStore`), приложение и расширение
-  пишут через транзакцию, обогнанное значение отбрасывается. Не считать бейдж
-  на устройстве: система применяет число из payload независимо от того,
-  запускалось расширение или нет.
-- **Очистка и удаление чата.** Очистка — местный акт: строки уходят, курсоры
-  (`lastSeq`, `syncedSeq`, `syncCursor`) остаются на месте, а сообщения выше
-  застрявшего префикса закрываются записью `cleared` в `historyGap` — иначе
-  пагинация снова просит у сервера диапазон, ключей к которому уже нет.
-  Удаление уносит чат целиком и оставляет отметку `chatTombstone`: вернувшийся
-  чат заводит курсоры с неё. У собеседника переписка остаётся: групповой чат
-  сервер покидает, direct — только убирает из своего списка и возвращает на
-  следующем контентном сообщении.
-- **Папки.** Вкладка — это правило плюс вручную положенные и убранные чаты
-  (`chatFolder`, `chatFolderChat`, `chatFolderPeer`); чат живёт в любом числе
-  папок, удаление папки уносит только её строки. Состав считает наблюдение
-  чат-листа один раз на выдачу, переключение вкладки в БД не ходит. Папки
-  местные: на сервер не уходят, синхронизации между устройствами нет. Архив и
-  заявки живут только во вкладке «Все». Длинный горизонтальный свайп по списку
-  переключает вкладку, короткий остаётся свайп-действиям строки — полного
-  свайпа у строки поэтому нет.
-- **APNs.** Пуш уходит на каждое контентное сообщение, даже при живом сокете;
-  дубль гасит клиент в `willPresent`. Не «чинить» это условием на presence.
-- **Уведомление — это запись в базу.** Пуш везёт сам конверт (`env`, срезанный
-  под устройство); расширение расшифровывает его и пишет сообщение в той же
-  транзакции, что берёт право на баннер (`PushMessageWriter`), а текст баннера
-  читается уже из этой строки. Ничего не тянуть с сервера в момент открытия
-  приложения. Больше 4 КБ APNs не принимает — конверт выбрасывается, сообщение
-  доезжает следующим соединением.
-- **Рэтчет и два процесса.** `ratchetSession`, `senderKeyIn`, prekey-блоб и
-  `trustedIdentity` меняются циклом «прочитать — шагнуть — записать», а
-  приложение и расширение живут в разных процессах над одним файлом. Любой такой
-  цикл идёт под `CryptoGate` (flock + локальный лок): гейт берётся до
-  транзакции, никогда внутри неё, и не удерживается через `await`. Потерянная
-  запись здесь — это позиция отправной цепочки, использованная дважды, то есть
-  сообщение, которое собеседник не откроет никогда.
-- **Один баннер на сообщение.** Право показать сообщение берётся строкой
-  `notificationShown` (`NotificationBurstStore.claim`): кто вставил, тот и
-  показывает. Приложение берёт её перед своим баннером, расширение — перед
-  своим. Порядок показа лавины задаёт `NotificationBurstGate`: пуши ждут окно
-  склейки и отвечают по seq одной цепочкой, перепостановки показанного нет.
+- **Idempotency.** A send is deduplicated by the server by `clientMsgId`; sending
+  the same thing again is normal, not an error. The `clientMsgId` of a sender key
+  handout is deterministic on purpose.
+- **Deferred application.** A message that arrives before its key goes into
+  `pendingDecrypt`; an edit or a reaction with no original goes into
+  `pendingApply`. A new path for applying content has to handle both.
+- **Storage paths.** Only through `StorageLocation`/`AppContainer`: the app and
+  the NSE work with the same files in the app group container.
+- **The feed.** `reloadData()` on a live chat cuts off animations; an update goes
+  through a pointwise diff and reconfiguring the cell in place.
+- **The feed window.** The window has a capacity (`FeedWindow`): while the reader
+  is at the bottom the lower bound is recomputed and the window slides, and while
+  they read history it stays put. Without a ceiling the window grew for as long
+  as the chat was open, and every insert re-read and rebuilt it whole.
+- **The inverted list.** The feed is inverted through `transform`, so a new
+  message is inserted at `item 0` and shifts the content above it under an
+  unchanged `contentOffset`. An update remembers the topmost visible item and
+  puts it back; any new update path has to do the same.
+- **Text size.** Every size lives in `Theme.Text`
+  (`ios/Msngr/App/Theme.swift`) as a named role; there should be no numbers in
+  the screen code. A role is scaled through `UIFontMetrics` with a ceiling: the
+  feed's ceiling is high, the header's and the chat list's are low, because their
+  heights are fixed. Feed measurement happens outside the view hierarchy, so the
+  size category is held by the `TypeScale.category` snapshot rather than
+  `UITraitCollection.current`. A size change drops the plan cache and re-measures
+  the feed, putting the reader back where they were; cell fonts are assigned in
+  `configure`, not in `init` — no trait callback arrives in the reuse pool.
+- **The badge.** The number is counted by the server and stamped with a counter
+  (`badgeStamp`); on the device it lives as a single row (`BadgeStore`), the app
+  and the extension write through a transaction, and an overtaken value is
+  discarded. Do not count the badge on the device: the system applies the number
+  from the payload whether the extension ran or not.
+- **Clearing and deleting a chat.** Clearing is a local act: the rows go, the
+  cursors (`lastSeq`, `syncedSeq`, `syncCursor`) stay where they are, and the
+  messages above the stuck prefix are closed off by a `cleared` record in
+  `historyGap` — otherwise pagination asks the server again for a range whose
+  keys are already gone. Deleting takes the chat away whole and leaves a
+  `chatTombstone` mark: a chat that comes back starts its cursors from it. The
+  peer keeps the conversation: a group chat is left on the server, a direct chat
+  is only taken out of your own list and comes back on the next content message.
+- **Folders.** A tab is a rule plus the chats put in and taken out by hand
+  (`chatFolder`, `chatFolderChat`, `chatFolderPeer`); a chat lives in any number
+  of folders, and deleting a folder removes only its rows. Membership is computed
+  by the chat list observation once per emission, and switching a tab does not go
+  to the database. Folders are local: they do not go to the server and there is
+  no sync between devices. The archive and the requests live only in the «Все»
+  tab. A long horizontal swipe over the list switches the tab while a short one
+  stays with the row's swipe actions, which is why a row has no full swipe.
+- **APNs.** A push goes out for every content message, even with a live socket;
+  the duplicate is suppressed by the client in `willPresent`. Do not "fix" this
+  with a condition on presence.
+- **A notification is a database write.** The push carries the envelope itself
+  (`env`, cut down to the device); the extension decrypts it and writes the
+  message in the same transaction that claims the banner (`PushMessageWriter`),
+  and the banner text is then read from that row. Do not pull anything from the
+  server at the moment the app opens. APNs does not accept more than 4 KB — the
+  envelope is dropped and the message arrives on the next connection.
+- **The ratchet and two processes.** `ratchetSession`, `senderKeyIn`, the prekey
+  blob and `trustedIdentity` change through a "read — step — write" cycle, while
+  the app and the extension live in different processes over one file. Every such
+  cycle runs under `CryptoGate` (flock + a local lock): the gate is taken before
+  the transaction, never inside it, and is not held across an `await`. A lost
+  write here is a position of the sending chain used twice, which is a message
+  the peer will never open.
+- **One banner per message.** The right to show a message is taken by the
+  `notificationShown` row (`NotificationBurstStore.claim`): whoever inserted it
+  shows it. The app takes it before its own banner, the extension before its own.
+  The display order of an avalanche is set by `NotificationBurstGate`: pushes
+  wait for the coalescing window and answer by seq in a single chain, and nothing
+  already shown is posted again.
 
-## Совместимость
+## Compatibility
 
-Обратной совместимости нет и compat-слоёв не пишем: схему БД можно менять без
-миграции (базу снести, юзера перерегистрировать), фреймы и REST меняются
-свободно, ключи и сессии терять можно. Механизм версий при этом закладывается —
-`v` в E2E-конверте, версия схемы, `migrations` в `wrangler.jsonc`. Подробности
-в `docs/PROCESS.md`.
+There is no backward compatibility and we write no compat layers: the database
+schema can change with no migration (wipe the database, register the user
+again), frames and REST change freely, keys and sessions can be lost. The
+versioning mechanism is still put in place — `v` in the E2E envelope, the schema
+version, `migrations` in `wrangler.jsonc`. The details are in `docs/PROCESS.md`.
 
-## Оформление работы
+## How work is delivered
 
-- Микро-скоуп: одно поведение за изменение, коммиты инкрементальные.
-  Живой прогон затронутого сценария на симуляторе, потом `make check`.
-- Коммиты и PR без `Co-Authored-By`.
-- Всё в репозитории — по-английски: комментарии, сообщения коммитов,
-  документация, отчёты прогонов. Комментарии описывают только текущее поведение;
-  история изменений живёт в git. Существующее русское содержимое переводится
-  отдельными сплошными проходами — попутно в своём диффе не переводи.
-- Пользовательские строки интерфейса живут в каталоге локализации, базовый язык
-  английский; зашитых в код текстов быть не должно.
-- Свои сбои продукт чинит сам: повтор в фоне, без участия человека. Пользователь
-  узнаёт только о том, что требует его решения. Кнопка действия появляется,
-  только если это действие реально что-то меняет.
-- Потерянное или нечитаемое сообщение — дефект, а не состояние интерфейса.
-  Сначала убираем причину и чиним автоматически (повтор, запрос отправителю), и
-  только в крайнем случае что-то показываем. В живом прогоне ноль нечитаемых
-  сообщений — иначе прогон красный.
-- Интерфейс сообщает состояние, а не причину и не виноватого. Не перекладываем
-  на пользователя («попросите отправителя»), не сваливаем на третьих лиц и
-  обстоятельства («сервер недоступен», «плохая сеть», «у собеседника старая
-  версия»). «Подключение…», «Сообщение ещё не загружено», «Не отправлено» —
-  этого достаточно.
-- Найденная после сдачи регрессия сначала получает воспроизводящий тест, потом
-  фикс.
-- Отчёт в конце: что сделано, что проверено (какой командой или прогоном), что
-  не сделано и почему.
+- Micro-scope: one behaviour per change, commits incremental. A live run of the
+  affected scenario on the simulator, then `make check`.
+- Commits and PRs without `Co-Authored-By`.
+- Everything in the repository is in English: comments, commit messages,
+  documentation, run reports. Comments describe only the current behaviour;
+  change history lives in git. Existing Russian content is translated by separate
+  continuous passes — do not translate it along the way in your own diff.
+- User-facing interface strings live in a localization catalog with English as
+  the base language; there should be no text hardcoded in the code.
+- The product fixes its own failures itself: a retry in the background, with no
+  human involved. The user hears only about what needs their decision. An action
+  button appears only if the action really changes something.
+- A lost or unreadable message is a defect, not an interface state. First remove
+  the cause and fix it automatically (a retry, a request to the sender), and only
+  as a last resort show something. Zero unreadable messages in a live run —
+  otherwise the run is red.
+- The interface reports the state, not the cause and not who is to blame. We do
+  not push it onto the user («попросите отправителя») and we do not blame third
+  parties or circumstances («сервер недоступен», «плохая сеть», «у собеседника
+  старая версия»). «Подключение…», «Сообщение ещё не загружено», «Не отправлено»
+  is enough.
+- A regression found after delivery gets a reproducing test first, then the fix.
+- A report at the end: what was done, what was verified (with which command or
+  run), what was not done and why.
