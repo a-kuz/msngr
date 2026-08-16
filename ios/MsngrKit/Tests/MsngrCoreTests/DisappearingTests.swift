@@ -2,8 +2,9 @@ import XCTest
 import GRDB
 @testable import MsngrCore
 
-/// Исчезающие сообщения: срок ставится и входящим, и своим, и подгруженным из
-/// истории, а свип уносит с устройства то, чему срок вышел.
+/// Disappearing messages: the deadline is stamped on incoming messages, on our own,
+/// and on ones paged in from history, and the sweep takes what has expired off the
+/// device.
 final class DisappearingTests: XCTestCase {
     private func makeEngine(db: DatabaseQueue) throws -> SyncEngine {
         let api = APIClient(baseURL: URL(string: "http://localhost:1")!)
@@ -23,20 +24,20 @@ final class DisappearingTests: XCTestCase {
         }
     }
 
-    /// Своё сообщение получает срок в момент, когда оно ушло: пока оно лежит в
-    /// очереди без сети, отсчитывать нечего.
+    /// Our own message gets its deadline at the moment it went out: while it sits in
+    /// the queue without a network there is nothing to count down.
     func testOwnMessageGetsItsDeadlineFromTheAck() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
         try await makeChat(db, ttl: 60)
 
         var content = ContentPayload(kind: "text")
-        content.text = "исчезнет"
+        content.text = "will disappear"
         try await engine.enqueue(content: content, chatId: "c1", clientMsgId: "local-1")
         var expires = try await db.read { dbc in
             try Double.fetchOne(dbc, sql: "SELECT expiresAt FROM message WHERE id = 'local-1'")
         }
-        XCTAssertNil(expires, "не отправленному сроку идти неоткуда")
+        XCTAssertNil(expires, "an unsent message has no clock to run from")
 
         await engine.apply(try JSONDecoder().decode(WSIncoming.self, from: Data("""
         {"t":"sent","chatId":"c1","clientMsgId":"local-1","msgId":"srv-1","seq":1,"ts":2}
@@ -48,15 +49,15 @@ final class DisappearingTests: XCTestCase {
         XCTAssertEqual(expires!, Date().timeIntervalSince1970 + 60, accuracy: 5)
     }
 
-    /// Подгруженное из истории помечается так же, иначе пагинация вверх
-    /// возвращала бы то, чему срок вышел, и оно оставалось бы навсегда.
+    /// What is paged in from history is stamped the same way, or paging up would
+    /// bring back what has already expired, and it would stay forever.
     func testHistoricMessageGetsDeadline() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
         try await makeChat(db, ttl: 60)
 
         var content = ContentPayload(kind: "text")
-        content.text = "старое"
+        content.text = "an old one"
         await engine.storeHistoric(content: content, chatId: "c1", msgId: "srv-9", seq: 9,
                                    from: "peer", sentAt: 1, ts: 1)
 
@@ -66,9 +67,9 @@ final class DisappearingTests: XCTestCase {
         XCTAssertNotNil(expires)
     }
 
-    /// Свип уносит просроченное и оставляет остальное. Seq выше syncedSeq
-    /// закрывается записью historyGap: без неё пагинация снова просила бы у
-    /// сервера диапазон, ключей к которому уже нет.
+    /// The sweep takes the expired and leaves the rest. A seq above syncedSeq is
+    /// closed off with a historyGap row: without it pagination would ask the server
+    /// again for a range whose keys are already gone.
     func testSweepRemovesExpiredAndClosesTheGap() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
@@ -96,17 +97,17 @@ final class DisappearingTests: XCTestCase {
              try Int.fetchAll(dbc, sql: "SELECT seq FROM historyGap WHERE chatId = 'c1'"))
         }
         XCTAssertEqual(left, ["m2", "m3"])
-        XCTAssertEqual(gap, [5], "просроченный seq закрыт, чтобы его не просили заново")
+        XCTAssertEqual(gap, [5], "the expired seq is closed off so it is not asked for again")
     }
 
-    /// Чат без TTL сроков не проставляет и свипом не задевается.
+    /// A chat with no TTL stamps no deadlines and the sweep does not touch it.
     func testChatWithoutTTLKeepsEverything() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
         try await makeChat(db, ttl: 0)
 
         var content = ContentPayload(kind: "text")
-        content.text = "остаётся"
+        content.text = "stays put"
         await engine.applyContent(content, chatId: "c1", msgId: "srv-1", seq: 1,
                                   from: "peer", sentAt: 1, ts: 1)
         await engine.sweepExpiredMessages()

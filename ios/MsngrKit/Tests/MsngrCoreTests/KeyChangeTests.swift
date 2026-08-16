@@ -2,8 +2,8 @@ import XCTest
 import GRDB
 @testable import MsngrCore
 
-/// Смена identity-ключа в группе. Отправку блокирует ключ любого участника,
-/// поэтому и принимается она по всему составу, а не по одному собеседнику.
+/// An identity key change in a group. Any member's key blocks sending, so the
+/// acceptance covers the whole roster rather than a single peer.
 final class KeyChangeTests: XCTestCase {
     private func makeEngine(db: DatabaseQueue) throws -> (SyncEngine, IdentityStore) {
         let api = APIClient(baseURL: URL(string: "http://localhost:1")!)
@@ -14,8 +14,8 @@ final class KeyChangeTests: XCTestCase {
                            ownUserId: "me", ownDeviceId: "dev"), store)
     }
 
-    /// Ключ сменился у участника группы, который не «собеседник»: принятие
-    /// снимает ожидание с него и возвращает заблокированную отправку в очередь.
+    /// The key changed for a group member who is not "the peer": accepting clears
+    /// the pending state for them and returns the blocked send to the queue.
     func testAcceptCoversEveryMemberOfTheChat() async throws {
         let db = try AppDatabase.openInMemory()
         let (engine, store) = try makeEngine(db: db)
@@ -28,12 +28,12 @@ final class KeyChangeTests: XCTestCase {
             try OutboxItem(clientMsgId: "c1", chatId: "g1", createdAt: 1,
                            payload: Data("{}".utf8), state: "blocked").save(dbc)
         }
-        // боб пришёл с новым ключом — TOFU ставит его в ожидание
+        // bob showed up with a new key: TOFU puts it in the pending state
         _ = try store.checkTrust(userId: "bob", identitySigning: "k1")
         guard case .changed = try store.checkTrust(userId: "bob", identitySigning: "k2") else {
-            return XCTFail("смена ключа должна распознаваться как changed")
+            return XCTFail("a key change must be recognized as changed")
         }
-        // участник, который не менял ключ, принятием не затрагивается
+        // a member whose key did not change is untouched by the acceptance
         _ = try store.checkTrust(userId: "alice", identitySigning: "ka")
 
         await engine.acceptKeyChange(chatId: "g1")
@@ -44,12 +44,12 @@ final class KeyChangeTests: XCTestCase {
              try String.fetchOne(dbc, sql: "SELECT state FROM outbox WHERE clientMsgId = 'c1'")!)
         }
         XCTAssertEqual(pending, 0)
-        XCTAssertEqual(current, "k2", "принятый ключ становится доверенным")
-        XCTAssertEqual(outbox, "ready", "заблокированная отправка возвращается в очередь")
+        XCTAssertEqual(current, "k2", "an accepted key becomes the trusted one")
+        XCTAssertEqual(outbox, "ready", "a blocked send returns to the queue")
     }
 
-    /// Смена ключа у постороннего пользователя чат не разблокирует: принятие
-    /// идёт по составу, а не по всей таблице доверия.
+    /// A key change for an outsider does not unblock the chat: acceptance runs over
+    /// the roster, not over the whole trust table.
     func testAcceptLeavesOutsidersPending() async throws {
         let db = try AppDatabase.openInMemory()
         let (engine, store) = try makeEngine(db: db)

@@ -1,8 +1,8 @@
 import XCTest
 @testable import MsngrCore
 
-/// Правило «удалить у всех» одно на все клиенты: чужое сообщение сервер
-/// тумбстоунит только администратору группы, в переписке — никому.
+/// The "delete for everyone" rule is one for every client: someone else's message
+/// the server tombstones for a group admin alone, and in a direct chat for no one.
 final class MessageDeletionTests: XCTestCase {
     private func message(id: String, outgoing: Bool) -> Message {
         Message(id: id, chatId: "c1", fromUserId: outgoing ? "me" : "peer", sentAt: 1,
