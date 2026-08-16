@@ -71,6 +71,10 @@ final class VoiceTests: XCTestCase {
             XCTAssertTrue(row.waitForExistence(timeout: 15), "search did not find the user \(peer)")
             row.tap()
         }
+        // the first message from someone new arrives as a request, and its content stays
+        // closed until it is accepted; the side that started the chat never sees this
+        let accept = app.buttons["request.accept"]
+        if accept.waitForExistence(timeout: 3) { accept.tap() }
         XCTAssertTrue(app.textViews["chat.input"].waitForExistence(timeout: 15), "the chat never opened")
     }
 
@@ -233,6 +237,25 @@ final class VoiceTests: XCTestCase {
         XCTAssertEqual(voiceCount(), before, "the dropped take was sent anyway")
     }
 
+    /// The app leaves the foreground mid-take, the way an incoming call takes it away:
+    /// the recording stops and nothing is sent. A call cannot be raised on a simulator, so
+    /// this is as close as the run gets; the audio session interruption itself is checked
+    /// in `RecordingGestureTests`.
+    func testE1_LeavingTheAppDropsTheTake() {
+        openPeerChat()
+        XCTAssertTrue(mic.waitForExistence(timeout: 10), "no microphone button")
+        let before = voiceCount()
+        micCenter().press(forDuration: 1.0,
+                          thenDragTo: micCenter().withOffset(CGVector(dx: 0, dy: -110)))
+        XCTAssertTrue(recordingBar.waitForExistence(timeout: 3), "the recording never locked")
+        XCUIDevice.shared.press(.home)
+        Thread.sleep(forTimeInterval: 2)
+        app.activate()
+        XCTAssertFalse(recordingBar.waitForExistence(timeout: 5),
+                       "the recording survived the app leaving the foreground")
+        XCTAssertEqual(voiceCount(), before, "the dropped take was sent anyway")
+    }
+
     /// The message in the feed plays, the position moves along the wave, and the speed
     /// button is on the message being played.
     func testF_PlaybackRunsAndSpeedSticks() {
@@ -252,6 +275,31 @@ final class VoiceTests: XCTestCase {
         XCTAssertEqual(rateButton.label, "Скорость 1,5×", "the speed button did not step to 1,5×")
         rateButton.tap()
         XCTAssertEqual(rateButton.label, "Скорость 2×", "the speed button did not step to 2×")
+    }
+
+    /// The speed is not just a caption on a button: at 2× the position walks the wave
+    /// about twice as fast. The take is recorded here because the measurement needs a
+    /// message long enough to outlast both samples.
+    func testF1_SpeedReallyPlaysFaster() {
+        openPeerChat()
+        sendVoice(seconds: 20)
+        newestPlay.tap()
+        XCTAssertTrue(rateButton.waitForExistence(timeout: 5),
+                      "the message being played has no speed button")
+        Thread.sleep(forTimeInterval: 0.5)
+        let oneFrom = progress()
+        Thread.sleep(forTimeInterval: 3)
+        let atOne = progress() - oneFrom
+        XCTAssertGreaterThan(atOne, 0, "the position stayed at the start")
+
+        rateButton.tap()
+        rateButton.tap()
+        XCTAssertEqual(rateButton.label, "Скорость 2×", "the speed button did not reach 2×")
+        let twoFrom = progress()
+        Thread.sleep(forTimeInterval: 3)
+        let atTwo = progress() - twoFrom
+        XCTAssertGreaterThan(atTwo, Int(Double(atOne) * 1.5),
+                             "three seconds moved the position by \(atOne)% at 1× and \(atTwo)% at 2×")
     }
 
     /// A message keeps playing while the reader walks out to the list and back, and the
