@@ -1,307 +1,357 @@
-# UI: как это устроено сейчас
+# UI: how it works today
 
-Описание фактического поведения клиента. Константы — из кода
+A description of what the client actually does. The constants come from the code
 (`ios/Msngr/Chat/*`, `ios/Msngr/ChatList/*`, `ios/Msngr/App/Theme.swift`).
-
-## Лента сообщений
-
-`UICollectionView` + `UICollectionViewFlowLayout`, обёрнут в SwiftUI через
-`UIViewControllerRepresentable`. Лента инвертирована: у коллекции
-`transform = scaleY(-1)`, каждая ячейка контр-инвертирована, низ чата —
-`contentOffset 0`, инсеты меняются местами.
-
-Diffable data source не используется: `apply(_:)` считает дифф по id вручную.
-Если состав id не изменился — только точечное обновление изменившихся ячеек;
-иначе вставки/удаления в `performWithoutAnimation { performBatchUpdates }`.
-Полный `reloadData()` — только при сложной перестановке или когда
-`deletes + inserts >= 60`.
-
-Обновление живой ячейки идёт через переконфигурацию на месте, если высота не
-изменилась (`|Δh| < 0.5`); `reloadItems` оборвал бы анимацию появления, когда
-ack `sending → sent` приходит в первые миллисекунды после вставки.
-
-Лента читается из БД `LIMIT 500`, порядок `COALESCE(seq, 999999999) DESC, sentAt DESC`.
-Пагинация вверх: при подходе к верхнему краю (600 pt) `loadOlder()` тянет
-`api.history` пачками по 50 от локального `MIN(seq)`, расшифровывает и кладёт
-через `engine.storeHistoric`. Кэш layout-планов — `NSCache`, ключ включает id,
-ширину, флаги группировки и хэш контента; сбрасывается при смене ширины и палитры.
-
-Клавиатура: `keyboardDismissMode = .interactive`, инсеты считаются вручную из
-safe area и фрейма клавиатуры. Если лента стояла у низа — после смены инсетов
-возвращается к низу.
-
-## Баббл: размещение статуса
-
-Блок статуса = время `HH:mm` (от `serverTs ?? sentAt`) + «изм. » при правке +
-галочки у исходящих (20 pt). Константы: текст 17 pt, время 12 pt, имя 14 pt
-semibold, горизонтальный паддинг 12, вертикальный 7, боковой отступ 10,
-скругление 17, максимальная ширина баббла — 0.76 ширины экрана, зазор
-текст↔статус 6.
-
-Порядок разбора в `BubbleLayout`:
-
-1. **Медиа без подписи и альбомы** — статус капсулой поверх изображения в
-   правом нижнем углу (высота 20, отступ 18 от правого края). Реакции ложатся
-   рядами под медиа.
-2. **Есть реакции** — если текст однострочный и `текст + капсулы + статус`
-   влезают в контентную ширину, всё идёт одной строкой. Иначе капсулы занимают
-   свои ряды, а статус садится в конец последнего ряда, если помещается, и
-   уходит на строку ниже, если нет.
-3. **Текст без реакций** — если `ширина последней строки + 6 + ширина статуса`
-   не превышает контентную ширину, статус стоит в последней строке; иначе
-   выталкивается на отдельную строку.
-4. **Голосовое и файл без реакций** — статус в правом нижнем углу той же строки.
-
-Статус всегда прижат к правому краю баббла. Ширина баббла не меньше ширины
-статуса с паддингами.
-
-Медиа: фото и видео — ширина во весь баббл, высота `min(max(w / aspect, 120), 420)`.
-Альбом раскладывается `AlbumMosaic` (фиксированные паттерны на 1–4 фото, для
-большего — перебор разбиений на строки по 2–3 со штрафом за искажение
-пропорций). У мозаики скругляются только внешние углы сетки. Видео получает
-иконку `play.circle.fill` 44×44 по центру. Плейсхолдер — blurhash 32×32,
-реальная картинка проявляется кросс-фейдом 0.18 с.
-
-Reply-плашка: ширина до 220, высота 36, вертикальная полоска 3 pt, автор 13 pt
-semibold, текст 13 pt. Форвард — строка «Переслано от …», курсив 13 pt.
-Реакции — капсулы высотой 26, скругление 13, обводка 0.5; порядок стабильный
-(по убыванию счётчика, при равенстве по эмодзи); своя реакция залита акцентом;
-перенос на новый ряд по ширине баббла.
-
-## Группировка в серии
-
-Сообщения одного автора объединяются в серию, если совпадает `fromUserId`,
-разница `sentAt` строго меньше 60 секунд, тот же календарный день и ни одно не
-системное. Внутри серии зазор над бабблом 2 pt, между сериями — 8 pt (зазор
-всегда сверху, внутри ячейки).
-
-Хвостик баббла рисуется только у последнего сообщения серии (у самого нового).
-Имя автора показывается у первого в серии, только во входящих и только в группе
-(`members.count > 2`); цвет имени — стабильный хэш userId по палитре из 7 цветов.
-Аватаров в ленте нет.
-
-Разделители дат — обычные ячейки («Сегодня», «Вчера», иначе дата), капсула
-высотой 22 на полупрозрачном чёрном. Плавающих (sticky) заголовков нет.
-
-## Плашка непрочитанных
-
-Полоса во всю ширину с текстом «N непрочитанных сообщений» (склонение по
-mod100/mod10: «1 непрочитанное сообщение», «2 непрочитанных сообщения»,
-«5 непрочитанных сообщений»). Логика — `UnreadMarkerState`, пять правил:
-
-1. Вход в чат с непрочитанными: якорь `myReadUpTo + 1`, счётчик = `unreadCount`.
-   Без непрочитанных плашки нет.
-2. Входящее при открытом чате: счётчик растёт, якорь не двигается.
-3. Своя отправка или своя реакция снимает плашку; после этого входящие её не
-   оживляют, пока экран видим.
-4. Уход в фон или шторку снимает плашку, накопитель обнуляется.
-5. Возврат на экран: накопленное за отсутствие становится новой плашкой; если
-   ничего не приходило, старая не возвращается.
-
-Плашка вставляется над первым непрочитанным, её id `unread:<anchorSeq>`
-стабилен при росте счётчика. При открытии чата лента сразу скроллится к плашке.
-Исчезновение анимируется (единственное удаление в диффе идёт без обёртки
-`performWithoutAnimation`).
-
-## Оптимистичная отправка и офлайн
-
-`enqueue` в одной транзакции пишет сообщение со статусом `sending` и строку
-outbox; UI видит сообщение до того, как оно ушло в сеть (лента — `ValueObservation`
-над SQLite). Медиа сначала кладётся в постоянную папку `media-outgoing`, выгрузку
-делает outbox-воркер, поэтому вложение, приложенное офлайн, не теряется.
-
-Статусы и значки: `failed` — `exclamationmark.circle.fill` красный,
-`sending` — часики, `sent` — одна галочка, `delivered` и `read` — двойная
-галочка, различаются только цветом (`read` — `outgoingTickRead` палитры).
-
-Подзаголовок шапки при разорванном сокете — «подключение…».
-
-## Анимации
-
-- Вылет исходящего из поля ввода: старт от точки у кнопки отправки,
-  `scale 0.15`, alpha 0.5; пружина 0.6 с, damping 0.72, velocity 1.1; контент
-  баббла проявляется отдельно (0.25 с с задержкой 0.18).
-- Появление входящего: сдвиг на 14 pt и `scale 0.96`, alpha 0.4; пружина 0.42 с,
-  damping 0.82. Обе анимации запускаются после layout вставленной ячейки.
-- Скролл к низу при чужом сообщении — только если пользователь был у низа
-  (`contentOffset.y < 60`); своё сообщение доскролливается мгновенно.
-- Контекстное меню: long-press 0.35 с и `Haptics.medium()`; бэкдроп
-  `systemUltraThinMaterial` 0.25 с; снапшот баббла — пружина 0.45/0.8; панель
-  реакций и карточка из `scale 0.2` — 0.4 с, задержка 0.05, damping 0.75;
-  эмодзи каскадом 0.35 с с шагом 0.03. Закрытие — 0.3 с, damping 0.9. Переход в
-  подменю удаления — кроссдиссолв 0.2 с.
-- Свайп-reply: пан начинается только при горизонтальном движении вправо, ход
-  ограничен 90 pt с резистенцией `60 * (1 - exp(-x/60))`, иконка проявляется по
-  ходу, порог срабатывания 44 pt с `Haptics.medium()`, возврат — пружина 0.35/0.8.
-- Реакции: появление новой капсулы — 0.4 с, damping 0.6 из `scale 0.5`; тап по
-  капсуле — 0.12 с до 1.25 и обратно.
-- Двойной тап по бабблу ставит «❤️» с `Haptics.medium()`.
-- Кнопка «вниз»: появляется, когда самое новое сообщение (item 0 инвертированной
-  ленты) не видно на экране; переход `scale + opacity` пружиной `Theme.springFast`.
-  Тот же признак включает отметку прочтения, поэтому открытие чата с плашкой
-  непрочитанных, когда сами непрочитанные на экране, кнопку не показывает.
-
-Пружины темы: `springFast` 0.35/0.82, `spring` 0.45/0.84, `springSlow` 0.55/0.86.
-
-## Контекстное меню
-
-Пункты: «Ответить», «Копировать» (только текст), «Переслать», «Закрепить»,
-«Изменить» (только своё текстовое), «Удалить» → подменю «Удалить у меня» /
-«Удалить у всех». Для сообщения, удалённого у всех, меню не открывается.
-
-Ряд реакций: «❤️», «👍», «🔥», «😂», «😮», «😢». Своя текущая подсвечена.
-Ширина карточки 252, высота строки 44, меню и панель прижимаются к стороне
-баббла.
-
-## Медиа
-
-Фото: даунскейл длинной стороны до 1280, JPEG качества 0.8, blurhash
-кодируется по копии 32 px (4×3 компоненты). Несколько фото уходят одним
-сообщением-альбомом.
-
-Видео: экспорт `AVAssetExportPreset1280x720` в mp4 с `shouldOptimizeForNetworkUse`
-(faststart), кадр на 0.1 с как превью (отдельный блоб + blurhash), длительность
-и размеры в `MediaInfo`.
-
-Файлы: до 100 МБ, имя сохраняется в `MediaInfo.name`.
-
-Просмотрщик — отдельное `UIWindow` поверх навбара: пейджинг по альбому, пинч-зум
-(двойной тап 1 ↔ 2.5), закрытие вертикальным свайпом с порогом 120 pt и
-затемнением по ходу, кнопка закрытия и `ShareLink`. Видео проигрывается
-`VideoPlayer` после полной загрузки файла; потокового воспроизведения нет.
-
-Кэш медиа плоский (`<mediaId>.<ext>`, plaintext на диске), расширение выводится
-из MIME, потому что AVPlayer определяет контейнер по нему. Скачанное
-проверяется по SHA-256 ciphertext до расшифровки.
-
-## Голосовые
-
-Запись по удержанию микрофона (жест начинается с первого `onChanged`). Формат —
-m4a, AAC, 24 кГц, моно, 48 кбит/с. Записи короче 0.3 с отбрасываются
-(случайное касание), всё длиннее — полноценное сообщение.
-
-Во время записи: пульсация кнопки, таймер с десятыми, живая волна (таймер 0.05 с,
-`averagePower` из −60…0 дБ, последние 60 значений). Свайп влево дальше 110 pt —
-отмена, вверх дальше 70 pt — фиксация записи (lock), после чего появляются
-кнопки «Отмена» и отправки.
-
-В сообщении едет waveform из 100 бакетов со значениями 0…31, посчитанный по
-готовому файлу. Баббл голосового фиксированный: 220×42, кнопка воспроизведения
-40×40, волна высотой 22, длительность под волной. Тап и пан по волне — seek.
-Файловый баббл использует тот же слот: ширина до 240, высота 42.
-
-## Поле ввода
-
-Растущий `UITextView` (17 pt, скругление 18): от 36 pt до 6 строк (142 pt),
-дальше скролл; плейсхолдер «Сообщение». Кнопка справа: стрелка отправки при
-непустом тексте или зафиксированной записи, иначе микрофон.
-
-Меню вложений (иконка `plus`): «Фото или видео», «Файл».
-
-Плашка над полем работает и для ответа, и для правки (приоритет у правки):
-заголовок «Редактирование» или имя автора, ниже однострочное превью, крестик
-сбрасывает режим. Черновик пишется в `chat.draft` на каждое изменение текста и
-восстанавливается при открытии чата, если поле пустое. Тот же обработчик шлёт
-typing с троттлингом 3 с.
-
-## Экран чата
-
-Шапка: аватар 40×40, заголовок, подзаголовок — «подключение…», «печатает…»
-(в группе с именем), «N участников», «в сети» или «был(а) …».
-
-Закреплённое сообщение — бар сверху, тап скроллит к сообщению.
-Заявка на переписку занимает весь экран вместо ленты: аватар 96×96, имя,
-юзернейм, «хочет вам написать», пояснение «Сообщения откроются после принятия»
-и кнопки «Принять» и «Заблокировать». Поля ввода нет, пришедшие сообщения на
-экран не попадают; «Принять» раскрывает всю накопленную историю, «Заблокировать»
-удаляет чат локально и закрывает экран.
-Смена ключа собеседника — баннер «Код безопасности изменился»
-с пояснением, что сообщения не отправляются, пока ключ не принят.
-Пустой чат — «Напишите первое сообщение» и отметка о сквозном шифровании.
-
-Системные сообщения в ленте показываются человеческим текстом:
-`identity_changed:<uid>` → «Код безопасности собеседника изменился»,
-`undecryptable` → «Сообщение не может быть расшифровано на этом устройстве».
-
-## Информация о чате
-
-Личка: код безопасности (60 цифр группами по 5, ключ собеседника при
-необходимости дотягивается из prekey-бандла), «Заблокировать», «Без звука»,
-автоудаление («Выкл», «24 часа», «7 дней», «90 дней» — уходит служебным
-сообщением `disappearing`).
-
-Группа: список участников (метка «админ» у создателя), удаление участника
-свайпом, добавление через поиск, ссылка-приглашение с копированием в буфер,
-выход из группы. Выдача и снятие ролей из интерфейса недоступны — права
-проверяет сервер.
-
-## Чат-лист
-
-Строка: аватар 54×54 с точкой онлайна, заголовок (для лички — имя собеседника),
-иконка mute, галочки последнего сообщения (только если оно исходящее), время
-(сегодня `HH:mm`, на этой неделе день недели, иначе `dd.MM.yy`), превью и
-бейдж непрочитанных. Бейдж и иконка закрепления взаимоисключающи: без
-непрочитанных на этом месте рисуется `pin`.
-
-Приоритет превью: заявка до принятия → печатает → «Черновик: …» → последнее
-сообщение («Сообщение удалено», «Фото», «Видео», «Голосовое сообщение», имя
-файла, «Альбом», иначе текст). Медиа-превью рисуются иконкой SF Symbols в
-цвете акцента; системные сообщения в превью не попадают. У заявки до принятия
-вместо превью «Новая заявка», бейджа непрочитанных и галочек нет.
-
-Сортировка: закреплённые сверху, дальше по `lastActivityAt`. Заявки и архив
-вынесены в отдельные секции, заявка «сильнее» архива. Свайпы: справа — архив и
-mute, слева — закрепить; в заявках — «Принять» и «Заблокировать»; в архиве —
-«Из архива». Все действия сначала пишутся в локальную БД, потом уходят на сервер.
-
-Поиск — одно поле и три секции. «Чаты»: заголовок и юзернейм собеседника среди
-активных и архивных, фильтруется на нажатие клавиши, из уже загруженного
-списка. «Сообщения»: полнотекст по `messageFts` страницами, свежие совпадения
-выше, в строке — кусок текста с подсвеченным словом; тап открывает чат на этом
-сообщении. «Люди»: тот же серверный поиск, что в листе нового чата, от двух
-символов. Медленные секции ищутся после паузы в наборе и не задерживают чаты;
-пока сообщения ищутся, на их месте состояние «Ищем в переписке…». Чат-заявка до
-принятия в выдачу по тексту не попадает.
-
-Пустое состояние: «Нет чатов» с кнопкой «Начать переписку».
-
-Новый чат: поиск по юзернейму/имени от двух символов; контакты синхронизируются
-только по явному тапу «Найти по контактам» (номер → E.164 → SHA-256 → discover),
-имя из адресной книги приоритетнее серверного; режим группы с названием и
-выбором участников.
-
-## Темы
-
-Три палитры, выбор в настройках («Оформление», карточки-превью), хранится в
-`UserDefaults` по ключу `palette`, по умолчанию — `graphite`:
-
-- `iMessage` — нейтральный светлый фон, синий исходящий, серый входящий;
-- `Telegram` — фон с лёгким зелёным тоном, мятный исходящий, синий акцент;
-- `Графит` — кремовый фон, индиго исходящий, оранжевый акцент.
-
-Каждая палитра задаёт фон чата, цвета бабблов, акцент, цвет прочитанных
-галочек, цвет текста и метаданных исходящего — раздельно для светлой и тёмной
-темы. Смена палитры чистит кэш фонов бабблов, шлёт `paletteChanged` и
-форсирует `reloadData()` ленты.
-
-## Уведомления
-
-- Приложение активно, чат не открыт — свой in-app баннер сверху (отдельное
-  окно, автоскрытие 3.5 с, тап открывает чат, свайп вверх закрывает).
-- Приложение активно, чат открыт — ничего.
-- Догнавший системный пуш гасится в `willPresent`, если чат открыт, баннер по
-  этому msgId уже показан, сообщение уже в БД, уже прочитано или чат muted.
-- В фоне in-app баннера нет: показывается системный пуш.
-- Бейдж — сумма `unreadCount` по чатам из локальной БД без заявок до принятия;
-  при обнулении непрочитанных доставленные уведомления этого чата снимаются
-  из шторки.
-- По заявке до принятия баннер несёт имя отправителя и «Новая заявка» вместо
-  превью.
-
-## Пин-код и приватность
-
-Пин 4 цифры, хранится как SHA-256(соль + пин) в `UserDefaults`. Face ID
-включается отдельным тумблером и предлагается автоматически на экране
-блокировки. Авто-лок — возврат из фона позже 30 секунд; при запуске с
-установленным пином экран блокируется сразу. В app switcher поверх содержимого
-рисуется `ultraThinMaterial` со значком.
+Interface text is quoted in Russian because that is what ships.
+
+## The message feed
+
+A `UICollectionView` with a `UICollectionViewFlowLayout`, wrapped into SwiftUI
+through `UIViewControllerRepresentable`. The feed is inverted: the collection
+carries `transform = scaleY(-1)`, every cell is counter-inverted, the bottom of
+the chat is `contentOffset 0`, and the insets swap ends.
+
+There is no diffable data source. `apply(_:)` computes the diff over ids by
+hand. If the set of ids has not changed, only the cells whose content changed
+are updated; otherwise the inserts and deletes go through
+`performWithoutAnimation { performBatchUpdates }`. A full `reloadData()` is kept
+for a complicated reordering, or when `deletes + inserts >= 60`.
+
+A live cell is updated by reconfiguring it in place as long as its height held
+(`|Δh| < 0.5`). `reloadItems` would cut off the appearance animation when the
+`sending → sent` ack lands in the first milliseconds after the insert.
+
+What the feed reads is a window rather than the whole chat. `FeedWindow` holds a
+floor and a capacity of `HistoryWindow.pageSize` (60); while the reader sits at
+the bottom the floor is recomputed on every change and the window slides, and
+while they read history it stays put. Order is `COALESCE(seq, 999999999) DESC,
+sentAt DESC`. Coming within 600 pt of the top edge, `loadOlder()` drops the
+floor by another page over what is already in the database; only when the local
+history runs out does it ask the server, and then only for the seq gaps this
+device has never decrypted, handing what comes back to `engine.storeHistoric`.
+Layout plans are cached in an `NSCache` whose key covers
+the id, the width, the grouping flags and a hash of the content; the cache is
+dropped when the width, the palette or the type size changes.
+
+The keyboard uses `keyboardDismissMode = .interactive` and the insets are
+computed by hand from the safe area and the keyboard frame. A feed that was at
+the bottom returns to the bottom once the insets change.
+
+## The bubble: where the status sits
+
+The status block is the time `HH:mm` (from `serverTs ?? sentAt`), plus «изм. »
+on an edited message, plus the ticks on outgoing ones (20 pt). Sizes are named
+roles in `Theme.Text` rather than numbers at the call site — text 17 pt, time
+12 pt, name 14 pt semibold — each scaled through `UIFontMetrics` up to its own
+ceiling. The rest of the geometry: horizontal padding 12, vertical 7, side
+inset 10, corner radius 17, a bubble at most 0.76 of the screen wide, and 6 pt
+between the text and the status.
+
+`BubbleLayout` decides in this order:
+
+1. **Media with no caption, and albums** — the status becomes a capsule over the
+   image in the bottom right corner (height 20, inset 18 from the right edge).
+   Reactions go in rows underneath the media.
+2. **There are reactions** — if the text is a single line and `text + capsules +
+   status` fit the content width, everything sits on one line. Otherwise the
+   capsules take their own rows and the status joins the end of the last row if
+   it fits, dropping to a line of its own if it does not.
+3. **Text with no reactions** — if `last line width + 6 + status width` is
+   within the content width, the status stays on the last line; otherwise it is
+   pushed onto its own.
+4. **Voice and files with no reactions** — the status sits in the bottom right
+   of the same row.
+
+The status is always flush with the right edge of the bubble, and the bubble is
+never narrower than the status plus its padding.
+
+Media: photos and videos are as wide as the bubble, with height
+`min(max(w / aspect, 120), 420)`. An album is laid out by `AlbumMosaic` — fixed
+patterns for one to four photos, and for more than that a search over splits
+into rows of two or three, penalised by how much each split distorts the
+proportions. Only the outer corners of the mosaic grid are rounded. A video gets
+a 44×44 `play.circle.fill` in the middle. The placeholder is a 32×32 blurhash
+and the real image cross-fades in over 0.18 s.
+
+The reply strip is up to 220 wide and 36 high, with a 3 pt vertical bar, the
+author at 13 pt semibold and the text at 13 pt. A forward is the line
+«Переслано от …» in 13 pt italic. Reactions are capsules 26 high, corner radius
+13, 0.5 pt stroke, ordered stably by descending count and then by emoji; your
+own reaction is filled with the accent colour; rows wrap at the bubble width.
+
+## Grouping into runs
+
+Messages from one author join a run when `fromUserId` matches, the `sentAt`
+difference is strictly under 60 seconds, the calendar day is the same and
+neither message is a system one. Inside a run the gap above a bubble is 2 pt,
+between runs 8 pt; the gap always lives at the top, inside the cell.
+
+The bubble tail is drawn only on the last message of a run, which is the newest
+one. The author's name shows on the first message of a run, only on incoming
+messages and only in a group (`members.count > 2`); its colour is a stable hash
+of the userId over a palette of seven. There are no avatars in the feed.
+
+Date separators are ordinary cells («Сегодня», «Вчера», otherwise the date), a
+capsule 22 high on translucent black. Nothing is sticky.
+
+## The unread banner
+
+A full-width strip reading «N непрочитанных сообщений», declined by mod100 and
+mod10 («1 непрочитанное сообщение», «2 непрочитанных сообщения», «5 непрочитанных
+сообщений»). `UnreadMarkerState` holds five rules:
+
+1. Entering a chat with unread messages anchors the banner at `myReadUpTo + 1`
+   with `unreadCount` as its number. With nothing unread there is no banner.
+2. A message arriving while the chat is open raises the number and leaves the
+   anchor alone.
+3. Sending something, or reacting, clears the banner; incoming messages do not
+   bring it back while the screen is visible.
+4. Going to the background or into the notification shade clears it and resets
+   the accumulator.
+5. Coming back to the screen turns whatever arrived while away into a new
+   banner; if nothing arrived, the old one does not return.
+
+The banner is inserted above the first unread message and its id,
+`unread:<anchorSeq>`, stays stable as the count grows. Opening the chat scrolls
+straight to it. Its disappearance is animated: this is the one delete in the
+diff that is not wrapped in `performWithoutAnimation`.
+
+## Optimistic send and offline
+
+`enqueue` writes the message with status `sending` and the outbox row in one
+transaction, so the UI has the message before it reaches the network — the feed
+is a `ValueObservation` over SQLite. Media goes into the permanent
+`media-outgoing` folder first and the outbox worker uploads it, which is why an
+attachment picked while offline is not lost.
+
+Statuses and their glyphs: `failed` is a red `exclamationmark.circle.fill`,
+`sending` a clock, `sent` one tick, `delivered` and `read` a double tick that
+differ only in colour (`read` uses the palette's `outgoingTickRead`).
+
+With the socket down the header subtitle reads «подключение…».
+
+## Animations
+
+- An outgoing message leaving the input field starts near the send button at
+  `scale 0.15` and alpha 0.5; a 0.6 s spring, damping 0.72, velocity 1.1, with
+  the bubble content fading in separately (0.25 s after a 0.18 s delay).
+- An incoming message arrives from 14 pt away at `scale 0.96` and alpha 0.4; a
+  0.42 s spring, damping 0.82. Both start after the inserted cell has laid out.
+- Someone else's message scrolls the feed down only if the reader was at the
+  bottom (`contentOffset.y < 60`); your own always scrolls, immediately.
+- The context menu: a 0.35 s long press with `Haptics.medium()`; a
+  `systemUltraThinMaterial` backdrop over 0.25 s; the bubble snapshot on a
+  0.45/0.8 spring; the reaction bar and the card from `scale 0.2` over 0.4 s
+  after a 0.05 s delay, damping 0.75; the emoji cascade 0.35 s at a 0.03 step.
+  Dismissal takes 0.3 s at damping 0.9, and stepping into the delete submenu is
+  a 0.2 s cross-dissolve.
+- Swipe to reply: the pan only starts on horizontal movement to the right,
+  travel is capped at 90 pt with resistance `60 * (1 - exp(-x/60))`, the icon
+  fades in along the way, the threshold is 44 pt with `Haptics.medium()`, and
+  the return is a 0.35/0.8 spring.
+- Reactions: a new capsule appears over 0.4 s at damping 0.6 from `scale 0.5`;
+  tapping a capsule runs 0.12 s up to 1.25 and back.
+- A double tap on a bubble leaves «❤️» with `Haptics.medium()`.
+- The scroll-to-bottom button appears when the newest message (item 0 of the
+  inverted feed) is off screen, transitioning on `scale + opacity` with
+  `Theme.springFast`. The same signal drives the read receipt, so opening a chat
+  whose unread messages are already on screen shows no button.
+
+The theme's springs: `springFast` 0.35/0.82, `spring` 0.45/0.84, `springSlow`
+0.55/0.86.
+
+## The context menu
+
+Items: «Ответить», «Копировать» (text only), «Переслать», «Закрепить»,
+«Изменить» (your own text messages only), and «Удалить» leading to a submenu of
+«Удалить у меня» and «Удалить у всех». A message deleted for everyone does not
+open a menu at all.
+
+The reaction row is «❤️», «👍», «🔥», «😂», «😮», «😢», with your current one
+highlighted. The card is 252 wide with 44 pt rows; the menu and the bar hug the
+side the bubble is on.
+
+## Media
+
+Photos are downscaled to 1280 on the long side and encoded as JPEG at quality
+0.8; the blurhash is computed from a 32 px copy (4×3 components). Several photos
+go out as one album message.
+
+Video is exported through `AVAssetExportPreset1280x720` into mp4 with
+`shouldOptimizeForNetworkUse` (faststart). The frame at 0.1 s becomes the
+preview, as its own blob plus blurhash, and duration and dimensions go into
+`MediaInfo`.
+
+Files go up to 100 MB and keep their name in `MediaInfo.name`.
+
+The viewer is a separate `UIWindow` above the nav bar: it pages through the
+album, pinch-zooms (double tap toggles 1 ↔ 2.5), closes on a vertical swipe past
+120 pt with the backdrop dimming along the way, and offers a close button and a
+`ShareLink`. Video plays through `VideoPlayer` once the file has fully
+downloaded; there is no streaming.
+
+The media cache is flat (`<mediaId>.<ext>`, plaintext on disk) and the extension
+is derived from the MIME type, because that is how AVPlayer identifies the
+container. A download is checked against the SHA-256 of its ciphertext before
+being decrypted.
+
+## Voice messages
+
+Recording runs while the microphone is held; the gesture begins on the first
+`onChanged`. The format is m4a, AAC, 24 kHz, mono, 48 kbit/s. Anything under
+0.3 s is dropped as an accidental touch and anything longer is a real message.
+
+While recording: the button pulses, a timer counts tenths, and a live waveform
+is drawn (a 0.05 s timer over `averagePower` from −60 to 0 dB, keeping the last
+60 values). Swiping left past 110 pt cancels; swiping up past 70 pt locks the
+recording, after which a cancel button and a send button appear.
+
+The message carries a waveform of 100 buckets valued 0 to 31, computed from the
+finished file. The voice bubble is fixed at 220×42 with a 40×40 play button, a
+waveform 22 high and the duration beneath it. Tapping or panning the waveform
+seeks. The file bubble uses the same slot: up to 240 wide, 42 high.
+
+## The input field
+
+A growing `UITextView` (17 pt, corner radius 18) from 36 pt up to six lines
+(142 pt), scrolling beyond that, with the placeholder «Сообщение». The button on
+the right is the send arrow when there is text or a locked recording, and the
+microphone otherwise.
+
+The attachment menu behind the `plus` icon offers «Фото или видео» and «Файл».
+
+The strip above the field serves both replying and editing, with editing taking
+precedence: a title of «Редактирование» or the author's name, a one-line preview
+below it, and a cross that leaves the mode. The draft is written to `chat.draft`
+on every change and restored when the chat opens if the field is empty. The same
+handler sends typing notifications, throttled to 3 s.
+
+## The chat screen
+
+The header carries a 40×40 avatar, the title, and a subtitle that is one of
+«подключение…», «печатает…» (with a name, in a group), «N участников», «в сети»
+or «был(а) …».
+
+A pinned message gets a bar at the top, and tapping it scrolls to the message.
+
+A message request takes the whole screen in place of the feed: a 96×96 avatar,
+the name, the username, «хочет вам написать», the explanation «Сообщения
+откроются после принятия», and the buttons «Принять» and «Заблокировать». There
+is no input field and incoming messages do not reach the screen. «Принять»
+reveals the whole accumulated history; «Заблокировать» deletes the chat locally
+and closes the screen.
+
+When the peer's key changes, a banner reads «Код безопасности изменился» and
+explains that nothing will be sent until the new key is accepted.
+
+An empty chat shows «Напишите первое сообщение» and a note about end-to-end
+encryption.
+
+System messages are rendered as human sentences: `identity_changed:<uid>` as
+«Код безопасности собеседника изменился», `undecryptable` as «Сообщение не может
+быть расшифровано на этом устройстве».
+
+## Chat info
+
+For a direct chat: the safety number (60 digits in groups of 5, fetching the
+peer's key from the prekey bundle if it is not at hand), «Заблокировать», «Без
+звука», and disappearing messages («Выкл», «24 часа», «7 дней», «90 дней»,
+delivered as a `disappearing` service message).
+
+For a group: the member list (the creator marked «админ»), removing a member by
+swipe, adding one through search, an invite link with a copy button, and leaving
+the group. Granting and revoking roles is not exposed in the interface; the
+server checks the rights.
+
+## The chat list
+
+A row holds a 54×54 avatar with an online dot, the title (the peer's name for a
+direct chat), the mute icon, the ticks of the last message (only when it is
+outgoing), the time (`HH:mm` today, the weekday this week, `dd.MM.yy` otherwise),
+the preview and the unread badge. The badge and the pin icon are mutually
+exclusive: with nothing unread, that spot holds the `pin`.
+
+The preview goes by priority: an unaccepted request, then typing, then
+«Черновик: …», then the last message («Сообщение удалено», «Фото», «Видео»,
+«Голосовое сообщение», the file name, «Альбом», otherwise the text). Media
+previews are drawn as SF Symbols in the accent colour, and system messages never
+reach a preview. An unaccepted request shows «Новая заявка» instead of a preview
+and carries neither an unread badge nor ticks.
+
+Sorting puts pinned chats on top and orders the rest by `lastActivityAt`.
+Requests and the archive are separate sections, and a request outranks the
+archive. Swipes: archive and mute from the right, pin from the left; «Принять»
+and «Заблокировать» among the requests; «Из архива» in the archive. Every action
+is written to the local database first and goes to the server afterwards.
+
+Tabs are folders: a rule plus the chats put in and taken out by hand. A chat can
+live in any number of them, and the archive and the requests appear only in
+«Все». Membership is computed once per chat-list emission, so switching a tab
+does not go to the database. A long horizontal swipe over the list switches tabs
+while a short one stays with the row's swipe actions, which is why a row has no
+full swipe.
+
+Search is one field over three sections. «Чаты» matches the title and the peer's
+username across active and archived chats, filtered on each keystroke out of the
+list already loaded. «Сообщения» is full text over `messageFts`, paged, newest
+matches first, each row showing a slice of the text with the word highlighted;
+tapping one opens the chat on that message. «Люди» is the same server search the
+new-chat screen uses, from two characters. The slow sections run after a pause in
+typing and do not hold up the chats; while messages are being searched their
+place reads «Ищем в переписке…». An unaccepted request does not appear in text
+results.
+
+The empty state is «Нет чатов» with a «Начать переписку» button.
+
+New chat: search by username or name from two characters; contacts are synced
+only on an explicit tap of «Найти по контактам» (number → E.164 → SHA-256 →
+discover), and a name from the address book wins over the server's; a group mode
+takes a title and a set of members.
+
+## Themes
+
+Three palettes, chosen in settings under «Оформление» through preview cards and
+stored in `UserDefaults` under the key `palette`, defaulting to `graphite`:
+
+- `iMessage` — a neutral light background, blue outgoing, grey incoming;
+- `Telegram` — a background with a faint green cast, mint outgoing, blue accent;
+- `Графит` — a cream background, indigo outgoing, orange accent.
+
+Each palette defines the chat background, the bubble colours, the accent, the
+colour of read ticks, and the text and metadata colours of an outgoing message,
+separately for light and dark. Switching palettes clears the bubble background
+cache, posts `paletteChanged` and forces a `reloadData()` on the feed.
+
+## Text size
+
+Every size is a named role in `Theme.Text`, scaled through `UIFontMetrics` with a
+ceiling per role: the feed's ceilings are high, the header's and the chat list's
+are low, because their heights are fixed. Feed measurement happens outside the
+view hierarchy, so the size category comes from the `TypeScale.category` snapshot
+rather than `UITraitCollection.current`. A size change drops the plan cache,
+re-measures the feed and puts the reader back where they were.
+
+## Notifications
+
+- App active, chat not open — an in-app banner of our own at the top: its own
+  window, hidden after 3.5 s, tap opens the chat, swipe up dismisses it.
+- App active, chat open — nothing.
+- A system push that catches up is suppressed in `willPresent` when the chat is
+  open, a banner for that msgId has already been shown, the message is already
+  in the database, it is already read, or the chat is muted.
+- In the background there is no in-app banner; the system push shows.
+- The badge number is computed by the server and stamped with a counter, and it
+  travels in the push payload. On the device it lives as a single row
+  (`BadgeStore`); the app writes its own local unread total into the same row
+  and a value overtaken by a later stamp is discarded. Clearing a chat's unread
+  count also withdraws that chat's delivered notifications from the shade.
+- For an unaccepted request the banner carries the sender's name and «Новая
+  заявка» in place of a preview.
+
+## PIN and privacy
+
+A four-digit PIN, stored as SHA-256(salt + pin) in `UserDefaults`. Face ID is a
+separate switch and is offered automatically on the lock screen. Auto-lock
+triggers on returning from the background after more than 30 seconds, and
+launching with a PIN set locks immediately. In the app switcher an
+`ultraThinMaterial` with the app glyph covers the content.
