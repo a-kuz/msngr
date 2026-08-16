@@ -49,7 +49,7 @@ final class X3DHTests: XCTestCase {
         let alice = IdentityKeyPair()
         let bob = IdentityKeyPair()
         let mallory = IdentityKeyPair()
-        let bobSPK = try SignedPreKey(id: 1, identity: mallory) // подписан чужим ключом
+        let bobSPK = try SignedPreKey(id: 1, identity: mallory) // signed by the wrong identity
         let bundle = PreKeyBundle(
             identity: bob.publicKeys, signedPreKeyId: 1,
             signedPreKey: bobSPK.key.publicKey.rawRepresentation,
@@ -107,13 +107,13 @@ final class DoubleRatchetTests: XCTestCase {
     func testOutOfOrderAcrossRatchetSteps() throws {
         var (alice, bob) = try makeSessions()
         let a0 = try alice.encrypt(Data("a0".utf8))
-        let a1 = try alice.encrypt(Data("a1".utf8)) // задержится
+        let a1 = try alice.encrypt(Data("a1".utf8)) // held back
         XCTAssertEqual(try bob.decrypt(a0), Data("a0".utf8))
         let b0 = try bob.encrypt(Data("b0".utf8))
         XCTAssertEqual(try alice.decrypt(b0), Data("b0".utf8))
-        let a2 = try alice.encrypt(Data("a2".utf8)) // уже новая цепочка
+        let a2 = try alice.encrypt(Data("a2".utf8)) // already on a new chain
         XCTAssertEqual(try bob.decrypt(a2), Data("a2".utf8))
-        XCTAssertEqual(try bob.decrypt(a1), Data("a1".utf8)) // старое доехало
+        XCTAssertEqual(try bob.decrypt(a1), Data("a1".utf8)) // the straggler from the old chain
     }
 
     func testDuplicateFails() throws {
@@ -132,24 +132,24 @@ final class DoubleRatchetTests: XCTestCase {
     }
 
     func testReplayedFirstMessageDoesNotResetRatchet() throws {
-        // Боб получил pk-сообщение и завёл сессию; затем прогнал ratchet.
-        // Повторная подача того же pk (replay) не должна сбрасывать сессию.
+        // Bob receives a prekey message, opens a session and steps the ratchet.
+        // Feeding him the same prekey message again must not reset that session.
         var (alice, bob) = try makeSessions()
         let pk = try alice.encrypt(Data("first".utf8))
         XCTAssertEqual(try bob.decrypt(pk), Data("first".utf8))
-        // ratchet вперёд
+        // step the ratchet forward
         let reply = try bob.encrypt(Data("reply".utf8))
         XCTAssertEqual(try alice.decrypt(reply), Data("reply".utf8))
         let second = try alice.encrypt(Data("second".utf8))
         XCTAssertEqual(try bob.decrypt(second), Data("second".utf8))
-        // bob.hasReceived == true → в E2EEManager это ветка stale_pk_ignored.
+        // bob.hasReceived == true is what sends E2EEManager down the stale_pk_ignored branch.
         XCTAssertTrue(bob.hasReceived)
     }
 
     func testSessionSerializationRoundtrip() throws {
         var (alice, bob) = try makeSessions()
         _ = try bob.decrypt(try alice.encrypt(Data("1".utf8)))
-        // сериализуем оба состояния и продолжаем на копиях
+        // serialize both states and carry on with the restored copies
         let alice2Data = try JSONEncoder().encode(alice)
         let bob2Data = try JSONEncoder().encode(bob)
         var alice2 = try JSONDecoder().decode(DoubleRatchetSession.self, from: alice2Data)
@@ -181,7 +181,7 @@ final class SenderKeyTests: XCTestCase {
         XCTAssertEqual(try r.decrypt(m2), Data("2".utf8))
         XCTAssertEqual(try r.decrypt(m0), Data("0".utf8))
         XCTAssertEqual(try r.decrypt(m1), Data("1".utf8))
-        XCTAssertThrowsError(try r.decrypt(m1)) // повтор
+        XCTAssertThrowsError(try r.decrypt(m1)) // replay
     }
 
     func testLateJoinerCannotReadHistory() throws {

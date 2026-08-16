@@ -2,8 +2,8 @@ import XCTest
 @testable import MsngrCore
 
 final class BroadcastTests: XCTestCase {
-    /// Каждый подписчик получает каждое значение (у голого AsyncStream
-    /// значение достаётся только одному из потребителей).
+    /// Every subscriber sees every value; a bare AsyncStream hands each value to
+    /// only one of its consumers.
     func testEachSubscriberGetsEveryValue() async {
         let b = Broadcast<Int>()
         var it1 = b.subscribe().makeAsyncIterator()
@@ -18,10 +18,11 @@ final class BroadcastTests: XCTestCase {
         XCTAssertEqual(c.1, 2)
     }
 
-    /// Сценарий залипшего «подключение…»: экран чата подписался и закрылся
-    /// (итерация отменена), затем пришёл реконнект. Новый подписчик обязан
-    /// получить актуальное состояние — у голого AsyncStream отмена итерации
-    /// терминировала continuation и yield(true) терялся навсегда.
+    /// The stuck "connecting…" case: a chat screen subscribes and then closes,
+    /// cancelling its iteration, and the reconnect lands afterwards. The next
+    /// subscriber has to see the current state. With a bare AsyncStream the
+    /// cancelled iteration terminated the continuation and yield(true) was lost
+    /// for good.
     func testResubscribeAfterCancelledConsumerReceivesReconnect() async {
         let b = Broadcast<Bool>(initial: false)
         let consumer = Task {
@@ -30,15 +31,15 @@ final class BroadcastTests: XCTestCase {
         consumer.cancel()
         _ = await consumer.value
 
-        b.send(true) // реконнект после отписки первого экрана
+        b.send(true) // the reconnect arrives after the first screen unsubscribed
 
         var it = b.subscribe().makeAsyncIterator()
         let v = await it.next()
         XCTAssertEqual(v, true)
     }
 
-    /// Подписка с initial: первым элементом приходит текущее состояние,
-    /// даже если после подписки событий ещё не было.
+    /// Subscribing with an initial value: the current state arrives as the first
+    /// element even when nothing is sent afterwards.
     func testInitialValueReplayedToLateSubscriber() async {
         let b = Broadcast<Bool>(initial: false)
         var it = b.subscribe().makeAsyncIterator()
@@ -46,7 +47,7 @@ final class BroadcastTests: XCTestCase {
         XCTAssertEqual(v, false)
     }
 
-    /// Отмена одного подписчика не влияет на доставку другому.
+    /// Cancelling one subscriber does not disturb delivery to another.
     func testCancelledSubscriberDoesNotBreakOthers() async {
         let b = Broadcast<Int>()
         var alive = b.subscribe().makeAsyncIterator()

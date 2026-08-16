@@ -1,11 +1,11 @@
 import XCTest
 @testable import MsngrCore
 
-/// Mute со сроком и права участника чата.
+/// Timed mute and the permissions a chat member has.
 final class ChatSettingsTests: XCTestCase {
     private let now: Double = 1_000_000
 
-    // MARK: - Истечение mute
+    // MARK: - Mute expiry
 
     func testMuteForeverNeverExpires() {
         XCTAssertTrue(MuteState.isMuted(muted: true, mutedUntil: nil, now: now))
@@ -38,16 +38,16 @@ final class ChatSettingsTests: XCTestCase {
         XCTAssertNil(MuteOption.forever.until(from: now))
     }
 
-    /// Срок из опции жив ровно до своего конца.
+    /// An option's deadline holds right up to its end and not past it.
     func testOptionMuteLifecycle() {
         for option in MuteOption.allCases {
             let until = option.until(from: now)
             XCTAssertTrue(MuteState.isMuted(muted: true, mutedUntil: until, now: now + 1),
-                          "\(option) должен молчать сразу после включения")
+                          "\(option) should mute straight after it is switched on")
             let later = now + (option.seconds ?? 0) + 1
             XCTAssertEqual(MuteState.isMuted(muted: true, mutedUntil: until, now: later),
                            option == .forever,
-                           "\(option) после срока")
+                           "\(option) past its deadline")
         }
     }
 
@@ -58,7 +58,7 @@ final class ChatSettingsTests: XCTestCase {
         XCTAssertNotNil(MuteState.untilLabel(muted: true, mutedUntil: now + 60, now: now))
     }
 
-    // MARK: - Права по роли
+    // MARK: - Permissions by role
 
     func testGroupSettingsOnlyForAdmin() {
         XCTAssertTrue(ChatPermissions.canEditSettings(kind: .group, role: "admin"))
