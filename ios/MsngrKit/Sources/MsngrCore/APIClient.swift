@@ -466,9 +466,6 @@ public final class APIClient: @unchecked Sendable {
                                     rawBody: jpeg, contentType: "image/jpeg")
         return try JSONDecoder().decode(AvatarResponse.self, from: raw).avatarId
     }
-    public func avatarURL(_ avatarId: String) -> URL {
-        baseURL.appendingPathComponent("api/avatar/\(avatarId)")
-    }
     /// Avatar bytes; the request carries the token.
     public func avatarData(_ avatarId: String) async throws -> Data {
         try await request("api/avatar/\(avatarId)")
