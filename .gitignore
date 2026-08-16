@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 .wrangler/
 # state of a separate stand: `wrangler dev --persist-to .wrangler-<name>`
 .wrangler-*/
