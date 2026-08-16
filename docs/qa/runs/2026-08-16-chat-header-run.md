@@ -73,6 +73,11 @@ the other two palettes should follow, but nobody looked at them.
 The peer device was used only to seed the incoming half of the chat; nothing in
 this run says anything about the receiving side.
 
+The width the header title fits itself into moved with the button by arithmetic,
+not by measurement: the peer here is called «Denis» and no long name was tried.
+The new number is the more conservative one, so a name can now truncate a little
+earlier than it has to, but it cannot reach the bar and be clipped.
+
 ## Checked with
 
 `make gen build unit layout crashes DEV_UDID=8FDCB62D` (own throwaway simulator
