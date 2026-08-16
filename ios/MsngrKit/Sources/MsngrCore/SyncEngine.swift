@@ -363,6 +363,16 @@ public actor SyncEngine {
                 }
             }
         case "chat":
+            // из чата убрали, пока устройство было офлайн: состав в таком
+            // фрейме не приходит, и догонять больше нечего
+            if f.event == "removed", let chatId = f.chatId {
+                let attachments = await chatMedia(chatId: chatId)
+                try? await db.write { dbc in
+                    try ChatCleanup.deleteChat(dbc, chatId: chatId)
+                }
+                for info in attachments { media?.remove(info) }
+                return
+            }
             if let state = f.state {
                 // a direct chat deleted here keeps its membership on the
                 // server, so events about it still reach this device: a title
@@ -392,8 +402,11 @@ public actor SyncEngine {
                     }
                 }
                 // кто-то покинул группу → ротация нашей sender-key цепочки,
-                // чтобы ушедший не мог расшифровывать новые сообщения (forward secrecy)
-                if f.event == "members", state.kind == "group" {
+                // чтобы ушедший не мог расшифровывать новые сообщения (forward
+                // secrecy). Состав сверяется на любом фрейме, который его несёт:
+                // живой members этого устройство могло не застать, и тогда об
+                // уходе оно узнаёт только из состава, доигранного при догоне.
+                if state.kind == "group" {
                     let current = Set(state.members.map(\.userId))
                     if !Set(previousMembers).subtracting(current).isEmpty {
                         try? e2ee.rotateSenderKey(chatId: state.chatId)

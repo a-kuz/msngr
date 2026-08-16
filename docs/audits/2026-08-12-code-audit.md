@@ -15,7 +15,7 @@ with what the check found. Fixes made during that sweep are in
 | 5 | fixed | Обрыв между skd и skm: distributedTo помечен до отправки — группа в вечном no_sender_key |
 | 6 | fixed | Kill во время отправки: inflight не сбрасывается в ready при рестарте |
 | 7 | fixed | Read receipts / delete-for-all / recv офлайн: try? ws.send без очереди |
-| 8 | confirmed | Sync не реплеит тумбстоуны/read-марки — только msg-фреймы |
+| 8 | fixed | Sync не реплеит тумбстоуны/read-марки — только msg-фреймы |
 | 9 | fixed | Черновик: onAppear читает chat.draft пока chat nil; onDisappear затирает |
 | 10 | confirmed | expiresAt никогда не применяется — автоудаление не работает |
 | 11 | confirmed | identityChanged в группе: outbox blocked, но баннер только для direct |
@@ -65,7 +65,7 @@ with what the check found. Fixes made during that sweep are in
 7. `SyncEngine.swift:555,576,230` — read receipts, delete-for-all, recv уходят через `try? ws.send` без очереди.
    2026-08-16: fixed earlier. Read marks, delete-for-all, accept and chat-delete go through the durable `pendingAction` queue drained on `.connected` (`SyncEngine.swift:1565-1626, 1646-1748`). Tests in `OfflineReliabilityTests`. The recv ack stays fire-and-forget on purpose: delivered marks are monotonic on both sides, so a lost one is absorbed by the next.
 8. `UserSessionDO.ts:240-273` — sync реплеит только `msg`-фреймы по курсорам; тумбстоуны, read-марки и смены состава — только при полном `refreshSnapshot`.
-   2026-08-16: tombstones and marks were already replayed by `sendChatTail`; membership was not, and a member who was offline while somebody was removed never rotated the sender key, so he kept encrypting to a chain the removed user holds. Fix pending.
+   2026-08-16: tombstones and marks were already replayed by `sendChatTail`; membership was not, and a member who was offline while somebody was removed never rotated the sender key, so he kept encrypting to a chain the removed user holds. Fixed: `/events` carries the roster, catch-up replays it, rotation triggers on any frame whose roster shrank, and a member who was removed is told so. Tests `server/test/smoke.mjs` ("catch-up replays the roster", "catch-up tells the removed member") and `MembershipReplayTests`.
 9. `ChatScreen.swift:53` — `text = model.chat?.draft` в `onAppear`, но `chat` грузится асинхронно и в этот момент nil; `onDisappear` перезапишет draft пустым.
    2026-08-16: fixed earlier. The draft is filled when the chat arrives, into an empty field only (`ChatScreen.swift:101-115`), and every keystroke persists it (`ChatViewModel.swift:580-601`).
 10. `expiresAt` проставляется входящим (`SyncEngine.swift:337`), но нигде не читается; исходящие без `expiresAt`.
