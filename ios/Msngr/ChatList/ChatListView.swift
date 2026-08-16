@@ -9,6 +9,10 @@ struct RootView: View {
     }
 }
 
+/// The archive as a point on the navigation path; a chat is a String there, so
+/// the archive needs a type of its own.
+struct ArchiveRoute: Hashable {}
+
 struct ChatListView: View {
     @EnvironmentObject var app: AppState
     @StateObject private var model = ChatListModel()
@@ -75,6 +79,9 @@ struct ChatListView: View {
             }
             .navigationDestination(for: String.self) { chatId in
                 ChatScreen(chatId: chatId)
+            }
+            .navigationDestination(for: ArchiveRoute.self) { _ in
+                ArchiveView(model: model)
             }
             .sheet(isPresented: $showNewChat) {
                 NewChatView { chatId in
@@ -321,10 +328,11 @@ struct ChatListView: View {
         }
     }
 
+    /// The archive goes onto the same path as the chats: a link that carries its
+    /// destination in itself puts the stack out of step with the path, and a chat
+    /// opened out of the archive then arrives one tap late or not at all.
     private var archiveRow: some View {
-        NavigationLink {
-            ArchiveView(model: model)
-        } label: {
+        NavigationLink(value: ArchiveRoute()) {
             HStack {
                 Image(systemName: "archivebox")
                     .foregroundStyle(.secondary)
