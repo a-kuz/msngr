@@ -16,6 +16,9 @@ struct ChatScreen: View {
     /// A match was actually opened, so leaving search has somewhere to go back from.
     @State private var searchMoved = false
     @State private var text = ""
+    /// What stood in the field before the edit mode took it over. Leaving the mode,
+    /// by the cross or by sending the edit, puts it back.
+    @State private var textBeforeEdit: String?
     @State private var showScrollDown = false
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showFilePicker = false
@@ -170,8 +173,15 @@ struct ChatScreen: View {
             ChatInfoView(model: model)
         }
         .onChange(of: model.editing?.id) { _, _ in
-            // switching which message is edited (edit A → edit B included) puts its text in the field
-            if let e = model.editing { text = e.text ?? "" }
+            if let e = model.editing {
+                // entering the mode, and switching which message is edited (A → B),
+                // puts its text in the field; the draft that stood there waits
+                if textBeforeEdit == nil { textBeforeEdit = text }
+                text = e.text ?? ""
+            } else {
+                text = textBeforeEdit ?? ""
+                textBeforeEdit = nil
+            }
         }
         .photosPicker(isPresented: $photoPickerPresented, selection: $photoItems,
                       maxSelectionCount: 10, matching: .any(of: [.images, .videos]))
