@@ -43,6 +43,27 @@ final class MessageSelectionTests: XCTestCase {
         XCTAssertFalse(MessageSelection.canDeleteForAll([]), "пустой выбор нечего удалять")
     }
 
+    /// «Удалить» из меню сообщения открывает выбор с этим сообщением и
+    /// подтверждением внизу; снятие выбора подтверждать больше нечего.
+    @MainActor
+    func testDeleteFromMenuOpensSelectionWithConfirmation() {
+        let model = ChatViewModel(chatId: "c")
+        let a = msg("a", outgoing: true)
+
+        model.beginSelection(with: a, confirmingDelete: true)
+        XCTAssertTrue(model.selecting)
+        XCTAssertTrue(model.confirmingDelete)
+        XCTAssertTrue(model.selection.contains(a))
+
+        model.toggleSelection(a)
+        XCTAssertTrue(model.selecting, "режим выбора остаётся")
+        XCTAssertFalse(model.confirmingDelete)
+
+        model.endSelection()
+        XCTAssertFalse(model.selecting)
+        XCTAssertTrue(model.selection.isEmpty)
+    }
+
     func testCounterTitle() {
         XCTAssertEqual(MessageSelection.title(count: 1), "1 сообщение")
         XCTAssertEqual(MessageSelection.title(count: 2), "2 сообщения")

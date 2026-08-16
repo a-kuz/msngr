@@ -51,9 +51,14 @@ final class ChatViewModel: ObservableObject {
     /// Режим мультивыбора: чекбоксы у бабблов, панель действий вместо поля ввода.
     @Published var selecting = false
     @Published var selection = MessageSelection()
+    /// Внизу вместо панели действий — подтверждение удаления выбранного.
+    /// Сообщения при этом видны и к выбору можно добавить ещё.
+    @Published var confirmingDelete = false
     /// Сообщение не попало в очередь отправки: показывается алертом, иначе
     /// набранный текст или вложение исчезли бы молча.
     @Published var sendFailure: String?
+    /// Счётчик своих отправок: каждая ведёт ленту к концу чата.
+    @Published private(set) var sendTick = 0
 
     /// Плашка непрочитанных: состояние живёт от входа в чат, лента
     /// перестраивается при его изменении из последнего снапшота БД.
@@ -422,6 +427,9 @@ final class ChatViewModel: ObservableObject {
     /// потеряно, — о таком сообщаем пользователю.
     func enqueue(_ content: ContentPayload, chatId: String? = nil) {
         let target = chatId ?? self.chatId
+        if Self.movesFeedToEnd(kind: content.kind, target: target, chatId: self.chatId) {
+            returnToBottom()
+        }
         Task { [weak self] in
             do {
                 try await app.engine.enqueue(content: content, chatId: target)
@@ -456,6 +464,24 @@ final class ChatViewModel: ObservableObject {
         Haptics.light()
     }
 
+    /// Отправка, у которой в этом чате появляется свой баббл: только она ведёт
+    /// ленту к концу. Правка, реакция и пересылка в другой чат — нет.
+    nonisolated static func movesFeedToEnd(kind: String, target: String, chatId: String) -> Bool {
+        target == chatId && !SyncEngine.serviceKinds.contains(kind)
+    }
+
+    /// Своя отправка возвращает ленту к концу чата.
+    ///
+    /// Окно ленты, замершее на прочитанной истории, держит ровно `capacity`
+    /// сообщений вверх от своей границы: в чате, где выше границы уже набралось
+    /// столько сообщений, новое исходящее в окно не попадает и на экране не
+    /// появляется вовсе. Поэтому граница окна снова начинает скользить за
+    /// новейшими, а лента получает счётчик отправок, по которому уезжает вниз.
+    private func returnToBottom() {
+        isViewingBottom = true
+        sendTick &+= 1
+    }
+
     static func previewText(_ m: Message) -> String {
         switch m.kind {
         case .photo: return "Фото"
@@ -478,10 +504,6 @@ final class ChatViewModel: ObservableObject {
         Haptics.medium()
     }
 
-    func delete(_ msg: Message, forAll: Bool) {
-        Task { await app.engine.deleteMessages(chatId: chatId, msgIds: [msg.msgId ?? msg.id], forAll: forAll) }
-    }
-
     // MARK: - Мультивыбор
 
     /// Выбранные сообщения в порядке ленты (сверху — самое новое).
@@ -489,20 +511,26 @@ final class ChatViewModel: ObservableObject {
 
     var canDeleteSelectedForAll: Bool { MessageSelection.canDeleteForAll(selectedMessages) }
 
-    func beginSelection(with msg: Message) {
+    /// confirmingDelete — вход сразу к подтверждению удаления: сообщение
+    /// выбрано, внизу два действия, а не всплывающее меню поверх самого баббла.
+    func beginSelection(with msg: Message, confirmingDelete: Bool = false) {
         selection.clear()
         selection.select(msg)
         selecting = true
+        self.confirmingDelete = confirmingDelete
         Haptics.light()
     }
 
     func toggleSelection(_ msg: Message) {
         selection.toggle(msg)
+        // выбор опустел — подтверждать нечего
+        if selection.isEmpty { confirmingDelete = false }
         Haptics.light()
     }
 
     func endSelection() {
         selecting = false
+        confirmingDelete = false
         selection.clear()
     }
 
@@ -624,11 +652,25 @@ final class ChatViewModel: ObservableObject {
         Task { await expandWindow() }
     }
 
+    /// Начало чата: окно растёт страницами, пока не покроет самое старое
+    /// сообщение на устройстве. К серверу здесь не ходим — начало это то, что
+    /// устройство уже хранит.
+    func loadDeviceHistory(maxPages: Int = 500) async {
+        for _ in 0..<maxPages {
+            guard await expandWindow(localOnly: true) else { return }
+        }
+    }
+
+    /// Окно дошло до самого старого сообщения на устройстве.
+    var isAtDeviceStart: Bool { atHistoryStart }
+
     /// Одна страница вверх. Сообщения уже расшифрованы и лежат в базе, поэтому
     /// страница берётся из неё; к серверу уходит только незакрытый разрыв seq —
     /// то, что это устройство ещё не расшифровывало. false — расширять нечего.
+    /// localOnly — расширять только по своей базе: к серверу не ходить и
+    /// «дальше нечего» не запоминать, разрывы остаются на обычную пагинацию.
     @discardableResult
-    private func expandWindow() async -> Bool {
+    private func expandWindow(localOnly: Bool = false) async -> Bool {
         guard chat != nil, !loadingOlder, !reachedStart, let db = app.db else { return false }
         loadingOlder = true
         defer { loadingOlder = false }
@@ -645,6 +687,7 @@ final class ChatViewModel: ObservableObject {
                 return true
             }
         }
+        guard !localOnly else { return false }
         // локальная история исчерпана: с сервера полезно только то, что это
         // устройство ещё не расшифровывало
         let gaps = (try? await db.read { [chatId] dbc in

@@ -6,7 +6,7 @@ import MsngrCore
 /// Инвертированный список сообщений: UICollectionView, перевёрнутый по Y.
 /// Ячейки тоже перевёрнуты — итог выглядит нормально, а «низ» чата это contentOffset 0:
 /// мгновенное открытие с последних сообщений и естественная пагинация вверх.
-final class MessagesViewController: UIViewController {
+final class MessagesViewController: UIViewController, UIGestureRecognizerDelegate {
     /// Лента у низа: самый новый элемент реально виден на экране.
     /// От этого зависят кнопка «вниз» и отметка прочтения.
     var onAtBottomChanged: ((Bool) -> Void)?
@@ -19,6 +19,10 @@ final class MessagesViewController: UIViewController {
     var onTapReplyQuote: ((Message) -> Void)?
     /// тап по строке в режиме мультивыбора
     var onToggleSelection: ((Message) -> Void)?
+    /// тап по статус-бару: экран ведёт ленту к началу чата
+    var onScrollToStart: (() -> Void)?
+    /// свайп от левой кромки: возврат к списку чатов
+    var onSwipeBack: (() -> Void)?
 
     private(set) var collectionView: UICollectionView!
     private var items: [ChatFeedItem] = []
@@ -31,6 +35,46 @@ final class MessagesViewController: UIViewController {
     /// с состоянием пустой ленты, поэтому первый пересчёт молчит.
     private var atBottom = true
     private var recomputingAtBottom = false
+    /// Счётчик своих отправок, уже отработанный лентой.
+    private var seenSendTick = 0
+    /// Возврат свайпом: кромка своя, потому что системный жест на этом экране
+    /// не начинается.
+    private let backSwipe = UIPanGestureRecognizer()
+    /// Отправка ждёт своего сообщения: оно обязано приехать в низ ленты
+    /// и появиться там с анимацией, из какого бы места истории его ни отправили.
+    private var awaitingOwnSend = false
+
+    /// Своя отправка: лента уезжает к концу сразу, не дожидаясь, пока сообщение
+    /// ляжет в базу и придёт из наблюдения.
+    func noteSendTick(_ tick: Int) {
+        guard tick != seenSendTick else { return }
+        seenSendTick = tick
+        awaitingOwnSend = true
+        guard isViewLoaded else { return }
+        scrollToBottom(animated: false)
+    }
+
+    /// Пришло ли в этом обновлении своё только что отправленное сообщение.
+    /// Ждать приходится не только вставку в существующую ленту: окно, стоявшее
+    /// на прочитанной истории, снова цепляется за новейшие, и лента приезжает
+    /// другим набором сообщений целиком.
+    private func ownSendLanded(newFirst: ChatFeedItem?, oldIds: Set<String>) -> Bool {
+        guard awaitingOwnSend, case .message(let m, _, _, _, _, _)? = newFirst, m.isOutgoing,
+              !oldIds.contains(m.id) else { return false }
+        awaitingOwnSend = false
+        return true
+    }
+
+    /// Ставит ленту на своё новое сообщение и играет его появление.
+    private func landOwnMessage() {
+        collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.contentInset.top), animated: false)
+        collectionView.layoutIfNeeded()
+        guard let cell = collectionView.cellForItem(at: IndexPath(item: 0, section: 0)) as? MessageCell
+        else { return }
+        let point = CGPoint(x: view.bounds.width - 28,
+                            y: view.bounds.height - collectionView.contentInset.top + 22)
+        cell.animateSendFlight(fromScreenPoint: point, in: view)
+    }
 
     /// Состояние мультивыбора: видимые ячейки перестраиваются на месте
     /// (reload оборвал бы анимации ленты), новые получают его при настройке.
@@ -63,6 +107,12 @@ final class MessagesViewController: UIViewController {
         collectionView.register(SystemCell.self, forCellWithReuseIdentifier: "system")
         collectionView.register(UnreadMarkerCell.self, forCellWithReuseIdentifier: "unread")
         view.addSubview(collectionView)
+        backSwipe.addTarget(self, action: #selector(handleBackSwipe(_:)))
+        backSwipe.delegate = self
+        view.addGestureRecognizer(backSwipe)
+        // лента ждёт отказа кромки: вне кромки жест не начинается вовсе,
+        // поэтому скролл остаётся мгновенным
+        collectionView.panGestureRecognizer.require(toFail: backSwipe)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardChanged(_:)),
                                                name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(typeScaleChanged),
@@ -87,15 +137,22 @@ final class MessagesViewController: UIViewController {
         updateAtBottom(layoutFirst: true)
     }
 
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        // шапка чата рисует свою кнопку возврата, а системная скрыта — вместе с
-        // ней навигация отключает и жест «свайп назад». Возвращаем его, сняв
-        // делегата, который его и глушит
-        if let pop = navigationController?.interactivePopGestureRecognizer {
-            pop.delegate = nil
-            pop.isEnabled = true
-        }
+    /// Возврат свайпом от левой кромки. Системный жест на этом экране не
+    /// начинается: шапка рисует свою кнопку возврата, а с убранной системной
+    /// навигация своему переходу отказывает — ни снятый делегат, ни включённый
+    /// заново распознаватель этого не меняют. Поэтому кромка своя.
+    @objc private func handleBackSwipe(_ g: UIPanGestureRecognizer) {
+        guard g.state == .ended else { return }
+        if g.translation(in: view).x > 70 || g.velocity(in: view).x > 500 { onSwipeBack?() }
+    }
+
+    /// Жест возврата берёт только касания от кромки, идущие вправо; всё
+    /// остальное остаётся ленте.
+    func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+        guard g === backSwipe else { return true }
+        let start = backSwipe.location(in: nil).x - backSwipe.translation(in: nil).x
+        let v = backSwipe.velocity(in: view)
+        return start < MessageCell.backSwipeEdge && v.x > abs(v.y)
     }
 
     override func viewDidLayoutSubviews() {
@@ -202,6 +259,14 @@ final class MessagesViewController: UIViewController {
         // контент выше. Запоминаем верхний видимый элемент и его положение на
         // экране, чтобы вернуть их после обновления
         let anchor = readingAnchor()
+        // своё новое сообщение лежит первым элементом инвертированной ленты
+        let ownAtBottom: Bool = {
+            guard case .message(let m, _, _, _, _, _)? = newItems.first else { return false }
+            return m.isOutgoing && oldIndex[newIds[0]] == nil
+        }()
+        // вызывается всегда: он же снимает ожидание отправки
+        let sendLanded = ownSendLanded(newFirst: newItems.first, oldIds: Set(oldIds))
+        let ownLanded = ownAtBottom || sendLanded
 
         // если структура изменилась слишком сложно (перестановки) — безопасный reload
         let onlyAppendOrRemove = deletes.count + inserts.count == abs(oldIds.count - newIds.count)
@@ -211,11 +276,7 @@ final class MessagesViewController: UIViewController {
             collectionView.reloadData()
             restore(anchor)
             // своё новое сообщение внизу обязано стать видимым и на reload-пути
-            if case .message(let m, _, _, _, _, _)? = newItems.first, m.isOutgoing,
-               oldIndex[newIds[0]] == nil {
-                collectionView.layoutIfNeeded()
-                collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.contentInset.top), animated: false)
-            }
+            if ownLanded { landOwnMessage() }
             updateAtBottom(layoutFirst: true)
             return
         }
@@ -362,6 +423,20 @@ final class MessagesViewController: UIViewController {
     func scrollToBottom(animated: Bool = true) {
         collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.contentInset.top), animated: animated)
         if !animated { updateAtBottom(layoutFirst: true) }
+    }
+
+    /// Начало чата: список перевёрнут, самое старое сообщение лежит последним,
+    /// то есть в конце контента. Дальний конец берём без анимации — прокрутка
+    /// через тысячи ячеек всё равно не читается.
+    func scrollToStart() {
+        guard isViewLoaded, !items.isEmpty else { return }
+        collectionView.layoutIfNeeded()
+        let maxOffset = collectionView.contentSize.height - collectionView.bounds.height
+            + collectionView.contentInset.bottom
+        let target = max(-collectionView.contentInset.top, maxOffset)
+        let far = abs(target - collectionView.contentOffset.y) > collectionView.bounds.height * 3
+        collectionView.setContentOffset(CGPoint(x: 0, y: target), animated: !far)
+        if far { updateAtBottom(layoutFirst: true) }
     }
 
     // MARK: - Удержание позиции чтения
@@ -548,6 +623,14 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
                                          replyAuthorName: replyAuthorName)
             return CGSize(width: cv.bounds.width, height: plan.cellHeight)
         }
+    }
+
+    /// Тап по статус-бару. Системная прокрутка «вверх» в перевёрнутом списке
+    /// уехала бы к самым новым сообщениям — начало чата это другой конец,
+    /// и ведёт туда экран сам.
+    func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
+        onScrollToStart?()
+        return false
     }
 
     func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
