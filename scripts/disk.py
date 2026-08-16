@@ -52,6 +52,7 @@ KEEP_DEVICES = {
     "74B78AFC-E8D7-4317-B16F-E51A65504B2D": "gate",
 }
 SHARED_STAND = ROOT / "server" / ".wrangler"
+DEVICES = HOME / "Library" / "Developer" / "CoreSimulator" / "Devices"
 
 RESET, BOLD, DIM = "\033[0m", "\033[1m", "\033[2m"
 RED, YELLOW, GREY, GREEN = "\033[31m", "\033[33m", "\033[90m", "\033[32m"
@@ -224,7 +225,46 @@ def held_by_dead_files():
 
 # ------------------------------------------------------------------- a scan
 
-def scan():
+WIDE_EVERY = 6 * 3600
+
+
+def outside(wide):
+    """Everything else on this disk, so a full disk can be blamed correctly.
+
+    Our footprint is a fraction of the machine, and when free space runs out the
+    first question is whether it is even us. Walking the whole home directory
+    costs minutes, so the answer is kept for a few hours and refreshed only when
+    it is about to be used.
+    """
+    old = {}
+    if SNAPSHOT.exists():
+        try:
+            old = json.loads(SNAPSHOT.read_text()).get("outside") or {}
+        except ValueError:
+            pass
+    if not wide and old and time.time() - old.get("taken", 0) < WIDE_EVERY:
+        return old
+    entries = [p for p in HOME.iterdir() if p.is_dir() and not p.is_symlink()]
+    sizes = du_all(entries)
+    items = sorted(({"name": "~/" + p.name, "bytes": b, "path": str(p)}
+                    for p, b in sizes.items()), key=lambda i: -i["bytes"])
+    return {"taken": int(time.time()), "items": items[:14]}
+
+
+def attribute(groups, out):
+    """How much of each big directory is our own footprint.
+
+    Simulators and derived data live under `~/Library`, the checkout under
+    `~/ws`; without saying so, the two lists look like they add up when in fact
+    one contains the other.
+    """
+    mine = [(i["path"], i["bytes"]) for g in groups for i in g["items"] if i.get("path")]
+    for item in out.get("items", []):
+        root = item["path"]
+        item["mine"] = sum(b for p, b in mine if p == root or is_under(Path(p), Path(root)))
+
+
+def scan(wide=False):
     started = time.time()
     agents = registry()
     groups = []
@@ -245,7 +285,8 @@ def scan():
             else:
                 note, loose = f"agent {owner}, gone", True
         sims.append({"name": f"{dev['name']} ({dev['state'].lower()})",
-                     "bytes": dev["bytes"], "note": note, "loose": loose})
+                     "bytes": dev["bytes"], "note": note, "loose": loose,
+                     "udid": dev["udid"], "path": str(DEVICES / dev["udid"])})
     groups.append({"name": "simulators", "items": sims})
 
     # Stands, measured before the worktrees so they can be subtracted from them.
@@ -318,25 +359,31 @@ def scan():
          "path": str(path)}
         for name, path in caches.items() if path.exists()]})
 
-    # The checkout itself, split so `.git` does not hide inside it.
+    # The checkout itself, split so `.git` and the scratchpads do not hide in it.
     git_dir = ROOT / ".git"
-    checkout = du_all([ROOT, git_dir, ROOT / ".claude"])
-    claude_own = sum(s["bytes"] for s in stand_items if s["path"].startswith(str(ROOT / ".claude")))
-    claude_own += sum(t["bytes"] for t in tree_items)
-    logs = du_all([ROOT / ".claude" / "logs", ROOT / ".claude" / "agent-runs"]
-                  + sorted((ROOT / ".claude").glob("scratch-*")))
+    scratchpad = ROOT / "scratchpad"
+    checkout = du_all([ROOT, git_dir, ROOT / ".claude", scratchpad])
     groups.append({"name": "the checkout", "items": [
-        {"name": "working tree", "bytes": max(0, checkout[ROOT] - checkout[git_dir] - checkout[ROOT / ".claude"]),
-         "note": "sources and node_modules"},
-        {"name": ".git", "bytes": checkout[git_dir], "note": "shared by every worktree"},
+        {"name": "working tree",
+         "bytes": max(0, checkout[ROOT] - checkout[git_dir] - checkout[ROOT / ".claude"]
+                      - checkout[scratchpad]),
+         "note": "sources and node_modules", "path": str(ROOT)},
+        {"name": ".git", "bytes": checkout[git_dir], "note": "shared by every worktree",
+         "path": str(git_dir)},
     ]})
+
+    scratch = du_all([ROOT / ".claude" / "logs", ROOT / ".claude" / "agent-runs"]
+                     + sorted((ROOT / ".claude").glob("scratch-*"))
+                     + [p for p in sorted(scratchpad.glob("*")) if p.is_dir()])
     groups.append({"name": "logs and scratch", "items": [
-        {"name": str(p).replace(str(ROOT) + "/", ""), "bytes": b, "note": "",
-         "path": str(p)}
-        for p, b in sorted(logs.items(), key=lambda kv: -kv[1])]})
+        {"name": str(p).replace(str(ROOT) + "/", ""), "bytes": b,
+         "note": "nobody reads it after the run", "loose": False, "path": str(p)}
+        for p, b in sorted(scratch.items(), key=lambda kv: -kv[1])]})
 
     dead_bytes, dead_procs = held_by_dead_files()
     avail, total = free_bytes()
+    beyond = outside(wide)
+    attribute(groups, beyond)
     snapshot = {
         "taken": int(time.time()),
         "took_s": round(time.time() - started, 1),
@@ -344,6 +391,7 @@ def scan():
         "footprint": sum(i["bytes"] for g in groups for i in g["items"]),
         "held_by_dead_files": {"bytes": dead_bytes, "processes": dead_procs},
         "groups": groups,
+        "outside": beyond,
     }
     SNAPSHOT.parent.mkdir(parents=True, exist_ok=True)
     SNAPSHOT.write_text(json.dumps(snapshot, indent=1))
@@ -415,6 +463,16 @@ def show(snap):
             print(f"  {DIM}and {hidden} smaller{RESET}")
         print()
 
+    out = snap.get("outside") or {}
+    if out.get("items"):
+        print(f"{BOLD}the rest of the disk{RESET}"
+              f"  {DIM}measured {ago(time.time() - out['taken'])} ago{RESET}")
+        for item in out["items"][:8]:
+            mine = item.get("mine", 0)
+            share = f"  {GREY}of which ours {gb(mine).strip()}{RESET}" if mine else ""
+            print(f"  {gb(item['bytes'])}  {DIM}{item['name']}{RESET}{share}")
+        print()
+
     dead = snap.get("held_by_dead_files", {})
     if dead.get("bytes", 0) > 2**30:
         who = ", ".join(f"{p['name']} {gb(p['bytes']).strip()}" for p in dead["processes"])
@@ -424,8 +482,8 @@ def show(snap):
 
 def main():
     args = sys.argv[1:]
-    if "--scan" in args:
-        snap = scan()
+    if "--scan" in args or "--wide" in args:
+        snap = scan(wide="--wide" in args)
     else:
         if not SNAPSHOT.exists():
             print("no snapshot yet — run scripts/disk.py --scan", file=sys.stderr)
