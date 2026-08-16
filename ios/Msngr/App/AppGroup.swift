@@ -1,7 +1,7 @@
 import Foundation
 import MsngrCore
 
-/// Общий контейнер приложения и NSE.
+/// App group shared by the app and the notification service extension.
 enum AppGroup {
     static let identifier = AppContainer.appGroupIdentifier
     static let keychainGroup = "ai.enface.msngr.shared"

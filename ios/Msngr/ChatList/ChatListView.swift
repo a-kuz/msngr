@@ -17,12 +17,12 @@ struct ChatListView: View {
     @State private var showNewChat = false
     @State private var showSettings = false
     @State private var path = NavigationPath()
-    /// чат, для которого спрошено подтверждение удаления
+    /// chat whose deletion is waiting for confirmation
     @State private var deleteCandidate: ChatListItem?
     @State private var showFolders = false
-    /// куда уезжает список при смене вкладки: вперёд по полосе или назад
+    /// which way the list slides when the tab changes: forward along the bar or back
     @State private var slideForward = true
-    /// папка, открытая на настройку прямо из списка
+    /// folder opened for editing straight from the list
     @State private var editingFolder: ChatFolder?
 
     private var deleteConfirmPresented: Binding<Bool> {
@@ -53,13 +53,13 @@ struct ChatListView: View {
                                       onOpenPerson: openPerson)
                 }
             }
-            // «пришли на список чатов» — по идентификатору списка, а не по
-            // заголовку: заголовок навигации в дерево доступности не попадает,
-            // когда список пуст и его закрывает overlay
+            // "we are on the chat list" is checked by this identifier rather
+            // than by the title: the navigation title never reaches the
+            // accessibility tree while the list is empty and an overlay covers it
             .accessibilityIdentifier("chatlist.root")
             .navigationTitle("Чаты")
             .searchable(text: $model.searchText, prompt: "Поиск")
-            // чаты фильтруются на месте, сообщения и люди ищутся своим темпом
+            // chats are filtered in place, messages and people are searched at their own pace
             .onChange(of: model.searchText) { _, text in
                 model.updateSearch()
                 search.update(text)
@@ -95,13 +95,13 @@ struct ChatListView: View {
             .onChange(of: app.ready) { _, ready in
                 if ready { model.start() }
             }
-            // тап по пушу или in-app баннеру → переход в чат
+            // a tap on a push or an in-app banner opens the chat
             .onReceive(NotificationCenter.default.publisher(for: .openChatRequested)) { note in
                 guard let chatId = note.object as? String,
                       NotificationCoordinator.shared.activeChatId != chatId else { return }
                 path.append(chatId)
             }
-            // чат удалён из своего же экрана — возвращаемся к списку
+            // the chat was deleted from its own screen, so come back to the list
             .onReceive(NotificationCenter.default.publisher(for: .chatDeleted)) { _ in
                 path = NavigationPath()
             }
@@ -121,7 +121,6 @@ struct ChatListView: View {
         }
     }
 
-    /// Пустой список: иконка, текст и кнопка, открывающая NewChat.
     private var emptyState: some View {
         VStack(spacing: 14) {
             Image(systemName: "bubble.left.and.bubble.right.fill")
@@ -150,11 +149,10 @@ struct ChatListView: View {
         .padding(.bottom, 40)
     }
 
-    /// Вкладка листается длинным горизонтальным свайпом. Постраничная
-    /// прокрутка тут не годится: её скролл забирает горизонтальное движение
-    /// себе, и свайп-действия строки (архив, закрепить, удалить) перестают
-    /// открываться. Короткий свайп остаётся строке, длинный — переключает
-    /// вкладку.
+    /// A paging scroll view is no good for switching tabs: its scrolling takes
+    /// every horizontal movement for itself, and the row's swipe actions
+    /// (archive, pin, delete) stop opening. Hence a gesture with a distance
+    /// threshold instead.
     private var folderPages: some View {
         page(for: selectedFolder)
             .id(model.selectedFolderId ?? "")
@@ -170,7 +168,7 @@ struct ChatListView: View {
                     })
     }
 
-    /// Выбор вкладки тапом: заодно запоминает, в какую сторону едет список.
+    /// Tab selection by tap; it also records which way the list should slide.
     private var tabSelection: Binding<String?> {
         Binding(get: { model.selectedFolderId },
                 set: { new in
@@ -186,8 +184,8 @@ struct ChatListView: View {
         model.folders.first { $0.id == model.selectedFolderId }
     }
 
-    /// Соседняя вкладка в сторону свайпа: «Все» стоит первой, дальше папки в
-    /// своём порядке. С краёв листать некуда.
+    /// The neighbouring tab in the direction of the swipe: «Все» comes first,
+    /// then the folders in their own order. There is nowhere to go past the ends.
     private func switchTab(by offset: Int) {
         let ids: [String?] = [nil] + model.folders.map { $0.id }
         guard let current = ids.firstIndex(of: model.selectedFolderId) else { return }
@@ -201,8 +199,6 @@ struct ChatListView: View {
     private func page(for folder: ChatFolder?) -> some View {
         let items = model.items(in: folder?.id)
         return List {
-            // архив и заявки — состояния входящего потока, а не тема
-            // переписки: они остаются наверху «Всех» и в папки не переезжают
             if folder == nil {
                 if !model.requests.isEmpty { requestsSection }
                 if !model.archived.isEmpty { archiveRow }
@@ -220,8 +216,8 @@ struct ChatListView: View {
         }
     }
 
-    /// Пустая папка: правило пока ничего не приносит — это состояние, и рядом
-    /// лежит то, чем его меняют.
+    /// An empty folder is a state, not a failure: the rule brings nothing in
+    /// yet, and the way to change that sits right next to it.
     private func folderEmptyState(_ folder: ChatFolder) -> some View {
         VStack(spacing: 14) {
             Image(systemName: "folder")
@@ -254,8 +250,6 @@ struct ChatListView: View {
                 ChatRowView(item: item, ownUserId: app.session?.userId ?? "")
             }
             .contextMenu { folderMenu(item) }
-            // без полного свайпа: длинное горизонтальное движение по списку
-            // переключает вкладку, и действие по нему было бы случайным
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 if let folder {
                     Button { model.setChat(item.id, inFolder: folder, included: false) } label: {
@@ -270,7 +264,7 @@ struct ChatListView: View {
                     Label(muted ? "Вкл. звук" : "Без звука",
                           systemImage: muted ? "bell.fill" : "bell.slash.fill")
                 }.tint(.indigo)
-                // удаление стоит последним, дальше от края
+                // delete comes last, further from the edge
                 Button(role: .destructive) { deleteCandidate = item } label: {
                     Label("Удалить", systemImage: "trash.fill")
                 }
@@ -286,8 +280,8 @@ struct ChatListView: View {
         .animation(Theme.springFast, value: items.map(\.id))
     }
 
-    /// Разложить чат по папкам, не открывая настройки: галочка показывает, где
-    /// он уже лежит — по правилу или руками.
+    /// Sorts the chat into folders without opening the settings; the checkmark
+    /// shows where it already sits, whether by rule or put there by hand.
     @ViewBuilder
     private func folderMenu(_ item: ChatListItem) -> some View {
         if model.folders.isEmpty {
@@ -340,14 +334,14 @@ struct ChatListView: View {
         }
     }
 
-    /// Найденное сообщение: чат открывается и доезжает до него, а не встаёт у
-    /// нижнего края ленты.
+    /// A search hit: the chat opens and scrolls to the message rather than
+    /// stopping at the bottom of the feed.
     private func openMessage(_ hit: MessageSearchHit) {
         MessageJump.request(chatId: hit.chatId, msgId: hit.messageId)
         path.append(hit.chatId)
     }
 
-    /// Найденный человек: переписка с ним либо уже есть, либо заводится.
+    /// A found person: the direct chat either already exists or is created.
     private func openPerson(_ user: APIClient.UserDTO) {
         Task {
             guard let chatId = await DirectChat.open(userId: user.id) else { return }
@@ -356,8 +350,8 @@ struct ChatListView: View {
     }
 }
 
-/// Строка чат-листа: навигация через NavigationLink (надёжно открывает чат),
-/// но скрытая под контентом — так List не рисует свой шеврон-индикатор.
+/// Chat list row: navigation goes through a NavigationLink, but the link is
+/// hidden under the content so that List doesn't draw its own chevron.
 struct ChatRow<Content: View>: View {
     let chatId: String
     @ViewBuilder let content: () -> Content
