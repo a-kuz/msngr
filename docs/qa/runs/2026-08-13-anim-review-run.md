@@ -1,6 +1,6 @@
 # Frame-by-frame verification of the animations
 
-Run date: 2026-08-13. Key frames in `2026-08-13-anim-review/`.
+Run date: 2026-08-13.
 
 ## Stand
 
@@ -12,59 +12,49 @@ Slow Animations in Simulator.app had no effect on these simulators: the checkbox
 was ticked and a push transition still took a steady 0.5 s, and
 `UIAnimationDragCoefficient=5` with an app restart did nothing either. Capture
 was therefore a burst of screenshots about 0.16 s apart, which is enough for a
-0.6 s spring — around four intermediate frames were expected.
+0.6 s spring; around four intermediate frames were expected.
 
-## 1. The outgoing bubble's flight — not visible
+## 1. The outgoing bubble's flight, not visible
 
 Expected: the bubble starts small at `scale 0.15` near the send button and
 springs into place (`MessageCell.animateSendFlight`, a 0.6 s spring at damping
 0.72, text fading over 0.25 s).
 
-What the frames show: between two neighbouring frames 0.16 s apart the composer
-empties and the bubble is already at its final position, full size, fully
-opaque, text and ticks visible. Three repeats produced no intermediate frame of
-the flight, neither in the 0.16 s screenshot burst nor in `recordVideo` at
-19 to 45 fps.
-
-Key frames: `send-frame0.png` (composer with text) → `send-frame1.png` (bubble
-already in place, 0.16 s later), and then 3.7 s of zero pixel difference. The
-video montage shows the same thing (`send-video-montage.png`).
+What the capture showed: between two neighbouring frames 0.16 s apart the
+composer empties and the bubble is already at its final position, full size,
+fully opaque, text and ticks visible. Three repeats produced no intermediate
+frame of the flight, neither in the 0.16 s screenshot burst nor in `recordVideo`
+at 19 to 45 fps. After the bubble appeared there were 3.7 s of zero pixel
+difference between frames.
 
 Hypothesis at this point, unconfirmed: a second snapshot update lands right
-after the optimistic insert (pending→sent), `contentEqual` comes back false,
-the cell is reconfigured or reloaded and the animation is cut off within
-milliseconds. On `s3-01` the ticks are already doubled, so the ack really does
-arrive instantly against a local stand.
+after the optimistic insert (pending→sent), `contentEqual` comes back false, the
+cell is reconfigured or reloaded and the animation is cut off within
+milliseconds. The ticks were already doubled in the first captured frame, so the
+ack really does arrive instantly against a local stand.
 
-## 2. The context menu on a long press — works
+## 2. The context menu on a long press, works
 
-Opening, at a 0.16 s step:
-
-- `menu-open-1-press.png` — the press highlight on the bubble;
-- `menu-open-2-cascade.png` — the blur already covers everything and the emoji
-  row is growing in a cascade: the first two at full size, the third still a
-  dot, the rest absent; the list menu has nearly finished growing;
-- `menu-open-3-full.png` — all six emoji in place, the menu complete.
+Opening, at a 0.16 s step, went through the press highlight on the bubble; then
+a frame where the blur already covered everything and the emoji row was growing
+in a cascade, the first two emoji at full size, the third still a dot, the rest
+absent, with the list menu nearly finished growing; then all six emoji in place
+and the menu complete.
 
 The cascade is plainly visible, half the row caught in one frame. The blur
 reaches full strength faster than the capture step, going from nothing to full
 in 0.16 s or less, so the wash-in exists but is brief.
 
-Closing, by tapping outside (`menu-close-0..3.png`):
+Closing by tapping outside went through the menu and the emoji row contracting
+while the bubble started moving back; then the blur dissolving with the bubble
+copy halfway to its place in the feed; then the chat fully restored. Smooth,
+with real intermediate states, over roughly 0.4 to 0.5 s.
 
-- `close-1` — the menu and the emoji row contract and the bubble starts moving
-  back;
-- `close-2` — the blur dissolves, the bubble copy is halfway to its place in the
-  feed;
-- `close-3` — the chat is fully restored.
-
-Smooth, with real intermediate states, over roughly 0.4 to 0.5 s.
-
-On aesthetics: in `close-1` the bubble's ghost travels over the still-visible
+On aesthetics: while closing, the bubble's ghost travels over the still-visible
 menu, which reads as intentional rather than as an artefact. The menu and the
 emoji capsules hold good contrast against the blur.
 
-## 3. The incoming message — not visible
+## 3. The incoming message, not visible
 
 Expected: the bubble rises from below on a spring
 (`MessageCell.animateAppearance`, `translationY` 14 with `scale 0.96`, alpha 0.4
@@ -74,8 +64,6 @@ What happened: across two independent runs, "Incoming wave" and "wave two", the
 incoming bubble appears between neighbouring frames 0.16 s apart, already in its
 final place and fully opaque. Not one frame of the rise or of the
 semi-transparency. A 0.42 s spring should have given about three.
-
-Key frames: `incoming-frame0.png` → `incoming-frame1.png`.
 
 ## Reading of the three
 
@@ -102,26 +90,20 @@ synchronous animation start outside `performWithoutAnimation`, with content
 updates that keep the same height reconfiguring the cell in place instead of
 rebuilding it.
 
-Frames after the fix, from video at 19 fps, roughly a 0.05 s step:
+Captured again at 19 fps, roughly a 0.05 s step, the outgoing flight now runs
+through the bubble in flight, semi-transparent and without text, then landing
+with the text fading in, then the spring's overshoot, then the final state. The
+incoming message rises through three intermediate positions below its final one
+with opacity climbing. Scrolling history fired the appearance animation zero
+times over six swipes according to the log, and the video shows those cells
+arriving without a rise or a scale.
 
-- the outgoing flight: `fix-send-0-start.png` → `fix-send-1-mid.png` (bubble in
-  flight, semi-transparent, no text yet) → `fix-send-2-textfade.png` (in place,
-  text fading in) → `fix-send-3-overshoot.png` (the spring's bounce) →
-  `fix-send-4-final.png`;
-- the incoming rise: `fix-incoming-1-low.png` → `fix-incoming-2-mid.png` →
-  `fix-incoming-3-high.png` (below its final position, opacity climbing) →
-  `fix-incoming-4-final.png`;
-- scrolling history: six swipes fired the appearance animation zero times
-  according to the log, and the video shows cells arriving without a rise or a
-  scale.
+## Defects noticed while watching
 
-## Defects noticed in the frames
-
-On the receiving side (`anim8`) the chat header and the chat list show «…» in
-place of the sender's name (`recipient-header-no-name.png`,
-`recipient-list-no-name.png`), while the sender sees the peer's name normally.
-The peer's profile never arrived on the receiver, neither while the message
-request was pending nor after it was accepted.
+On the receiving side (`anim8`) the chat header and the chat list showed «…» in
+place of the sender's name, while the sender saw the peer's name normally. The
+peer's profile never arrived on the receiver, neither while the message request
+was pending nor after it was accepted.
 
 The graphite palette holds up: dark blue outgoing bubbles read well on the cream
 background, the orange ticks contrast against the dark bubble, and the white

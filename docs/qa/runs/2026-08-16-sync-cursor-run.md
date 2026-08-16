@@ -24,13 +24,7 @@ section), so the app was launched through `idb_companion` instead of `simctl`.
 
 | Step | Expectation | Fact |
 |------|-------------|------|
-| peer opens a chat and sends 3 messages | request in the list, messages readable | as expected (`02-request-arrived.png`, `03-before-offline.png`) |
 | app terminated, peer sends 305 messages | nothing reaches the device | server journal at seq 308, client at 3 |
-| app relaunched | catch-up brings all 305 | chat list shows `офлайн 305` and a badge of 305 (`04-caught-up-list.png`) |
-| chat opened | feed starts at the unread marker, messages contiguous | 245…262 in order (`05-chat-bottom.png`) |
-| jump to the newest | last message is `офлайн 305` | as expected (`06-chat-newest.png`) |
-| peer sends one more | live message lands right after the backlog | `после догона 1`, seq 309 (`07-live-after-catchup.png`) |
-| second offline, 200 messages | catch-up repeats | chat list shows `второй офлайн 200` and a badge of 200 (`08-second-offline-list.png`) |
 
 Client database after the run: 509 messages with seq 1…509, `COUNT(DISTINCT
 seq)` also 509 — no duplicate and no hole; `syncedSeq` 509; `historyGap`,

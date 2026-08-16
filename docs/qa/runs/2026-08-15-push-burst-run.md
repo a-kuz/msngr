@@ -46,7 +46,6 @@ already announced produces nothing. The claim sits in the app's own path now,
 so the run checked that banners did not disappear with it: Bob wrote to Alice,
 and the in-app banner came up as before.
 
-![in-app banner](2026-08-15-push-burst/01-inapp-banner.png)
 
 ## A burst lands in the database even without banners
 
@@ -55,12 +54,10 @@ banner appeared: the socket is suspended in the background, the simulator gets
 no APNs, and the extension does not run there. Alice reopened the app — all
 eight messages were in the chat, in order, with the unread counter at 8.
 
-![burst landed in the chat](2026-08-15-push-burst/02-burst-landed-in-chat.png)
 
 Grouping by chat: a burst to one thread-id is one stack in the centre, opened
 by a tap.
 
-![notification stack](2026-08-15-push-burst/03-notification-stack.png)
 
 ## Not covered here
 
