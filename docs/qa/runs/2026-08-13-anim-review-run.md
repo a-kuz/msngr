@@ -1,98 +1,129 @@
-# Покадровая верификация анимаций (anim-a/anim-b, iPhone 17, iOS 26.5, палитра graphite)
+# Frame-by-frame verification of the animations
 
-Дата: 2026-08-13. Сборка main (ba585e8), стенд localhost:8787, юзеры anim7/anim8.
-Ключевые кадры сохранены в `docs/qa/runs/2026-08-13-anim-review/`.
+Run date: 2026-08-13. Key frames in `2026-08-13-anim-review/`.
 
-Замечание по методике: Slow Animations в Simulator.app на этих симуляторах эффекта не дал
-(чекбокс ✓, но push-переход стабильно ~0.5 с; UIAnimationDragCoefficient=5 с перезапуском
-приложения — тоже без эффекта). Съёмка велась серией скриншотов с шагом ~0.16 с, чего
-достаточно для спринга 0.6 с (ожидалось ~4 промежуточных кадра).
+## Stand
 
-## 1. Вылет баббла при отправке — НЕ РАБОТАЕТ (визуально)
+Two simulators, `anim-a` and `anim-b`, iPhone 17, iOS 26.5, palette graphite.
+Build from main (`ba585e8`) against the stand on localhost:8787, users `anim7`
+and `anim8`.
 
-Ожидание: баббл стартует маленьким (scale 0.15) у кнопки отправки и спрингом летит на место
-(код: MessageCell.animateSendFlight, spring 0.6 с, damping 0.72, текст фейдится 0.25 с).
+Slow Animations in Simulator.app had no effect on these simulators: the checkbox
+was ticked and a push transition still took a steady 0.5 s, and
+`UIAnimationDragCoefficient=5` with an app restart did nothing either. Capture
+was therefore a burst of screenshots about 0.16 s apart, which is enough for a
+0.6 s spring — around four intermediate frames were expected.
 
-Факт на кадрах: между соседними кадрами (0.16 с) композер очищается и баббл появляется сразу
-на финальном месте — полный размер, полная непрозрачность, текст и тики уже видны.
-Ни одного промежуточного кадра полёта за 3 повтора (серия скриншотов 0.16 с и видео
-recordVideo ~12–45 fps).
+## 1. The outgoing bubble's flight — not visible
 
-Ключевые кадры: `send-frame0.png` (композер с текстом) → `send-frame1.png` (баббл уже на
-месте, +0.16 с), дальше 3.7 с — нулевая попиксельная разница. То же в видеозаписи
-(`send-video-montage.png`).
+Expected: the bubble starts small at `scale 0.15` near the send button and
+springs into place (`MessageCell.animateSendFlight`, a 0.6 s spring at damping
+0.72, text fading over 0.25 s).
 
-Гипотеза (не подтверждена): сразу после оптимистичной вставки приходит второй апдейт снапшота
-(pending→sent), contentEqual=false вызывает reconfigure/reload ячейки и срубает анимацию в
-первые миллисекунды. На s3-01 тики уже двойные — ack действительно приходит мгновенно на
-локальном стенде.
+What the frames show: between two neighbouring frames 0.16 s apart the composer
+empties and the bubble is already at its final position, full size, fully
+opaque, text and ticks visible. Three repeats produced no intermediate frame of
+the flight, neither in the 0.16 s screenshot burst nor in `recordVideo` at
+19 to 45 fps.
 
-## 2. Контекстное меню (лонг-тап по бабблу) — РАБОТАЕТ
+Key frames: `send-frame0.png` (composer with text) → `send-frame1.png` (bubble
+already in place, 0.16 s later), and then 3.7 s of zero pixel difference. The
+video montage shows the same thing (`send-video-montage.png`).
 
-Открытие (шаг 0.16 с):
-- `menu-open-1-press.png`: подсветка нажатия на баббле;
-- `menu-open-2-cascade.png`: блюр уже на всю площадь, ряд эмодзи вырастает каскадом — первые
-  два эмодзи в полном размере, третий ещё точкой, остальных нет; меню списка почти выросло;
-- `menu-open-3-full.png`: все 6 эмодзи на месте, меню полное.
-Каскад эмодзи виден явно (полразмера ряда на одном кадре). Блюр набирает силу быстрее шага
-съёмки (0→полный за ≤0.16 с) — «наплыв» есть, но короткий.
+Hypothesis at this point, unconfirmed: a second snapshot update lands right
+after the optimistic insert (pending→sent), `contentEqual` comes back false,
+the cell is reconfigured or reloaded and the animation is cut off within
+milliseconds. On `s3-01` the ticks are already doubled, so the ack really does
+arrive instantly against a local stand.
 
-Закрытие (тап мимо, `menu-close-0..3.png`):
-- close-1: меню и ряд эмодзи сжимаются, баббл начинает уезжать на своё место;
-- close-2: блюр растворяется, копия баббла на полпути к месту в ленте;
-- close-3: чат полностью восстановлен.
-Плавно, с промежуточными состояниями, ~0.4–0.5 с.
+## 2. The context menu on a long press — works
 
-Эстетика: на close-1 «призрак» баббла проезжает поверх ещё видимого меню — выглядит нормально,
-не как артефакт. Контраст меню и эмодзи-капсулы на блюре хороший.
+Opening, at a 0.16 s step:
 
-## 3. Входящее сообщение — НЕ РАБОТАЕТ (визуально)
+- `menu-open-1-press.png` — the press highlight on the bubble;
+- `menu-open-2-cascade.png` — the blur already covers everything and the emoji
+  row is growing in a cascade: the first two at full size, the third still a
+  dot, the rest absent; the list menu has nearly finished growing;
+- `menu-open-3-full.png` — all six emoji in place, the menu complete.
 
-Ожидание: баббл поднимается снизу со спрингом (код: MessageCell.animateAppearance,
-translationY 14 + scale 0.96, alpha 0.4→1, spring 0.42 с).
+The cascade is plainly visible, half the row caught in one frame. The blur
+reaches full strength faster than the capture step, going from nothing to full
+in 0.16 s or less, so the wash-in exists but is brief.
 
-Факт: два независимых прогона («Incoming wave», «wave two») — входящий баббл появляется между
-соседними кадрами (0.16 с) сразу в финальном месте, с полной непрозрачностью; ни одного
-кадра подъёма или полупрозрачности. При спринге 0.42 с промежуточных кадров было бы ~3.
+Closing, by tapping outside (`menu-close-0..3.png`):
 
-Ключевые кадры: `incoming-frame0.png` → `incoming-frame1.png`.
+- `close-1` — the menu and the emoji row contract and the bubble starts moving
+  back;
+- `close-2` — the blur dissolves, the bubble copy is halfway to its place in the
+  feed;
+- `close-3` — the chat is fully restored.
 
-## Общий вывод
+Smooth, with real intermediate states, over roughly 0.4 to 0.5 s.
 
-Меню (сценарий 2) анимируется как задумано. Обе анимации появления баббла (вылет исходящего
-и подъём входящего) в коде есть, но на экране не видны — баббл в обоих случаях материализуется
-мгновенно. Паттерн одинаковый, что указывает на общую причину в пути вставки
-(MessagesViewController.applySnapshot → completion performBatchUpdates), а не на сами
-анимации: методика съёмки ловила промежуточные состояния контекстного меню на тех же кадрах.
-Гипотезы (не подтверждены): reloadData-ветка вместо insertItems; cellForItem(at:) nil в
-completion; мгновенный reconfigure ячейки вторым апдейтом снапшота.
+On aesthetics: in `close-1` the bubble's ghost travels over the still-visible
+menu, which reads as intentional rather than as an artefact. The menu and the
+emoji capsules hold good contrast against the blur.
 
-## Проверка после фикса (2026-08-14, юзеры animfix1/animfix2)
+## 3. The incoming message — not visible
 
-Причина подтверждена NSLog-диагностикой на живом симуляторе: completion у
-performBatchUpdates без анимации вызывался до создания вставленной ячейки —
-`cellForItem(at: 0)` возвращал nil, анимация не стартовала вовсе; вдобавок ack
-pending→sent через ~15 мс делал reloadItems(0) и пересоздавал ячейку. Фикс:
-layoutIfNeeded после batch-апдейта и синхронный старт анимации вне
-performWithoutAnimation; обновления контента той же высоты — reconfigure на месте
-без пересоздания ячейки.
+Expected: the bubble rises from below on a spring
+(`MessageCell.animateAppearance`, `translationY` 14 with `scale 0.96`, alpha 0.4
+to 1, a 0.42 s spring).
 
-Кадры после фикса (видео 19 fps, шаг ~0.05 с):
-- вылет исходящего: `fix-send-0-start.png` → `fix-send-1-mid.png` (баббл в полёте,
-  полупрозрачный, без текста) → `fix-send-2-textfade.png` (на месте, текст фейдится) →
-  `fix-send-3-overshoot.png` (отскок спринга) → `fix-send-4-final.png`;
-- подъём входящего: `fix-incoming-1-low.png` → `fix-incoming-2-mid.png` →
-  `fix-incoming-3-high.png` (баббл ниже финала, прозрачность растёт) →
+What happened: across two independent runs, "Incoming wave" and "wave two", the
+incoming bubble appears between neighbouring frames 0.16 s apart, already in its
+final place and fully opaque. Not one frame of the rise or of the
+semi-transparency. A 0.42 s spring should have given about three.
+
+Key frames: `incoming-frame0.png` → `incoming-frame1.png`.
+
+## Reading of the three
+
+The menu animates as designed. Both bubble-appearance animations exist in the
+code and neither reaches the screen; in both cases the bubble materialises at
+once. The pattern being identical points at the insert path
+(`MessagesViewController.applySnapshot` → the `performBatchUpdates` completion)
+rather than at the animations themselves, and the capture method is not at fault
+either, since it caught the context menu's intermediate states in the very same
+frames.
+
+Hypotheses, unconfirmed at the time: the `reloadData` branch running instead of
+`insertItems`; `cellForItem(at:)` returning nil in the completion; the cell
+being reconfigured instantly by a second snapshot update.
+
+## After the fix, 2026-08-14, users animfix1 and animfix2
+
+NSLog diagnostics on a live simulator confirmed the cause. The completion of an
+unanimated `performBatchUpdates` ran before the inserted cell existed, so
+`cellForItem(at: 0)` returned nil and the animation never started at all; on top
+of that the pending→sent ack arrived about 15 ms later and `reloadItems(0)`
+rebuilt the cell. The fix is a `layoutIfNeeded` after the batch update and a
+synchronous animation start outside `performWithoutAnimation`, with content
+updates that keep the same height reconfiguring the cell in place instead of
+rebuilding it.
+
+Frames after the fix, from video at 19 fps, roughly a 0.05 s step:
+
+- the outgoing flight: `fix-send-0-start.png` → `fix-send-1-mid.png` (bubble in
+  flight, semi-transparent, no text yet) → `fix-send-2-textfade.png` (in place,
+  text fading in) → `fix-send-3-overshoot.png` (the spring's bounce) →
+  `fix-send-4-final.png`;
+- the incoming rise: `fix-incoming-1-low.png` → `fix-incoming-2-mid.png` →
+  `fix-incoming-3-high.png` (below its final position, opacity climbing) →
   `fix-incoming-4-final.png`;
-- скролл истории: за 6 свайпов ноль срабатываний анимаций появления (лог),
-  на видео ячейки без подъёма/масштаба.
+- scrolling history: six swipes fired the appearance animation zero times
+  according to the log, and the video shows cells arriving without a rise or a
+  scale.
 
-## Эстетические замечания (видно на кадрах)
+## Defects noticed in the frames
 
-- У получателя (anim8) в шапке чата и в списке чатов вместо имени отправителя — «…»
-  (`recipient-header-no-name.png`, `recipient-list-no-name.png`), у отправителя имя пира
-  отображается нормально. Профиль пира на стороне получателя не подтянулся ни в заявке,
-  ни после принятия.
-- Палитра graphite: исходящие тёмно-синие бабблы на кремовом фоне читаются хорошо, оранжевые
-  тики на тёмном бабле контрастны; входящий белый баббл с тенью — ок.
-- Композер и ряд реакций на блюре выглядят согласованно, артефактов наложения нет.
+On the receiving side (`anim8`) the chat header and the chat list show «…» in
+place of the sender's name (`recipient-header-no-name.png`,
+`recipient-list-no-name.png`), while the sender sees the peer's name normally.
+The peer's profile never arrived on the receiver, neither while the message
+request was pending nor after it was accepted.
+
+The graphite palette holds up: dark blue outgoing bubbles read well on the cream
+background, the orange ticks contrast against the dark bubble, and the white
+incoming bubble with its shadow is fine. The composer and the reaction row sit
+consistently on the blur with no compositing artefacts.
