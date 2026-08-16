@@ -18,7 +18,7 @@ with what the check found. Fixes made during that sweep are in
 | 8 | fixed | Sync не реплеит тумбстоуны/read-марки — только msg-фреймы |
 | 9 | fixed | Черновик: onAppear читает chat.draft пока chat nil; onDisappear затирает |
 | 10 | confirmed | expiresAt никогда не применяется — автоудаление не работает |
-| 11 | confirmed | identityChanged в группе: outbox blocked, но баннер только для direct |
+| 11 | fixed | identityChanged в группе: outbox blocked, но баннер только для direct |
 | 12 | fixed | Push не шлётся пока жив подвешенный сокет (live.length === 0) |
 | 13 | confirmed | Реакции/edit/skd растят unreadCount — бейдж без сообщения |
 | 14 | fixed | Возврат из фона: нет форс-реконнекта/ресинка, stale connected |
@@ -71,7 +71,7 @@ with what the check found. Fixes made during that sweep are in
 10. `expiresAt` проставляется входящим (`SyncEngine.swift:337`), но нигде не читается; исходящие без `expiresAt`.
     2026-08-16: confirmed — the field was written and never read, and outgoing copies were never stamped, so the TTL switch in ChatInfo promised and did nothing. Fix pending.
 11. `SyncEngine.swift:456` ставит outbox `blocked` и для групповых, но `keyChangePending` считается только для direct (`ChatViewModel.swift:106`).
-    2026-08-16: confirmed — in a group the block is reachable (a changed key means a new device, so `missing` is non-empty and the distribution goes pairwise) and the banner was direct-only, leaving the send blocked with no action. Fix pending.
+    2026-08-16: confirmed — in a group the block is reachable (a changed key means a new device, so `missing` is non-empty and the distribution goes pairwise) and the banner was direct-only, leaving the send blocked with no action. Fixed: the pending change is read over every member of the chat and accepting covers all of them. Tests `KeyChangeTests.testAcceptCoversEveryMemberOfTheChat`, `testAcceptLeavesOutsidersPending`.
 12. `UserSessionDO.ts:102` — push только при `live.length === 0`; iOS держит WS живым минуты после сворачивания.
     2026-08-16: fixed earlier. The push goes out for every non-service, non-muted, non-echo `msg` regardless of live sockets (`UserSessionDO.ts:168-187`). Test `server/test/smoke.mjs:750-752`.
 13. Каждый send получает seq (`ConversationDO.ts:167`), а `applyIncomingMessage` (`SyncEngine.swift:217-227`) растит `lastSeq`/`unreadCount` для любых фреймов.
