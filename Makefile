@@ -2,9 +2,10 @@
 DEV_UDID := 44CE2242-EBB9-48EA-A605-5988A00E4C31
 DEST := -destination 'id=$(DEV_UDID)'
 XCODE := xcodebuild -project ios/Msngr.xcodeproj
-# for an agent on its own stand: make check MSNGR_SERVER=http://localhost:8809 PUSH_PORT=9873
+# The UI tests need the shared stand and the fixtures on it; the server smoke
+# raises a clean stand of its own (scripts/smoke-stand.sh).
+# for an agent on its own stand: make check MSNGR_SERVER=http://localhost:8809
 MSNGR_SERVER := http://localhost:8787
-PUSH_PORT := 9871
 
 .PHONY: check gen build unit layout uitest server-smoke crashes
 
@@ -28,7 +29,7 @@ uitest:
 	MSNGR_SERVER=$(MSNGR_SERVER) $(XCODE) -scheme Msngr $(DEST) test -only-testing:MsngrUITests 2>&1 | tail -5 | grep -q "TEST SUCCEEDED"
 
 server-smoke:
-	cd server && BASE_URL=$(MSNGR_SERVER) PUSH_PORT=$(PUSH_PORT) node test/smoke.mjs
+	bash scripts/smoke-stand.sh
 
 crashes:
 	bash scripts/collect-crashes.sh --since 240

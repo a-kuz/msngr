@@ -44,7 +44,9 @@ print(last)
   elif [ "$tool" != "Bash" ] && [ "$idle" != "-" ] && [ "$idle" -gt 90 ]; then state="STUCK"
   else state="running"; fi
 
-  commits="$(git -C "$ROOT" log --oneline "main..$wt" 2>/dev/null | wc -l | tr -d ' ')"
-  last="$(git -C "$ROOT" log -1 --format=%s "$wt" 2>/dev/null | cut -c1-46)"
+  # the worktree names itself; its branch may be named after the task instead
+  branch="$(git -C "$ROOT/.claude/worktrees/$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  commits="$(git -C "$ROOT" log --oneline "main..${branch:-$wt}" 2>/dev/null | wc -l | tr -d ' ')"
+  last="$(git -C "$ROOT" log -1 --format=%s "${branch:-$wt}" 2>/dev/null | cut -c1-46)"
   printf "%-10s %-9s %-6s %-10s %-7s %s\n" "$name" "$state" "${idle}s" "$tool" "$commits" "$last"
 done < "$REG"
