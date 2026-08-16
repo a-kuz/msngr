@@ -1,7 +1,7 @@
 #!/bin/bash
-# Сбор свежих креш-репортов Msngr из DiagnosticReports.
-# Использование: collect-crashes.sh [--since <minutes>] (по умолчанию 120)
-# Выход: 1 если найдены свежие краши (гейт красный), 0 если чисто.
+# Collects fresh Msngr crash reports out of DiagnosticReports.
+# Usage: collect-crashes.sh [--since <minutes>], defaulting to 120.
+# Exits 1 when fresh crashes were found, which fails the gate, and 0 when clean.
 set -euo pipefail
 SINCE_MIN="${2:-120}"
 [ "${1:-}" = "--since" ] || SINCE_MIN=120
@@ -13,7 +13,7 @@ while IFS= read -r f; do
   if [ ! -f "$DST/$base" ]; then
     cp "$f" "$DST/$base"
     echo "CRASH: $base"
-    # краткая выжимка: тип и termination
+    # a one-line digest: exception type and termination
     python3 - "$f" <<'EOF' || true
 import json, sys
 lines = open(sys.argv[1]).read().split("\n", 1)
@@ -26,7 +26,7 @@ EOF
   fi
 done < <(find ~/Library/Logs/DiagnosticReports -name 'Msngr*.ips' -mmin "-$SINCE_MIN" 2>/dev/null)
 if [ "$FOUND" = 1 ]; then
-  echo "Свежие краши скопированы в docs/qa/crashes/ — разберите перед коммитом."
+  echo "Fresh crashes copied into docs/qa/crashes/. Work them out before committing."
   exit 1
 fi
-echo "Крашей нет."
+echo "No crashes."
