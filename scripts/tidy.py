@@ -113,7 +113,7 @@ def app_quiet_for(udid):
     return float("inf")
 
 
-def stale_simulators(agents):
+def stale_simulators(agents, working):
     """Simulators no live agent claims, that have also stopped writing.
 
     The registry decides ownership, but an agent that never registered would
@@ -121,58 +121,34 @@ def stale_simulators(agents):
     device that is unclaimed and busy is left for the report to raise.
     """
     out, busy = [], []
-    working = working_worktrees()
     for dev in disk.devices():
-        if dev["udid"] in disk.KEEP_DEVICES:
-            continue
-        owner = disk.device_owner(dev["name"], agents)
-        if owner and agents[owner]["alive"]:
-            continue
-        # An agent that never wrote itself into the registry still leaves a
-        # worktree named after itself, and that is a claim on the simulator.
-        stem = dev["name"].split("-")[0]
-        if stem in working:
+        note, loose = disk.claim(dev, agents, working)
+        if not loose:
             continue
         home = disk.DEVICES / dev["udid"]
         if not home.exists():
             continue
         if time.time() - home.stat().st_ctime < SETTLE:
             continue
-        why = f"no live agent owns {dev['name']}"
-        if owner:
-            why = f"agent {owner} is gone"
-        idle = app_quiet_for(dev["udid"])
-        if idle < SETTLE:
-            busy.append((dev, f"{why}, but written to {int(idle / 60)}m ago"))
-            continue
+        if note.endswith(", gone"):
+            # The registry named this agent and the agent has finished. Nothing
+            # else has to agree: an abandoned app keeps writing for as long as
+            # the simulator is up — one left a trace file ticking every second
+            # hours after its agent was gone — so waiting for quiet here would
+            # be waiting forever.
+            why = f"agent {note.split()[1].rstrip(',')} is gone"
+        else:
+            # Nobody claims this name at all, which is also what an agent that
+            # never registered looks like. Its app would still be writing.
+            idle = app_quiet_for(dev["udid"])
+            if idle < SETTLE:
+                busy.append((dev, f"nothing claims {dev['name']}, and its app "
+                             f"was writing {int(idle / 60)}m ago"))
+                continue
+            why = f"nothing claims {dev['name']}, and its app has been quiet"
         out.append({"what": f"simulator {dev['name']}", "bytes": dev["bytes"],
                     "why": why, "do": lambda u=dev["udid"]: delete_device(u)})
     return out, busy
-
-
-def unfinished_worktrees():
-    """Worktrees that still hold work: a branch not in main, or a dirty tree."""
-    trees = ROOT / ".claude" / "worktrees"
-    out = []
-    for path in sorted(trees.glob("*")) if trees.is_dir() else []:
-        if not path.is_dir():
-            continue
-        dirty = subprocess.run(["git", "-C", str(path), "status", "--porcelain"],
-                               capture_output=True, text=True).stdout.strip()
-        if dirty or not disk.merged(path.name):
-            out.append(path)
-    return out
-
-
-def working_worktrees():
-    """Agent names claimed by an unfinished worktree.
-
-    `run-chatlist` means an agent called `chatlist`, whether or not it got as
-    far as writing itself into .claude/agents.tsv — which is exactly what one
-    agent had not done while this was being built.
-    """
-    return {p.name[4:] if p.name.startswith("run-") else p.name
-            for p in unfinished_worktrees()}
 
 
 def delete_device(udid):
@@ -180,11 +156,11 @@ def delete_device(udid):
     subprocess.run(["xcrun", "simctl", "delete", udid], capture_output=True)
 
 
-def stale_stands(agents):
+def stale_stands(working):
     """Stand state directories with no wrangler pointing at them."""
     live = {Path(p).resolve() for p in disk.persist_paths() if Path(p).is_dir()}
     shared = disk.SHARED_STAND.resolve()
-    busy = [p.resolve() for p in unfinished_worktrees()]
+    busy = list(working.values())
     out = []
     for path in disk.stand_dirs():
         if path == shared or any(p == path or disk.is_under(p, path) for p in live):
@@ -267,9 +243,10 @@ def kill(pids):
             pass
 
 
-def merged_worktrees(agents):
+def merged_worktrees(agents, working):
     """Worktrees whose branch is in main, with nothing left in them to lose."""
     owned = {a["worktree"] for a in agents.values() if a["alive"]}
+    owned |= {p.name for p in working.values()}
     here = Path.cwd().resolve()
     cwds = process_cwds()
     out = []
@@ -353,9 +330,10 @@ def rel(path):
 
 def sweep():
     agents = disk.registry()
-    sims, busy = stale_simulators(agents)
-    plan = (sims + stale_stands(agents) + orphan_stand_processes()
-            + merged_worktrees(agents) + orphan_derived_data() + old_logs())
+    working = disk.live_worktrees()
+    sims, busy = stale_simulators(agents, working)
+    plan = (sims + stale_stands(working) + orphan_stand_processes()
+            + merged_worktrees(agents, working) + orphan_derived_data() + old_logs())
     freed = 0
     for item in plan:
         size = f"{item['bytes'] / 2**30:.2f}G" if item["bytes"] else "—"
