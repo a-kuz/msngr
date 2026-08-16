@@ -98,6 +98,7 @@ struct ChatScreen: View {
             }
         }
         .onAppear {
+            PerfTrace.shared.mark("chat.open")
             model.start()
             // the draft is restored only into an empty field: coming back from
             // ChatInfo the typed text is still in @State and must not be overwritten
@@ -334,11 +335,13 @@ struct ChatScreen: View {
     /// loaded if the message sits deeper than the window.
     private func jump(to msgId: String) {
         showChatInfo = false
+        PerfTrace.shared.mark("jump.begin")
         Task {
             guard await model.ensureLoaded(msgId: msgId) else {
                 Haptics.rigid()
                 return
             }
+            PerfTrace.shared.mark("jump.loaded")
             MessagesView.scrollWhenReady(vc: messagesVC, msgId: msgId)
         }
     }

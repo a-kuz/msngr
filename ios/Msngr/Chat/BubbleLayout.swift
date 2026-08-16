@@ -93,8 +93,10 @@ enum BubbleLayout {
         let key = cacheKey(msg, width: width, tightGap: tightGap, showTail: showTail,
                            showName: showName, ownId: OwnUser.id)
         if let boxed = cache.object(forKey: key) { return boxed.plan }
-        let p = compute(for: msg, width: width, tightGap: tightGap, showTail: showTail,
-                        showName: showName, authorName: authorName, replyAuthorName: replyAuthorName)
+        let p = PerfTrace.shared.measure("bubble.measure") {
+            compute(for: msg, width: width, tightGap: tightGap, showTail: showTail,
+                    showName: showName, authorName: authorName, replyAuthorName: replyAuthorName)
+        }
         cache.setObject(Box(p), forKey: key)
         return p
     }

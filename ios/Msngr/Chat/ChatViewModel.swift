@@ -155,46 +155,56 @@ final class ChatViewModel: ObservableObject {
         let floorBox = windowFloor
         cancellable = ValueObservation
             .tracking { dbc -> Snapshot in
-                let chat = try Chat.fetchOne(dbc, key: chatId)
-                let plan = floorBox.plan()
-                var floor = plan.floor
-                if plan.recompute {
-                    floor = try HistoryWindow.newestFloor(dbc, chatId: chatId,
-                                                          limit: plan.capacity)
-                    floorBox.set(floor)
+                try PerfTrace.shared.measure("feed.fetch") {
+                    try Self.fetchSnapshot(dbc, chatId: chatId, ownId: ownId, floorBox: floorBox)
                 }
-                // a recomputed floor already sits `capacity` messages below the
-                // newest; a floor that stays put needs the cap spelled out, or
-                // the window grows with the chat
-                let msgs = try HistoryWindow.messages(dbc, chatId: chatId, floor: floor,
-                                                      limit: plan.recompute ? nil : plan.capacity)
-                let users = try User.fetchAll(dbc, sql: """
-                    SELECT u.* FROM user u JOIN member m ON m.userId = u.id WHERE m.chatId = ?
-                    """, arguments: [chatId])
-                // the pending key change is read here rather than from the main
-                // thread: a read of its own would block on the writer queue,
-                // and during a burst that queue is busy applying messages
-                // it is read over every member, not just the peer of a direct chat:
-                // in a group a key change by any of them blocks sending, and without
-                // the banner the message would sit there forever
-                let peers = users.map(\.id).filter { $0 != ownId }
-                var keyChangePending = false
-                if !peers.isEmpty {
-                    keyChangePending = try Bool.fetchOne(dbc, sql: """
-                        SELECT EXISTS(SELECT 1 FROM trustedIdentity
-                        WHERE changedPending IS NOT NULL AND userId IN (\(databaseQuestionMarks(count: peers.count))))
-                        """, arguments: StatementArguments(peers)) ?? false
-                }
-                return Snapshot(
-                    chat: chat, msgs: msgs, users: users,
-                    unreadableSeqs: try HistoryWindow.exhaustedGapSeqs(dbc, chatId: chatId, floor: floor),
-                    atHistoryStart: try !HistoryWindow.hasOlder(dbc, chatId: chatId, floor: floor),
-                    keyChangePending: keyChangePending)
             }
             .publisher(in: db, scheduling: .async(onQueue: .main))
             .sink(receiveCompletion: { _ in }, receiveValue: { [weak self] snapshot in
-                self?.apply(snapshot, ownId: ownId)
+                PerfTrace.shared.measure("feed.apply", info: ["msgs": Double(snapshot.msgs.count)]) {
+                    self?.apply(snapshot, ownId: ownId)
+                }
             })
+    }
+
+    /// One fetch of the feed observation: the window, who is in the chat, and
+    /// the two flags the screen draws around it.
+    private static func fetchSnapshot(_ dbc: GRDB.Database, chatId: String, ownId: String,
+                                      floorBox: FeedWindow) throws -> Snapshot {
+        let chat = try Chat.fetchOne(dbc, key: chatId)
+        let plan = floorBox.plan()
+        var floor = plan.floor
+        if plan.recompute {
+            floor = try HistoryWindow.newestFloor(dbc, chatId: chatId, limit: plan.capacity)
+            floorBox.set(floor)
+        }
+        // a recomputed floor already sits `capacity` messages below the newest; a
+        // floor that stays put needs the cap spelled out, or the window grows
+        // with the chat
+        let msgs = try HistoryWindow.messages(dbc, chatId: chatId, floor: floor,
+                                              limit: plan.recompute ? nil : plan.capacity)
+        let users = try User.fetchAll(dbc, sql: """
+            SELECT u.* FROM user u JOIN member m ON m.userId = u.id WHERE m.chatId = ?
+            """, arguments: [chatId])
+        // the pending key change is read here rather than from the main thread: a
+        // read of its own would block on the writer queue, and during a burst that
+        // queue is busy applying messages
+        // it is read over every member, not just the peer of a direct chat: in a
+        // group a key change by any of them blocks sending, and without the banner
+        // the message would sit there forever
+        let peers = users.map(\.id).filter { $0 != ownId }
+        var keyChangePending = false
+        if !peers.isEmpty {
+            keyChangePending = try Bool.fetchOne(dbc, sql: """
+                SELECT EXISTS(SELECT 1 FROM trustedIdentity
+                WHERE changedPending IS NOT NULL AND userId IN (\(databaseQuestionMarks(count: peers.count))))
+                """, arguments: StatementArguments(peers)) ?? false
+        }
+        return Snapshot(
+            chat: chat, msgs: msgs, users: users,
+            unreadableSeqs: try HistoryWindow.exhaustedGapSeqs(dbc, chatId: chatId, floor: floor),
+            atHistoryStart: try !HistoryWindow.hasOlder(dbc, chatId: chatId, floor: floor),
+            keyChangePending: keyChangePending)
     }
 
     private func apply(_ snapshot: Snapshot, ownId: String) {
@@ -207,10 +217,12 @@ final class ChatViewModel: ObservableObject {
         atHistoryStart = snapshot.atHistoryStart
         // a deferred decrypt may have landed a message below the window
         if !snapshot.atHistoryStart { reachedStart = false }
-        feed = Self.buildFeed(snapshot.msgs, members: snapshot.users, ownId: ownId,
-                              unreadMarker: markerFeedParam, contentHidden: contentHidden,
-                              unreadableSeqs: snapshot.unreadableSeqs,
-                              atHistoryStart: snapshot.atHistoryStart)
+        feed = PerfTrace.shared.measure("feed.build", info: ["msgs": Double(snapshot.msgs.count)]) {
+            Self.buildFeed(snapshot.msgs, members: snapshot.users, ownId: ownId,
+                           unreadMarker: markerFeedParam, contentHidden: contentHidden,
+                           unreadableSeqs: snapshot.unreadableSeqs,
+                           atHistoryStart: snapshot.atHistoryStart)
+        }
         if let pinId = snapshot.chat?.pinnedMsgId, !contentHidden {
             pinnedMessage = snapshot.msgs.first { $0.msgId == pinId }
         } else {
@@ -444,6 +456,7 @@ final class ChatViewModel: ObservableObject {
     func send(text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        PerfTrace.shared.mark("send.tap")
         dismissUnreadMarker()
         if let editing {
             var c = ContentPayload(kind: "edit")
