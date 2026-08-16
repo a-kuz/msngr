@@ -19,7 +19,7 @@ final class SendFailureTests: XCTestCase {
         try await db.write { dbc in
             try dbc.execute(sql: "INSERT INTO chat (id, kind, createdBy, createdAt) VALUES ('c1','direct','me',0)")
             var msg = Message(id: clientMsgId, chatId: "c1", fromUserId: "me", sentAt: 1,
-                              kind: .text, text: "привет", status: .sending, isOutgoing: true)
+                              kind: .text, text: "hello", status: .sending, isOutgoing: true)
             msg.clientMsgId = clientMsgId
             try msg.save(dbc)
             try OutboxItem(clientMsgId: clientMsgId, chatId: "c1", createdAt: 1,
@@ -57,7 +57,7 @@ final class SendFailureTests: XCTestCase {
         try await seedOutgoing(db, clientMsgId: "cm1")
         try await db.write { dbc in
             var other = Message(id: "cm2", chatId: "c1", fromUserId: "me", sentAt: 2,
-                                kind: .text, text: "второе", status: .sending, isOutgoing: true)
+                                kind: .text, text: "the second one", status: .sending, isOutgoing: true)
             other.clientMsgId = "cm2"
             try other.save(dbc)
             try OutboxItem(clientMsgId: "cm2", chatId: "c1", createdAt: 2,

@@ -20,7 +20,7 @@ final class HistoricReplayTests: XCTestCase {
         let engine = try makeEngine(db: db)
 
         var original = ContentPayload(kind: "text")
-        original.text = "привет"
+        original.text = "hello"
         await engine.storeHistoric(content: original, chatId: "c1", msgId: "m1",
                                    seq: 1, from: "peer", sentAt: 1, ts: 1)
 
@@ -32,14 +32,14 @@ final class HistoricReplayTests: XCTestCase {
 
         var edit = ContentPayload(kind: "edit")
         edit.targetMsgId = "m1"
-        edit.text = "привет!"
+        edit.text = "hello!"
         await engine.storeHistoric(content: edit, chatId: "c1", msgId: "e1",
                                    seq: 3, from: "peer", sentAt: 3, ts: 3)
 
         let row = try await db.read { dbc in
             try Row.fetchOne(dbc, sql: "SELECT text, edited, reactions FROM message WHERE msgId = 'm1'")!
         }
-        XCTAssertEqual(row["text"] as String, "привет!")
+        XCTAssertEqual(row["text"] as String, "hello!")
         XCTAssertEqual(row["edited"] as Bool, true)
         let reactions = try JSONDecoder().decode([String: [String]].self,
                                                  from: Data((row["reactions"] as String).utf8))
@@ -69,7 +69,7 @@ final class HistoricReplayTests: XCTestCase {
         XCTAssertEqual(buffered, 1)
 
         var original = ContentPayload(kind: "text")
-        original.text = "оригинал"
+        original.text = "the original"
         await engine.storeHistoric(content: original, chatId: "c1", msgId: "m1",
                                    seq: 1, from: "peer", sentAt: 1, ts: 1)
 
@@ -90,7 +90,7 @@ final class HistoricReplayTests: XCTestCase {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
         var original = ContentPayload(kind: "text")
-        original.text = "раз"
+        original.text = "one"
         await engine.storeHistoric(content: original, chatId: "c1", msgId: "m1",
                                    seq: 1, from: "peer", sentAt: 1, ts: 1)
         await engine.storeHistoric(content: original, chatId: "c1", msgId: "m1",

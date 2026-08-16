@@ -92,12 +92,12 @@ final class OfflineReliabilityTests: XCTestCase {
         XCTAssertEqual(queued, 1)
     }
 
-    /// Отклонённая заявка: чат уходит с устройства с тумбстоуном, а блокировка
-    /// ждёт сети в очереди. Без очереди снапшот приносил бы заявку обратно, а
-    /// собеседник оставался бы разблокированным.
+    /// A rejected request: the chat leaves the device with a tombstone, and the
+    /// block waits for the network in the queue. Without the queue a snapshot would
+    /// bring the request back, and the peer would stay unblocked.
     func testRejectingRequestOfflineQueuesBothHalves() async throws {
         let db = try AppDatabase.openInMemory()
-        let engine = try makeEngine(db: db) // без start(): офлайн, очередь не дренится
+        let engine = try makeEngine(db: db) // no start(): offline, the queue does not drain
         try await db.write { dbc in
             var chat = Chat(id: "req", kind: .direct, title: nil, createdBy: "peer",
                             createdAt: 1, lastSeq: 3)
@@ -116,7 +116,7 @@ final class OfflineReliabilityTests: XCTestCase {
         }
         XCTAssertEqual(chats, 0)
         XCTAssertEqual(tombstones, 1)
-        XCTAssertTrue(isBlocked, "инпут-бар гаснет сразу, не дожидаясь сервера")
+        XCTAssertTrue(isBlocked, "the input bar goes dim at once, without waiting for the server")
 
         let types = try await db.read { dbc in
             try String.fetchSet(dbc, sql: "SELECT type FROM pendingAction")
@@ -124,8 +124,8 @@ final class OfflineReliabilityTests: XCTestCase {
         XCTAssertEqual(types, ["deleteChat", "block"])
     }
 
-    /// Список заблокированных с сервера не отменяет блокировку, которая ещё
-    /// стоит в очереди: иначе решение пользователя откатывалось бы само.
+    /// The blocked list from the server does not cancel a block that is still in the
+    /// queue: otherwise the user's decision would roll itself back.
     func testServerListKeepsQueuedBlock() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
@@ -134,14 +134,14 @@ final class OfflineReliabilityTests: XCTestCase {
         }
         try await engine.setBlocked(userId: "peer", blocked: true)
 
-        // сервер о блокировке ещё не знает и отвечает пустым списком
+        // the server does not know about the block yet and answers with an empty list
         try await db.write { dbc in try SyncEngine.applyBlockedList(dbc, serverIds: []) }
         var isBlocked = try await db.read { dbc in
             try Bool.fetchOne(dbc, sql: "SELECT isBlocked FROM user WHERE id = 'peer'")!
         }
         XCTAssertTrue(isBlocked)
 
-        // очередь доехала — дальше решает сервер
+        // the queue got through: from here the server decides
         try await db.write { dbc in
             try dbc.execute(sql: "DELETE FROM pendingAction WHERE type = 'block'")
             try SyncEngine.applyBlockedList(dbc, serverIds: [])

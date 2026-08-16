@@ -17,7 +17,7 @@ final class ReplyJumpTests: XCTestCase {
     private var feed: [ChatFeedItem] {
         [
             item(id: "local-1", msgId: "srv-9", outgoing: true),
-            .dateSeparator(id: "date:x", label: "Сегодня"),
+            .dateSeparator(id: "date:x", label: "Today"),
             item(id: "srv-4", msgId: "srv-4", outgoing: false),
         ]
     }
@@ -47,9 +47,9 @@ final class ReplyJumpTests: XCTestCase {
 final class FilePreviewNameTests: XCTestCase {
     func testKeepsOriginalNameWithExtension() {
         XCTAssertEqual(
-            FilePreviewName.previewFileName(name: "Договор.pdf", mime: "application/octet-stream",
+            FilePreviewName.previewFileName(name: "Contract.pdf", mime: "application/octet-stream",
                                             mediaId: "m1"),
-            "Договор.pdf")
+            "Contract.pdf")
     }
 
     func testAddsExtensionFromMimeWhenNameHasNone() {

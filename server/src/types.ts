@@ -40,8 +40,8 @@ export type ServerFrame =
   | { t: "receipt"; chatId: string; kind: "delivered" | "read"; upToSeq?: number; seqs?: number[]; by: string }
   | { t: "typing"; chatId: string; from: string; kind: string | null }
   | { t: "presence"; userId: string; online: boolean; lastSeen: number }
-  /// state отсутствует только у event "removed": адресат больше не участник,
-  /// состав ему не отдаётся
+  /// state is absent only for event "removed": the addressee is no longer a
+  /// member, so the roster is not handed to them
   | { t: "chat"; chatId: string; event: string; state?: ChatState }
   | { t: "deleted"; chatId: string; msgIds: string[]; forAll: boolean; by: string }
   /// catch-up progress of one chat: cursor to resume from, more — whether the

@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 /// Text selection mode for a message: the system selection with its loupe, its handles
-/// and the «Скопировать» menu. The whole text is shown and selected by default.
+/// and the copy menu. The whole text is shown and selected by default.
 struct TextSelectionView: View {
     let text: String
     @Environment(\.dismiss) private var dismiss

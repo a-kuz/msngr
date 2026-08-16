@@ -53,7 +53,7 @@ container keeps only `avatars` and `Library`, while `msngr.sqlite`, `.masterkey`
 and `session.json` are removed.
 
 Signing in as the same user is not implemented in the app — registration is the
-only entry point (see ROADMAP, "логин на новом устройстве"): registering
+only entry point (see ROADMAP, "Sign-in and devices"): registering
 `swbeta` again answers "Юзернейм занят". Registering `swdelta` on the same
 device works, the chat list is empty and the marker is delta
 

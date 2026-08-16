@@ -2,7 +2,7 @@ import SwiftUI
 import MsngrCore
 
 /// The user's active devices: the session list from the server, and revoking
-/// access. Revoking the current device takes the same path as «Выйти»: the token
+/// access. Revoking the current device takes the same path as signing out: the token
 /// is invalidated, local data is wiped, and the app returns to registration.
 struct SessionsView: View {
     @EnvironmentObject var app: AppState
@@ -132,7 +132,7 @@ struct SessionsView: View {
         }
     }
 
-    /// «Добавлено 15 августа 2026»; a session added today shows the time instead.
+    /// The "added on <date>" line; a session added today shows the time instead.
     static func addedLabel(_ ts: Double) -> String {
         guard ts > 0 else { return "Добавлено недавно" }
         let date = Date(timeIntervalSince1970: ts)

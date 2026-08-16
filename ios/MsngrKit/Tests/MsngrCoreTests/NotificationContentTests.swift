@@ -5,8 +5,8 @@ import XCTest
 final class NotificationContentTests: XCTestCase {
 
     private let direct = NotificationContentBuilder.ChatInfo(chatId: "c1", isGroup: false, title: nil)
-    private let group = NotificationContentBuilder.ChatInfo(chatId: "c2", isGroup: true, title: "Команда")
-    private let sender = NotificationContentBuilder.SenderInfo(userId: "u1", displayName: "Аня", avatarId: "av1")
+    private let group = NotificationContentBuilder.ChatInfo(chatId: "c2", isGroup: true, title: "Team")
+    private let sender = NotificationContentBuilder.SenderInfo(userId: "u1", displayName: "Anna", avatarId: "av1")
 
     private func payload(_ kind: String, text: String? = nil, fileName: String? = nil) -> ContentPayload {
         var c = ContentPayload(kind: kind)
@@ -28,10 +28,10 @@ final class NotificationContentTests: XCTestCase {
     // MARK: - 1:1
 
     func testDirectTextUsesSenderNameAndText() {
-        let c = build(payload("text", text: "привет"))
-        XCTAssertEqual(c?.title, "Аня")
+        let c = build(payload("text", text: "hello"))
+        XCTAssertEqual(c?.title, "Anna")
         XCTAssertNil(c?.subtitle)
-        XCTAssertEqual(c?.body, "привет")
+        XCTAssertEqual(c?.body, "hello")
         XCTAssertEqual(c?.threadIdentifier, "c1")
     }
 
@@ -42,17 +42,17 @@ final class NotificationContentTests: XCTestCase {
 
     func testSenderWithoutNameFallsBackToAppName() {
         let anon = NotificationContentBuilder.SenderInfo(userId: "u9", displayName: " ")
-        let c = NotificationContentBuilder.build(payload: payload("text", text: "тук"), chat: direct, sender: anon)
+        let c = NotificationContentBuilder.build(payload: payload("text", text: "knock"), chat: direct, sender: anon)
         XCTAssertEqual(c?.title, "Msngr")
     }
 
     // MARK: - Group
 
     func testGroupKeepsSenderInTitleAndGroupInSubtitle() {
-        let c = build(payload("text", text: "всем привет"), chat: group)
-        XCTAssertEqual(c?.title, "Аня")
-        XCTAssertEqual(c?.subtitle, "Команда")
-        XCTAssertEqual(c?.body, "всем привет")
+        let c = build(payload("text", text: "hello everyone"), chat: group)
+        XCTAssertEqual(c?.title, "Anna")
+        XCTAssertEqual(c?.subtitle, "Team")
+        XCTAssertEqual(c?.body, "hello everyone")
         XCTAssertEqual(c?.threadIdentifier, "c2")
     }
 
@@ -73,16 +73,16 @@ final class NotificationContentTests: XCTestCase {
     }
 
     func testFileUsesItsName() {
-        XCTAssertEqual(build(payload("file", fileName: "смета.pdf"))?.body, "📎 смета.pdf")
+        XCTAssertEqual(build(payload("file", fileName: "estimate.pdf"))?.body, "📎 estimate.pdf")
     }
 
     func testMediaCaptionIsAppended() {
-        XCTAssertEqual(build(payload("photo", text: "закат"))?.body, "📷 Фото: закат")
-        XCTAssertEqual(build(payload("video", text: "с моря"))?.body, "🎥 Видео: с моря")
+        XCTAssertEqual(build(payload("photo", text: "sunset"))?.body, "📷 Фото: sunset")
+        XCTAssertEqual(build(payload("video", text: "from the sea"))?.body, "🎥 Видео: from the sea")
     }
 
     func testUnknownKindFallsBackToTextOrPlaceholder() {
-        XCTAssertEqual(build(payload("sticker", text: "ы"))?.body, "ы")
+        XCTAssertEqual(build(payload("sticker", text: "y"))?.body, "y")
         XCTAssertEqual(build(payload("sticker"))?.body, "Новое сообщение")
     }
 
@@ -90,25 +90,25 @@ final class NotificationContentTests: XCTestCase {
 
     func testServiceKindsProduceNoNotification() {
         for kind in ["edit", "reaction", "disappearing", "system", "deleted"] {
-            XCTAssertNil(build(payload(kind, text: "что-то")), "expected silence for \(kind)")
+            XCTAssertNil(build(payload(kind, text: "something")), "expected silence for \(kind)")
         }
     }
 
     func testDeletedMessageProducesNoNotification() {
-        XCTAssertNil(build(payload("text", text: "было"), isDeleted: true))
+        XCTAssertNil(build(payload("text", text: "there it was"), isDeleted: true))
     }
 
     // MARK: - Privacy
 
     func testHiddenTextKeepsNamesAndDropsContent() {
-        let c = build(payload("text", text: "секрет"), chat: group, showsText: false)
-        XCTAssertEqual(c?.title, "Аня")
-        XCTAssertEqual(c?.subtitle, "Команда")
+        let c = build(payload("text", text: "a secret"), chat: group, showsText: false)
+        XCTAssertEqual(c?.title, "Anna")
+        XCTAssertEqual(c?.subtitle, "Team")
         XCTAssertEqual(c?.body, "Новое сообщение")
     }
 
     func testHiddenTextHidesMediaPlaceholderToo() {
-        XCTAssertEqual(build(payload("photo", text: "закат"), showsText: false)?.body, "Новое сообщение")
+        XCTAssertEqual(build(payload("photo", text: "sunset"), showsText: false)?.body, "Новое сообщение")
     }
 
     func testPreferenceDefaultsToShowingText() {
@@ -123,37 +123,37 @@ final class NotificationContentTests: XCTestCase {
     // MARK: - Truncation
 
     func testShortTextIsUntouched() {
-        XCTAssertEqual(NotificationContentBuilder.truncate("коротко"), "коротко")
+        XCTAssertEqual(NotificationContentBuilder.truncate("short"), "short")
     }
 
     func testNewlinesCollapseToSpaces() {
-        XCTAssertEqual(NotificationContentBuilder.truncate("две\nстроки\n\nи ещё"), "две строки и ещё")
+        XCTAssertEqual(NotificationContentBuilder.truncate("two\nlines\n\nand more"), "two lines and more")
     }
 
     func testLongTextCutsOnWordBoundary() {
-        let text = String(repeating: "слово ", count: 60).trimmingCharacters(in: .whitespaces)
+        let text = String(repeating: "word ", count: 60).trimmingCharacters(in: .whitespaces)
         let cut = NotificationContentBuilder.truncate(text)
         XCTAssertTrue(cut.hasSuffix("…"))
         XCTAssertLessThanOrEqual(cut.count, NotificationContentBuilder.textLimit + 1)
-        XCTAssertTrue(cut.dropLast().hasSuffix("слово"), "cut in the middle of a word: \(cut)")
+        XCTAssertTrue(cut.dropLast().hasSuffix("word"), "cut in the middle of a word: \(cut)")
         XCTAssertTrue(text.hasPrefix(String(cut.dropLast())))
     }
 
     func testTrailingPunctuationIsTrimmedBeforeEllipsis() {
-        let text = String(repeating: "аб, ", count: 80)
+        let text = String(repeating: "ab, ", count: 80)
         let cut = NotificationContentBuilder.truncate(text)
-        XCTAssertTrue(cut.hasSuffix("аб…"), cut)
+        XCTAssertTrue(cut.hasSuffix("ab…"), cut)
     }
 
     func testSingleLongWordCutsByLimit() {
-        let word = String(repeating: "ы", count: 400)
+        let word = String(repeating: "y", count: 400)
         let cut = NotificationContentBuilder.truncate(word)
         XCTAssertEqual(cut.count, NotificationContentBuilder.textLimit + 1)
         XCTAssertTrue(cut.hasSuffix("…"))
     }
 
     func testBodyOfLongMessageIsTruncated() {
-        let text = String(repeating: "слово ", count: 100)
+        let text = String(repeating: "word ", count: 100)
         let body = build(payload("text", text: text))?.body ?? ""
         XCTAssertLessThanOrEqual(body.count, NotificationContentBuilder.textLimit + 1)
     }

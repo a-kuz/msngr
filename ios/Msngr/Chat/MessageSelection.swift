@@ -28,7 +28,7 @@ struct MessageSelection: Equatable {
         MessageDeletion.canDeleteForAll(selected)
     }
 
-    /// Counter in the header, with plural forms: «1 сообщение», «2 сообщения», «5 сообщений».
+    /// Counter in the header, in Russian plural forms of "N messages".
     static func title(count: Int) -> String {
         let mod100 = count % 100
         let mod10 = count % 10

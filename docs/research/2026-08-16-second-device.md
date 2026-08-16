@@ -105,7 +105,7 @@ So a freshly linked device starts with:
 
 - the full chat list, titles, avatars, members, pinned message, read marks —
   everything in the `/api/chats` snapshot;
-- zero messages, and "История начинается здесь" at the top of every chat;
+- zero messages, and the "history starts here" line at the top of every chat;
 - unread counts at zero;
 - every message sent from the moment it linked.
 
@@ -278,6 +278,6 @@ rather than by notification.
 ## 6. Documentation this changes
 
 `docs/protocol.md` gains the provisioning endpoints and the revocation
-behaviour; `docs/crypto-flows.md` replaces "Логина как отдельной операции нет"
-with the linking flow and states that the identity key belongs to the account;
-`ROADMAP.md` closes "логин на новом устройстве" and the multi-device line.
+behaviour; `docs/crypto-flows.md` replaces "there is no login as a separate
+operation" with the linking flow and states that the identity key belongs to the
+account; `ROADMAP.md` closes the "log in on a new device" and multi-device lines.

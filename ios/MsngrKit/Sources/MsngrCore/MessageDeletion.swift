@@ -1,13 +1,13 @@
 import Foundation
 
-/// Правило, общее для всех клиентов: какое удаление вообще имеет смысл
-/// предлагать. Живёт в ядре, потому что iOS и macOS показывают одно и то же
-/// меню над одними и теми же сообщениями.
+/// The rule shared by every client: which deletion is worth offering at all.
+/// Lives in the core because iOS and macOS show the same menu over the same
+/// messages.
 public enum MessageDeletion {
-    /// «Удалить у всех» доступно, только когда все выбранные сообщения свои:
-    /// чужое сервер тумбстоунит лишь администратору группы, в личной переписке
-    /// такой запрос молча ничего не сделает, и сообщение исчезло бы только на
-    /// этом устройстве.
+    /// "Delete for everyone" is available only when every selected message is the
+    /// user's own: someone else's the server tombstones for a group admin alone, in
+    /// a direct chat such a request silently does nothing, and the message would
+    /// disappear on this device only.
     public static func canDeleteForAll(_ selected: [Message]) -> Bool {
         !selected.isEmpty && selected.allSatisfy(\.isOutgoing)
     }

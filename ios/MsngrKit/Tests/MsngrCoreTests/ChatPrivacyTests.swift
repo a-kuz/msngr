@@ -24,10 +24,10 @@ final class ChatPrivacyTests: XCTestCase {
 
     /// The core rule: the preview carries no text before accept and the real text after it.
     func testPreviewHiddenUntilAccept() {
-        XCTAssertEqual(ChatPrivacy.preview(isRequest: true, iAccepted: false, content: "Привет, это я"),
+        XCTAssertEqual(ChatPrivacy.preview(isRequest: true, iAccepted: false, content: "Hi, it's me"),
                        ChatPrivacy.requestPlaceholder)
-        XCTAssertEqual(ChatPrivacy.preview(isRequest: false, iAccepted: true, content: "Привет, это я"),
-                       "Привет, это я")
+        XCTAssertEqual(ChatPrivacy.preview(isRequest: false, iAccepted: true, content: "Hi, it's me"),
+                       "Hi, it's me")
     }
 
     /// A hidden chat with no text must not read as a chat with no messages.
