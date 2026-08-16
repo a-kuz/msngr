@@ -24,6 +24,9 @@ public struct DoubleRatchetSession: Codable, Sendable {
     var recvN: UInt32 = 0
     var prevSendN: UInt32 = 0
     var skipped: [String: Data] = [:] // "\(dhPub.base64)/\(n)" -> messageKey
+    /// The keys of `skipped` in the order they were derived, which is the order
+    /// they are evicted in once the store is full.
+    var skippedOrder: [String] = []
     public var associatedData: Data
     /// The initiator's ephemeral key this session was built from, on the
     /// responder side. It names the handshake, which is how a prekey envelope
@@ -116,6 +119,7 @@ public struct DoubleRatchetSession: Codable, Sendable {
         let skipKey = Self.skippedKey(message.header.dhPub, message.header.n)
         if let mk = skipped[skipKey] {
             skipped.removeValue(forKey: skipKey)
+            skippedOrder.removeAll { $0 == skipKey }
             return try open(message, with: mk)
         }
         // 2. sender moved to a new DH pub -> step the DH ratchet
@@ -162,20 +166,17 @@ public struct DoubleRatchetSession: Codable, Sendable {
         guard var chainKey = recvChainKey, let remote = dhRemotePub else { return }
         while recvN < n {
             let (next, msgKey) = Self.kdfChain(chainKey)
-            skipped[Self.skippedKey(remote, recvN)] = msgKey
+            let key = Self.skippedKey(remote, recvN)
+            if skipped.updateValue(msgKey, forKey: key) == nil { skippedOrder.append(key) }
             chainKey = next
             recvN += 1
         }
         recvChainKey = chainKey
-        // keep skipped bounded: evict the lowest message numbers first
-        if skipped.count > Self.maxSkippedStored {
-            func msgIndex(_ key: String) -> UInt32 {
-                UInt32(key.split(separator: "/").last.map(String.init) ?? "") ?? 0
-            }
-            for key in skipped.keys.sorted(by: { msgIndex($0) < msgIndex($1) })
-                .prefix(skipped.count - Self.maxSkippedStored) {
-                skipped.removeValue(forKey: key)
-            }
+        // keep skipped bounded: the oldest keys go first. Age is the order they
+        // were derived in, across chains — a message number belongs to one chain
+        // and says nothing about the keys of another.
+        while skipped.count > Self.maxSkippedStored, !skippedOrder.isEmpty {
+            skipped.removeValue(forKey: skippedOrder.removeFirst())
         }
     }
 
