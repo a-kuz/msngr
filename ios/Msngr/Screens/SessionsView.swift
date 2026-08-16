@@ -65,9 +65,9 @@ struct SessionsView: View {
     private func row(_ s: APIClient.SessionDTO) -> some View {
         HStack(spacing: 12) {
             Image(systemName: s.current ? "iphone" : "laptopcomputer.and.iphone")
-                .font(.system(size: 20))
+                .font(Theme.glyph(20, max: 30))
                 .foregroundStyle(Theme.accent)
-                .frame(width: 28)
+                .frame(width: TypeScale.scaled(28, max: 40))
             VStack(alignment: .leading, spacing: 3) {
                 Text(s.name ?? "Неизвестное устройство")
                     .font(.body)

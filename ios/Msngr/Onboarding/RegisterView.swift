@@ -17,6 +17,7 @@ struct RegisterView: View {
                 Image(systemName: "message.circle.fill")
                     .font(.system(size: 72))
                     .foregroundStyle(Theme.accent)
+                    .accessibilityHidden(true)
                 Text("Msngr")
                     .font(.largeTitle.bold())
                 Text("Сквозное шифрование. Ключи создаются на этом устройстве.")
