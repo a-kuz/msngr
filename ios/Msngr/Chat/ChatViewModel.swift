@@ -683,27 +683,28 @@ final class ChatViewModel: ObservableObject {
         return isLoaded(msgId: msgId)
     }
 
-    /// Ставит границу окна на сообщение, оставляя в окне всё, что новее.
-    /// false — опереться не на что: сообщения нет на устройстве, у него нет seq
-    /// или оно и так внутри окна.
+    /// Ставит границу окна на сообщение и растягивает вместимость до конца
+    /// переписки: в окне оказывается и само сообщение, и всё, что новее.
+    /// false — опереться не на что: сообщения нет на устройстве или у него нет seq.
     private func anchorWindow(to msgId: String) async -> Bool {
         guard let db = app.db else { return false }
-        let anchor = try? await db.read { [chatId] dbc -> (seq: Int, count: Int)? in
+        let current = windowFloor.get()
+        let anchor = try? await db.read { [chatId] dbc -> (floor: Int, count: Int)? in
             guard let seq = try Int.fetchOne(dbc, sql: """
                 SELECT seq FROM message
                 WHERE chatId = ? AND (msgId = ? OR id = ?) AND seq IS NOT NULL
                 """, arguments: [chatId, msgId, msgId]) else { return nil }
+            // сообщение новее границы уже внутри — окну не хватает только высоты
+            let floor = min(seq, current ?? seq)
             // своё неотправленное (seq ещё нет) стоит выше всего пронумерованного
             let count = try Int.fetchOne(dbc, sql: """
                 SELECT COUNT(*) FROM message
                 WHERE chatId = ? AND (seq >= ? OR seq IS NULL)
-                """, arguments: [chatId, seq]) ?? 0
-            return (seq, count)
+                """, arguments: [chatId, floor]) ?? 0
+            return (floor, count)
         }
-        guard let anchor = anchor ?? nil, anchor.seq < windowFloor.get() ?? Int.max else {
-            return false
-        }
-        windowFloor.anchor(floor: anchor.seq, capacity: anchor.count)
+        guard let anchor = anchor ?? nil else { return false }
+        windowFloor.anchor(floor: anchor.floor, capacity: anchor.count)
         observeChat()
         return true
     }
