@@ -165,12 +165,13 @@ struct LinkDeviceView: View {
             let claimed = try await DeviceLink.claim(api: api, pending: pending, bundle: bundle,
                                                      store: store,
                                                      deviceName: UIDevice.current.name)
-            // the chat list comes over, the history does not: every chat starts
-            // at the end it stands at now
+            // the chat list comes over, the history does not: the rows are
+            // written before the engine ever opens a socket, so the first sync
+            // names the end of each journal instead of asking for all of it
             let linked = APIClient(baseURL: AppState.httpBase, token: claimed.token)
-            if let snapshot = try? await linked.chatsSnapshot() {
-                let ends = snapshot.chats.map { ($0.state.chatId, $0.state.lastSeq) }
-                try await db.write { dbc in try DeviceLink.startChatsFromNow(dbc, chats: ends) }
+            let snapshot = try await linked.chatsSnapshot()
+            try await db.write { dbc in
+                try DeviceLink.primeChats(dbc, snapshot: snapshot, ownUserId: claimed.userId)
             }
             try StorageOwnership.stamp(db, userId: claimed.userId)
             try app.saveSession(Session(userId: claimed.userId, deviceId: claimed.deviceId,
