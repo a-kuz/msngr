@@ -83,6 +83,15 @@ make check DEV_UDID=74B78AFC-E8D7-4317-B16F-E51A65504B2D   # gate-runner
 
 A simulator is an exclusive resource: at any moment it belongs to one agent.
 
+Nothing about speed is decided on a simulator. It does not emulate a phone: the
+same arm64 code runs natively on the host, over the host's memory and its NVMe,
+so "iPhone 13" there is a screen size and a system version and nothing else. A
+frame time, a scroll, a database query, the moment a screen opens — all of it is
+measured on a device, and a run that has only simulator numbers behind it does
+not close a performance line in the ROADMAP. What a simulator is still good for
+is the shape of the work: how many queries a screen makes, how many rows it
+reads, how many times a cell is rebuilt — counts do not change with the machine.
+
 - Do not touch the owner's simulators: `44CE2242-EBB9-48EA-A605-5988A00E4C31`
   (iPhone 17 dev) and `0E0CF155-B4B7-4794-A963-AD7C76EFDCEA` (iPhone 17 Pro Max).
   They are handed out only on an explicit exclusive reservation.
