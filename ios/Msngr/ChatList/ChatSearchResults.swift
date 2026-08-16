@@ -7,6 +7,7 @@ struct ChatSearchResults: View {
     @ObservedObject var list: ChatListModel
     @ObservedObject var search: ChatSearchModel
     let ownUserId: String
+    @Environment(\.dynamicTypeSize) private var typeSize
     /// Тап по найденному сообщению: чат открывается на этом сообщении.
     var onOpenMessage: (MessageSearchHit) -> Void
     var onOpenPerson: (APIClient.UserDTO) -> Void
@@ -67,12 +68,12 @@ struct ChatSearchResults: View {
                     Button { onOpenPerson(user) } label: {
                         HStack(spacing: 10) {
                             AvatarView(name: user.display_name, avatarId: user.avatar_id)
-                                .frame(width: 40, height: 40)
+                                .frame(width: personAvatarSide, height: personAvatarSide)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(user.display_name)
-                                    .font(.system(size: 16, weight: .semibold))
+                                    .textRole(Theme.Text.rowTitle)
                                 Text("@\(user.username)")
-                                    .font(.footnote)
+                                    .textRole(Theme.Text.rowTime)
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
@@ -96,12 +97,13 @@ struct ChatSearchResults: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 34))
                 .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
             Text("Ничего не нашлось")
-                .font(.system(size: 17, weight: .semibold))
+                .font(.title3.weight(.semibold))
             Text("Поищем по названию чата, тексту сообщения\nили юзернейму")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -110,6 +112,11 @@ struct ChatSearchResults: View {
         .padding(.bottom, 40)
         .accessibilityIdentifier("search.empty")
     }
+
+    /// Аватар человека тянется за размером текста, как строка чата рядом.
+    private var personAvatarSide: CGFloat {
+        typeSize.scaled(40, relativeTo: .subheadline, max: 58)
+    }
 }
 
 /// Строка найденного сообщения: чей чат, кусок текста с подсвеченным словом и
@@ -117,32 +124,36 @@ struct ChatSearchResults: View {
 struct MessageHitRow: View {
     let hit: MessageSearchHit
     let chat: ChatListItem?
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         HStack(spacing: 10) {
             AvatarView(name: title, avatarId: avatarId)
-                .frame(width: 44, height: 44)
+                .frame(width: avatarSide, height: avatarSide)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 4) {
                     Text(title)
-                        .font(.system(size: 16, weight: .semibold))
+                        .textRole(Theme.Text.rowTitle)
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     Text(ChatRowView.timeLabel(hit.sortedAt))
-                        .font(.system(size: 13))
+                        .textRole(Theme.Text.rowTime)
                         .foregroundStyle(.secondary)
+                        .fixedSize()
+                        .layoutPriority(1)
                 }
                 HStack(alignment: .top, spacing: 4) {
                     // подпись под вложением ищется как обычный текст, но строка
                     // должна показывать, что нашлась не переписка, а фото или файл
                     if let icon = Self.kindIcon(hit.kind) {
                         Image(systemName: icon)
-                            .font(.system(size: 12))
+                            .font(Theme.glyph(12, max: 18))
                             .foregroundStyle(Theme.accent)
                             .padding(.top, 2)
+                            .accessibilityHidden(true)
                     }
                     Text(Self.highlighted(hit.snippet))
-                        .font(.system(size: 15))
+                        .textRole(Theme.Text.rowPreview)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -150,6 +161,8 @@ struct MessageHitRow: View {
         }
         .contentShape(Rectangle())
     }
+
+    private var avatarSide: CGFloat { typeSize.scaled(44, relativeTo: .subheadline, max: 62) }
 
     private var title: String { chat?.title ?? "Чат" }
 
@@ -176,7 +189,9 @@ struct MessageHitRow: View {
         for range in snippet.matches {
             guard let lower = AttributedString.Index(range.lowerBound, within: text),
                   let upper = AttributedString.Index(range.upperBound, within: text) else { continue }
-            text[lower..<upper].font = .system(size: 15, weight: .semibold)
+            // выделение задаётся ролью текста, а не своим размером: строка
+            // целиком должна тянуться за системным размером шрифта
+            text[lower..<upper].inlinePresentationIntent = .stronglyEmphasized
             text[lower..<upper].foregroundColor = Theme.accent
         }
         return text
