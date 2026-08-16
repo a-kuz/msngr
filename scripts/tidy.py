@@ -24,6 +24,8 @@ and it comes with a notification instead of a silent stall.
 """
 
 import os
+import plistlib
+import re
 import shutil
 import signal
 import subprocess
@@ -74,6 +76,43 @@ def quiet_for(path):
     return time.time() - last if last else float("inf")
 
 
+def app_group_id():
+    """The app group both the app and the extension write into."""
+    entitlements = ROOT / "ios" / "project.yml"
+    if entitlements.exists():
+        for line in entitlements.read_text().splitlines():
+            if "application-groups" in line and "[" in line:
+                return line.split("[", 1)[1].split("]")[0].split(",")[0].strip()
+    return "group.ai.enface.msngr"
+
+
+def app_quiet_for(udid):
+    """How long our own app has been silent on a simulator.
+
+    A booted simulator writes to `data/Containers` forever on its own — Siri,
+    news, splash screens, a few dozen system group containers — so the tree as
+    a whole says nothing about whether anyone is using it. Our app group is
+    written by our app and the extension and by nothing else, which is what
+    makes it an answer.
+    """
+    shared = disk.DEVICES / udid / "data" / "Containers" / "Shared" / "AppGroup"
+    if not shared.is_dir():
+        return float("inf")
+    wanted = app_group_id()
+    for path in shared.iterdir():
+        meta = path / ".com.apple.mobile_container_manager.metadata.plist"
+        if not meta.exists():
+            continue
+        try:
+            with meta.open("rb") as f:
+                if plistlib.load(f).get("MCMMetadataIdentifier") != wanted:
+                    continue
+        except (OSError, ValueError):
+            continue
+        return quiet_for(path)
+    return float("inf")
+
+
 def stale_simulators(agents):
     """Simulators no live agent claims, that have also stopped writing.
 
@@ -82,11 +121,17 @@ def stale_simulators(agents):
     device that is unclaimed and busy is left for the report to raise.
     """
     out, busy = [], []
+    working = working_worktrees()
     for dev in disk.devices():
         if dev["udid"] in disk.KEEP_DEVICES:
             continue
         owner = disk.device_owner(dev["name"], agents)
         if owner and agents[owner]["alive"]:
+            continue
+        # An agent that never wrote itself into the registry still leaves a
+        # worktree named after itself, and that is a claim on the simulator.
+        stem = dev["name"].split("-")[0]
+        if stem in working:
             continue
         home = disk.DEVICES / dev["udid"]
         if not home.exists():
@@ -96,13 +141,38 @@ def stale_simulators(agents):
         why = f"no live agent owns {dev['name']}"
         if owner:
             why = f"agent {owner} is gone"
-        idle = quiet_for(home / "data" / "Containers")
+        idle = app_quiet_for(dev["udid"])
         if idle < SETTLE:
             busy.append((dev, f"{why}, but written to {int(idle / 60)}m ago"))
             continue
         out.append({"what": f"simulator {dev['name']}", "bytes": dev["bytes"],
                     "why": why, "do": lambda u=dev["udid"]: delete_device(u)})
     return out, busy
+
+
+def unfinished_worktrees():
+    """Worktrees that still hold work: a branch not in main, or a dirty tree."""
+    trees = ROOT / ".claude" / "worktrees"
+    out = []
+    for path in sorted(trees.glob("*")) if trees.is_dir() else []:
+        if not path.is_dir():
+            continue
+        dirty = subprocess.run(["git", "-C", str(path), "status", "--porcelain"],
+                               capture_output=True, text=True).stdout.strip()
+        if dirty or not disk.merged(path.name):
+            out.append(path)
+    return out
+
+
+def working_worktrees():
+    """Agent names claimed by an unfinished worktree.
+
+    `run-chatlist` means an agent called `chatlist`, whether or not it got as
+    far as writing itself into .claude/agents.tsv — which is exactly what one
+    agent had not done while this was being built.
+    """
+    return {p.name[4:] if p.name.startswith("run-") else p.name
+            for p in unfinished_worktrees()}
 
 
 def delete_device(udid):
@@ -114,14 +184,14 @@ def stale_stands(agents):
     """Stand state directories with no wrangler pointing at them."""
     live = {Path(p).resolve() for p in disk.persist_paths() if Path(p).is_dir()}
     shared = disk.SHARED_STAND.resolve()
-    owned = {t for n, a in agents.items() if a["alive"] and (t := a["worktree"])}
+    busy = [p.resolve() for p in unfinished_worktrees()]
     out = []
     for path in disk.stand_dirs():
         if path == shared or any(p == path or disk.is_under(p, path) for p in live):
             continue
-        # A live agent's own stand is left alone even between its wrangler runs.
-        if any(disk.is_under(path, (ROOT / ".claude" / "worktrees" / t).resolve())
-               for t in owned):
+        # A working agent's own stand is left alone even between its wrangler
+        # runs: it is empty for a moment, not abandoned.
+        if any(disk.is_under(path, tree) for tree in busy):
             continue
         if quiet_for(path) < SETTLE:
             continue
@@ -142,22 +212,51 @@ def orphan_stand_processes():
                             text=True, timeout=30).stdout
     except subprocess.SubprocessError:
         return []
-    dead = {}
+    trees = re.escape(str(ROOT / ".claude" / "worktrees"))
+    inside = re.compile(trees + r"/([^/\s]+)/")
+    dead, ports = {}, {}
     for line in ps.splitlines()[1:]:
         pid, _, command = line.strip().partition(" ")
-        if "/worktrees/" not in command:
+        # Only the program and the script it was given, never the whole line:
+        # an agent is started with its worktree path written out in the prompt,
+        # and matching that would have this kill the agent itself.
+        head = " ".join(command.split()[:2])
+        if not any(k in head for k in ("wrangler", "workerd", "esbuild")):
             continue
-        if not any(k in command for k in ("wrangler", "workerd", "esbuild")):
+        found = inside.search(head)
+        if not found:
             continue
-        tree = command.split("/worktrees/", 1)[1].split("/", 1)[0]
+        tree = found.group(1)
         if (ROOT / ".claude" / "worktrees" / tree).exists():
             continue
         dead.setdefault(tree, []).append(int(pid))
-    return [{"what": f"the stand of the deleted worktree {tree} "
-                     f"({len(pids)} processes)",
-             "bytes": 0, "why": "it is holding files that no longer exist",
-             "do": lambda p=pids: kill(p)}
-            for tree, pids in sorted(dead.items())]
+        port = re.search(r"--port[= ]+(\d+)", command)
+        if port:
+            ports.setdefault(tree, set()).add(int(port.group(1)))
+    out = []
+    for tree, pids in sorted(dead.items()):
+        if any(has_clients(port) for port in ports.get(tree, ())):
+            continue
+        out.append({"what": f"the stand of the deleted worktree {tree} "
+                            f"({len(pids)} processes)",
+                    "bytes": 0, "why": "it is holding files that no longer exist",
+                    "do": lambda p=pids: kill(p)})
+    return out
+
+
+def has_clients(port):
+    """Whether anybody is connected to the port a stand serves.
+
+    Asking about the processes instead would always say yes: wrangler runs node
+    and workerd as a pair and they hold loopback sockets to each other for as
+    long as they live. The served port is the one an app connects to.
+    """
+    try:
+        out = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:ESTABLISHED"],
+                             capture_output=True, text=True, timeout=60).stdout
+    except subprocess.SubprocessError:
+        return True
+    return len(out.splitlines()) > 1
 
 
 def kill(pids):
