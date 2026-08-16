@@ -1,0 +1,411 @@
+#!/usr/bin/env python3
+"""Takes back what dead agents left behind, and asks when that is not enough.
+
+    scripts/tidy.py            what would go
+    scripts/tidy.py --apply    let it go
+    scripts/tidy.py --report   write the escalation report whatever the free space
+
+Runs from launchd every five minutes (`ai.enface.msngr.tidy`). Everything it
+removes on its own has been checked to belong to nobody: the agent that made it
+is gone, or no process is holding it. Nothing here waits for a simulator to be
+shut down first, because the shutdown was the dead agent's job and it never
+happened — that is the whole reason this exists.
+
+An agent owns a simulator whose name is its own name or starts with it and a
+dash: `perfdb` owns `perfdb-a` and `perfdb-b`. Agents are listed in
+.claude/agents.tsv; a name nobody in that file claims is a name nobody will miss.
+
+Two things are never touched: the owner's two devices with the gate runner, and
+the shared stand on :8787 with the conversations and keys in server/.wrangler.
+
+When the sweep cannot get free space above the floor, the decision stops being
+ours. The report says what is holding the disk and what would be next to go,
+and it comes with a notification instead of a silent stall.
+"""
+
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import disk  # noqa: E402  the metric and the facts about what belongs to whom
+
+ROOT = disk.ROOT
+REPORT = ROOT / ".claude" / "disk-report.md"
+
+FLOOR = int(os.environ.get("TIDY_FLOOR_GB", 25)) * 2**30   # ask below this
+BUDGET = int(os.environ.get("TIDY_BUDGET_GB", 85)) * 2**30  # what we said we'd fit in
+# A thing has to be still for this long before it counts as litter. Lowering it
+# is how the sweep gets tested without waiting half an hour for the clock.
+SETTLE = int(os.environ.get("TIDY_SETTLE_MIN", 30)) * 60
+SNAPSHOT_MAX_AGE = 15 * 60
+
+APPLY = "--apply" in sys.argv
+
+
+def log(line):
+    print(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {line}", flush=True)
+
+
+# --------------------------------------------------------------- candidates
+
+def newest_write(path, cap=20000):
+    """When anything under a path was last written. Cheap enough to call often."""
+    newest = 0
+    seen = 0
+    for root, dirs, files in os.walk(path, onerror=lambda e: None):
+        for name in files:
+            try:
+                newest = max(newest, os.lstat(os.path.join(root, name)).st_mtime)
+            except OSError:
+                pass
+            seen += 1
+            if seen > cap:
+                return newest
+    return newest
+
+
+def quiet_for(path):
+    last = newest_write(path)
+    return time.time() - last if last else float("inf")
+
+
+def stale_simulators(agents):
+    """Simulators no live agent claims, that have also stopped writing.
+
+    The registry decides ownership, but an agent that never registered would
+    lose its work to that alone, so the container has to be still as well. A
+    device that is unclaimed and busy is left for the report to raise.
+    """
+    out, busy = [], []
+    for dev in disk.devices():
+        if dev["udid"] in disk.KEEP_DEVICES:
+            continue
+        owner = disk.device_owner(dev["name"], agents)
+        if owner and agents[owner]["alive"]:
+            continue
+        home = disk.DEVICES / dev["udid"]
+        if not home.exists():
+            continue
+        if time.time() - home.stat().st_ctime < SETTLE:
+            continue
+        why = f"no live agent owns {dev['name']}"
+        if owner:
+            why = f"agent {owner} is gone"
+        idle = quiet_for(home / "data" / "Containers")
+        if idle < SETTLE:
+            busy.append((dev, f"{why}, but written to {int(idle / 60)}m ago"))
+            continue
+        out.append({"what": f"simulator {dev['name']}", "bytes": dev["bytes"],
+                    "why": why, "do": lambda u=dev["udid"]: delete_device(u)})
+    return out, busy
+
+
+def delete_device(udid):
+    subprocess.run(["xcrun", "simctl", "shutdown", udid], capture_output=True)
+    subprocess.run(["xcrun", "simctl", "delete", udid], capture_output=True)
+
+
+def stale_stands(agents):
+    """Stand state directories with no wrangler pointing at them."""
+    live = {Path(p).resolve() for p in disk.persist_paths() if Path(p).is_dir()}
+    shared = disk.SHARED_STAND.resolve()
+    owned = {t for n, a in agents.items() if a["alive"] and (t := a["worktree"])}
+    out = []
+    for path in disk.stand_dirs():
+        if path == shared or any(p == path or disk.is_under(p, path) for p in live):
+            continue
+        # A live agent's own stand is left alone even between its wrangler runs.
+        if any(disk.is_under(path, (ROOT / ".claude" / "worktrees" / t).resolve())
+               for t in owned):
+            continue
+        if quiet_for(path) < SETTLE:
+            continue
+        out.append({"what": f"stand {rel(path)}", "bytes": disk.du_kb(path),
+                    "why": "no wrangler is holding it",
+                    "do": lambda p=path: shutil.rmtree(p, ignore_errors=True)})
+    return out
+
+
+def orphan_stand_processes():
+    """Wranglers whose worktree was deleted under them.
+
+    They keep running against files that no longer have a name, so the space
+    shows in df and in nothing else. Killing the process is what frees it.
+    """
+    try:
+        ps = subprocess.run(["ps", "-eo", "pid,command"], capture_output=True,
+                            text=True, timeout=30).stdout
+    except subprocess.SubprocessError:
+        return []
+    dead = {}
+    for line in ps.splitlines()[1:]:
+        pid, _, command = line.strip().partition(" ")
+        if "/worktrees/" not in command:
+            continue
+        if not any(k in command for k in ("wrangler", "workerd", "esbuild")):
+            continue
+        tree = command.split("/worktrees/", 1)[1].split("/", 1)[0]
+        if (ROOT / ".claude" / "worktrees" / tree).exists():
+            continue
+        dead.setdefault(tree, []).append(int(pid))
+    return [{"what": f"the stand of the deleted worktree {tree} "
+                     f"({len(pids)} processes)",
+             "bytes": 0, "why": "it is holding files that no longer exist",
+             "do": lambda p=pids: kill(p)}
+            for tree, pids in sorted(dead.items())]
+
+
+def kill(pids):
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+
+def merged_worktrees(agents):
+    """Worktrees whose branch is in main, with nothing left in them to lose."""
+    owned = {a["worktree"] for a in agents.values() if a["alive"]}
+    here = Path.cwd().resolve()
+    cwds = process_cwds()
+    out = []
+    trees = ROOT / ".claude" / "worktrees"
+    for path in sorted(trees.glob("*")) if trees.is_dir() else []:
+        if not path.is_dir() or path.name in owned:
+            continue
+        full = path.resolve()
+        if full == here or disk.is_under(here, full):
+            continue
+        if any(c == full or disk.is_under(c, full) for c in cwds):
+            continue
+        if not disk.merged(path.name):
+            continue
+        dirty = subprocess.run(["git", "-C", str(path), "status", "--porcelain"],
+                               capture_output=True, text=True).stdout.strip()
+        if dirty:
+            continue
+        out.append({"what": f"worktree {path.name}", "bytes": disk.du_kb(path),
+                    "why": "branch merged, nothing uncommitted, nobody in it",
+                    "do": lambda p=path: remove_worktree(p)})
+    return out
+
+
+def process_cwds():
+    """Directories processes are sitting in, so a worktree in use is not removed."""
+    try:
+        out = subprocess.run(["lsof", "-a", "-d", "cwd", "-n", "-F", "n"],
+                             capture_output=True, text=True, timeout=120).stdout
+    except subprocess.SubprocessError:
+        return set()
+    return {Path(line[1:]) for line in out.splitlines()
+            if line.startswith("n/") and "/worktrees/" in line}
+
+
+def remove_worktree(path):
+    done = subprocess.run(["git", "-C", str(ROOT), "worktree", "remove",
+                           str(path), "--force"], capture_output=True)
+    if done.returncode != 0:
+        shutil.rmtree(path, ignore_errors=True)
+    subprocess.run(["git", "-C", str(ROOT), "worktree", "prune"], capture_output=True)
+
+
+def orphan_derived_data():
+    """Derived data built from a workspace that is no longer there."""
+    out = []
+    root = disk.HOME / "Library" / "Developer" / "Xcode" / "DerivedData"
+    for path in sorted(root.glob("*")) if root.is_dir() else []:
+        if not path.is_dir() or path.name.endswith(".noindex"):
+            continue
+        workspace = disk.workspace_of(path)
+        if not workspace or Path(workspace).exists():
+            continue
+        out.append({"what": f"derived data {path.name}", "bytes": disk.du_kb(path),
+                    "why": f"built from {workspace}, which is gone",
+                    "do": lambda p=path: shutil.rmtree(p, ignore_errors=True)})
+    return out
+
+
+def old_logs(days=3):
+    """Run logs older than a few days. Nobody has ever read one that old."""
+    cutoff = time.time() - days * 86400
+    out = []
+    for folder in ((ROOT / ".claude" / "logs"), (ROOT / ".claude" / "agent-runs")):
+        if not folder.is_dir():
+            continue
+        for path in sorted(folder.rglob("*")):
+            if not path.is_file() or path.stat().st_mtime > cutoff:
+                continue
+            out.append({"what": f"log {rel(path)}", "bytes": path.stat().st_size,
+                        "why": f"older than {days} days",
+                        "do": lambda p=path: p.unlink(missing_ok=True)})
+    return out
+
+
+def rel(path):
+    return str(path).replace(str(ROOT) + "/", "")
+
+
+# ------------------------------------------------------------------ the run
+
+def sweep():
+    agents = disk.registry()
+    sims, busy = stale_simulators(agents)
+    plan = (sims + stale_stands(agents) + orphan_stand_processes()
+            + merged_worktrees(agents) + orphan_derived_data() + old_logs())
+    freed = 0
+    for item in plan:
+        size = f"{item['bytes'] / 2**30:.2f}G" if item["bytes"] else "—"
+        if APPLY:
+            try:
+                item["do"]()
+            except OSError as err:
+                log(f"could not remove {item['what']}: {err}")
+                continue
+            log(f"removed {item['what']} ({size}) — {item['why']}")
+            freed += item["bytes"]
+        else:
+            log(f"would remove {item['what']} ({size}) — {item['why']}")
+    return plan, busy, freed
+
+
+# --------------------------------------------------------------- escalation
+
+def gb(n):
+    return f"{n / 2**30:.1f} GB"
+
+
+def proposals(snap, busy):
+    """What a human could give up next, dearest first, with what it costs.
+
+    Only things a script must not take on its own: work in progress, state with
+    test users in it, caches whose loss is measured in build minutes.
+    """
+    out = []
+    for dev, why in busy:
+        out.append((dev["bytes"], f"simulator `{dev['name']}` — {why}. "
+                    "Nobody in the registry claims it; if the agent really is "
+                    "gone, `xcrun simctl delete` takes it."))
+
+    for group in snap["groups"]:
+        for item in group["items"]:
+            if item.get("loose"):
+                continue
+            name, size = item["name"], item["bytes"]
+            if group["name"] == "derived data" and name.endswith(".noindex"):
+                out.append((size, f"`{name}` — a shared build cache. Costs one "
+                            "cold build of every scheme."))
+            elif group["name"] == "derived data":
+                out.append((size, f"derived data `{name}` — costs one cold "
+                            "build of that project."))
+            elif group["name"] == "simulators" and item["note"].startswith("agent "):
+                out.append((size, f"simulator `{name}` belongs to a working "
+                            f"{item['note']}. Ask it to finish first."))
+            elif group["name"] == "logs and scratch":
+                out.append((size, f"`{name}` — a finished run's scratch."))
+            elif name == "swiftpm cache":
+                out.append((size, "the SwiftPM cache — costs one re-resolve of "
+                            "the packages."))
+            elif name == "the shared :8787 stand" or name.endswith("server/.wrangler"):
+                out.append((size, "`server/.wrangler` — the shared stand. It "
+                            "holds the conversations and keys of the test "
+                            "users; deleting it means registering them again."))
+
+    dead = snap.get("held_by_dead_files", {}).get("bytes", 0)
+    if dead > 2 * 2**30:
+        who = ", ".join(p["name"] for p in snap["held_by_dead_files"]["processes"][:3])
+        out.append((dead, f"{gb(dead)} is held by deleted files still open "
+                    f"({who}). Restarting those processes returns it and "
+                    "deletes nothing."))
+
+    for item in (snap.get("outside") or {}).get("items", []):
+        theirs = item["bytes"] - item.get("mine", 0)
+        if theirs > 8 * 2**30 and not item["name"].startswith("~/ws"):
+            out.append((theirs, f"`{item['name']}` holds {gb(theirs)} that is "
+                        "not this project at all."))
+
+    out.sort(key=lambda p: -p[0])
+    return [(size, text) for size, text in out if size > 200 * 2**20][:10]
+
+
+def escalate(snap, busy, freed):
+    avail, total = disk.free_bytes()
+    lines = [
+        "# The sweep was not enough",
+        "",
+        f"Written by `scripts/tidy.py` at {time.strftime('%Y-%m-%d %H:%M')}. "
+        f"Free space is {gb(avail)} of {gb(total)}, and the floor this asks at "
+        f"is {gb(FLOOR)}. The sweep just before this took back {gb(freed)}; "
+        "everything left needs somebody to decide.",
+        "",
+        "## Where the space is",
+        "",
+    ]
+    for group in sorted(snap["groups"], key=lambda g: -sum(i["bytes"] for i in g["items"])):
+        size = sum(i["bytes"] for i in group["items"])
+        if size < 200 * 2**20:
+            continue
+        biggest = sorted(group["items"], key=lambda i: -i["bytes"])[:3]
+        detail = ", ".join(f"{i['name']} {gb(i['bytes'])}" for i in biggest)
+        lines.append(f"- **{group['name']}** {gb(size)} — {detail}")
+    beyond = snap.get("outside") or {}
+    if beyond.get("items"):
+        top = beyond["items"][0]
+        lines += ["", f"Our whole footprint is {gb(snap['footprint'])}. The "
+                  f"largest directory on the disk is `{top['name']}` at "
+                  f"{gb(top['bytes'])}, of which {gb(top.get('mine', 0))} is ours."]
+
+    lines += ["", "## What could go next", ""]
+    for size, text in proposals(snap, busy):
+        lines.append(f"- {gb(size)} — {text}")
+    lines += ["", "Nothing above was touched. `scripts/disk.py` prints the "
+              "current picture; `scripts/tidy.py` without `--apply` prints what "
+              "it would take on its own."]
+
+    REPORT.write_text("\n".join(lines) + "\n")
+    log(f"free space {gb(avail)} is below the floor {gb(FLOOR)} — wrote {rel(REPORT)}")
+    notify(f"Free space {gb(avail)}. The sweep took back {gb(freed)} and cannot "
+           f"reach {gb(FLOOR)}. See .claude/disk-report.md")
+
+
+def notify(text):
+    body = text.replace('"', "'")
+    subprocess.run(["osascript", "-e",
+                    f'display notification "{body}" with title "msngr disk"'],
+                   capture_output=True)
+
+
+# ---------------------------------------------------------------------- run
+
+def main():
+    plan, busy, freed = sweep()
+
+    stamp = disk.SNAPSHOT
+    stale = (not stamp.exists()
+             or time.time() - stamp.stat().st_mtime > SNAPSHOT_MAX_AGE)
+    snap = None
+    if APPLY and (stale or freed):
+        snap = disk.scan()
+
+    avail, _ = disk.free_bytes()
+    over_budget = snap and snap["footprint"] > BUDGET
+    if avail < FLOOR or over_budget or "--report" in sys.argv:
+        # The report is about to name the biggest directories on the disk, so
+        # it is worth the walk if that part of the snapshot has gone stale.
+        if snap is None or not (snap.get("outside") or {}).get("items"):
+            snap = disk.scan()
+        if over_budget:
+            log(f"footprint {gb(snap['footprint'])} is over the "
+                f"{gb(BUDGET)} we said we would fit in")
+        escalate(snap, busy, freed)
+    elif not APPLY:
+        log(f"free {gb(avail)}, floor {gb(FLOOR)} — nothing to escalate")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
