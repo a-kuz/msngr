@@ -58,9 +58,11 @@ them.
 Nothing disabled. Вера's info screen (`07`) goes from the member list straight
 to «Очистить историю» and «Покинуть группу»: no «Права участников» section, no
 «Добавить участника», no «Ссылка-приглашение», the title is a label rather than
-a field, the group photo has no camera badge, and a swipe over a member row
-offers nothing. An admin gets the same screen with all of it (`05`), and the
-swipe over a row gives «Снять админа» and «Удалить» (`06`).
+a field, the group photo has no camera badge. An admin gets the same screen with
+all of it (`05`), and a swipe over a member row gives «Снять админа» and
+«Удалить» (`06`). Both of those buttons are behind `ChatPermissions`, so a
+member's swipe opens onto an empty set; that one is read from the code, not from
+a screenshot.
 
 ## The event raises no unread and no push
 
