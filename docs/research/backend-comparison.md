@@ -205,9 +205,9 @@ queue up behind it. The client's cursor moves only as frames are applied, so a
 sync interrupted halfway starts over from the same point. A client with a large
 history can get stuck in a resync loop.
 
-`/events` in `ConversationDO` walks the entire chat log with the `msg:` prefix to
-collect tombstones, on every sync, for every chat. `/delete` does the same. The
-dead `msgIdx` also survives there: it is read and discarded through `void`.
+`/delete` in `ConversationDO` walks the entire chat log with the `msg:` prefix to
+find the messages it has to tombstone. `/events` used to do the same on every
+sync for every chat; it now reads the `tomb:` records instead.
 
 A small thing, but worth reconciling: `ARCHITECTURE.md` fixes the batch ceiling
 at 128 keys, while `/history` and the `sync` loop work with 200. Reads currently
@@ -477,8 +477,8 @@ pay for itself with a single client living in the same repository.
 
 ### Important
 
-6. **Remove the full log scan in `/events` and `/delete`.** All `msg:` keys are
-   walked on every sync for every chat; throw out the dead `msgIdx` while there.
+6. **Remove the full log scan in `/delete`.** All `msg:` keys are walked to find
+   the messages to tombstone; only `/events` has been taken off that path.
 7. **Parse the APNs response.** `410 Unregistered` does not delete the token:
    dead tokens accumulate and burn a subrequest every time.
 8. **Push retry cancelled by the delivery receipt.** Right now there is one

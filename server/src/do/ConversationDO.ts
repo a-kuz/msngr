@@ -37,6 +37,21 @@ const FANOUT_STALL_MS = 15_000;
 /// keys per batch, so a larger page would be served by several reads anyway.
 const HISTORY_PAGE = 128;
 
+/// One record per message removed for everyone, so the chat tail is read
+/// without walking the journal: a client that reconnects asks for the
+/// tombstones of a chat, and there are as many of those as messages were
+/// actually deleted.
+const TOMB_PREFIX = "tomb:";
+
+interface Tombstone {
+  msgId: string;
+  /// who removed it
+  by: string;
+  /// the member the message was withheld from: it never reached them, so its
+  /// tombstone is not theirs either
+  blockedFor?: string;
+}
+
 interface FanoutJob {
   frame: ServerFrame;
   targets: string[];
@@ -529,9 +544,9 @@ export class ConversationDO implements DurableObject {
         const viewer = url.searchParams.get("userId");
         if (!(await this.loadMembers()).has(viewer ?? "")) return err("not_member", 403);
         const deleted: Array<{ msgId: string; by: string }> = [];
-        for (const [, m] of await this.state.storage.list<StoredMsg>({ prefix: "msg:" })) {
-          if (!m.deleted || m.blockedFor === viewer) continue;
-          deleted.push({ msgId: m.msgId, by: m.deletedBy ?? m.from });
+        for (const [, t] of await this.state.storage.list<Tombstone>({ prefix: TOMB_PREFIX })) {
+          if (t.blockedFor === viewer) continue;
+          deleted.push({ msgId: t.msgId, by: t.by });
         }
         const readMarks =
           (await this.state.storage.get<Record<string, number>>("readMarks")) ?? {};
@@ -702,22 +717,25 @@ export class ConversationDO implements DurableObject {
           const members = await this.loadMembers();
           const actor = members.get(b.userId);
           if (!actor) return err("not_member", 403);
-          // tombstone the ciphertext, found by msgId through the msgId→seq index
-          const idx =
-            (await this.state.storage.get<Record<string, number>>("msgIdx")) ?? {};
+          // tombstone the ciphertext, found by msgId in the journal
           const updates: Record<string, StoredMsg> = {};
+          const marks: Record<string, Tombstone> = {};
           const tombstoned: string[] = [];
           for (const [key, m] of await this.state.storage.list<StoredMsg>({ prefix: "msg:" })) {
             if (b.msgIds.includes(m.msgId)) {
               // only a group admin can remove someone else's message
               if (m.from !== b.userId && actor.role !== "admin") continue;
               updates[key] = { ...m, body: null, deleted: true, deletedBy: b.userId };
+              marks[TOMB_PREFIX + m.msgId] = {
+                msgId: m.msgId, by: b.userId,
+                ...(m.blockedFor ? { blockedFor: m.blockedFor } : {}),
+              };
               tombstoned.push(m.msgId);
             }
           }
-          void idx;
           if (tombstoned.length) {
             await this.state.storage.put(updates);
+            await this.state.storage.put(marks);
             // fan out only what was really removed: otherwise members would lose
             // messages locally that are still on the server
             await this.fanout({
