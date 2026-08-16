@@ -187,7 +187,7 @@ private struct MediaPage: View {
     }
 }
 
-/// Видео: стриминг с range-запросов, потом локальный файл когда скачан.
+/// Видео: воспроизведение расшифрованного файла из кэша медиа.
 private struct VideoPlayerPage: View {
     let url: URL
     @State private var player: AVPlayer?
