@@ -22,7 +22,7 @@ with what the check found. Fixes made during that sweep are in
 | 12 | fixed | Push не шлётся пока жив подвешенный сокет (live.length === 0) |
 | 13 | confirmed | Реакции/edit/skd растят unreadCount — бейдж без сообщения |
 | 14 | fixed | Возврат из фона: нет форс-реконнекта/ресинка, stale connected |
-| 15 | confirmed | Accept заявки офлайн: try? глотает, снапшот воскрешает заявку |
+| 15 | fixed | Accept заявки офлайн: try? глотает, снапшот воскрешает заявку |
 | 16 | fixed | Краш: Dictionary(uniqueKeysWithValues:) на дубликатах id (дата-сепараторы) |
 | 17 | fixed | LIMIT 500 в ленте: история докачивается в БД, но не показывается |
 | 18 | confirmed | Delete-for-all чужого в direct: локально удалено, у собеседника нет |
@@ -32,7 +32,7 @@ with what the check found. Fixes made during that sweep are in
 | 22 | fixed | Sync-лимит 200 без продолжения до следующего reconnect |
 | 23 | rejected | Гонка генерации master key между app и NSE |
 | 24 | fixed | Два процесса на одной DatabaseQueue без busy_timeout — молчаливый SQLITE_BUSY |
-| 25 | confirmed | Блокировка заявки только локальная, снапшот возвращает чат |
+| 25 | fixed | Блокировка заявки только локальная, снапшот возвращает чат |
 | 26 | fixed | Edit/reaction на нерасшифрованный target — no-op без повтора |
 | 27 | fixed | loadOlder теряет реакции и правки исторических сообщений |
 | 28 | fixed | undecryptable-плейсхолдер блокирует поздний контент по дедупу msgId |
@@ -79,7 +79,7 @@ with what the check found. Fixes made during that sweep are in
 14. `AppState.scenePhaseChanged:105` только обнуляет лок; мёртвый сокет обнаружится через ping-таймаут или backoff до 30с (`WSClient.swift:139`).
     2026-08-16: fixed earlier. Foreground calls `appBecameActive` → `ws.nudge()`, which cancels the backoff and reconnects at once (`AppState.swift:259-281`, `SyncEngine.swift:143-157`, `WSClient.swift:238-248`); the backoff cap is 12 s.
 15. `ChatViewModel.acceptRequest:267` — `try? api.acceptChat` молча падает, локально `isRequest=0`; следующий снапшот вернёт `isRequest`.
-    2026-08-16: confirmed on the chat-list path only — the chat screen queues the accept durably, the list swipe still called the API directly and flipped the flag regardless, leaving the server at `accepted = false` forever. Fix pending.
+    2026-08-16: confirmed on the chat-list path only — the chat screen queues the accept durably, the list swipe still called the API directly and flipped the flag regardless, leaving the server at `accepted = false` forever. Fixed: the swipe goes through the same queued accept as the chat screen.
 16. `MessagesViewController.swift:83-84` — `Dictionary(uniqueKeysWithValues:)` трапается при повторе id; id дата-сепараторов по label — при немонотонном `sentAt` один день дважды → краш.
     2026-08-16: fixed earlier. Separator ids derive from the message id (`ChatViewModel.swift:347-353`) and the diff uses `uniquingKeysWith:` (`MessagesViewController.swift:194-195`). Tests `ChatFeedTests.testSeparatorIdsUniqueForNonMonotonicSentAt`, `HistoryFeedTests.testFeedIdsStayUnique`.
 17. `ChatViewModel.swift:57` LIMIT 500 — `loadOlder` докачивает в БД, лента не показывает.
@@ -99,7 +99,7 @@ with what the check found. Fixes made during that sweep are in
 24. `Database.swift:7-15` — NSE и приложение на одном SQLite; SQLITE_BUSY гасится `try? db.write`.
     2026-08-16: fixed earlier. The file is opened with `busyMode = .timeout(5)`, immediate transactions and WAL, by both processes (`Database.swift:22-35`, `NotificationService.swift:47`), so a cross-process conflict waits instead of failing.
 25. `ChatListModel.blockRequest:157-165` удаляет чат только локально.
-    2026-08-16: confirmed — the block reached the server but the chat did not, so the next snapshot brought the request back, and without a tombstone it came back at seq 0 and re-requested journal ranges whose keys are gone. Fix pending.
+    2026-08-16: confirmed — the block reached the server but the chat did not, so the next snapshot brought the request back, and without a tombstone it came back at seq 0 and re-requested journal ranges whose keys are gone. Fixed: rejecting runs the same queued chat delete as any other deletion, and the block itself became a queued action too, so neither half is lost offline (migration v17 — `pendingAction.chatId` is now optional). Tests `OfflineReliabilityTests.testRejectingRequestOfflineQueuesBothHalves`, `testServerListKeepsQueuedBlock`.
 26. `SyncEngine.applyContent:312-320` — UPDATE по msgId без строки = no-op; edit/reaction на застрявший в pendingDecrypt оригинал теряются.
     2026-08-16: fixed earlier. A zero-row update parks the event in `pendingApply`, applied when the original lands (`SyncEngine.swift:1102-1124, 1868-1901`). Tests `ServiceFrameTests.testReactionAndEditBeforeOriginalApplyAfter`, `testDeletedBeforeOriginalAndReplay`.
 27. `ChatViewModel.storeHistoric:329` пропускает `edit/reaction`.
