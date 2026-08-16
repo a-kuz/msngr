@@ -2,9 +2,10 @@ import XCTest
 @testable import Msngr
 import MsngrCore
 
-/// Проверка трёх случаев размещения времени в баббле (эталон — Telegram).
+/// Layout of a chat bubble: where the time lands, how reactions wrap, what the
+/// reply quote shows. Telegram is the reference for time placement.
 final class BubbleLayoutTests: XCTestCase {
-    private let width: CGFloat = 390 // iPhone логическая ширина
+    private let width: CGFloat = 390 // iPhone width in points
 
     private func outgoing(_ text: String) -> Message {
         var m = Message(id: UUID().uuidString, chatId: "c", fromUserId: "me",
@@ -20,42 +21,39 @@ final class BubbleLayoutTests: XCTestCase {
                           showTail: true, showName: false, authorName: nil)
     }
 
-    /// Случай 1: короткий текст в одну строку — время inline в той же строке.
+    /// Case 1: short single-line text — the time sits inline on the same line.
     func testShortTextTimeInline() {
         let p = plan("Привет")
         let tf = try! XCTUnwrap(p.textFrame)
-        // статус на той же строке: его верх примерно на уровне последней строки текста
         XCTAssertLessThan(p.statusFrame.minY, tf.maxY,
-                          "короткий текст: время должно быть inline, не ниже текста")
-        // и правее текста
+                          "short text: the time belongs inline, not below the text")
         XCTAssertGreaterThan(p.statusFrame.minX, tf.minX)
     }
 
-    /// Случай 2: длинная одиночная строка, занимающая почти всю ширину, —
-    /// время выталкивается (pushout) на отдельную строку ниже.
+    /// Case 2: a single long line filling almost the whole width pushes the
+    /// time onto a line of its own below.
     func testLongLineTimePushedToNewLine() {
-        // длинная фраза, которая укладывается в ширину баббла, но без места под время
+        // fits the bubble width, but leaves no room for the time after it
         let p = plan("Время уже не вместе с первой строкой а на новой строке ниже")
         let tf = try! XCTUnwrap(p.textFrame)
         XCTAssertGreaterThanOrEqual(p.statusFrame.minY, tf.maxY - 2,
-            "длинная строка без места: время должно уйти на новую строку под текстом")
-        // высота ячейки учитывает добавленную строку статуса
+            "long line with no room left: the time must move to a new line under the text")
+        // the cell height accounts for that extra status line
         XCTAssertGreaterThan(p.cellHeight, tf.maxY)
     }
 
-    /// Случай 3: многострочный текст, у последней строки есть свободное место —
-    /// время садится в конец последней строки, не на новую.
+    /// Case 3: multiline text whose last line has room to spare — the time
+    /// joins the end of that last line instead of starting a new one.
     func testMultilineShortLastLineTimeInline() {
-        // длинный текст → несколько строк, последняя короткая («хвост»)
+        // long enough to wrap, with a short trailing line
         let p = plan("Время уже не вместе с первой строкой и не на новой строке. А вместе с последней")
         let tf = try! XCTUnwrap(p.textFrame)
-        XCTAssertGreaterThan(tf.height, 30, "ожидается многострочный текст")
-        // статус в пределах последней строки, не ниже текста
+        XCTAssertGreaterThan(tf.height, 30, "the text is expected to wrap")
         XCTAssertLessThan(p.statusFrame.minY, tf.maxY,
-            "у короткой последней строки время должно быть inline")
+            "with a short last line the time belongs inline")
     }
 
-    /// Медиа без подписи — время в капсуле-оверлее поверх изображения.
+    /// Media without a caption — the time rides in a capsule over the image.
     func testMediaStatusOverlay() {
         var m = outgoing("")
         m.text = nil
@@ -65,9 +63,9 @@ final class BubbleLayoutTests: XCTestCase {
         m.media = media
         let p = BubbleLayout.plan(for: m, width: width, tightGap: false,
                                   showTail: true, showName: false, authorName: nil)
-        XCTAssertTrue(p.statusOnMedia, "статус на фото без подписи — оверлей-капсула")
+        XCTAssertTrue(p.statusOnMedia, "on a photo without a caption the status is an overlay capsule")
         let mf = try! XCTUnwrap(p.mediaFrame)
-        // капсула в правом нижнем углу изображения
+        // capsule in the bottom right corner of the image
         XCTAssertGreaterThan(p.statusFrame.maxY, mf.midY)
         XCTAssertGreaterThan(p.statusFrame.minX, mf.midX)
     }
@@ -79,34 +77,34 @@ final class BubbleLayoutTests: XCTestCase {
                                  showTail: true, showName: false, authorName: nil)
     }
 
-    /// Короткий текст: текст + реакция + время помещаются в одну строку.
+    /// Short text: text, reaction and time all fit on one line.
     func testShortTextReactionAndTimeOnSameLine() {
         let p = withReactions("Ок", ["👍": ["u1"]])
         let chip = try! XCTUnwrap(p.reactionsFrames.first)
         let tf = try! XCTUnwrap(p.textFrame)
-        // капсула справа от текста, время справа от капсулы, всё на одной линии
+        // capsule right of the text, time right of the capsule, all on one line
         XCTAssertGreaterThan(chip.frame.minX, tf.minX)
         XCTAssertGreaterThan(p.statusFrame.minX, chip.frame.minX)
         XCTAssertLessThan(abs(p.statusFrame.midY - chip.frame.midY), 6,
-                          "время и реакция должны быть на одной линии")
+                          "the time and the reaction must share a line")
     }
 
-    /// Многострочный текст с реакцией: время НЕ на линии последней строки текста,
-    /// а на линии реакций.
+    /// Multiline text with reactions: the time leaves the last text line and
+    /// moves down to the reactions row.
     func testTimeMovesToReactionRowForMultilineText() {
         let p = withReactions("Довольно длинное сообщение, которое точно занимает несколько строк подряд",
                               ["😂": ["u1", "u2"], "🔥": ["u3"]])
         let tf = try! XCTUnwrap(p.textFrame)
         let chip = try! XCTUnwrap(p.reactionsFrames.first)
         XCTAssertGreaterThanOrEqual(p.statusFrame.minY, tf.maxY - 2,
-            "время не должно оставаться в последней строке текста при наличии реакций")
+            "with reactions present the time must not stay on the last text line")
         XCTAssertLessThan(abs(p.statusFrame.midY - chip.frame.midY), 8,
-            "время должно стоять на линии реакций")
+            "the time must sit on the reactions line")
         XCTAssertGreaterThan(p.statusFrame.minX, chip.frame.maxX,
-            "время правее капсул реакций")
+            "the time goes to the right of the reaction capsules")
     }
 
-    /// Много реакций — переносятся на несколько рядов, все внутри баббла.
+    /// Many reactions wrap onto several rows, all of them inside the bubble.
     func testManyReactionsWrapToMultipleRows() {
         let emojis = ["😂", "🔥", "❤️", "👍", "😮", "😢", "🎉", "🙏", "👏", "💯"]
         var reactions: [String: [String]] = [:]
@@ -114,91 +112,91 @@ final class BubbleLayoutTests: XCTestCase {
         let p = withReactions("Текст", reactions)
         XCTAssertEqual(p.reactionsFrames.count, emojis.count)
         let rows = Set(p.reactionsFrames.map { Int($0.frame.minY.rounded()) })
-        XCTAssertGreaterThan(rows.count, 1, "капсулы должны переноситься на новые ряды")
+        XCTAssertGreaterThan(rows.count, 1, "capsules must wrap onto new rows")
         for r in p.reactionsFrames {
             XCTAssertLessThanOrEqual(r.frame.maxX, p.bubbleFrame.width,
-                                     "капсула не должна вылезать за баббл")
+                                     "a capsule must not stick out of the bubble")
         }
         XCTAssertLessThanOrEqual(p.statusFrame.maxX, p.bubbleFrame.width)
     }
 
-    /// Исходящее видимо шире статуса; ширина баббла не схлопывается уже времени.
+    /// The bubble never collapses narrower than the time it has to show.
     func testBubbleNotNarrowerThanStatus() {
         let p = plan("!")
         XCTAssertGreaterThanOrEqual(p.bubbleFrame.width, p.statusWidth)
     }
 
-    /// Обычное текстовое сообщение без реакций даёт видимый баббл:
-    /// высота положительная и не меньше строки текста с вертикальными паддингами.
+    /// A plain text message without reactions still draws a visible bubble:
+    /// at least one text line tall plus the vertical padding.
     func testPlainTextWithoutReactionsHasVisibleBubble() {
         let p = plan("Test message 1")
         XCTAssertGreaterThan(p.bubbleFrame.height, 0)
         XCTAssertGreaterThanOrEqual(
             p.bubbleFrame.height,
             ceil(BubbleLayout.textFont.lineHeight) + 2 * BubbleLayout.vPadding,
-            "баббл не ниже строки текста с паддингами")
+            "the bubble is no shorter than a text line with its padding")
         XCTAssertGreaterThan(p.cellHeight, p.bubbleFrame.height - 1)
         let tf = try! XCTUnwrap(p.textFrame)
         XCTAssertGreaterThan(tf.width, 0)
         XCTAssertGreaterThan(tf.height, 0)
     }
 
-    /// Короткий текст: зазор между текстом и временем фиксированный,
-    /// время прижато к правому краю баббла.
+    /// Short text: a fixed gap between text and time, with the time flush
+    /// against the right edge of the bubble.
     func testShortTextStatusPinnedToBubbleRightEdge() {
         let p = plan("Высев")
         let tf = try! XCTUnwrap(p.textFrame)
         XCTAssertEqual(p.statusFrame.maxX, p.bubbleFrame.width - BubbleLayout.hPadding,
-                       accuracy: 0.5, "время прижато к правому краю баббла")
+                       accuracy: 0.5, "the time is flush with the right edge of the bubble")
         XCTAssertEqual(p.statusFrame.minX - tf.maxX, 6, accuracy: 1.5,
-                       "зазор между текстом и временем фиксированный")
+                       "the gap between text and time is fixed")
     }
 
-    // MARK: - Зазор между бабблами
+    // MARK: - Gap between bubbles
 
     private func gapPlan(tightGap: Bool) -> BubbleLayoutPlan {
         BubbleLayout.plan(for: outgoing("Привет"), width: width, tightGap: tightGap,
                           showTail: true, showName: false, authorName: nil)
     }
 
-    /// Продолжение серии — зазор groupGap, разрыв серии — normalGap;
-    /// сам баббл при этом одинаковой высоты.
+    /// Inside a run of messages the gap is groupGap, between runs normalGap;
+    /// the bubble itself keeps the same height either way.
     func testCellHeightTightVersusNormalGap() {
         let tight = gapPlan(tightGap: true)
         let normal = gapPlan(tightGap: false)
         XCTAssertEqual(tight.bubbleFrame.height, normal.bubbleFrame.height,
-                       "зазор не должен менять высоту самого баббла")
+                       "the gap must not change the height of the bubble itself")
         XCTAssertEqual(tight.cellHeight - tight.bubbleFrame.height, BubbleLayout.groupGap, accuracy: 0.01)
         XCTAssertEqual(normal.cellHeight - normal.bubbleFrame.height, BubbleLayout.normalGap, accuracy: 0.01)
         XCTAssertEqual(normal.cellHeight - tight.cellHeight,
                        BubbleLayout.normalGap - BubbleLayout.groupGap, accuracy: 0.01)
     }
 
-    /// Зазор лежит над бабблом: ячейка перевёрнута, её верх на экране —
-    /// граница с сообщением выше, о котором и говорит tightGap.
+    /// The gap sits above the bubble: the cell is flipped, so its top on screen
+    /// is the border with the message above — the one tightGap talks about.
     func testGapSitsAboveBubble() {
         XCTAssertEqual(gapPlan(tightGap: true).bubbleFrame.minY, BubbleLayout.groupGap, accuracy: 0.01)
         XCTAssertEqual(gapPlan(tightGap: false).bubbleFrame.minY, BubbleLayout.normalGap, accuracy: 0.01)
-        // баббл прижат к низу ячейки: под ним пустого места не остаётся
+        // the bubble is flush with the bottom of the cell: no empty space under it
         for tight in [true, false] {
             let p = gapPlan(tightGap: tight)
             XCTAssertEqual(p.bubbleFrame.maxY, p.cellHeight, accuracy: 0.01)
         }
     }
 
-    // MARK: - Мини-маркдаун
+    // MARK: - Mini markdown
 
-    /// Блок кода занимает больше места, чем тот же текст без разметки:
-    /// подложка с отступами плюс время на своей строке.
+    /// A code block takes more room than the same text unformatted: the inset
+    /// backdrop plus the time on a line of its own.
     func testCodeBlockBubbleIsTallerThanPlainText() {
         let plain = plan("let a = 1")
         let code = plan("```\nlet a = 1\n```")
         XCTAssertGreaterThan(code.bubbleFrame.height, plain.bubbleFrame.height,
-                             "баббл с блоком кода обязан быть выше")
+                             "a bubble with a code block has to be taller")
         XCTAssertGreaterThan(code.cellHeight, plain.cellHeight)
     }
 
-    /// Многострочный блок кода выше однострочного минимум на строку.
+    /// A multiline code block is taller than a one-liner by at least a line.
     func testMultilineCodeBlockGrowsWithLines() {
         let one = plan("```\nlet a = 1\n```")
         let three = plan("```\nlet a = 1\nlet b = 2\nlet c = 3\n```")
@@ -206,15 +204,15 @@ final class BubbleLayoutTests: XCTestCase {
                              2 * BubbleLayout.textFont.lineHeight - 6)
     }
 
-    /// После блока кода время не садится в последнюю строку.
+    /// After a code block the time does not join the last line.
     func testStatusBelowCodeBlock() {
         let p = plan("```\nx\n```")
         let tf = try! XCTUnwrap(p.textFrame)
         XCTAssertGreaterThanOrEqual(p.statusFrame.minY, tf.maxY - 2,
-                                    "время должно уйти под подложку кода")
+                                    "the time must move below the code backdrop")
     }
 
-    /// Маркеры разметки в баббл не попадают, начертания применены.
+    /// Markup markers never reach the bubble; the styles they carry do.
     func testMarkersAreNotRendered() {
         let p = plan("**жирный** и `код`")
         let attr = try! XCTUnwrap(p.text)
@@ -225,7 +223,7 @@ final class BubbleLayoutTests: XCTestCase {
         XCTAssertEqual(codeFont, MessageMarkdownRenderer.codeFont)
     }
 
-    /// Ссылка получает атрибут .msngrLink — по нему ячейка открывает браузер.
+    /// A link gets the .msngrLink attribute; that is what makes the cell open a browser.
     func testLinkAttributePresent() {
         let attr = try! XCTUnwrap(plan("жми https://example.com сюда").text)
         var found: URL?
@@ -235,8 +233,8 @@ final class BubbleLayoutTests: XCTestCase {
         XCTAssertEqual(found, URL(string: "https://example.com"))
     }
 
-    /// Замер в плане совпадает с замером того же attributed-текста:
-    /// рисуется ровно то, что померено.
+    /// The size in the plan matches a direct measurement of the same attributed
+    /// text: what gets drawn is exactly what was measured.
     func testTextFrameMatchesMeasuredSize() {
         for source in ["Привет", "**жирный** текст", "```\nlet a = 1\nlet b = 22\n```",
                        "текст\n```\ncode\n```\nхвост"] {
@@ -250,7 +248,7 @@ final class BubbleLayoutTests: XCTestCase {
         }
     }
 
-    // MARK: - Реакции на voice/file
+    // MARK: - Reactions on voice and file bubbles
 
     private func mediaMessage(_ kind: MessageKind, reactions: [String: [String]]) -> Message {
         var m = outgoing("")
@@ -270,34 +268,34 @@ final class BubbleLayoutTests: XCTestCase {
                           tightGap: false, showTail: true, showName: false, authorName: nil)
     }
 
-    /// Внутри баббла: ни одна капсула и статус не выходят за его край.
+    /// No capsule and no status may cross the edge of the bubble.
     private func assertReactionsInsideBubble(_ p: BubbleLayoutPlan,
                                              file: StaticString = #filePath, line: UInt = #line) {
         for r in p.reactionsFrames {
             XCTAssertLessThanOrEqual(r.frame.maxY, p.bubbleFrame.height,
-                                     "капсула не должна вылезать за низ баббла", file: file, line: line)
+                                     "a capsule must not hang below the bubble", file: file, line: line)
             XCTAssertLessThanOrEqual(r.frame.maxX, p.bubbleFrame.width,
-                                     "капсула не должна вылезать за правый край", file: file, line: line)
+                                     "a capsule must not cross the right edge", file: file, line: line)
         }
         XCTAssertLessThanOrEqual(p.statusFrame.maxY, p.bubbleFrame.height, file: file, line: line)
     }
 
-    /// Голосовое с одной реакцией: баббл выше, чем без реакций, капсула — рядом
-    /// под волной, время на линии ряда, всё внутри баббла.
+    /// Voice with one reaction: the bubble grows, the capsule goes under the
+    /// waveform, the time sits on that row, everything stays inside.
     func testVoiceBubbleGrowsForOneReaction() {
         let base = mediaPlan(.voice, [:])
         let p = mediaPlan(.voice, ["👍": ["u1", "u2"]])
         XCTAssertGreaterThan(p.bubbleFrame.height, base.bubbleFrame.height,
-                             "баббл с реакцией обязан быть выше")
+                             "a bubble with a reaction has to be taller")
         let chip = try! XCTUnwrap(p.reactionsFrames.first)
         let vf = try! XCTUnwrap(p.voiceFrame)
-        XCTAssertGreaterThanOrEqual(chip.frame.minY, vf.maxY, "капсула под волной")
+        XCTAssertGreaterThanOrEqual(chip.frame.minY, vf.maxY, "the capsule goes under the waveform")
         XCTAssertLessThan(abs(p.statusFrame.midY - chip.frame.midY), 8,
-                          "время на линии ряда реакций")
+                          "the time sits on the reactions row")
         assertReactionsInsideBubble(p)
     }
 
-    /// Голосовое с пятью реакциями: баббл выше минимум на ряд капсул, все внутри.
+    /// Voice with five reactions: the bubble grows by at least a capsule row.
     func testVoiceBubbleGrowsForFiveReactions() {
         let base = mediaPlan(.voice, [:])
         let reactions = ["😂": ["u1", "u2"], "🔥": ["u3", "u4"], "❤️": ["u5", "u6"],
@@ -305,15 +303,15 @@ final class BubbleLayoutTests: XCTestCase {
         let p = mediaPlan(.voice, reactions)
         XCTAssertEqual(p.reactionsFrames.count, 5)
         XCTAssertGreaterThanOrEqual(p.bubbleFrame.height - base.bubbleFrame.height, 26,
-                                    "рост баббла не меньше высоты ряда капсул")
+                                    "the bubble grows by no less than the height of a capsule row")
         let vf = try! XCTUnwrap(p.voiceFrame)
         for r in p.reactionsFrames {
-            XCTAssertGreaterThanOrEqual(r.frame.minY, vf.maxY, "капсулы под волной")
+            XCTAssertGreaterThanOrEqual(r.frame.minY, vf.maxY, "capsules go under the waveform")
         }
         assertReactionsInsideBubble(p)
     }
 
-    // MARK: - Цитата ответа (reply-плашка)
+    // MARK: - Reply quote
 
     private func replyPlan(replyTo: ReplyPreview, replyAuthorName: String?) -> BubbleLayoutPlan {
         var m = outgoing("Текст ответа")
@@ -322,23 +320,23 @@ final class BubbleLayoutTests: XCTestCase {
                                  showName: false, authorName: nil, replyAuthorName: replyAuthorName)
     }
 
-    /// Автор цитаты — переданное имя (резолвится вызывающей стороной из user/participants),
-    /// а не сырой userId из replyTo.authorId.
+    /// The quote shows the name the caller resolved from user/participants,
+    /// never the raw userId in replyTo.authorId.
     func testReplyAuthorUsesResolvedName() {
         let reply = ReplyPreview(msgId: "m1", authorId: "01KZXED9XMFKTKYDBVH30C", text: "привет", kind: "text")
         let p = replyPlan(replyTo: reply, replyAuthorName: "Аня")
         XCTAssertEqual(p.replyAuthor, "Аня")
-        XCTAssertNotEqual(p.replyAuthor, reply.authorId, "в цитате не должен показываться сырой userId")
+        XCTAssertNotEqual(p.replyAuthor, reply.authorId, "a quote must never show a raw userId")
     }
 
-    /// Ответ на своё сообщение — автор цитаты «Вы».
+    /// Replying to your own message: the quote is attributed to you.
     func testReplyAuthorShowsYouForOwnMessage() {
         let reply = ReplyPreview(msgId: "m1", authorId: "me", text: "моё сообщение", kind: "text")
         let p = replyPlan(replyTo: reply, replyAuthorName: "Вы")
         XCTAssertEqual(p.replyAuthor, "Вы")
     }
 
-    /// Без цитаты replyAuthor не выставляется, даже если имя было бы известно.
+    /// Without a quote replyAuthor stays nil, even when a name is available.
     func testReplyAuthorNilWithoutReplyTo() {
         let p = BubbleLayout.plan(for: outgoing("без ответа"), width: width, tightGap: false,
                                   showTail: true, showName: false, authorName: nil,
@@ -346,7 +344,7 @@ final class BubbleLayoutTests: XCTestCase {
         XCTAssertNil(p.replyAuthor)
     }
 
-    /// Превью цитаты для нетекстовых сообщений — иконка и подпись, не пустая строка.
+    /// A quote of a non-text message previews as an icon plus a caption.
     func testReplyPreviewTextForEachKind() {
         XCTAssertEqual(BubbleLayout.replyPreviewText(
             ReplyPreview(msgId: "1", authorId: "u", text: "Фото", kind: "photo")), "📷 Фото")
@@ -361,8 +359,8 @@ final class BubbleLayoutTests: XCTestCase {
             ReplyPreview(msgId: "1", authorId: "u", text: "", kind: "album")), "🖼 Альбом")
     }
 
-    /// Пустой сохранённый текст (файл без имени, отсутствующее превью) — заглушка,
-    /// а не пустая строка в баббле.
+    /// When the stored text is empty (a file without a name, a missing preview)
+    /// the quote falls back to a placeholder instead of an empty line.
     func testReplyPreviewTextFallsBackWhenEmpty() {
         XCTAssertEqual(BubbleLayout.replyPreviewText(
             ReplyPreview(msgId: "1", authorId: "u", text: "", kind: "file")), "📎 Файл")
@@ -370,14 +368,15 @@ final class BubbleLayoutTests: XCTestCase {
             ReplyPreview(msgId: "1", authorId: "u", text: "", kind: "text")), "Сообщение")
     }
 
-    /// План собирает итоговую строку превью через replyPreviewText, а не сырой replyTo.text.
+    /// The plan builds its preview line through replyPreviewText rather than
+    /// copying replyTo.text.
     func testPlanReplyTextUsesPreviewMapping() {
         let reply = ReplyPreview(msgId: "1", authorId: "peer", text: "Видео", kind: "video")
         let p = replyPlan(replyTo: reply, replyAuthorName: "Петя")
         XCTAssertEqual(p.replyText, "🎥 Видео")
     }
 
-    /// Файл с реакциями: те же гарантии, что и для голосового.
+    /// A file bubble with reactions: same guarantees as voice.
     func testFileBubbleGrowsForReactions() {
         let base = mediaPlan(.file, [:])
         let one = mediaPlan(.file, ["👍": ["u1", "u2"]])
@@ -388,7 +387,7 @@ final class BubbleLayoutTests: XCTestCase {
         for p in [one, five] {
             let vf = try! XCTUnwrap(p.voiceFrame)
             for r in p.reactionsFrames {
-                XCTAssertGreaterThanOrEqual(r.frame.minY, vf.maxY, "капсулы под плашкой файла")
+                XCTAssertGreaterThanOrEqual(r.frame.minY, vf.maxY, "capsules go under the file row")
             }
             assertReactionsInsideBubble(p)
         }
