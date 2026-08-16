@@ -652,13 +652,20 @@ final class ChatViewModel: ObservableObject {
         Task { await expandWindow() }
     }
 
-    /// Начало чата: окно растёт страницами, пока не покроет самое старое
-    /// сообщение на устройстве. К серверу здесь не ходим — начало это то, что
-    /// устройство уже хранит.
-    func loadDeviceHistory(maxPages: Int = 500) async {
-        for _ in 0..<maxPages {
-            guard await expandWindow(localOnly: true) else { return }
+    /// Начало чата: граница окна переносится на самое старое сообщение, которое
+    /// хранит устройство, одним движением. К серверу здесь не ходим — начало это
+    /// то, что устройство уже хранит.
+    func loadDeviceHistory() async {
+        guard let db = app.db else { return }
+        let oldest = try? await db.read { [chatId] dbc in
+            try String.fetchOne(dbc, sql: """
+                SELECT id FROM message
+                WHERE chatId = ? AND seq IS NOT NULL
+                ORDER BY seq ASC LIMIT 1
+                """, arguments: [chatId])
         }
+        guard let oldest = oldest ?? nil else { return }
+        _ = await anchorWindow(to: oldest)
     }
 
     /// Окно дошло до самого старого сообщения на устройстве.
@@ -667,10 +674,8 @@ final class ChatViewModel: ObservableObject {
     /// Одна страница вверх. Сообщения уже расшифрованы и лежат в базе, поэтому
     /// страница берётся из неё; к серверу уходит только незакрытый разрыв seq —
     /// то, что это устройство ещё не расшифровывало. false — расширять нечего.
-    /// localOnly — расширять только по своей базе: к серверу не ходить и
-    /// «дальше нечего» не запоминать, разрывы остаются на обычную пагинацию.
     @discardableResult
-    private func expandWindow(localOnly: Bool = false) async -> Bool {
+    private func expandWindow() async -> Bool {
         guard chat != nil, !loadingOlder, !reachedStart, let db = app.db else { return false }
         loadingOlder = true
         defer { loadingOlder = false }
@@ -687,7 +692,6 @@ final class ChatViewModel: ObservableObject {
                 return true
             }
         }
-        guard !localOnly else { return false }
         // локальная история исчерпана: с сервера полезно только то, что это
         // устройство ещё не расшифровывало
         let gaps = (try? await db.read { [chatId] dbc in
