@@ -92,6 +92,91 @@ final class ServiceFrameTests: XCTestCase {
         XCTAssertEqual(left, 0)
     }
 
+    /// Реакция на собственное сообщение, поставленная до ack: пока у цели нет
+    /// серверного msgId, отправлять нечего — иначе собеседник получил бы
+    /// локальный id, которого у него никогда не будет.
+    func testReactionToUnackedTargetResolvesAtSendTime() async throws {
+        let db = try AppDatabase.openInMemory()
+        let engine = try makeEngine(db: db)
+        try await db.write { dbc in
+            try dbc.execute(sql: "INSERT INTO chat (id, kind, createdBy, createdAt) VALUES ('c1','direct','me',0)")
+            // своё сообщение, ack ещё не пришёл: msgId пуст, id локальный
+            try dbc.execute(sql: """
+                INSERT INTO message (id, chatId, clientMsgId, fromUserId, sentAt, kind, status, isOutgoing)
+                VALUES ('local-1','c1','local-1','me',1,'text',0,1)
+                """)
+        }
+        var reaction = ContentPayload(kind: "reaction")
+        reaction.targetMsgId = "local-1"
+        reaction.emoji = "👍"
+
+        do {
+            _ = try await engine.resolveTarget(reaction, chatId: "c1")
+            XCTFail("реакция не должна уехать с локальным id")
+        } catch let e as SyncEngine.TargetNotAcked {
+            XCTAssertFalse(e.gone, "цель ещё может уехать — ждём ack, а не выбрасываем")
+        }
+
+        // ack пришёл — цель подставляется серверным id
+        let ack = try JSONDecoder().decode(WSIncoming.self, from: Data("""
+        {"t":"sent","chatId":"c1","clientMsgId":"local-1","msgId":"srv-1","seq":1,"ts":2}
+        """.utf8))
+        await engine.apply(ack)
+        let resolved = try await engine.resolveTarget(reaction, chatId: "c1")
+        XCTAssertEqual(resolved.targetMsgId, "srv-1")
+    }
+
+    /// Цель от собеседника: её id уже серверный, подстановка ничего не меняет.
+    /// Цель, которая так и не ушла: служебный фрейм выбрасывается.
+    func testTargetFromPeerPassesThroughAndFailedTargetIsDropped() async throws {
+        let db = try AppDatabase.openInMemory()
+        let engine = try makeEngine(db: db)
+        try await db.write { dbc in
+            try dbc.execute(sql: "INSERT INTO chat (id, kind, createdBy, createdAt) VALUES ('c1','direct','me',0)")
+            try dbc.execute(sql: """
+                INSERT INTO message (id, chatId, msgId, fromUserId, sentAt, kind, status, isOutgoing)
+                VALUES ('srv-9','c1','srv-9','peer',1,'text',1,0)
+                """)
+            try dbc.execute(sql: """
+                INSERT INTO message (id, chatId, clientMsgId, fromUserId, sentAt, kind, status, isOutgoing)
+                VALUES ('local-2','c1','local-2','me',1,'text',-1,1)
+                """)
+        }
+        var edit = ContentPayload(kind: "edit")
+        edit.targetMsgId = "srv-9"
+        edit.text = "исправлено"
+        let fromPeer = try await engine.resolveTarget(edit, chatId: "c1")
+        XCTAssertEqual(fromPeer.targetMsgId, "srv-9")
+
+        edit.targetMsgId = "local-2"
+        do {
+            _ = try await engine.resolveTarget(edit, chatId: "c1")
+            XCTFail("правка сообщения, которое не ушло, отправляться не должна")
+        } catch let e as SyncEngine.TargetNotAcked {
+            XCTAssertTrue(e.gone)
+        }
+    }
+
+    /// Ack освобождает служебные фреймы, ждавшие серверный id своей цели.
+    func testAckReleasesWaitingOutboxRows() async throws {
+        let db = try AppDatabase.openInMemory()
+        let engine = try makeEngine(db: db)
+        try await db.write { dbc in
+            try dbc.execute(sql: "INSERT INTO chat (id, kind, createdBy, createdAt) VALUES ('c1','direct','me',0)")
+            try OutboxItem(clientMsgId: "r1", chatId: "c1", createdAt: 2,
+                           payload: Data("{}".utf8), state: "waiting").save(dbc)
+        }
+        let ack = try JSONDecoder().decode(WSIncoming.self, from: Data("""
+        {"t":"sent","chatId":"c1","clientMsgId":"local-1","msgId":"srv-1","seq":1,"ts":2}
+        """.utf8))
+        await engine.apply(ack)
+
+        let state = try await db.read { dbc in
+            try String.fetchOne(dbc, sql: "SELECT state FROM outbox WHERE clientMsgId = 'r1'")
+        }
+        XCTAssertEqual(state, "ready")
+    }
+
     /// deleted раньше оригинала буферизуется; повторный deleted (sync-реплей) идемпотентен.
     func testDeletedBeforeOriginalAndReplay() async throws {
         let db = try AppDatabase.openInMemory()

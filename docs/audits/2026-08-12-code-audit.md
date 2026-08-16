@@ -44,7 +44,7 @@ with what the check found. Fixes made during that sweep are in
 | 34 | fixed | Ноль бандлов → пустой конверт «успешно отправлен» |
 | 35 | fixed | skd с новым UUID на каждый ретрай — дубликаты в истории, двигают seq |
 | 36 | rejected | WSClient.events() одноразовый: повторный вызов убивает старый стрим |
-| 37 | confirmed | Реакция на своё сообщение до ack уходит с clientMsgId — видна только автору |
+| 37 | fixed | Реакция на своё сообщение до ack уходит с clientMsgId — видна только автору |
 
 Полные описания с файлами и строками — в тексте аудита ниже.
 
@@ -123,7 +123,7 @@ with what the check found. Fixes made during that sweep are in
 36. `WSClient.swift:32-36` — повторный `events()` перезаписывает continuation.
     2026-08-16: rejected as written. The overwrite is still in the code (`WSClient.swift:42-46`), but `events()` has exactly one call site, `SyncEngine.start()`, and no path starts an engine twice: `AppState.bootstrap` and `MacApp` build a fresh engine each time and `resetToRegistration` drops it. Nothing to reproduce; worth a guard the day a second consumer appears.
 37. `ChatViewModel.react:239` — `targetMsgId = msg.msgId ?? msg.id`; до ack уходит clientMsgId.
-    2026-08-16: confirmed, and it covers edits the same way — one double tap on a just-sent bubble is enough, and offline the window lasts as long as the outbox does. The peer parks the reaction in `pendingApply` under an id that never arrives. Fix pending.
+    2026-08-16: confirmed, and it covers edits the same way — one double tap on a just-sent bubble is enough, and offline the window lasts as long as the outbox does. The peer parks the reaction in `pendingApply` under an id that never arrives. Fixed: the target is resolved against the message row at send time, and a service frame whose target has no server id yet waits for its ack instead of leaving. Tests `ServiceFrameTests.testReactionToUnackedTargetResolvesAtSendTime`, `testTargetFromPeerPassesThroughAndFailedTargetIsDropped`, `testAckReleasesWaitingOutboxRows`.
 
 ## Найдено попутно
 
