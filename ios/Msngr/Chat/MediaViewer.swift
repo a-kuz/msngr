@@ -187,7 +187,7 @@ private struct MediaPage: View {
     }
 }
 
-/// Video: streamed over range requests, then played from the local file once downloaded.
+/// Video: the decrypted file is played from the media cache.
 private struct VideoPlayerPage: View {
     let url: URL
     @State private var player: AVPlayer?
