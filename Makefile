@@ -1,7 +1,10 @@
 # The quality gate: run make check before every commit.
 DEV_UDID := 44CE2242-EBB9-48EA-A605-5988A00E4C31
 DEST := -destination 'id=$(DEV_UDID)'
-XCODE := xcodebuild -project ios/Msngr.xcodeproj
+# every agent builds the same project on the same host, so builds queue for a
+# shared slot instead of running all at once (scripts/build-slot.py)
+SLOT := python3 scripts/build-slot.py
+XCODE := $(SLOT) xcodebuild -project ios/Msngr.xcodeproj
 # The UI tests need the shared stand and the fixtures on it; the server smoke
 # raises a clean stand of its own (scripts/smoke-stand.sh).
 # for an agent on its own stand: make check MSNGR_SERVER=http://localhost:8809
@@ -19,7 +22,7 @@ build:
 	$(XCODE) -scheme Msngr $(DEST) -configuration Debug build 2>&1 | tail -2 | grep -q "BUILD SUCCEEDED"
 
 unit:
-	cd ios/MsngrKit && swift test 2>&1 | tail -3 | grep -q "passed"
+	cd ios/MsngrKit && $(CURDIR)/scripts/build-slot.py swift test 2>&1 | tail -3 | grep -q "passed"
 
 layout:
 	$(XCODE) -scheme Msngr $(DEST) test -only-testing:MsngrTests 2>&1 | tail -5 | grep -q "TEST SUCCEEDED"

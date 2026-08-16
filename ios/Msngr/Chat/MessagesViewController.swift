@@ -7,7 +7,7 @@ import MsngrCore
 /// flipped back so the result reads normally. The bottom of the chat is then
 /// contentOffset 0: it opens instantly on the latest messages and pages upwards
 /// the way a scroll view already wants to.
-final class MessagesViewController: UIViewController {
+final class MessagesViewController: UIViewController, UIGestureRecognizerDelegate {
     /// The feed is at the bottom: the newest item is really on screen. The scroll
     /// to bottom button and the read receipt both depend on this.
     var onAtBottomChanged: ((Bool) -> Void)?
@@ -20,6 +20,10 @@ final class MessagesViewController: UIViewController {
     var onTapReplyQuote: ((Message) -> Void)?
     /// Tap on a row while multi-select is on.
     var onToggleSelection: ((Message) -> Void)?
+    /// тап по статус-бару: экран ведёт ленту к началу чата
+    var onScrollToStart: (() -> Void)?
+    /// свайп от левой кромки: возврат к списку чатов
+    var onSwipeBack: (() -> Void)?
 
     private(set) var collectionView: UICollectionView!
     private var items: [ChatFeedItem] = []
@@ -34,6 +38,46 @@ final class MessagesViewController: UIViewController {
     private var recomputingAtBottom = false
     /// The next feed comes from a window that was moved: it is shown from the bottom.
     private var showBottomOnUpdate = false
+    /// Счётчик своих отправок, уже отработанный лентой.
+    private var seenSendTick = 0
+    /// Возврат свайпом: кромка своя, потому что системный жест на этом экране
+    /// не начинается.
+    private let backSwipe = UIPanGestureRecognizer()
+    /// Отправка ждёт своего сообщения: оно обязано приехать в низ ленты
+    /// и появиться там с анимацией, из какого бы места истории его ни отправили.
+    private var awaitingOwnSend = false
+
+    /// Своя отправка: лента уезжает к концу сразу, не дожидаясь, пока сообщение
+    /// ляжет в базу и придёт из наблюдения.
+    func noteSendTick(_ tick: Int) {
+        guard tick != seenSendTick else { return }
+        seenSendTick = tick
+        awaitingOwnSend = true
+        guard isViewLoaded else { return }
+        scrollToBottom(animated: false)
+    }
+
+    /// Пришло ли в этом обновлении своё только что отправленное сообщение.
+    /// Ждать приходится не только вставку в существующую ленту: окно, стоявшее
+    /// на прочитанной истории, снова цепляется за новейшие, и лента приезжает
+    /// другим набором сообщений целиком.
+    private func ownSendLanded(newFirst: ChatFeedItem?, oldIds: Set<String>) -> Bool {
+        guard awaitingOwnSend, case .message(let m, _, _, _, _, _)? = newFirst, m.isOutgoing,
+              !oldIds.contains(m.id) else { return false }
+        awaitingOwnSend = false
+        return true
+    }
+
+    /// Ставит ленту на своё новое сообщение и играет его появление.
+    private func landOwnMessage() {
+        collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.contentInset.top), animated: false)
+        collectionView.layoutIfNeeded()
+        guard let cell = collectionView.cellForItem(at: IndexPath(item: 0, section: 0)) as? MessageCell
+        else { return }
+        let point = CGPoint(x: view.bounds.width - 28,
+                            y: view.bounds.height - collectionView.contentInset.top + 22)
+        cell.animateSendFlight(fromScreenPoint: point, in: view)
+    }
 
     /// Multi-select state: visible cells are reconfigured in place, because a reload
     /// would cut off the feed's animations; new cells pick it up in configure.
@@ -61,11 +105,24 @@ final class MessagesViewController: UIViewController {
         collectionView.delegate = self
         collectionView.keyboardDismissMode = .interactive
         collectionView.contentInsetAdjustmentBehavior = .never
+        // the feed is flipped, so the system edge effect lands mirrored: it clears
+        // the strip it should soften and softens the rest of the feed. The band
+        // under the header is drawn by HeaderFade instead
+        if #available(iOS 26.0, *) {
+            collectionView.topEdgeEffect.isHidden = true
+            collectionView.bottomEdgeEffect.isHidden = true
+        }
         collectionView.register(MessageCell.self, forCellWithReuseIdentifier: "msg")
         collectionView.register(DateSeparatorCell.self, forCellWithReuseIdentifier: "date")
         collectionView.register(SystemCell.self, forCellWithReuseIdentifier: "system")
         collectionView.register(UnreadMarkerCell.self, forCellWithReuseIdentifier: "unread")
         view.addSubview(collectionView)
+        backSwipe.addTarget(self, action: #selector(handleBackSwipe(_:)))
+        backSwipe.delegate = self
+        view.addGestureRecognizer(backSwipe)
+        // лента ждёт отказа кромки: вне кромки жест не начинается вовсе,
+        // поэтому скролл остаётся мгновенным
+        collectionView.panGestureRecognizer.require(toFail: backSwipe)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardChanged(_:)),
                                                name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(typeScaleChanged),
@@ -109,13 +166,24 @@ final class MessagesViewController: UIViewController {
             link.add(to: .main, forMode: .common)
             frameLink = link
         }
-        // the chat header draws its own back button and the system one is hidden;
-        // hiding it also disables the swipe-back gesture, so bring it back by
-        // dropping the delegate that suppresses it
-        if let pop = navigationController?.interactivePopGestureRecognizer {
-            pop.delegate = nil
-            pop.isEnabled = true
-        }
+    }
+
+    /// Swipe back from the left edge. The system gesture does not start on this screen:
+    /// the header draws its own back button, and with the system one hidden the
+    /// navigation controller refuses its own transition — neither dropping the delegate
+    /// nor re-enabling the recogniser changes that. Hence an edge of our own.
+    @objc private func handleBackSwipe(_ g: UIPanGestureRecognizer) {
+        guard g.state == .ended else { return }
+        if g.translation(in: view).x > 70 || g.velocity(in: view).x > 500 { onSwipeBack?() }
+    }
+
+    /// The back gesture takes only touches from the edge going right; everything
+    /// else stays with the feed.
+    func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+        guard g === backSwipe else { return true }
+        let start = backSwipe.location(in: nil).x - backSwipe.translation(in: nil).x
+        let v = backSwipe.velocity(in: view)
+        return start < MessageCell.backSwipeEdge && v.x > abs(v.y)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -258,6 +326,14 @@ final class MessagesViewController: UIViewController {
         // contentOffset stays put. Remember the top visible item and where it sits
         // on screen, then put it back after the update
         let anchor = readingAnchor()
+        // своё новое сообщение лежит первым элементом инвертированной ленты
+        let ownAtBottom: Bool = {
+            guard case .message(let m, _, _, _, _, _)? = newItems.first else { return false }
+            return m.isOutgoing && oldIndex[newIds[0]] == nil
+        }()
+        // вызывается всегда: он же снимает ожидание отправки
+        let sendLanded = ownSendLanded(newFirst: newItems.first, oldIds: Set(oldIds))
+        let ownLanded = ownAtBottom || sendLanded
 
         // a structural change too complex to diff (a reordering) falls back to reload
         let onlyAppendOrRemove = deletes.count + inserts.count == abs(oldIds.count - newIds.count)
@@ -266,12 +342,8 @@ final class MessagesViewController: UIViewController {
             items = newItems
             collectionView.reloadData()
             restore(anchor)
-            // our own new message at the bottom has to become visible on this path too
-            if case .message(let m, _, _, _, _, _)? = newItems.first, m.isOutgoing,
-               oldIndex[newIds[0]] == nil {
-                collectionView.layoutIfNeeded()
-                collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.contentInset.top), animated: false)
-            }
+            // our own new message at the bottom has to become visible on the reload path too
+            if ownLanded { landOwnMessage() }
             updateAtBottom(layoutFirst: true)
             return
         }
@@ -423,6 +495,20 @@ final class MessagesViewController: UIViewController {
         if !animated { updateAtBottom(layoutFirst: true) }
     }
 
+    /// The start of the chat: the list is inverted, so the oldest message is the last
+    /// item, at the end of the content. A far end is taken without animation — scrolling
+    /// through thousands of cells does not read as anything anyway.
+    func scrollToStart() {
+        guard isViewLoaded, !items.isEmpty else { return }
+        collectionView.layoutIfNeeded()
+        let maxOffset = collectionView.contentSize.height - collectionView.bounds.height
+            + collectionView.contentInset.bottom
+        let target = max(-collectionView.contentInset.top, maxOffset)
+        let far = abs(target - collectionView.contentOffset.y) > collectionView.bounds.height * 3
+        collectionView.setContentOffset(CGPoint(x: 0, y: target), animated: !far)
+        if far { updateAtBottom(layoutFirst: true) }
+    }
+
     // MARK: - Holding the reading position
 
     /// The item at the top edge of the screen and where it sits relative to that edge.
@@ -497,12 +583,29 @@ final class MessagesViewController: UIViewController {
         }
     }
 
+    /// The message at the top edge of the screen, or nil while the feed is at its
+    /// bottom. Search remembers it and brings the reader back to it.
+    func topVisibleMessageId() -> String? {
+        guard isViewLoaded, !atBottom else { return nil }
+        let visibleRect = collectionView.bounds.inset(by: collectionView.adjustedContentInset)
+        // the list is inverted: the visual top of the screen is the largest maxY
+        let top = collectionView.indexPathsForVisibleItems.compactMap { path -> (String, CGFloat)? in
+            guard path.item < items.count,
+                  case .message(let msg, _, _, _, _, _) = items[path.item],
+                  let attrs = collectionView.layoutAttributesForItem(at: path),
+                  attrs.frame.intersects(visibleRect) else { return nil }
+            return (msg.msgId ?? msg.id, attrs.frame.maxY)
+        }.max { $0.1 < $1.1 }
+        return top?.0
+    }
+
     /// Scrolls to a message by its server msgId or its local id.
     /// Returns false when the message is not in the loaded feed and history has to be fetched.
     @discardableResult
-    func scrollTo(msgId: String, highlight: Bool = false) -> Bool {
+    func scrollTo(msgId: String, highlight: Bool = false, animated: Bool = true) -> Bool {
         guard let idx = index(ofMsgId: msgId) else { return false }
-        collectionView.scrollToItem(at: IndexPath(item: idx, section: 0), at: .centeredVertically, animated: true)
+        collectionView.scrollToItem(at: IndexPath(item: idx, section: 0), at: .centeredVertically,
+                                    animated: animated)
         if highlight {
             pendingHighlightId = msgId
             // if the cell is already on screen the flash runs alongside the scroll settling;
@@ -534,7 +637,7 @@ final class MessagesViewController: UIViewController {
 }
 
 enum MessageContextAction {
-    case reply, copy, selectText, forward, select, edit, pin, delete
+    case reply, copy, forward, select, edit, pin, delete
 }
 
 extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
@@ -608,6 +711,14 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
                                          replyAuthorName: replyAuthorName)
             return CGSize(width: cv.bounds.width, height: plan.cellHeight)
         }
+    }
+
+    /// A status bar tap. The system's own "scroll to top" would land on the newest
+    /// messages in an inverted feed, so the screen takes the tap over and goes to the
+    /// beginning of the conversation itself.
+    func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
+        onScrollToStart?()
+        return false
     }
 
     func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {

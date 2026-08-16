@@ -2,6 +2,9 @@ import type { Env, ClientFrame, ServerFrame } from "../types";
 import { json, err, nowSec } from "../util";
 import { sendPush, envelopeForDevice } from "../push/apns";
 import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "../version";
+import {
+  newCounters, snapshot, diff, logPerf, wrapState, wrapDB, wrapStub, type PerfCounters,
+} from "../perf";
 
 /// Presence TTL: the client pings every ~12s, so silence longer than this reads as offline.
 const PRESENCE_TTL_MS = 35_000;
@@ -48,7 +51,16 @@ export class UserSessionDO implements DurableObject {
   /// Dev test hook (/dev-fault): how many frame deliveries to reject next.
   private devFailEvents = 0;
 
-  constructor(private state: DurableObjectState, private env: Env) {}
+  /// dev measurement (PERF_LOG); never installed otherwise
+  private perf: PerfCounters | null = null;
+
+  constructor(private state: DurableObjectState, private env: Env) {
+    if (env.PERF_LOG) {
+      this.perf = newCounters();
+      this.state = wrapState(state, this.perf);
+      this.env = { ...env, DB: wrapDB(env.DB, this.perf) };
+    }
+  }
 
   private async getUserId(): Promise<string | null> {
     if (!this.userId) this.userId = (await this.state.storage.get<string>("userId")) ?? null;
@@ -56,7 +68,21 @@ export class UserSessionDO implements DurableObject {
   }
 
   private convStub(chatId: string) {
-    return this.env.CONV_DO.get(this.env.CONV_DO.idFromName(chatId));
+    const stub = this.env.CONV_DO.get(this.env.CONV_DO.idFromName(chatId));
+    return this.perf ? wrapStub(stub, this.perf) : stub;
+  }
+
+  /// Wraps one invocation (a fetch or a client frame) in a PERF line.
+  private async measured<T>(op: string, body: () => Promise<T>, extra?: object): Promise<T> {
+    if (!this.perf) return body();
+    const before = snapshot(this.perf);
+    const t0 = Date.now();
+    try {
+      return await body();
+    } finally {
+      logPerf("user", op, Date.now() - t0, diff(this.perf, before), snapshot(this.perf),
+              { userId: this.userId, ...(extra ?? {}) });
+    }
   }
 
   private sockets(): WebSocket[] {
@@ -64,7 +90,12 @@ export class UserSessionDO implements DurableObject {
   }
 
   private send(ws: WebSocket, frame: ServerFrame) {
-    try { ws.send(JSON.stringify(frame)); } catch { /* socket is gone; the hibernation API sweeps it */ }
+    const body = JSON.stringify(frame);
+    if (this.perf) {
+      this.perf.outFrames++;
+      this.perf.outBytes += body.length;
+    }
+    try { ws.send(body); } catch { /* socket is gone; the hibernation API sweeps it */ }
   }
 
   private broadcast(frame: ServerFrame) {
@@ -129,6 +160,10 @@ export class UserSessionDO implements DurableObject {
   }
 
   async fetch(req: Request): Promise<Response> {
+    return this.measured(new URL(req.url).pathname, () => this.handleFetch(req));
+  }
+
+  private async handleFetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const path = url.pathname;
 
@@ -493,6 +528,19 @@ export class UserSessionDO implements DurableObject {
   // --- WebSocket hibernation handlers ---
 
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer) {
+    if (!this.perf) return this.handleFrame(ws, raw);
+    const t = (() => {
+      try {
+        return JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw)).t;
+      } catch {
+        return "?";
+      }
+    })();
+    return this.measured(`ws:${t}`, () => this.handleFrame(ws, raw),
+                         { inBytes: typeof raw === "string" ? raw.length : raw.byteLength });
+  }
+
+  private async handleFrame(ws: WebSocket, raw: string | ArrayBuffer) {
     const userId = await this.getUserId();
     if (!userId) return;
     let frame: ClientFrame;

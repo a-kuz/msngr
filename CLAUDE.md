@@ -25,12 +25,18 @@ Documentation: `docs/protocol.md` (frames and API), `docs/crypto-flows.md`,
 
 ```bash
 cd ios && xcodegen                                  # required after editing project.yml
-xcodebuild -project ios/Msngr.xcodeproj -scheme Msngr -destination 'id=<UDID>' build
-xcodebuild -project ios/Msngr.xcodeproj -scheme Msngr -destination 'id=<UDID>' \
-  test -only-testing:MsngrTests
-cd ios/MsngrKit && swift test                       # the core
+scripts/build-slot.py xcodebuild -project ios/Msngr.xcodeproj -scheme Msngr \
+  -destination 'id=<UDID>' build
+scripts/build-slot.py xcodebuild -project ios/Msngr.xcodeproj -scheme Msngr \
+  -destination 'id=<UDID>' test -only-testing:MsngrTests
+cd ios/MsngrKit && ../../scripts/build-slot.py swift test    # the core
 cd server && node test/smoke.mjs                    # API/DO/pushes, needs wrangler dev
 ```
+
+Every build and every test run goes through `scripts/build-slot.py`: several
+agents share this host, and six xcodebuilds at once took the load average past
+600 and started failing tests on timing instead of on code. The wrapper holds one
+of two slots for the duration of the command and releases it with the process.
 
 `ios/Msngr.xcodeproj` is in `.gitignore` and is generated from `ios/project.yml`.
 Do not edit `.pbxproj` by hand — the next `xcodegen` will overwrite the edits. The
@@ -84,8 +90,50 @@ A simulator is an exclusive resource: at any moment it belongs to one agent.
 - For your own scenarios, create your own simulator
   (`xcrun simctl create <name> "iPhone 17"` → `boot` → `install` → register a
   fresh user) and delete it after yourself (`shutdown` + `delete`).
+- Name it after yourself: `<agent>` or `<agent>-<role>`, the way `perfdb` owns
+  `perfdb-a` and `perfdb-b`. That name is how the housekeeping below tells your
+  simulator from litter.
 - Slow Animations in Simulator.app is a global toggle: if you turned it on, turn
   it off at the end.
+
+## Housekeeping
+
+Two commands, both at the root of the repository:
+
+```bash
+scripts/disk.py            # what our footprint is made of, from the last snapshot
+scripts/tidy.py            # what would be taken back; --apply to take it
+```
+
+`scripts/disk.py` prints in a moment because it prints a stored snapshot and
+says how old it is; only free space is read live. `--scan` takes a new one, and
+`--wide` also walks the home directory to say how much of the disk is not this
+project at all.
+
+The sweep runs from launchd every five minutes and refreshes the snapshot as it
+goes; its output is in `.claude/tidy.log`. The job is installed with
+
+```bash
+cp scripts/launchd/ai.enface.msngr.tidy.plist ~/Library/LaunchAgents/
+launchctl unload ~/Library/LaunchAgents/ai.enface.msngr.tidy.plist 2>/dev/null
+launchctl load ~/Library/LaunchAgents/ai.enface.msngr.tidy.plist
+```
+
+The sweep only takes what nothing alive is holding: a simulator whose agent has
+finished, a stand no wrangler points at, a wrangler still running for a worktree
+that was deleted, a worktree whose branch is in main with nothing uncommitted,
+derived data of a workspace that is gone, logs older than three days. An agent
+counts as alive while its process is in `ps` or its transcript is still being
+written; a name that is in no registry at all is given the benefit of the doubt
+for as long as its app keeps writing.
+
+Below a floor of free space the sweep stops being enough and the decision goes
+to a human: `.claude/disk-report.md` says where the space went and what would be
+next to give up, with the cost of losing each, and a notification points at it.
+Nothing in that report is ever taken automatically.
+
+The owner's two devices, the gate runner, and the shared stand in
+`server/.wrangler` are outside all of this and are never touched.
 
 ## What is easy to break
 
@@ -113,6 +161,12 @@ A simulator is an exclusive resource: at any moment it belongs to one agent.
   message is inserted at `item 0` and shifts the content above it under an
   unchanged `contentOffset`. An update remembers the topmost visible item and
   puts it back; any new update path has to do the same.
+- **The status bar tap.** UIKit delivers it as `scrollViewShouldScrollToTop` and
+  only while exactly one visible scroll view claims it, which is why the input
+  text view has `scrollsToTop = false`. The touch itself is SpringBoard's:
+  XCUITest cannot produce it on the simulator, through the SpringBoard element or
+  through a coordinate in the app's own window alike, so this path is checked in
+  `MsngrTests/StatusBarTapTests` and not in the UI smoke.
 - **Text size.** Every size lives in `Theme.Text`
   (`ios/Msngr/App/Theme.swift`) as a named role; there should be no numbers in
   the screen code. A role is scaled through `UIFontMetrics` with a ceiling: the
