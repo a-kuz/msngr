@@ -64,12 +64,19 @@ export interface ChatMember {
   accepted: boolean;
 }
 
+/// Who may act in a group: everyone in it, or only its admins.
+export type ChatPolicy = "all" | "admins";
+
 export interface ChatState {
   chatId: string;
   kind: "direct" | "group";
   title: string | null;
   avatarId: string | null;
   description: string | null;
+  /// who may send content; service frames are never held back
+  sendPolicy: ChatPolicy;
+  /// who may add members and mint invite links
+  invitePolicy: ChatPolicy;
   createdBy: string;
   createdAt: number;
   members: ChatMember[];
