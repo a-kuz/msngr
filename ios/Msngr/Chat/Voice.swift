@@ -2,6 +2,35 @@ import UIKit
 import AVFoundation
 import MsngrCore
 
+/// Что делать по нажатию на микрофон. Отделено от самой записи, чтобы правило
+/// «сначала спросить, записывать потом» держалось само по себе: запись, начатая
+/// под системным диалогом, пишет тишину, а после отказа не пишет вообще ничего
+/// и без объяснения выглядит как сломанная кнопка.
+enum MicGate {
+    enum Permission { case granted, denied, undetermined }
+    enum Decision: Equatable {
+        case record   // разрешение есть
+        case ask      // спросить и записывать уже по ответу
+        case explain  // отказано: диалога больше не будет, ведём в настройки
+    }
+
+    static func decide(_ permission: Permission) -> Decision {
+        switch permission {
+        case .granted: return .record
+        case .undetermined: return .ask
+        case .denied: return .explain
+        }
+    }
+
+    static var current: Permission {
+        switch AVAudioApplication.shared.recordPermission {
+        case .granted: return .granted
+        case .denied: return .denied
+        default: return .undetermined
+        }
+    }
+}
+
 /// Запись голосовых: AAC 48kbps, амплитуды для waveform в реальном времени.
 final class VoiceRecorder: NSObject, ObservableObject {
     @Published var isRecording = false
@@ -11,6 +40,17 @@ final class VoiceRecorder: NSObject, ObservableObject {
     private var recorder: AVAudioRecorder?
     private var timer: Timer?
     private(set) var fileURL: URL?
+
+    /// Доступ к микрофону. Спрашивается до записи, а не одновременно с ней:
+    /// системный диалог перекрывает экран, и дубль, начатый под ним, был бы
+    /// тишиной. Отказ — не ошибка записи, а состояние, о котором экран говорит.
+    static func requestPermission() async -> Bool {
+        switch MicGate.decide(MicGate.current) {
+        case .record: return true
+        case .explain: return false
+        case .ask: return await AVAudioApplication.requestRecordPermission()
+        }
+    }
 
     func start() throws {
         let session = AVAudioSession.sharedInstance()
