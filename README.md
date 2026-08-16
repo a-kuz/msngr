@@ -1,70 +1,77 @@
 # Msngr
 
-Мессенджер со сквозным шифрованием: клиенты для iOS и macOS, бэкенд на
-Cloudflare Workers. Прода нет, это разработческий стенд.
+An end-to-end encrypted messenger: iOS and macOS clients over a Cloudflare
+Workers backend. There is no production; this is a development stand.
 
-## Что внутри
+## What is here
 
-- **server/** — Cloudflare Worker: HTTP API (hono) и WebSocket, два Durable
-  Object'а (`UserSessionDO` — сокеты устройств пользователя, чат-лист,
-  presence, пуши; `ConversationDO` — журнал чата, членство, `seq`, fan-out),
-  D1 (пользователи, устройства, prekeys, блокировки, инвайты), R2 (медиа), APNs.
-- **ios/MsngrKit/** — переносимое ядро, Swift Package:
-  - `MsngrCrypto` — X3DH, Double Ratchet, sender keys, шифрование медиа, safety numbers;
-  - `MsngrCore` — GRDB-хранилище, WS-клиент, SyncEngine, E2EE-пайплайн, медиа,
-    BlurHash, мозаика альбомов, image pipeline.
-- **ios/Msngr/** — iOS-приложение: SwiftUI, лента сообщений на UICollectionView.
-- **ios/MsngrMac/** — macOS-клиент на том же ядре (удобно как второй собеседник).
-- **ios/NotificationService/** — NSE: превью пуша из общей БД.
+- **server/** — the Cloudflare Worker: an HTTP API (hono) and WebSocket, two
+  Durable Objects (`UserSessionDO` for a user's device sockets, chat list,
+  presence and pushes; `ConversationDO` for the chat journal, membership, `seq`
+  and fan-out), D1 (users, devices, prekeys, blocks, invites), R2 (media), APNs.
+- **ios/MsngrKit/** — the portable core, a Swift package:
+  - `MsngrCrypto` — X3DH, Double Ratchet, sender keys, media encryption, safety
+    numbers;
+  - `MsngrCore` — the GRDB store, the WS client, SyncEngine, the E2EE pipeline,
+    media, BlurHash, album mosaics, the image pipeline.
+- **ios/Msngr/** — the iOS app: SwiftUI, with the message feed on a
+  UICollectionView.
+- **ios/MsngrMac/** — a macOS client over the same core, handy as a second
+  participant.
+- **ios/NotificationService/** — the NSE, which builds a push preview from the
+  shared database.
 
-Что умеет: чаты 1:1 и группы (роли и инвайт-ссылки), текст, фото, видео, файлы,
-голосовые, альбомы, реплаи, форварды, реакции, правка, удаление у себя и у всех,
-typing, онлайн и last seen, галочки доставки и прочтения, message requests,
-закреплённые чаты и сообщения, архив, mute, черновики, поиск по списку чатов,
-блокировки, контакт-дискавери по хэшам номеров, TOFU и safety numbers, пин-код
-с Face ID, офлайн-очередь отправки. Звонков нет.
+What it does: one-to-one and group chats (with roles and invite links), text,
+photos, video, files, voice messages, albums, replies, forwards, reactions,
+editing, deleting for yourself and for everyone, typing, online and last seen,
+delivery and read ticks, message requests, pinned chats and messages, archive,
+mute, drafts, search over the chat list, blocking, contact discovery by number
+hashes, TOFU and safety numbers, a PIN with Face ID, and an offline send queue.
+There are no calls.
 
-## Запуск
+## Running it
 
-### Бэкенд
+### Backend
 
 ```bash
 cd server
 npm install
-npx wrangler d1 execute msngr --local --file=schema.sql   # один раз
+npx wrangler d1 execute msngr --local --file=schema.sql   # once
 npx wrangler dev --port 8787
 ```
 
-Серверный смоук (нужен запущенный `wrangler dev`, 63 проверки API/WS/DO/пушей):
+The server smoke needs a running `wrangler dev` and covers the API, WS, the
+Durable Objects and pushes:
 
 ```bash
 cd server && node test/smoke.mjs
 ```
 
-Смоук поднимает собственный приёмник пушей на :9871, поэтому дев-мок APNs на
-это время надо остановить.
+It raises its own push sink on :9871, so the dev APNs mock has to be stopped
+first.
 
 ### iOS
 
 ```bash
 cd ios
-brew install xcodegen                  # если ещё нет
-xcodegen generate                      # .xcodeproj не в git, генерируется отсюда
+brew install xcodegen                  # if you do not have it
+xcodegen generate                      # .xcodeproj is not in git, it comes from here
 xcodebuild -project Msngr.xcodeproj -scheme Msngr \
-  -destination 'id=<UDID симулятора>' build
+  -destination 'id=<simulator UDID>' build
 ```
 
-Сервер по умолчанию `http://localhost:8787`, переопределяется переменной
-окружения схемы `MSNGR_SERVER`. Симулятор ходит на localhost хоста напрямую.
+The server defaults to `http://localhost:8787` and is overridden by the scheme's
+`MSNGR_SERVER` environment variable. The simulator reaches the host's localhost
+directly.
 
-### Тесты ядра
+### Core tests
 
 ```bash
-cd ios/MsngrKit && swift test          # крипто, синк, офлайн, миграции, BlurHash, мозаика
+cd ios/MsngrKit && swift test          # crypto, sync, offline, migrations, BlurHash, mosaic
 ```
 
-Тесты приложения (раскладка бабблов, лента, плашка непрочитанных, решения по
-уведомлениям, валидация регистрации) и UI-смоук — через xcodebuild:
+The app tests (bubble layout, the feed, the unread banner, notification
+decisions, registration validation) and the UI smoke go through xcodebuild:
 
 ```bash
 cd ios
@@ -72,7 +79,7 @@ xcodebuild -project Msngr.xcodeproj -scheme Msngr -destination 'id=<UDID>' \
   test -only-testing:MsngrTests
 ```
 
-Полный гейт качества — `make check` в корне (см. `docs/PROCESS.md`).
+The full quality gate is `make check` at the root; see `docs/PROCESS.md`.
 
 ### macOS
 
@@ -82,38 +89,39 @@ xcodebuild -project Msngr.xcodeproj -scheme MsngrMac -destination 'platform=macO
 open ~/Library/Developer/Xcode/DerivedData/Msngr-*/Build/Products/Debug/MsngrMac.app
 ```
 
-### Пуши на дев-стенде
+### Pushes on the dev stand
 
-Apple-аккаунт не нужен: `APNS_HOST` в `server/.dev.vars` уводит пуши в мок,
-который доставляет их в симулятор через `simctl`.
+No Apple account is needed: `APNS_HOST` in `server/.dev.vars` sends pushes to a
+mock, which delivers them into the simulator through `simctl`.
 
 ```bash
-cd server && node tools/apns-mock.mjs --log        # слушает :9871
+cd server && node tools/apns-mock.mjs --log        # listens on :9871
 ```
 
-APNs-токеном на симуляторе регистрируется UDID (`SIMULATOR_UDID`). Ограничение
-канала: `simctl push` не запускает Notification Service Extension —
-`docs/research/nse-simulator-experiment.md`.
+On a simulator the UDID (`SIMULATOR_UDID`) stands in for the APNs token. The
+channel has a limit: `simctl push` does not start the Notification Service
+Extension, as `docs/research/nse-simulator-experiment.md` shows.
 
-## Деплой бэкенда
+## Deploying the backend
 
 ```bash
 npx wrangler d1 create msngr           # database_id → wrangler.jsonc
 npx wrangler r2 bucket create msngr-media
 npx wrangler d1 execute msngr --remote --file=server/schema.sql
-npx wrangler secret put APNS_KEY_P8    # содержимое .p8
+npx wrangler secret put APNS_KEY_P8    # contents of the .p8
 npx wrangler secret put APNS_KEY_ID
 npx wrangler secret put APNS_TEAM_ID
-npx wrangler secret put APNS_TOPIC     # bundle id приложения
+npx wrangler secret put APNS_TOPIC     # the app's bundle id
 npx wrangler deploy
 ```
 
-## Документация
+## Documentation
 
-- `CLAUDE.md` — правила работы в репозитории для агентов.
-- `ARCHITECTURE.md` — компоненты и принципы.
-- `docs/protocol.md` — HTTP/WS-протокол, E2E-конверт, пуши.
-- `docs/crypto-flows.md` — первый контакт, TOFU, группы, контакт-дискавери.
-- `docs/ui-spec.md` — поведение клиента: лента, баббл, анимации, палитры.
-- `docs/PROCESS.md` — гейт качества, матрица состояний, стенды.
-- `docs/audits/`, `docs/qa/`, `docs/research/` — аудиты, прогоны, исследования.
+- `CLAUDE.md` — the rules for agents working in this repository.
+- `ARCHITECTURE.md` — components and principles.
+- `docs/protocol.md` — the HTTP and WS protocol, the E2E envelope, pushes.
+- `docs/crypto-flows.md` — first contact, TOFU, groups, contact discovery.
+- `docs/ui-spec.md` — how the client behaves: the feed, the bubble, animations,
+  palettes.
+- `docs/PROCESS.md` — the quality gate, the state matrix, the stands.
+- `docs/audits/`, `docs/qa/`, `docs/research/` — audits, runs, research.

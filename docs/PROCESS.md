@@ -56,8 +56,8 @@ off when you are done.
    marker, notification decisions, registration validation.
 4. UI smoke (MsngrUITests) — launch, registration, sending text, drafts, the
    long-press menu, the attach menu.
-5. Server smoke (`node server/test/smoke.mjs`) — 95 checks over the API, the
-   DOs and pushes. The dev APNs mock has to be stopped for the duration: the
+5. Server smoke (`node server/test/smoke.mjs`) — checks over the API, the DOs
+   and pushes. The dev APNs mock has to be stopped for the duration: the
    smoke takes the same port, :9871. A stand of your own on another port runs
    as `wrangler dev --port <port> --var APNS_HOST:http://localhost:<sink port>`
    plus `BASE_URL=… PUSH_PORT=<sink port> node test/smoke.mjs`; `--var`
