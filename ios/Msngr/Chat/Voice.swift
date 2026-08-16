@@ -41,9 +41,9 @@ final class VoiceRecorder: NSObject, ObservableObject {
     private var timer: Timer?
     private(set) var fileURL: URL?
 
-    /// Доступ к микрофону. Спрашивается до записи, а не одновременно с ней:
-    /// системный диалог перекрывает экран, и дубль, начатый под ним, был бы
-    /// тишиной. Отказ — не ошибка записи, а состояние, о котором экран говорит.
+    /// Microphone access. It is asked for before recording rather than alongside it:
+    /// the system dialog covers the screen, and a take started underneath it would be
+    /// silence. A refusal is a state the screen reports, not a recording error.
     static func requestPermission() async -> Bool {
         switch MicGate.decide(MicGate.current) {
         case .record: return true
@@ -83,7 +83,7 @@ final class VoiceRecorder: NSObject, ObservableObject {
 
     /// Returns (file, duration, a waveform of 100 buckets in 0..31).
     /// Only an accidental touch of the microphone (under 0.3s) is dropped and gives nil;
-    /// a short voice message like «ок» (0.3 to 1s) is a message like any other.
+    /// a short voice message like a quick "ok" (0.3 to 1s) is a message like any other.
     func stop() -> (url: URL, duration: TimeInterval, waveform: [Int])? {
         timer?.invalidate()
         guard let r = recorder, let url = fileURL else { return nil }
@@ -302,7 +302,7 @@ final class VoiceMessageView: UIView {
             waveform.amplitudes = msg.media?.waveform ?? []
             let raw = msg.media?.dur ?? 0
             if raw < 1 {
-                // a sub-second voice message («ок») shows tenths: «0:00,5»
+                // a sub-second voice message shows tenths: "0:00,5"
                 durationLabel.text = String(format: "0:00,%01d", Int(raw * 10))
             } else {
                 // rounded to the nearest second: 2.7s reads «0:03», not «0:02»

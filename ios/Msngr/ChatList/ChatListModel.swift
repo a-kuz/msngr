@@ -8,7 +8,7 @@ struct ChatListItem: Identifiable, Equatable {
     var chat: Chat
     var peer: User?          // direct chats only
     var lastMessage: Message?
-    var typingText: String?  // "печатает…"
+    var typingText: String?  // the typing indicator line
     var id: String { chat.id }
 
     var title: String {
@@ -33,10 +33,10 @@ final class ChatListModel: ObservableObject {
     @Published var items: [ChatListItem] = []
     @Published var requests: [ChatListItem] = []
     @Published var archived: [ChatListItem] = []
-    /// Tabs above the list, in the user's order. «Все» is not a folder: it is
+    /// Tabs above the list, in the user's order. The "all" tab is not a folder: it is
     /// the whole list.
     @Published var folders: [ChatFolder] = []
-    /// Selected tab; nil stands for «Все».
+    /// Selected tab; nil stands for the "all" tab.
     @Published var selectedFolderId: String?
     /// How many chats have unread in each folder; the nil tab is keyed by "".
     @Published private(set) var folderUnread: [String: Int] = [:]
@@ -51,7 +51,7 @@ final class ChatListModel: ObservableObject {
     private var cancellable: AnyCancellable?
     private var typing: [String: (userId: String, until: Date)] = [:]
     private var typingTask: Task<Void, Never>?
-    /// Per-chat timers that clear «печатает…»: without them the indicator only
+    /// Per-chat timers that clear the typing indicator: without them it only
     /// goes out on the next event (lazy expiry) and can stay stuck.
     private var typingClearTasks: [String: Task<Void, Never>] = [:]
     private let app = AppState.shared
@@ -323,9 +323,9 @@ final class ChatListModel: ObservableObject {
         Task { await app.engine.deleteChat(chatId: item.chat.id) }
     }
 
-    /// Отклонённая заявка уходит с устройства так же, как удалённый чат: через
-    /// очередь, с тумбстоуном. Иначе снапшот приносил бы её обратно, а
-    /// вернувшийся чат заводил бы курсоры с нуля.
+    /// A rejected request leaves the device the same way a deleted chat does: through
+    /// the queue, with a tombstone. Otherwise a snapshot would bring it back, and a
+    /// chat that returned would start its cursors from zero.
     func blockRequest(_ item: ChatListItem) {
         guard let peer = item.peer else { return }
         Task {
