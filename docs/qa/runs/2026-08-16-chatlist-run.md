@@ -5,7 +5,7 @@ Run date: 2026-08-16. No screenshots kept.
 ## Stand
 
 Own simulators `chatlist-a` (B5BE76FC) and `chatlist-b` (C4480C18), both iPhone
-17 on iOS 26.5, deleted after the run. Own `wrangler dev` on :8812 with
+17 on iOS 26.5, deleted after the run along with the stand's state. Own `wrangler dev` on :8812 with
 `--persist-to .wrangler-chatlist` in the working tree and D1 migrations applied
 into it; both apps launched with `MSNGR_SERVER=http://localhost:8812`. Two real
 accounts with real keys, `anna` («Anna Kim») on A and `boris` («Boris Petrov»)
@@ -57,6 +57,11 @@ row could keep a typing line until some other database write came along. It walk
 the archive too now: Boris typing in the archived «Family» lit the row in the
 archive screen and the preview came back five seconds later.
 
+The first shape of the receiving half sent a stop for every message in a batch,
+and the list rebuilt itself on each of them, catch-up included. It sends one per
+sender per batch now, and a stop for a chat that was not typing changes nothing
+and touches no view.
+
 ## The archive was a dead end
 
 A tap on an archived chat pushed nothing. Four taps in a row pushed nothing, and
@@ -101,6 +106,14 @@ the name and the right edge takes no hits, so half the row is dead.
 
 ## Checked with
 
-`make check DEV_UDID=74B78AFC` (gate-runner), the UI tests and the smoke against
-the stands the Makefile picks: :8787 for the UI tests, the smoke's own throwaway
-stand for the server.
+The gate on a throwaway simulator of its own, `chatlist-gate` (C5D8DE14), every
+build and test run through `scripts/build-slot.py`: build, `swift test`,
+MsngrTests, MsngrUITests against :8787 (five of five, `testC` being the draft one)
+and `scripts/smoke-stand.sh` — ALL PASS, no fresh crashes.
+
+Two earlier attempts at the gate are not evidence of anything. The first shared
+gate-runner with another agent's run, and the log carries paths from the main
+working tree, a test that lost the application halfway and one that found no
+search field. The second ran while the host's load average stood near 800 and
+died on registration, typing into a field that never took focus. The green one
+above is the third.
