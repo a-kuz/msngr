@@ -1977,6 +1977,14 @@ public actor SyncEngine {
                         sql: "UPDATE message SET deletedForAll = 1, text = NULL, media = NULL, album = NULL WHERE chatId = ? AND (msgId = ? OR id = ?)",
                         arguments: [chatId, id, id])
                 } else {
+                    // a message thrown away is not sent afterwards: its queue
+                    // entry goes with it, whether it is still waiting for its
+                    // turn or holding the payload of a send that failed
+                    try dbc.execute(sql: """
+                        DELETE FROM outbox WHERE clientMsgId IN
+                          (SELECT clientMsgId FROM message
+                           WHERE chatId = ? AND (msgId = ? OR id = ?) AND clientMsgId IS NOT NULL)
+                        """, arguments: [chatId, id, id])
                     try dbc.execute(sql: "DELETE FROM message WHERE chatId = ? AND (msgId = ? OR id = ?)",
                                     arguments: [chatId, id, id])
                 }
