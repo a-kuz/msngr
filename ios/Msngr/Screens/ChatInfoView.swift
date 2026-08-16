@@ -471,6 +471,8 @@ extension ChatInfoView {
                 Button("Отправить вложения ×\(rounds)") { seedAttachments(rounds) }
                     .disabled(seeding)
             }
+            Button("Отправить альбомы 2/3/5/10") { seedAlbums([2, 3, 5, 10]) }
+                .disabled(seeding)
             if seeding {
                 HStack {
                     ProgressView()
@@ -478,6 +480,18 @@ extension ChatInfoView {
                         .foregroundStyle(.secondary)
                 }
             }
+        }
+    }
+
+    /// One album of every listed size, to see the whole mosaic range at once.
+    func seedAlbums(_ sizes: [Int]) {
+        seeding = true
+        seedSent = 0
+        let chatId = model.chatId
+        Task {
+            await AttachmentSeed.sendAlbums(chatId: chatId, sizes: sizes)
+            seedSent = sizes.count
+            seeding = false
         }
     }
 

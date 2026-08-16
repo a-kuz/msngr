@@ -12,11 +12,19 @@ enum AttachmentSeed {
     static func send(chatId: String, batches: Int) async {
         for round in 1...batches {
             await sendPhoto(chatId: chatId, round: round)
-            await sendAlbum(chatId: chatId, round: round)
+            await sendAlbum(chatId: chatId, round: round, count: 3)
             await sendVideo(chatId: chatId, round: round)
             sendFile(chatId: chatId, round: round)
             await sendVoice(chatId: chatId, round: round)
             sendLinks(chatId: chatId, round: round)
+        }
+    }
+
+    /// One album per size, so the mosaic can be looked at across its whole range
+    /// in a single chat.
+    static func sendAlbums(chatId: String, sizes: [Int]) async {
+        for (round, size) in sizes.enumerated() {
+            await sendAlbum(chatId: chatId, round: round + 1, count: size)
         }
     }
 
@@ -67,11 +75,11 @@ enum AttachmentSeed {
         try? await AppState.shared.engine?.enqueue(content: content, chatId: chatId)
     }
 
-    private static func sendAlbum(chatId: String, round: Int) async {
-        let medias = (0..<3).compactMap { i -> MediaInfo? in
+    private static func sendAlbum(chatId: String, round: Int, count: Int) async {
+        let medias = (0..<count).compactMap { i -> MediaInfo? in
             image(round * 10 + i).flatMap { info($0) }
         }
-        guard medias.count == 3 else { return }
+        guard medias.count == count else { return }
         var content = ContentPayload(kind: "album")
         content.album = medias
         try? await AppState.shared.engine?.enqueue(content: content, chatId: chatId)
