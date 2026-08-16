@@ -29,8 +29,8 @@ final class UpsertTests: XCTestCase {
         XCTAssertFalse(iAccepted)
     }
 
-    /// Локальный accept не откатывается снапшотом, собранным до доставки /accept:
-    /// иначе принятый чат снова спрятал бы историю.
+    /// A snapshot taken before /accept reached the server must not roll back the
+    /// local accept, or an accepted chat would hide its history again.
     func testAcceptSurvivesStaleSnapshot() throws {
         let state = ChatStateDTO(
             chatId: "direct:A:B", kind: "direct", title: nil, avatarId: nil, description: nil,
@@ -44,7 +44,7 @@ final class UpsertTests: XCTestCase {
         try db.write { dbc in
             try SyncEngine.upsertChatState(dbc, state, ownUserId: "B", flags: nil)
             try dbc.execute(sql: "UPDATE chat SET isRequest = 0, iAccepted = 1 WHERE id = 'direct:A:B'")
-            // тот же (устаревший) снапшот приходит ещё раз
+            // the same, now stale, snapshot arrives once more
             try SyncEngine.upsertChatState(dbc, state, ownUserId: "B", flags: nil)
         }
         let (isRequest, iAccepted) = try db.read { dbc -> (Bool, Bool) in

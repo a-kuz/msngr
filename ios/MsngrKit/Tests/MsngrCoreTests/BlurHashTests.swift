@@ -2,7 +2,7 @@ import XCTest
 @testable import MsngrCore
 
 final class BlurHashTests: XCTestCase {
-    // Диагональный градиент 32x32
+    // Diagonal gradient
     private func makeGradient(width: Int, height: Int) -> [UInt8] {
         var pixels = [UInt8](repeating: 255, count: width * height * 4)
         for y in 0..<height {
@@ -35,7 +35,7 @@ final class BlurHashTests: XCTestCase {
         XCTAssertNotNil(hash)
         guard let hash else { return }
 
-        // 4x3 компоненты: 1 (размер) + 1 (maxAC) + 4 (DC) + 2*(4*3-1) (AC) = 28
+        // 4x3 components: 1 (size) + 1 (maxAC) + 4 (DC) + 2*(4*3-1) (AC) = 28
         XCTAssertEqual(hash.count, 28)
 
         let decoded = BlurHash.decodePixels(hash, width: width, height: height)
@@ -57,9 +57,9 @@ final class BlurHashTests: XCTestCase {
     func testDecodeInvalidHash() {
         XCTAssertNil(BlurHash.decodePixels("", width: 8, height: 8))
         XCTAssertNil(BlurHash.decodePixels("abc", width: 8, height: 8))
-        // Валидный префикс, но длина не соответствует числу компонент
+        // Valid prefix, but the length does not match the component count
         XCTAssertNil(BlurHash.decodePixels("LEHV6nWB2yk8", width: 8, height: 8))
-        // Символ вне base83-алфавита
+        // Character outside the base83 alphabet
         XCTAssertNil(BlurHash.decodePixels(String(repeating: "!", count: 28), width: 8, height: 8))
     }
 

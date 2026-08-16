@@ -52,7 +52,7 @@ final class HistoryWindowTests: XCTestCase {
         XCTAssertEqual(secondPage.count, 60)
         XCTAssertEqual(secondPage.last?.seq, 41)
 
-        // окно у начала локальной истории: ниже брать нечего
+        // the window sits at the start of local history: there is nothing below it
         let atStart = try db.read { dbc -> (Bool, Int?) in
             (try HistoryWindow.hasOlder(dbc, chatId: "c1", floor: 1),
              try HistoryWindow.floorBelow(dbc, chatId: "c1", floor: 1, limit: 30))
@@ -61,7 +61,7 @@ final class HistoryWindowTests: XCTestCase {
         XCTAssertNil(atStart.1)
     }
 
-    /// Сообщения без seq (своё, до ack) всегда в самой новой странице.
+    /// A message with no seq yet, our own before the ack, always belongs to the newest page.
     func testUnacknowledgedOwnMessageStaysInWindow() throws {
         let db = try AppDatabase.openInMemory()
         try seedChat(db, lastSeq: 10, syncedSeq: 10)
@@ -86,8 +86,8 @@ final class HistoryWindowTests: XCTestCase {
         XCTAssertEqual(HistoryWindow.gaps(known: [7], lower: 10, upper: 12), [10...12])
     }
 
-    /// Ниже курсора синхронизации дыр нет по построению: syncedSeq двигается
-    /// только по непрерывному префиксу.
+    /// Below the sync cursor there are no gaps by construction: syncedSeq only
+    /// moves along the contiguous prefix.
     func testGapsLiveAboveSyncCursorOnly() throws {
         let db = try AppDatabase.openInMemory()
         try seedChat(db, lastSeq: 20, syncedSeq: 10)
@@ -96,8 +96,9 @@ final class HistoryWindowTests: XCTestCase {
         XCTAssertEqual(gaps, [12...14, 16...19])
     }
 
-    /// Служебный фрейм (реакция, правка) занимает seq и строки в ленте не даёт —
-    /// после его применения дыра закрыта записью, а не сообщением.
+    /// A service frame such as a reaction or an edit takes a seq without adding a
+    /// feed row, so once it is applied the gap is closed by a record rather than
+    /// by a message.
     func testAppliedServiceFrameClosesItsSeq() throws {
         let db = try AppDatabase.openInMemory()
         try seedChat(db, lastSeq: 5, syncedSeq: 2)
@@ -109,8 +110,8 @@ final class HistoryWindowTests: XCTestCase {
         XCTAssertTrue(gaps.isEmpty)
     }
 
-    /// Тот же разрыв не уходит на сервер бесконечно: зафиксированный нечитаемый
-    /// seq закрывает диапазон, повторный проход его уже не видит.
+    /// The same gap does not go back to the server forever: recording a seq as
+    /// unreadable closes the range, and the next pass no longer sees it.
     func testRecordedUnreadableSeqIsNotRequestedAgain() throws {
         let db = try AppDatabase.openInMemory()
         try seedChat(db, lastSeq: 6, syncedSeq: 3)
@@ -127,7 +128,7 @@ final class HistoryWindowTests: XCTestCase {
         let after = try db.read { dbc in try HistoryWindow.openGaps(dbc, chatId: "c1") }
         XCTAssertTrue(after.isEmpty)
 
-        // причина и счётчик попыток остаются в базе — ремонт опирается на них
+        // the reason and the attempt counter stay in the database: repair works off them
         let row = try db.read { dbc in
             try Row.fetchOne(dbc, sql: "SELECT * FROM historyGap WHERE chatId = 'c1' AND seq = 4")!
         }
@@ -136,8 +137,8 @@ final class HistoryWindowTests: XCTestCase {
         XCTAssertEqual(row["fromUserId"] as String?, "peer")
     }
 
-    /// Заглушка в ленте — терминальное состояние: пока попытки не исчерпаны,
-    /// нечитаемый seq в ленту не выходит.
+    /// A placeholder in the feed is a terminal state: while attempts remain, an
+    /// unreadable seq never reaches the feed.
     func testPlaceholderOnlyAfterAttemptsAreSpent() throws {
         let db = try AppDatabase.openInMemory()
         try seedChat(db, lastSeq: 6, syncedSeq: 6)
@@ -156,8 +157,8 @@ final class HistoryWindowTests: XCTestCase {
         XCTAssertEqual(shown, [4])
     }
 
-    /// Конверт, адресованный другому устройству, и служебный фрейм заглушки не
-    /// получают ни при каком числе попыток.
+    /// An envelope addressed to another device, and a service frame, get no
+    /// placeholder however many attempts are spent on them.
     func testSilentReasonsNeverReachTheFeed() throws {
         let db = try AppDatabase.openInMemory()
         try seedChat(db, lastSeq: 9, syncedSeq: 9)
@@ -173,7 +174,7 @@ final class HistoryWindowTests: XCTestCase {
         XCTAssertTrue(shown.isEmpty)
     }
 
-    /// Заглушки ниже окна в ленту не идут: окно расширяется — они появляются.
+    /// Placeholders below the window stay out of the feed and appear once the window grows.
     func testExhaustedSeqsAreLimitedToTheWindow() throws {
         let db = try AppDatabase.openInMemory()
         try seedChat(db, lastSeq: 30, syncedSeq: 30)
