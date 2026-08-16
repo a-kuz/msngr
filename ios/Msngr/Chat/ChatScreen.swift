@@ -13,10 +13,6 @@ struct ChatScreen: View {
     @State private var forwardMessage: Message?
     /// сообщение, для которого открыт режим выделения текста
     @State private var selectingText: Message?
-    /// сообщение, для которого спрошено подтверждение удаления
-    @State private var deleteCandidate: Message?
-    /// подтверждение удаления выбранных в мультивыборе
-    @State private var confirmDeleteSelection = false
     @State private var forwardingSelection = false
     @State private var messagesVC = MessagesViewController()
     @EnvironmentObject var app: AppState
@@ -49,7 +45,11 @@ struct ChatScreen: View {
                         keyChangeBanner
                     }
                     if model.selecting {
-                        selectionActionBar
+                        if model.confirmingDelete {
+                            deleteConfirmBar
+                        } else {
+                            selectionActionBar
+                        }
                     } else {
                         InputBar(model: model, text: $text,
                                  onAttachPhoto: { photoPickerPresented = true },
@@ -179,34 +179,6 @@ struct ChatScreen: View {
         } message: {
             Text(model.sendFailure ?? "")
         }
-        // удаление одного сообщения из контекстного меню
-        .confirmationDialog("Удалить сообщение?", isPresented: deleteCandidateBinding,
-                            titleVisibility: .visible) {
-            if deleteCandidate?.isOutgoing == true {
-                Button("Удалить у всех", role: .destructive) {
-                    if let msg = deleteCandidate { model.delete(msg, forAll: true) }
-                    deleteCandidate = nil
-                }
-            }
-            Button("Удалить у меня", role: .destructive) {
-                if let msg = deleteCandidate { model.delete(msg, forAll: false) }
-                deleteCandidate = nil
-            }
-            Button("Отмена", role: .cancel) { deleteCandidate = nil }
-        }
-        // удаление выбранных в мультивыборе
-        .confirmationDialog(deleteSelectionTitle, isPresented: $confirmDeleteSelection,
-                            titleVisibility: .visible) {
-            if model.canDeleteSelectedForAll {
-                Button("Удалить у всех", role: .destructive) {
-                    withAnimation(Theme.springFast) { model.deleteSelected(forAll: true) }
-                }
-            }
-            Button("Удалить у меня", role: .destructive) {
-                withAnimation(Theme.springFast) { model.deleteSelected(forAll: false) }
-            }
-            Button("Отмена", role: .cancel) {}
-        }
     }
 
     private var sendFailureBinding: Binding<Bool> {
@@ -214,20 +186,45 @@ struct ChatScreen: View {
                 set: { if !$0 { model.sendFailure = nil } })
     }
 
-    private var deleteCandidateBinding: Binding<Bool> {
-        Binding(get: { deleteCandidate != nil },
-                set: { if !$0 { deleteCandidate = nil } })
-    }
-
-    private var deleteSelectionTitle: String {
-        "Удалить " + MessageSelection.title(count: model.selection.count) + "?"
+    /// Подтверждение удаления: два действия внизу, сами сообщения видны и
+    /// к выбору можно добавить ещё.
+    private var deleteConfirmBar: some View {
+        VStack(spacing: 8) {
+            Text("Удалить " + MessageSelection.title(count: model.selection.count) + "?")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            if model.canDeleteSelectedForAll {
+                Button("Удалить у всех", role: .destructive) {
+                    withAnimation(Theme.springFast) { model.deleteSelected(forAll: true) }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .controlSize(.large)
+                .frame(maxWidth: .infinity)
+                .accessibilityIdentifier("chat.delete.forAll")
+            }
+            Button("Удалить у меня", role: .destructive) {
+                withAnimation(Theme.springFast) { model.deleteSelected(forAll: false) }
+            }
+            .buttonStyle(.bordered)
+            .tint(.red)
+            .controlSize(.large)
+            .frame(maxWidth: .infinity)
+            .accessibilityIdentifier("chat.delete.forMe")
+        }
+        .disabled(model.selection.isEmpty)
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .background(.bar)
+        .transition(.move(edge: .bottom))
     }
 
     /// Панель действий мультивыбора вместо поля ввода.
     private var selectionActionBar: some View {
         HStack(spacing: 0) {
             selectionAction("Удалить", icon: "trash", destructive: true) {
-                confirmDeleteSelection = true
+                withAnimation(Theme.springFast) { model.confirmingDelete = true }
             }
             selectionAction("Переслать", icon: "arrowshape.turn.up.right") {
                 forwardingSelection = true
@@ -261,12 +258,14 @@ struct ChatScreen: View {
 
     private var messagesList: MessagesView {
         MessagesView(vc: messagesVC, model: model, items: model.feed,
+                     sendTick: model.sendTick,
                      selecting: model.selecting, selectedIds: model.selection.ids,
                      onTapMedia: { (msg: Message, idx: Int, _: UIView) in
                          MediaViewerPresenter.present(message: msg, startIndex: idx)
                      },
-                     selectingText: $selectingText, deleteCandidate: $deleteCandidate,
-                     showScrollDown: $showScrollDown)
+                     selectingText: $selectingText,
+                     showScrollDown: $showScrollDown,
+                     onSwipeBack: { dismiss() })
     }
 
     /// Пустой чат: центрированная подсказка вместо голого фона.
@@ -667,13 +666,16 @@ struct MessagesView: UIViewControllerRepresentable {
     /// feed передаётся и значением: изменение массива меняет value представляемого
     /// view — SwiftUI гарантированно зовёт updateUIViewController
     let items: [ChatFeedItem]
+    /// счётчик своих отправок: передаётся значением по той же причине, что и feed
+    let sendTick: Int
     /// режим и состав выбора передаются значением по той же причине, что и feed
     let selecting: Bool
     let selectedIds: Set<String>
     var onTapMedia: (Message, Int, UIView) -> Void
     @Binding var selectingText: Message?
-    @Binding var deleteCandidate: Message?
     @Binding var showScrollDown: Bool
+    /// свайп от левой кромки: возврат к списку чатов
+    var onSwipeBack: () -> Void
 
     func makeUIViewController(context: Context) -> MessagesViewController {
         vc.onAtBottomChanged = { [weak model] atBottom in
@@ -705,6 +707,20 @@ struct MessagesView: UIViewControllerRepresentable {
         vc.onToggleSelection = { [weak model] msg in
             withAnimation(Theme.springFast) { model?.toggleSelection(msg) }
         }
+        // тап по статус-бару: к началу чата, догрузив всё, что хранит устройство
+        vc.onScrollToStart = { [weak model, weak vc] in
+            guard let model, let vc else { return }
+            Haptics.light()
+            Task {
+                await model.loadDeviceHistory()
+                // окно приходит из наблюдения БД — ждём, пока лента его получит
+                for _ in 0..<20 {
+                    if model.isAtDeviceStart { break }
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+                vc.scrollToStart()
+            }
+        }
         return vc
     }
 
@@ -721,9 +737,17 @@ struct MessagesView: UIViewControllerRepresentable {
             case .pin: model.pin(msg)
             case .forward: NotificationCenter.default.post(name: .forwardRequested, object: msg)
             case .select: withAnimation(Theme.springFast) { model.beginSelection(with: msg) }
-            case .delete: deleteCandidate = msg
+            // удаление начинается с выбора: сообщение видно, к нему можно
+            // добавить ещё, подтверждение стоит внизу
+            case .delete:
+                withAnimation(Theme.springFast) {
+                    model.beginSelection(with: msg, confirmingDelete: true)
+                }
             }
         }
+        // замыкание с dismiss живёт не дольше тела body — переустанавливаем
+        vc.onSwipeBack = onSwipeBack
+        vc.noteSendTick(sendTick)
         vc.apply(items)
         vc.setSelection(mode: selecting, ids: selectedIds)
     }

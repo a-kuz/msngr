@@ -122,6 +122,33 @@ final class BubbleLayoutTests: XCTestCase {
         XCTAssertLessThanOrEqual(p.statusFrame.maxX, p.bubbleFrame.width)
     }
 
+    /// Реакция не должна смещать время и галочки: отступы статуса от правого
+    /// и нижнего края баббла те же, что и у баббла без реакций.
+    func testReactionKeepsStatusInsetsOfPlainBubble() {
+        let cases: [(name: String, text: String, reactions: [String: [String]])] = [
+            ("короткий текст, одна реакция", "Ок", ["👍": ["u1"]]),
+            ("многострочный текст, две реакции",
+             "Довольно длинное сообщение, которое точно занимает несколько строк подряд",
+             ["😂": ["u1", "u2"], "🔥": ["u3"]]),
+            ("реакции в несколько рядов", "Текст",
+             ["😂": ["u1"], "🔥": ["u2"], "❤️": ["u3"], "👍": ["u4"], "😮": ["u5"],
+              "😢": ["u6"], "🎉": ["u7"], "🙏": ["u8"], "👏": ["u9"], "💯": ["u10"]]),
+        ]
+        for c in cases {
+            let plain = plan(c.text)
+            let withR = withReactions(c.text, c.reactions)
+            XCTAssertEqual(rightInset(plain), rightInset(withR), accuracy: 0.5,
+                           "\(c.name): отступ времени справа")
+            XCTAssertEqual(bottomInset(plain), bottomInset(withR), accuracy: 0.5,
+                           "\(c.name): отступ времени снизу")
+            XCTAssertEqual(bottomInset(withR), BubbleLayout.vPadding, accuracy: 0.5,
+                           "\(c.name): время стоит на нижнем паддинге баббла")
+        }
+    }
+
+    private func rightInset(_ p: BubbleLayoutPlan) -> CGFloat { p.bubbleFrame.width - p.statusFrame.maxX }
+    private func bottomInset(_ p: BubbleLayoutPlan) -> CGFloat { p.bubbleFrame.height - p.statusFrame.maxY }
+
     /// Исходящее видимо шире статуса; ширина баббла не схлопывается уже времени.
     func testBubbleNotNarrowerThanStatus() {
         let p = plan("!")

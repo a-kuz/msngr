@@ -12,6 +12,18 @@ final class MessageContextOverlay: UIView {
         var handler: (() -> Void)?
     }
 
+    /// Текст сообщения, который в приподнятом состоянии выделяется протяжкой.
+    /// Снимок баббла рендерится без него, а сверху ложится живой текст той же
+    /// раскладки — иначе выделение закрасило бы картинку с текстом.
+    struct SelectableText {
+        let attributed: NSAttributedString
+        /// фрейм текста в координатах баббла
+        let frame: CGRect
+        let color: UIColor
+        let linkColor: UIColor
+        let codeBackground: UIColor
+    }
+
     static let quickReactions = ["❤️", "👍", "🔥", "😂", "😮", "😢"]
 
     private let blurView = UIVisualEffectView(effect: nil)
@@ -30,6 +42,11 @@ final class MessageContextOverlay: UIView {
     private var emojiButtons: [UIButton] = []
     private let menuCard = UIView()
     private let menuStack = UIStackView()
+    /// живой текст поверх снимка, когда сообщение текстовое
+    private var textView: UITextView?
+    /// точка, от которой тянут выделение
+    private var dragAnchor: UITextPosition?
+    private lazy var editMenu = UIEditMenuInteraction(delegate: self)
 
     private static var menuWidth: CGFloat { TypeScale.scaled(252, max: 340) }
     private static var rowHeight: CGFloat {
@@ -43,7 +60,8 @@ final class MessageContextOverlay: UIView {
     // MARK: - Показ
 
     static func present(over bubble: UIView, in window: UIWindow, isOutgoing: Bool,
-                        myReaction: String?, items: [Item], onReact: @escaping (String) -> Void) {
+                        myReaction: String?, items: [Item], selectableText: SelectableText? = nil,
+                        onReact: @escaping (String) -> Void) {
         // рендер в картинку: snapshotView возвращает nil/пустоту для бабблов
         // выше экрана; рендерим только верх (больше экрана всё равно не показать)
         let renderH = min(bubble.bounds.height, window.bounds.height * 1.2)
@@ -53,14 +71,16 @@ final class MessageContextOverlay: UIView {
         snap.contentMode = .scaleToFill
         let frame = bubble.convert(bubble.bounds, to: window)
         let overlay = MessageContextOverlay(snapshot: snap, originFrame: frame, isOutgoing: isOutgoing,
-                                            myReaction: myReaction, items: items, onReact: onReact)
+                                            myReaction: myReaction, items: items,
+                                            selectableText: selectableText, onReact: onReact)
         overlay.frame = window.bounds
         window.addSubview(overlay)
         overlay.animateIn()
     }
 
     private init(snapshot: UIView, originFrame: CGRect, isOutgoing: Bool,
-                 myReaction: String?, items: [Item], onReact: @escaping (String) -> Void) {
+                 myReaction: String?, items: [Item], selectableText: SelectableText?,
+                 onReact: @escaping (String) -> Void) {
         self.snapshot = snapshot
         self.originFrame = originFrame
         self.isOutgoing = isOutgoing
@@ -85,6 +105,7 @@ final class MessageContextOverlay: UIView {
 
         snapshot.frame = originFrame
         addSubview(snapshot)
+        if let selectableText { buildSelectableText(selectableText) }
 
         buildReactionBar()
         buildMenuCard(items: items)
@@ -143,6 +164,71 @@ final class MessageContextOverlay: UIView {
     private func alignedX(width: CGFloat, bubble: CGRect) -> CGFloat {
         let x = isOutgoing ? bubble.maxX - width : bubble.minX
         return min(max(x, 8), bounds.width - width - 8)
+    }
+
+    // MARK: - Выделение текста
+
+    /// Живой текст поверх снимка: протяжка по нему выделяет прямо здесь.
+    private func buildSelectableText(_ spec: SelectableText) {
+        // TextKit 1: тот же стек, каким текст меряли и рисовали в ленте,
+        // поэтому строки ложатся ровно на снимок
+        let tv = UITextView(usingTextLayoutManager: false)
+        tv.isEditable = false
+        tv.isSelectable = true
+        tv.isScrollEnabled = false
+        tv.backgroundColor = .clear
+        tv.textContainerInset = .zero
+        tv.textContainer.lineFragmentPadding = 0
+        tv.textContainer.maximumNumberOfLines = 0
+        tv.tintColor = UIColor(Theme.accent)
+        let coloured = MessageTextView.coloured(spec.attributed, color: spec.color,
+                                                linkColor: spec.linkColor)
+        // подложка блоков кода: в ленте её рисует MessageTextView, здесь она
+        // приходит атрибутом — снимок под текстом её уже не несёт
+        coloured.enumerateAttribute(.msngrCodeBlock,
+                                    in: NSRange(location: 0, length: coloured.length)) { value, range, _ in
+            guard value != nil else { return }
+            coloured.addAttribute(.backgroundColor, value: spec.codeBackground, range: range)
+        }
+        tv.attributedText = coloured
+        tv.frame = spec.frame
+        tv.accessibilityIdentifier = "chat.liftedText"
+        snapshot.addSubview(tv)
+        textView = tv
+
+        let drag = UIPanGestureRecognizer(target: self, action: #selector(textDrag(_:)))
+        tv.addGestureRecognizer(drag)
+        tv.addInteraction(editMenu)
+    }
+
+    @objc private func textDrag(_ g: UIPanGestureRecognizer) {
+        guard let tv = textView else { return }
+        let point = g.location(in: tv)
+        switch g.state {
+        case .began:
+            tv.becomeFirstResponder()
+            dragAnchor = tv.closestPosition(to: point)
+            Haptics.light()
+        case .changed:
+            guard let anchor = dragAnchor, let now = tv.closestPosition(to: point) else { return }
+            let ordered = tv.compare(anchor, to: now) == .orderedAscending
+                ? (anchor, now) : (now, anchor)
+            tv.selectedTextRange = tv.textRange(from: ordered.0, to: ordered.1)
+        case .ended, .cancelled, .failed:
+            dragAnchor = nil
+            guard let range = tv.selectedTextRange, !range.isEmpty else { return }
+            editMenu.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: point))
+        default:
+            break
+        }
+    }
+
+    private func copySelection() {
+        guard let tv = textView, let range = tv.selectedTextRange,
+              let text = tv.text(in: range), !text.isEmpty else { return }
+        UIPasteboard.general.string = text
+        Haptics.light()
+        dismiss()
     }
 
     // MARK: - Реакции
@@ -335,6 +421,14 @@ final class MessageContextOverlay: UIView {
         let f = view.frame
         view.layer.anchorPoint = anchor
         view.frame = f
+    }
+}
+
+extension MessageContextOverlay: UIEditMenuInteractionDelegate {
+    func editMenuInteraction(_ interaction: UIEditMenuInteraction,
+                             menuFor configuration: UIEditMenuConfiguration,
+                             suggestedActions: [UIMenuElement]) -> UIMenu? {
+        UIMenu(children: [UIAction(title: "Скопировать") { [weak self] _ in self?.copySelection() }])
     }
 }
 
