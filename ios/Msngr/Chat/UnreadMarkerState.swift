@@ -1,6 +1,6 @@
 import Foundation
 
-/// State of the «N непрочитанных сообщений» banner inside an open chat.
+/// State of the unread-count banner inside an open chat.
 /// It lives from the moment the chat is entered (in ChatViewModel); the rules are:
 /// - entering with unread messages puts the banner above the first of them;
 /// - messages arriving while the chat is visible raise the active banner's counter;

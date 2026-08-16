@@ -21,8 +21,8 @@ simulator and the same synthetic drag (idb, 90 pt over 0.6 s): in a plain
 the `TabView` no row action appeared, the page bounced back instead.
 
 So the tab is switched by a drag of 120 pt or more, and shorter drags stay with
-the row. Measured after the change on a chat row: 90 pt opens Удалить / Без
-звука / Архив / Из папки, 160 pt moves to the next tab. Full-swipe archiving is
+the row. Measured after the change on a chat row: 90 pt opens "Удалить" / "Без
+звука" / "Архив" / "Из папки", 160 pt moves to the next tab. Full-swipe archiving is
 gone with it — a drag that long now changes the tab, and an action fired by
 crossing the same distance would be an accident.
 

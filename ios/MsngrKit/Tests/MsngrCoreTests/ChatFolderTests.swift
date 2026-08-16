@@ -58,32 +58,32 @@ final class ChatFolderTests: XCTestCase {
     func testCreateReadAndOrder() throws {
         let db = try makeDB()
         try db.write { dbc in
-            try ChatFolderStore.create(dbc, title: "Работа", rules: ChatFolderRules(groups: true))
-            try ChatFolderStore.create(dbc, title: "Личное", rules: ChatFolderRules(direct: true, peerIds: ["u1", "u2"]))
+            try ChatFolderStore.create(dbc, title: "Work", rules: ChatFolderRules(groups: true))
+            try ChatFolderStore.create(dbc, title: "Personal", rules: ChatFolderRules(direct: true, peerIds: ["u1", "u2"]))
         }
         let folders = try db.read { try ChatFolderStore.all($0) }
-        XCTAssertEqual(folders.map(\.title), ["Работа", "Личное"])
+        XCTAssertEqual(folders.map(\.title), ["Work", "Personal"])
         XCTAssertEqual(folders[0].rules, ChatFolderRules(groups: true))
         XCTAssertEqual(folders[1].rules.peerIds, ["u1", "u2"])
 
         try db.write { dbc in
             try ChatFolderStore.reorder(dbc, orderedIds: [folders[1].id, folders[0].id])
         }
-        XCTAssertEqual(try db.read { try ChatFolderStore.all($0) }.map(\.title), ["Личное", "Работа"])
+        XCTAssertEqual(try db.read { try ChatFolderStore.all($0) }.map(\.title), ["Personal", "Work"])
     }
 
     func testRenameAndRulesRewritePeerSet() throws {
         let db = try makeDB()
         let folder = try db.write { dbc in
-            try ChatFolderStore.create(dbc, title: "Черновик", rules: ChatFolderRules(peerIds: ["u1"]))
+            try ChatFolderStore.create(dbc, title: "Draft", rules: ChatFolderRules(peerIds: ["u1"]))
         }
         try db.write { dbc in
-            try ChatFolderStore.rename(dbc, folderId: folder.id, title: "Семья")
+            try ChatFolderStore.rename(dbc, folderId: folder.id, title: "Family")
             try ChatFolderStore.setRules(dbc, folderId: folder.id,
                                          rules: ChatFolderRules(unread: true, peerIds: ["u2", "u3"]))
         }
         let stored = try db.read { try ChatFolderStore.all($0) }[0]
-        XCTAssertEqual(stored.title, "Семья")
+        XCTAssertEqual(stored.title, "Family")
         XCTAssertTrue(stored.rules.unread)
         XCTAssertEqual(stored.rules.peerIds, ["u2", "u3"])
     }
@@ -96,8 +96,8 @@ final class ChatFolderTests: XCTestCase {
         try db.write { dbc in try chat.save(dbc) }
 
         let (work, family) = try db.write { dbc in
-            (try ChatFolderStore.create(dbc, title: "Работа"),
-             try ChatFolderStore.create(dbc, title: "Семья"))
+            (try ChatFolderStore.create(dbc, title: "Work"),
+             try ChatFolderStore.create(dbc, title: "Family"))
         }
         try db.write { dbc in
             try ChatFolderStore.setPin(dbc, folderId: work.id, chatId: "c1", pin: .included)
@@ -115,7 +115,7 @@ final class ChatFolderTests: XCTestCase {
 
     func testUnpinHandsTheChatBackToTheRules() throws {
         let db = try makeDB()
-        let folder = try db.write { dbc in try ChatFolderStore.create(dbc, title: "Люди") }
+        let folder = try db.write { dbc in try ChatFolderStore.create(dbc, title: "People") }
         try db.write { dbc in
             try ChatFolderStore.setPin(dbc, folderId: folder.id, chatId: "c1", pin: .excluded)
             try ChatFolderStore.setPin(dbc, folderId: folder.id, chatId: "c1", pin: nil)
@@ -130,7 +130,7 @@ final class ChatFolderTests: XCTestCase {
         chat.unreadCount = 0
         let folder = try db.write { dbc -> ChatFolder in
             try chat.save(dbc)
-            let folder = try ChatFolderStore.create(dbc, title: "Работа")
+            let folder = try ChatFolderStore.create(dbc, title: "Work")
             try ChatFolderStore.setPin(dbc, folderId: folder.id, chatId: "c1", pin: .included)
             return folder
         }

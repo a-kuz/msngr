@@ -42,7 +42,7 @@ final class AppState: ObservableObject {
     /// true once db/engine are initialised (bootstrap finished)
     @Published var ready = false
     /// the device was cut off from the account from another device; the
-    /// «Сессия завершена» screen covers everything else
+    /// session-ended screen covers everything else
     @Published var sessionRevoked = false
     /// this build is behind what it has to work with; the screen states it
     @Published var outdated: OutdatedBuild?
@@ -239,7 +239,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Leaving the «Сессия завершена» screen: the revoked device's local data is
+    /// Leaving the session-ended screen: the revoked device's local data is
     /// wiped and the user is taken back to registration.
     func finishRevokedSession() async {
         await resetToRegistration()

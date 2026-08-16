@@ -78,7 +78,7 @@ final class CoreIntegrationTests: XCTestCase {
         let chatId = try await alice.api.createChat(kind: "direct", memberIds: [bob.userId], title: nil)
         try await alice.engine.refreshSnapshot()
         var content = ContentPayload(kind: "text")
-        content.text = "привет, это e2e"
+        content.text = "hello, this is e2e"
         try await alice.engine.enqueue(content: content, chatId: chatId)
 
         // on Alice's side the message gets a seq and the sent status
@@ -94,7 +94,7 @@ final class CoreIntegrationTests: XCTestCase {
         let received = try await waitUntil {
             try await bob.db.read { dbc in
                 (try String.fetchOne(dbc, sql: "SELECT text FROM message WHERE chatId = ?",
-                                     arguments: [chatId])) == "привет, это e2e"
+                                     arguments: [chatId])) == "hello, this is e2e"
             }
         }
         XCTAssertTrue(received, "Bob did not decrypt the message")
@@ -108,12 +108,12 @@ final class CoreIntegrationTests: XCTestCase {
         // Bob replies after accepting, which ratchets in the other direction
         try await bob.api.acceptChat(chatId)
         var reply = ContentPayload(kind: "text")
-        reply.text = "ответ боба"
+        reply.text = "reply from bob"
         try await bob.engine.enqueue(content: reply, chatId: chatId)
 
         let gotReply = try await waitUntil {
             try await alice.db.read { dbc in
-                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'ответ боба'",
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'reply from bob'",
                                  arguments: [chatId]) == 1
             }
         }
@@ -149,21 +149,21 @@ final class CoreIntegrationTests: XCTestCase {
         try await a.engine.refreshSnapshot()
         try await b.engine.refreshSnapshot()
 
-        var m1 = ContentPayload(kind: "text"); m1.text = "от A"
-        var m2 = ContentPayload(kind: "text"); m2.text = "от B"
+        var m1 = ContentPayload(kind: "text"); m1.text = "from A"
+        var m2 = ContentPayload(kind: "text"); m2.text = "from B"
         async let s1: Void = a.engine.enqueue(content: m1, chatId: chatId)
         async let s2: Void = b.engine.enqueue(content: m2, chatId: chatId)
         _ = try await (s1, s2)
 
         let bGotA = try await waitUntil(12) {
             try await b.db.read { dbc in
-                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'от A'",
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'from A'",
                                  arguments: [chatId]) == 1
             }
         }
         let aGotB = try await waitUntil(12) {
             try await a.db.read { dbc in
-                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'от B'",
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'from B'",
                                  arguments: [chatId]) == 1
             }
         }
@@ -171,11 +171,11 @@ final class CoreIntegrationTests: XCTestCase {
         XCTAssertTrue(aGotB, "A did not decrypt B's message")
 
         // and the conversation keeps flowing both ways
-        var m3 = ContentPayload(kind: "text"); m3.text = "ответ A"
+        var m3 = ContentPayload(kind: "text"); m3.text = "reply from A"
         try await a.engine.enqueue(content: m3, chatId: chatId)
         let bGotReply = try await waitUntil(12) {
             try await b.db.read { dbc in
-                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'ответ A'",
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'reply from A'",
                                  arguments: [chatId]) == 1
             }
         }
@@ -208,11 +208,11 @@ final class CoreIntegrationTests: XCTestCase {
 
         let chatId = try await alice.api.createChat(kind: "group",
                                                     memberIds: [bob.userId, carol.userId],
-                                                    title: "Группа")
+                                                    title: "Group")
         try await alice.engine.refreshSnapshot()
 
         var content = ContentPayload(kind: "text")
-        content.text = "групповое сообщение"
+        content.text = "group message"
         try await alice.engine.enqueue(content: content, chatId: chatId)
 
         // both members decrypt through the sender key
@@ -220,7 +220,7 @@ final class CoreIntegrationTests: XCTestCase {
             let ok = try await waitUntil {
                 try await client.db.read { dbc in
                     (try String.fetchOne(dbc, sql: "SELECT text FROM message WHERE chatId = ? AND kind = 'text'",
-                                         arguments: [chatId])) == "групповое сообщение"
+                                         arguments: [chatId])) == "group message"
                 }
             }
             XCTAssertTrue(ok, "\(name) did not decrypt the group message")
@@ -228,12 +228,12 @@ final class CoreIntegrationTests: XCTestCase {
 
         // Bob replies: his sender key is distributed, Alice and Carol can read it
         var reply = ContentPayload(kind: "text")
-        reply.text = "ответ в группе"
+        reply.text = "reply in the group"
         try await bob.engine.enqueue(content: reply, chatId: chatId)
         for (name, client) in [("alice", alice), ("carol", carol)] {
             let ok = try await waitUntil {
                 try await client.db.read { dbc in
-                    try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'ответ в группе'",
+                    try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'reply in the group'",
                                      arguments: [chatId]) == 1
                 }
             }
@@ -242,7 +242,7 @@ final class CoreIntegrationTests: XCTestCase {
 
         // reaction: Carol puts a heart on Alice's message
         let targetId = try await carol.db.read { dbc in
-            try String.fetchOne(dbc, sql: "SELECT msgId FROM message WHERE chatId = ? AND text = 'групповое сообщение'",
+            try String.fetchOne(dbc, sql: "SELECT msgId FROM message WHERE chatId = ? AND text = 'group message'",
                                 arguments: [chatId])
         }
         var reaction = ContentPayload(kind: "reaction")
@@ -268,11 +268,11 @@ final class CoreIntegrationTests: XCTestCase {
             }
         }
         var after = ContentPayload(kind: "text")
-        after.text = "после удаления Кэрол"
+        after.text = "after removing carol"
         try await alice.engine.enqueue(content: after, chatId: chatId)
         let bobGot = try await waitUntil {
             try await bob.db.read { dbc in
-                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'после удаления Кэрол'",
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'after removing carol'",
                                  arguments: [chatId]) == 1
             }
         }
@@ -280,7 +280,7 @@ final class CoreIntegrationTests: XCTestCase {
         // leave time for a delivery to Carol that must not happen
         try await Task.sleep(nanoseconds: 1_500_000_000)
         let carolLeaked = try await carol.db.read { dbc in
-            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'после удаления Кэрол'",
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'after removing carol'",
                              arguments: [chatId]) ?? 0
         }
         XCTAssertEqual(carolLeaked, 0, "a removed member must not read new messages")
@@ -304,8 +304,8 @@ final class CoreIntegrationTests: XCTestCase {
         // Bob goes offline
         await bob.engine.stop()
 
-        var m1 = ContentPayload(kind: "text"); m1.text = "пока ты офлайн 1"
-        var m2 = ContentPayload(kind: "text"); m2.text = "пока ты офлайн 2"
+        var m1 = ContentPayload(kind: "text"); m1.text = "while you were offline 1"
+        var m2 = ContentPayload(kind: "text"); m2.text = "while you were offline 2"
         try await alice.engine.enqueue(content: m1, chatId: chatId)
         try await alice.engine.enqueue(content: m2, chatId: chatId)
         _ = try await waitUntil {
@@ -344,11 +344,11 @@ final class CoreIntegrationTests: XCTestCase {
         let chatId = try await alice.api.createChat(kind: "direct", memberIds: [bob.userId], title: nil)
         try await alice.engine.refreshSnapshot()
         var first = ContentPayload(kind: "text")
-        first.text = "до поломки"
+        first.text = "before the break"
         try await alice.engine.enqueue(content: first, chatId: chatId)
         let gotFirst = try await waitUntil {
             try await bob.db.read { dbc in
-                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'до поломки'",
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'before the break'",
                                  arguments: [chatId]) == 1
             }
         }
@@ -366,7 +366,7 @@ final class CoreIntegrationTests: XCTestCase {
         }
 
         var lost = ContentPayload(kind: "text")
-        lost.text = "после поломки"
+        lost.text = "after the break"
         try await alice.engine.enqueue(content: lost, chatId: chatId)
         let recorded = try await waitUntil {
             try await bob.db.read { dbc in
@@ -389,7 +389,7 @@ final class CoreIntegrationTests: XCTestCase {
 
         let repaired = try await waitUntil(15) {
             try await bob.db.read { dbc in
-                try String.fetchOne(dbc, sql: "SELECT text FROM message WHERE chatId = ? AND text = 'после поломки'",
+                try String.fetchOne(dbc, sql: "SELECT text FROM message WHERE chatId = ? AND text = 'after the break'",
                                     arguments: [chatId]) != nil
             }
         }
@@ -397,7 +397,7 @@ final class CoreIntegrationTests: XCTestCase {
 
         // exactly one row per message and no record of a gap
         let rows = try await bob.db.read { dbc in
-            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'после поломки'",
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'after the break'",
                              arguments: [chatId])!
         }
         XCTAssertEqual(rows, 1, "the repaired message was duplicated")
@@ -411,11 +411,11 @@ final class CoreIntegrationTests: XCTestCase {
 
         // the session is rebuilt: the next message reads without any repair
         var after = ContentPayload(kind: "text")
-        after.text = "после починки"
+        after.text = "after the repair"
         try await alice.engine.enqueue(content: after, chatId: chatId)
         let flows = try await waitUntil(10) {
             try await bob.db.read { dbc in
-                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'после починки'",
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'after the repair'",
                                  arguments: [chatId]) == 1
             }
         }
@@ -448,11 +448,11 @@ final class CoreIntegrationTests: XCTestCase {
         let chatId = try await alice.api.createChat(kind: "direct", memberIds: [bob.userId], title: nil)
         try await alice.engine.refreshSnapshot()
         var hello = ContentPayload(kind: "text")
-        hello.text = "здравствуй"
+        hello.text = "greetings"
         try await alice.engine.enqueue(content: hello, chatId: chatId)
         let opened = try await waitUntil(12) {
             try await bob.db.read { dbc in
-                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'здравствуй'",
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'greetings'",
                                  arguments: [chatId]) == 1
             }
         }
@@ -464,7 +464,7 @@ final class CoreIntegrationTests: XCTestCase {
         let total = 300
         for i in 1...total {
             var m = ContentPayload(kind: "text")
-            m.text = "офлайн \(i)"
+            m.text = "offline \(i)"
             try await alice.engine.enqueue(content: m, chatId: chatId)
         }
         let allAcked = try await waitUntil(180) {

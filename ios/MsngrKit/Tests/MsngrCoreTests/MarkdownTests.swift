@@ -13,8 +13,8 @@ final class MarkdownTests: XCTestCase {
     }
 
     func testPlainText() {
-        XCTAssertEqual(MessageMarkdown.parse("Просто текст"),
-                       [.paragraph([MarkdownSpan("Просто текст")])])
+        XCTAssertEqual(MessageMarkdown.parse("Just text"),
+                       [.paragraph([MarkdownSpan("Just text")])])
     }
 
     func testEmptyString() {
@@ -22,27 +22,27 @@ final class MarkdownTests: XCTestCase {
     }
 
     func testBold() {
-        XCTAssertEqual(spans("a **жирный** b"), [
+        XCTAssertEqual(spans("a **bold** b"), [
             MarkdownSpan("a "),
-            MarkdownSpan("жирный", style: .bold),
+            MarkdownSpan("bold", style: .bold),
             MarkdownSpan(" b"),
         ])
     }
 
     func testItalicBothMarkers() {
-        XCTAssertEqual(spans("_курсив_"), [MarkdownSpan("курсив", style: .italic)])
-        XCTAssertEqual(spans("*курсив*"), [MarkdownSpan("курсив", style: .italic)])
+        XCTAssertEqual(spans("_italic_"), [MarkdownSpan("italic", style: .italic)])
+        XCTAssertEqual(spans("*italic*"), [MarkdownSpan("italic", style: .italic)])
     }
 
     func testStrikethrough() {
-        XCTAssertEqual(spans("~~нет~~"), [MarkdownSpan("нет", style: .strikethrough)])
+        XCTAssertEqual(spans("~~no~~"), [MarkdownSpan("no", style: .strikethrough)])
     }
 
     func testInlineCode() {
-        XCTAssertEqual(spans("вызов `let x = 1` тут"), [
-            MarkdownSpan("вызов "),
+        XCTAssertEqual(spans("the call `let x = 1` here"), [
+            MarkdownSpan("the call "),
             MarkdownSpan("let x = 1", style: .code),
-            MarkdownSpan(" тут"),
+            MarkdownSpan(" here"),
         ])
     }
 
@@ -53,34 +53,34 @@ final class MarkdownTests: XCTestCase {
     // MARK: - Nesting
 
     func testBoldWithItalicInside() {
-        XCTAssertEqual(spans("**жирный _и курсив_**"), [
-            MarkdownSpan("жирный ", style: .bold),
-            MarkdownSpan("и курсив", style: [.bold, .italic]),
+        XCTAssertEqual(spans("**bold _and italic_**"), [
+            MarkdownSpan("bold ", style: .bold),
+            MarkdownSpan("and italic", style: [.bold, .italic]),
         ])
     }
 
     func testTripleMarkerIsBoldItalic() {
-        XCTAssertEqual(spans("***оба***"), [MarkdownSpan("оба", style: [.bold, .italic])])
+        XCTAssertEqual(spans("***both***"), [MarkdownSpan("both", style: [.bold, .italic])])
     }
 
     func testStrikethroughWithBoldInside() {
-        XCTAssertEqual(spans("~~вычеркнут **и жирный**~~"), [
-            MarkdownSpan("вычеркнут ", style: .strikethrough),
-            MarkdownSpan("и жирный", style: [.strikethrough, .bold]),
+        XCTAssertEqual(spans("~~struck **and bold**~~"), [
+            MarkdownSpan("struck ", style: .strikethrough),
+            MarkdownSpan("and bold", style: [.strikethrough, .bold]),
         ])
     }
 
     // MARK: - Escaping
 
     func testEscapedMarkersStayLiteral() {
-        XCTAssertEqual(spans(#"\*не курсив\*"#), [MarkdownSpan("*не курсив*")])
-        XCTAssertEqual(spans(#"\*\*не жирный\*\*"#), [MarkdownSpan("**не жирный**")])
+        XCTAssertEqual(spans(#"\*not italic\*"#), [MarkdownSpan("*not italic*")])
+        XCTAssertEqual(spans(#"\*\*not bold\*\*"#), [MarkdownSpan("**not bold**")])
     }
 
     func testEscapedBackslashKeepsFormatting() {
-        XCTAssertEqual(spans(#"\\ *курсив*"#), [
+        XCTAssertEqual(spans(#"\\ *italic*"#), [
             MarkdownSpan("\\ "),
-            MarkdownSpan("курсив", style: .italic),
+            MarkdownSpan("italic", style: .italic),
         ])
     }
 
@@ -92,10 +92,10 @@ final class MarkdownTests: XCTestCase {
     // MARK: - Unclosed markers
 
     func testUnclosedMarkersStayPlain() {
-        XCTAssertEqual(spans("**без закрытия"), [MarkdownSpan("**без закрытия")])
-        XCTAssertEqual(spans("текст с * звёздочкой"), [MarkdownSpan("текст с * звёздочкой")])
-        XCTAssertEqual(spans("`код без конца"), [MarkdownSpan("`код без конца")])
-        XCTAssertEqual(spans("~~почти"), [MarkdownSpan("~~почти")])
+        XCTAssertEqual(spans("**never closed"), [MarkdownSpan("**never closed")])
+        XCTAssertEqual(spans("text with a * star"), [MarkdownSpan("text with a * star")])
+        XCTAssertEqual(spans("`code with no end"), [MarkdownSpan("`code with no end")])
+        XCTAssertEqual(spans("~~almost"), [MarkdownSpan("~~almost")])
     }
 
     func testEmptyMarkerPairIsLiteral() {
@@ -111,11 +111,11 @@ final class MarkdownTests: XCTestCase {
     // MARK: - Code blocks
 
     func testMultilineCodeBlock() {
-        let source = "смотри:\n```\nlet a = 1\nlet b = 2\n```\nвот"
+        let source = "look:\n```\nlet a = 1\nlet b = 2\n```\nthere"
         XCTAssertEqual(MessageMarkdown.parse(source), [
-            .paragraph([MarkdownSpan("смотри:")]),
+            .paragraph([MarkdownSpan("look:")]),
             .code(text: "let a = 1\nlet b = 2", language: nil),
-            .paragraph([MarkdownSpan("вот")]),
+            .paragraph([MarkdownSpan("there")]),
         ])
     }
 
@@ -130,10 +130,10 @@ final class MarkdownTests: XCTestCase {
     }
 
     func testTwoCodeBlocks() {
-        let blocks = MessageMarkdown.parse("```\na\n```\nмежду\n```\nb\n```")
+        let blocks = MessageMarkdown.parse("```\na\n```\nbetween\n```\nb\n```")
         XCTAssertEqual(blocks, [
             .code(text: "a", language: nil),
-            .paragraph([MarkdownSpan("между")]),
+            .paragraph([MarkdownSpan("between")]),
             .code(text: "b", language: nil),
         ])
     }
@@ -141,16 +141,16 @@ final class MarkdownTests: XCTestCase {
     // MARK: - Autolinks
 
     func testHttpLink() {
-        XCTAssertEqual(spans("см. https://example.com/page?a=1 дальше"), [
-            MarkdownSpan("см. "),
+        XCTAssertEqual(spans("see https://example.com/page?a=1 further on"), [
+            MarkdownSpan("see "),
             MarkdownSpan("https://example.com/page?a=1", link: "https://example.com/page?a=1"),
-            MarkdownSpan(" дальше"),
+            MarkdownSpan(" further on"),
         ])
     }
 
     func testBareDomainBecomesLink() {
-        XCTAssertEqual(spans("зайди на example.com."), [
-            MarkdownSpan("зайди на "),
+        XCTAssertEqual(spans("go to example.com."), [
+            MarkdownSpan("go to "),
             MarkdownSpan("example.com", link: "https://example.com"),
             MarkdownSpan("."),
         ])
@@ -158,14 +158,14 @@ final class MarkdownTests: XCTestCase {
 
     /// A file name does not become a link: its extension is not a known TLD.
     func testFileNameIsNotLink() {
-        XCTAssertEqual(spans("правь main.swift"), [MarkdownSpan("правь main.swift")])
+        XCTAssertEqual(spans("edit main.swift"), [MarkdownSpan("edit main.swift")])
     }
 
     func testLinkInsideFormatting() {
-        XCTAssertEqual(spans("**жми https://ya.ru сюда**"), [
-            MarkdownSpan("жми ", style: .bold),
+        XCTAssertEqual(spans("**tap https://ya.ru right here**"), [
+            MarkdownSpan("tap ", style: .bold),
             MarkdownSpan("https://ya.ru", style: .bold, link: "https://ya.ru"),
-            MarkdownSpan(" сюда", style: .bold),
+            MarkdownSpan(" right here", style: .bold),
         ])
     }
 
@@ -198,6 +198,6 @@ final class MarkdownTests: XCTestCase {
 
     /// Line breaks inside a paragraph are preserved.
     func testNewlinesInsideParagraph() {
-        XCTAssertEqual(spans("первая\nвторая"), [MarkdownSpan("первая\nвторая")])
+        XCTAssertEqual(spans("first\nsecond"), [MarkdownSpan("first\nsecond")])
     }
 }

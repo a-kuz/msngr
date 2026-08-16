@@ -4,7 +4,7 @@ import MsngrCore
 /// Clipboard for messages: copying text and photos, and reading pasted images back.
 @MainActor
 enum MessageClipboard {
-    /// «Копировать» from the context menu: a photo or an album goes in as images,
+    /// Copy from the context menu: a photo or an album goes in as images,
     /// everything else as text.
     static func copy(_ msg: Message) {
         let photos = (msg.album ?? msg.media.map { [$0] } ?? []).filter { $0.type == "photo" }

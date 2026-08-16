@@ -369,8 +369,8 @@ public enum AppDatabase {
                 """)
         }
         m.registerMigration("v17-actionWithoutChat") { db in
-            // Блокировка собеседника — тоже действие очереди, но чата у неё нет:
-            // блокировать можно и из профиля. Колонка становится необязательной.
+            // Blocking a peer is a queued action too, but it has no chat: blocking
+            // also happens from a profile. The column becomes optional.
             try db.create(table: "pendingActionNew") { t in
                 t.column("id", .text).primaryKey()
                 t.column("type", .text).notNull()

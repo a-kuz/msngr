@@ -71,7 +71,7 @@ enum AttachmentSeed {
         guard let jpeg = image(round), let media = info(jpeg) else { return }
         var content = ContentPayload(kind: "photo")
         content.media = media
-        content.text = "Фото \(round)"
+        content.text = "Photo \(round)"
         try? await AppState.shared.engine?.enqueue(content: content, chatId: chatId)
     }
 
@@ -108,13 +108,13 @@ enum AttachmentSeed {
     }
 
     private static func sendFile(chatId: String, round: Int) {
-        let text = String(repeating: "Отчёт \(round). Строка данных.\n", count: 200)
+        let text = String(repeating: "Report \(round). A line of data.\n", count: 200)
         guard let data = text.data(using: .utf8),
               let name = try? AppState.shared.media.stash(data) else { return }
         var media = MediaInfo(type: "file", mediaId: "", key: "", hash: "",
                               size: data.count, mime: "text/plain")
         media.localPath = name
-        media.name = "отчёт-\(round).txt"
+        media.name = "report-\(round).txt"
         var content = ContentPayload(kind: "file")
         content.media = media
         Task { try? await AppState.shared.engine?.enqueue(content: content, chatId: chatId) }
@@ -136,8 +136,8 @@ enum AttachmentSeed {
 
     private static func sendLinks(chatId: String, round: Int) {
         let texts = [
-            "Смотри доклад: https://developer.apple.com/videos/play/wwdc\(2020 + round % 5)/",
-            "Тут два адреса — example.com и https://ru.wikipedia.org/wiki/Криптография",
+            "Watch this talk: https://developer.apple.com/videos/play/wwdc\(2020 + round % 5)/",
+            "Two addresses here: example.com and https://en.wikipedia.org/wiki/Cryptography",
         ]
         for text in texts {
             var content = ContentPayload(kind: "text")

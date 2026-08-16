@@ -629,7 +629,7 @@ final class DateSeparatorCell: UICollectionViewCell {
     }
 }
 
-/// The «N непрочитанных сообщений» divider: a full-width band that scrolls with the feed.
+/// The unread-count divider: a full-width band that scrolls with the feed.
 final class UnreadMarkerCell: UICollectionViewCell {
     private let label = UILabel()
     private let band = UIView()
@@ -666,7 +666,7 @@ final class UnreadMarkerCell: UICollectionViewCell {
         label.frame = band.bounds.insetBy(dx: 12, dy: 0)
     }
 
-    /// Plural forms: «1 непрочитанное сообщение / 2 непрочитанных сообщения / 5 непрочитанных сообщений».
+    /// Russian plural forms of "N unread messages", for counts ending in 1, in 2 to 4, and in the rest.
     static func title(count: Int) -> String {
         let mod100 = count % 100
         let mod10 = count % 10

@@ -52,7 +52,7 @@ Payload per `docs/protocol.md` (`mutable-content: 1`, `thread-id`, `badge: 3`,
 
 | state | banner | marker file | NSLog from the NSE |
 |---|---|---|---|
-| foreground | «Msngr / Новое сообщение», no prefix | none | none |
+| foreground | the raw "Msngr / new message" payload, no prefix | none | none |
 | background | same | none | none |
 | killed | same, badge 3 on the icon | none | none |
 

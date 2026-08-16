@@ -109,7 +109,7 @@ struct NewChatView: View {
                 }
             }
             // the system contacts permission dialog comes up only on an explicit
-            // tap of «Найти по контактам»; with access already granted the sync
+            // tap of the "find via contacts" button; with access already granted the sync
             // starts straight away
             .task {
                 if contactsStatus == .authorized { await syncContacts() }

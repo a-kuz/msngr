@@ -453,9 +453,9 @@ export class ConversationDO implements DurableObject {
         return json({ ok: true, ...(await this.fanoutState()) });
 
       case "/history": {
-        // userId — от чьего лица читаем: журнал отдаётся только участнику,
-        // иначе id чата (в direct он выводится из двух id) хватало бы, чтобы
-        // вычитать чужую переписку конвертами
+        // userId is whose view this is read as: the log is handed to members only.
+        // Otherwise the chat id (in a direct chat it is derived from the two user
+        // ids) would be enough to read someone else's conversation as envelopes
         if (!(await this.loadMembers()).has(url.searchParams.get("userId") ?? ""))
           return err("not_member", 403);
         const fromSeq = Number(url.searchParams.get("fromSeq") ?? "0");
@@ -568,12 +568,11 @@ export class ConversationDO implements DurableObject {
           for (const u of blocked) marks[u] = Math.max(marks[u] ?? 0, seq);
           await this.state.storage.put("readMarks", marks);
         }
-        // Счётная марка, по которой считается непрочитанное. Она двигается по
-        // тем же правилам, что и курсор клиента (`advanceChat`): своё
-        // отправленное автор непрочитанным не считает, а служебный фрейм в уже
-        // прочитанном чате поглощается. Держится отдельно от `readMarks`,
-        // потому что квитанции о прочтении шлются только по ним: отправка
-        // сообщения — не заявление о том, что чужие прочитаны.
+        // The counting mark unread is measured against. It moves by the same rules
+        // as the client cursor (`advanceChat`): an author does not count their own
+        // sent message as unread, and a service frame in an already-read chat is
+        // absorbed. Kept apart from `readMarks` because read receipts are sent for
+        // those alone: sending a message is not a claim that others were read.
         const seen = (await this.state.storage.get<Record<string, number>>("seenMarks")) ?? {};
         for (const u of blocked) seen[u] = Math.max(seen[u] ?? 0, seq);
         seen[b.from] = Math.max(seen[b.from] ?? 0, seq);

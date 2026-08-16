@@ -6,14 +6,14 @@ final class RegistrationValidatorTests: XCTestCase {
     // MARK: Display name
 
     func testNameValid() {
-        XCTAssertTrue(RegistrationValidator.isValidName("Аня"))
+        XCTAssertTrue(RegistrationValidator.isValidName("Ann"))
         XCTAssertTrue(RegistrationValidator.isValidName("Bob"))
-        XCTAssertTrue(RegistrationValidator.isValidName("  Ли Он  ")) // surrounding whitespace is trimmed
+        XCTAssertTrue(RegistrationValidator.isValidName("  Li On  ")) // surrounding whitespace is trimmed
     }
 
     func testNameTooShort() {
         XCTAssertFalse(RegistrationValidator.isValidName(""))
-        XCTAssertFalse(RegistrationValidator.isValidName("Ян"))
+        XCTAssertFalse(RegistrationValidator.isValidName("Jo"))
         XCTAssertFalse(RegistrationValidator.isValidName("  a  ")) // 1 character left after the trim
         XCTAssertFalse(RegistrationValidator.isValidName("   \n ")) // whitespace only
     }

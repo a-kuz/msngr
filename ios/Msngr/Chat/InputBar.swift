@@ -19,10 +19,10 @@ struct InputBar: View {
     /// images from the clipboard waiting to be sent
     @State private var pendingImages: [UIImage] = []
     @State private var pasteboardHasImage = MessageClipboard.hasImages
-    /// микрофон запрещён в системе: единственное, что здесь ещё можно сделать —
-    /// открыть настройки, поэтому кнопка ведёт туда
+    /// the microphone is denied in the system: the only thing left to do from here is
+    /// open Settings, so that is where the button leads
     @State private var micDenied = false
-    /// запрос доступа уже в полёте: повторные касания микрофона его не множат
+    /// the permission request is already in flight: further taps on the microphone do not multiply it
     @State private var startingRecording = false
     @GestureState private var pressing = false
 
@@ -93,7 +93,7 @@ struct InputBar: View {
             .padding(.vertical, 6)
         }
         .background(.bar)
-        // the «Вставить» item appears when the clipboard really holds an image: a copy made
+        // the paste item appears when the clipboard really holds an image: a copy made
         // here raises changedNotification, one made elsewhere shows up on return to the app
         .onReceive(NotificationCenter.default.publisher(for: UIPasteboard.changedNotification)) { _ in
             pasteboardHasImage = MessageClipboard.hasImages
@@ -121,7 +121,7 @@ struct InputBar: View {
         .animation(Theme.springFast, value: recordingLocked)
     }
 
-    /// «влево — отмена, вверх — замок»: shown as soon as recording starts.
+    /// The hint "swipe left to cancel, up to lock": shown as soon as recording starts.
     private var recordingHint: some View {
         HStack(spacing: 10) {
             HStack(spacing: 3) {
@@ -285,9 +285,9 @@ struct InputBar: View {
             )
     }
 
-    /// Первое нажатие на микрофон спрашивает доступ и записи не начинает:
-    /// системный диалог перекрывает экран, и этот дубль был бы тишиной.
-    /// Пользователь нажимает второй раз, уже с разрешением.
+    /// The first tap on the microphone asks for access and starts no recording: the
+    /// system dialog covers the screen, and that take would be silence. The user taps
+    /// a second time, now with permission in hand.
     private func beginRecording() {
         guard !startingRecording else { return }
         startingRecording = true
@@ -467,7 +467,7 @@ struct GrowingTextView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     /// A pasted image leaves as an attachment: a plain field ignores that kind of clipboard
-    /// altogether and does not even offer «Вставить».
+    /// altogether and does not even offer to paste.
     final class PasteAwareTextView: UITextView {
         var onPasteImages: ([UIImage]) -> Void = { _ in }
 

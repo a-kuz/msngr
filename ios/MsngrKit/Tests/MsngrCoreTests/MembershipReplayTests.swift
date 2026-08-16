@@ -3,9 +3,9 @@ import GRDB
 import MsngrCrypto
 @testable import MsngrCore
 
-/// Состав группы, доигранный при догоне. Живой `chat`-фрейм об уходе участника
-/// устройство могло не застать, поэтому решения о цепочке и о самом чате
-/// принимаются по любому фрейму, который несёт состав.
+/// A group roster replayed on catch-up. The device may have missed the live `chat`
+/// frame about a member leaving, so decisions about the chain and about the chat
+/// itself are taken from any frame that carries a roster.
 final class MembershipReplayTests: XCTestCase {
     private func makeEngine(db: DatabaseQueue) throws -> (SyncEngine, E2EEManager) {
         let api = APIClient(baseURL: URL(string: "http://localhost:1")!)
@@ -28,28 +28,28 @@ final class MembershipReplayTests: XCTestCase {
         """.utf8))
     }
 
-    /// Состав пришёл догоном (event "sync", не "members"), участника в нём нет:
-    /// цепочка отправителя ротируется, иначе ушедший читал бы всё, что group
-    /// напишет дальше.
+    /// The roster arrived on catch-up (event "sync", not "members") and a member is
+    /// gone from it: the sender chain rotates, or the departed member would read
+    /// everything sent to the group from here on.
     func testShrunkRosterFromCatchupRotatesSenderKey() async throws {
         let db = try AppDatabase.openInMemory()
         let (engine, e2ee) = try makeEngine(db: db)
 
         await engine.apply(try chatFrame(event: "created", members: ["me", "peer", "leaver"]))
-        // цепочка заводится первой отправкой в чат
+        // the chain is started by the first send into the chat
         try e2ee.store.saveSenderKeyOut(chatId: "g1", state: SenderKeyState(),
                                         distributedTo: [], attemptedAt: [:])
         let before = try e2ee.store.loadSenderKeyOut(chatId: "g1")
-        XCTAssertNotNil(before, "цепочка должна существовать до ротации")
+        XCTAssertNotNil(before, "the chain must exist before the rotation")
 
         await engine.apply(try chatFrame(event: "sync", members: ["me", "peer"]))
 
         XCTAssertNil(try e2ee.store.loadSenderKeyOut(chatId: "g1"),
-                     "состав уменьшился — цепочка обязана быть сброшена")
+                     "the roster shrank, so the chain must be reset")
     }
 
-    /// Тот же состав — ротации нет: догон приносит состав на каждом круге, и
-    /// сброс цепочки на каждом сделал бы раздачу вечной.
+    /// The same roster means no rotation: catch-up brings the roster on every round,
+    /// and resetting the chain on each one would make the handout endless.
     func testUnchangedRosterKeepsSenderKey() async throws {
         let db = try AppDatabase.openInMemory()
         let (engine, e2ee) = try makeEngine(db: db)
@@ -64,8 +64,8 @@ final class MembershipReplayTests: XCTestCase {
         XCTAssertEqual(try e2ee.store.loadSenderKeyOut(chatId: "g1")?.0.keyId, keyId)
     }
 
-    /// "removed" без состава: чат уходит с устройства и оставляет тумбстоун —
-    /// вернувшийся чат заводит курсоры с него, а не с нуля.
+    /// "removed" with no roster: the chat leaves the device and leaves a tombstone,
+    /// and a chat that comes back starts its cursors from it rather than from zero.
     func testRemovedFrameDeletesChatAndLeavesTombstone() async throws {
         let db = try AppDatabase.openInMemory()
         let (engine, _) = try makeEngine(db: db)

@@ -1,177 +1,183 @@
-# Крипто-флоу
+# Crypto flows
 
-Код: `ios/MsngrKit/Sources/MsngrCrypto/*` (примитивы), `MsngrCore/E2EE.swift`
-(пайплайн), `MsngrCore/KeyStore.swift` (хранение и TOFU).
+Code: `ios/MsngrKit/Sources/MsngrCrypto/*` (primitives), `MsngrCore/E2EE.swift`
+(the pipeline), `MsngrCore/KeyStore.swift` (storage and TOFU).
 
-## Регистрация устройства
+## Registering a device
 
-`POST /api/register` уносит только публичные части: identity DH (X25519),
-identity signing (Ed25519), signed prekey с подписью и 100 one-time prekeys.
-Приватные части лежат в БД, зашифрованные мастер-ключом (`StateCrypto`,
-ChaChaPoly).
+`POST /api/register` carries only the public parts: identity DH (X25519),
+identity signing (Ed25519), a signed prekey with its signature and 100 one-time
+prekeys. The private parts sit in the database, encrypted with the master key
+(`StateCrypto`, ChaChaPoly).
 
-## Чей identity: аккаунта, а не устройства
+## Whose identity: the account's, not the device's
 
-Пара identity (X25519 + Ed25519) заводится при регистрации и принадлежит
-**аккаунту**: устройства, которые владелец потом авторизует, получают её копию.
-Signed prekey, one-time prekeys, состояния рэтчета, sender key и мастер-ключ —
-у каждого устройства свои.
+The identity pair (X25519 + Ed25519) is created at registration and belongs to
+the **account**: devices the owner authorizes later get a copy of it. The signed
+prekey, the one-time prekeys, the ratchet states, the sender key and the master
+key are each device's own.
 
-Так устроено потому, что доверие в `trustedIdentity` ключуется по `userId`, а
-отправитель сверяет этот ключ у **всех** устройств получателя. Устройство с
-собственной парой роняло бы отправку в `identityChanged` у каждого собеседника.
-Обратная сторона важнее: устройство, которое придумал бы сервер, ключа аккаунта
-предъявить не может, и TOFU собеседника на нём срабатывает. Safety number при
-добавлении устройства не меняется.
+It is built this way because trust in `trustedIdentity` is keyed by `userId`, and
+a sender checks that key on **every** device of the recipient. A device with its
+own pair would drop sending into `identityChanged` for every peer. The other side
+of it matters more: a device the server made up cannot present the account's key,
+so the peer's TOFU fires on it. The safety number does not change when a device
+is added.
 
-Цена названа прямо: любое авторизованное устройство держит приватный identity
-аккаунта. Украденное вместе с читаемым хранилищем может выдавать себя за
-аккаунт; отзыв забирает доступ к серверу, но не знание ключа. Ротации identity
-у аккаунта нет.
+The price is stated plainly: any authorized device holds the account's private
+identity. One stolen together with readable storage can impersonate the account;
+revocation takes away access to the server, but not knowledge of the key. There
+is no identity rotation for an account.
 
-## Вход на новом устройстве
+## Signing in on a new device
 
-Пароля нет, номера нет: новое устройство пускает в аккаунт то, которое уже в нём.
+There is no password and no phone number: a new device is let into the account by
+one that is already in it.
 
-1. Новое устройство генерирует эфемерную пару X25519 и открывает сессию
-   провижининга (`POST /api/provision/start`), получая восьмизначный код и
-   `provisionToken` — секрет сессии, который знает только оно.
-2. Владелец набирает код на старом устройстве. `POST /api/provision/lookup`
-   отдаёт эфемерный публичный ключ и имя устройства, экран называет, что именно
-   просит доступ.
-3. Старое устройство запечатывает бандл аккаунта (`userId`, юзернейм, имя,
-   приватные identity DH и signing) на этот эфемерный ключ:
-   X25519 → HKDF-SHA256 → ChaChaPoly, солью служит `provisionId`, в `info`
-   входят оба публичных ключа. Сервер несёт результат и открыть его не может.
-4. Новое устройство расшифровывает бандл, показывает `@username` и просит
-   подтверждения: сессию мог одобрить и чужой аккаунт, если код угадали.
-5. `POST /api/provision/:id/claim` под `provisionToken` заводит устройство:
-   свои свежие prekeys, identity — из бандла. Сервер сверяет, что предъявленные
-   identity-ключи совпадают с ключами аккаунта, иначе `identity_mismatch`.
-   Ответ с чужим `userId` устройство считает отказом и стирает себя.
+1. The new device generates an ephemeral X25519 pair and opens a provisioning
+   session (`POST /api/provision/start`), receiving an eight-character code and a
+   `provisionToken` — the session secret that only it knows.
+2. The owner types the code on the old device. `POST /api/provision/lookup`
+   returns the ephemeral public key and the device name, and the screen names
+   exactly what is asking for access.
+3. The old device seals the account bundle (`userId`, username, display name, the
+   private identity DH and signing keys) to that ephemeral key:
+   X25519 → HKDF-SHA256 → ChaChaPoly, with `provisionId` as the salt and both
+   public keys in `info`. The server carries the result and cannot open it.
+4. The new device decrypts the bundle, shows the `@username` and asks for
+   confirmation: a stranger's account could have approved the session if the code
+   was guessed.
+5. `POST /api/provision/:id/claim` under the `provisionToken` registers the
+   device: fresh prekeys of its own, identity from the bundle. The server checks
+   that the identity keys presented match the account's keys, otherwise
+   `identity_mismatch`. An answer with a different `userId` is treated by the
+   device as a refusal, and it wipes itself.
 
-Переписка не переносится: рэтчет уничтожил ключи прочитанного, а на сервере
-лежат конверты, адресованные другим устройствам. Новое устройство получает
-список чатов и начинает каждый с его текущего конца (`DeviceLink.primeChats`);
-всё, что старше, для него не существует.
+The conversation history does not move over: the ratchet destroyed the keys of
+what was read, and what sits on the server is envelopes addressed to other
+devices. The new device gets the chat list and starts each chat at its current
+end (`DeviceLink.primeChats`); anything older does not exist for it.
 
-Пока на руках есть хотя бы одно устройство, доступ не потерян. Когда не осталось
-ни одного — аккаунт не восстановить: ни резервной фразы, ни пароля нет.
+While at least one device is in hand, access is not lost. Once none are left, the
+account cannot be recovered: there is no recovery phrase and no password.
 
-## Первое сообщение собеседнику
+## The first message to a peer
 
-1. `GET /api/devices?ids=…` — список устройств получателя (и своих других) с
-   identity-ключами. Этот запрос ничего не расходует.
-2. Для каждого устройства, где сессия уже есть, шифруем существующим Double
-   Ratchet — бандл не запрашивается.
-3. Полный бандл `GET /api/users/:id/prekeys` берётся только тогда, когда нашлось
-   устройство без сессии, и только один раз на пользователя за отправку. Сервер
-   при этом выдаёт и удаляет по одному one-time prekey на устройство.
-4. Подпись signed prekey проверяется перед X3DH; при провале сессия не
-   поднимается.
-5. Первое сообщение уходит как `pk`: внутри — ratchet-сообщение, снаружи наши
-   identity DH и signing pub, ephemeral, id использованных prekey.
-6. Ответная сторона поднимает responder-сессию из своих приватных prekey,
-   помечает one-time prekey израсходованным, дальше обе стороны на `dr`.
+1. `GET /api/devices?ids=…` — the recipient's device list (and your own other
+   devices) with identity keys. This request spends nothing.
+2. For every device that already has a session, we encrypt with the existing
+   Double Ratchet — no bundle is requested.
+3. The full bundle `GET /api/users/:id/prekeys` is fetched only when a device
+   without a session turns up, and only once per user per send. The server then
+   hands out and deletes one one-time prekey per device.
+4. The signed prekey's signature is verified before X3DH; on failure the session
+   is not established.
+5. The first message goes out as `pk`: inside is the ratchet message, outside are
+   our identity DH and signing pub, the ephemeral and the ids of the prekeys used.
+6. The other side builds a responder session from its private prekeys, marks the
+   one-time prekey spent, and from there both sides are on `dr`.
 
-Свои остальные устройства всегда входят в список адресатов — эхо собственных
-сообщений тоже сквозное.
+Your own other devices are always in the list of addressees — the echo of your
+own messages is end-to-end too.
 
-## Пополнение one-time prekeys
+## Topping up one-time prekeys
 
-Раз за сессию `SyncEngine` спрашивает `GET /api/prekeys/count`; если на сервере
-осталось меньше 20, догенерирует до 100 и заливает `POST /api/prekeys`. Ошибка
-сети снимает флаг «уже проверяли» — попытка повторится при следующем `start()`.
+Once per session `SyncEngine` asks `GET /api/prekeys/count`; if fewer than 20 are
+left on the server, it generates up to 100 and uploads them with
+`POST /api/prekeys`. A network error clears the "already checked" flag, so the
+attempt repeats on the next `start()`.
 
-## Рассинхрон сессий
+## Sessions out of step
 
-Входящее сначала пробуется активной сессией, затем архивными (до 5 на
-устройство). Если `pk` не подошёл ни к одной, активная сессия уходит в архив, а
-из бандла поднимается новая — так разрешаются одновременная инициация (glare) и
-рассинхрон после переустановки. При этом пробуются два кандидата: с one-time
-prekey и без него (ключ мог быть уже израсходован повторной выдачей бандла).
+An incoming message is tried against the active session first, then the archived
+ones (up to 5 per device). If a `pk` matched none of them, the active session is
+archived and a new one is built from the bundle — that is how simultaneous
+initiation (glare) and the mismatch after a reinstall are resolved. Two
+candidates are tried in the process: with a one-time prekey and without one (the
+key may have been spent already by a repeated bundle handout).
 
-`dr`, к которому не подошла ни одна сессия, и групповое сообщение без sender key
-не теряются: конверт складывается в `pendingDecrypt` и переигрывается, когда
-ключ приходит.
+A `dr` that no session matched, and a group message with no sender key, are not
+lost: the envelope goes into `pendingDecrypt` and is replayed when the key
+arrives.
 
-## TOFU и смена ключа
+## TOFU and a key change
 
-Первый увиденный identity signing key собеседника сохраняется в
-`trustedIdentity`. При отправке проверяются ключи **всех** устройств получателя,
-не только первого. Расхождение записывается в `changedPending` и роняет
-отправку с `identityChanged`:
+The first identity signing key seen for a peer is stored in `trustedIdentity`. On
+sending, the keys of **all** the recipient's devices are checked, not just the
+first. A mismatch is written into `changedPending` and drops the send with
+`identityChanged`:
 
-- строка outbox переходит в состояние `blocked`, сообщение показывается как
-  неотправленное;
-- в чат вставляется системное сообщение, которое UI рисует как «Код
+- the outbox row moves to the `blocked` state and the message is shown as unsent;
+- a system message is inserted into the chat, which the UI draws as «Код
   безопасности собеседника изменился»;
-- в чате появляется баннер: сообщения не отправляются, пока ключ не принят;
-- `acceptKeyChange` переносит `changedPending` в доверенный ключ, снимает
-  `verified`, возвращает заблокированные сообщения в `ready` и будит outbox.
+- a banner appears in the chat: messages are not sent until the key is accepted;
+- `acceptKeyChange` moves `changedPending` into the trusted key, clears
+  `verified`, returns the blocked messages to `ready` and wakes the outbox.
 
-Во входящем `pk` смена ключа не блокирует расшифровку: контент применяется, но
-рядом вставляется то же системное предупреждение.
+In an incoming `pk` a key change does not block decryption: the content is
+applied, but the same system warning is inserted next to it.
 
-Сверка вне канала — safety number на 60 цифр в информации о чате (5200 итераций
-SHA-512 по каждому отпечатку, порядок сторон отсортирован, поэтому число
-одинаково у обоих).
+Verification out of band is the 60-digit safety number in the chat info (5200
+iterations of SHA-512 over each fingerprint, with the two sides sorted, so the
+number is the same for both).
 
-## Группы
+## Groups
 
-Первое сообщение в группу раздаёт sender key: `skd` едет отдельным
-pairwise-сообщением тем устройствам, которые её ещё не получили, и помечается
-служебным. `clientMsgId` раздачи детерминирован по `(chatId, keyId, набор
-адресатов)`, поэтому ретрай той же раздачи гасится серверным дедупом, а раздача
-новому устройству проходит.
+The first message to a group hands out the sender key: `skd` travels as a
+separate pairwise message to the devices that have not received it yet, and is
+marked as a service frame. The handout's `clientMsgId` is deterministic over
+`(chatId, keyId, the set of addressees)`, so a retry of the same handout is
+swallowed by the server's dedup while a handout to a new device goes through.
 
-Само сообщение шифруется цепочкой (`skm`) и подписывается Ed25519-ключом
-цепочки. Выход участника из группы ротирует нашу цепочку: старая удаляется,
-следующая отправка раздаёт новую только оставшимся.
+The message itself is encrypted with the chain (`skm`) and signed with the
+chain's Ed25519 key. A member leaving the group rotates our chain: the old one is
+deleted, and the next send hands the new one out to those who remain.
 
-## Медиа
+## Media
 
-Файл шифруется случайным 256-битным ключом (ChaChaPoly), в R2 уходит только
-ciphertext. Ключ и SHA-256 ciphertext едут внутри E2E-сообщения. При скачивании
-хэш проверяется до расшифровки. Превью-кадр видео — самостоятельный блоб со
-своим ключом.
+A file is encrypted with a random 256-bit key (ChaChaPoly); only the ciphertext
+goes to R2. The key and the SHA-256 of the ciphertext travel inside the E2E
+message. On download the hash is checked before decryption. A video's preview
+frame is a blob in its own right, with its own key.
 
-## Контакт-дискавери
+## Contact discovery
 
-Телефон опционален. На сервер уходит только SHA-256 от номера в E.164:
-`POST /api/phone` для своего номера, `POST /api/contacts/discover` для поиска
-знакомых. Приватность слабее, чем у Signal с SGX — известное ограничение;
-номера в открытом виде не хранятся.
+The phone number is optional. Only the SHA-256 of the number in E.164 goes to the
+server: `POST /api/phone` for your own number, `POST /api/contacts/discover` to
+find people you know. The privacy is weaker than Signal's with SGX — a known
+limitation; numbers are not stored in the clear.
 
-На клиенте: доступ к адресной книге запрашивается только по явному действию,
-номера нормализуются в E.164 (российское `8XXXXXXXXXX` переписывается в `+7…`),
-хэшируются батчем; имя из адресной книги в списке приоритетнее серверного.
+On the client: access to the address book is requested only on an explicit
+action, numbers are normalized to E.164 (the Russian `8XXXXXXXXXX` is rewritten
+as `+7…`) and hashed in a batch; a name from the address book takes precedence
+over the server's one in the list.
 
-## Где лежат ключи
+## Where the keys live
 
-- Мастер-ключ — файл `.masterkey` в контейнере app group, Data Protection
-  `completeUntilFirstUserAuthentication` (доступен NSE после первой
-  разблокировки). Есть и Keychain-реализация `MasterKeyProvider`, приложение
-  использует файловую.
-- Identity, приватные prekeys, состояния ratchet и sender keys — в SQLite,
-  каждое значение запечатано мастер-ключом.
-- Пин-код хранится как SHA-256(соль + пин) в `UserDefaults`; к шифрованию
-  переписки отношения не имеет.
+- The master key is the `.masterkey` file in the app group container, Data
+  Protection `completeUntilFirstUserAuthentication` (available to the NSE after
+  the first unlock). There is also a Keychain implementation of
+  `MasterKeyProvider`; the app uses the file-based one.
+- Identity, private prekeys, ratchet states and sender keys are in SQLite, each
+  value sealed with the master key.
+- The PIN is stored as SHA-256(salt + pin) in `UserDefaults`; it has nothing to
+  do with encrypting the conversation.
 
-## Кто шагает рэтчетом
+## Who steps the ratchet
 
-Расшифровка живёт в `IncomingDecryptor`: ей нужны ключи устройства и не нужна
-сеть, поэтому её держит и приложение, и Notification Service Extension — пуш
-привозит конверт, расширение его открывает.
+Decryption lives in `IncomingDecryptor`: it needs the device's keys and does not
+need the network, so both the app and the Notification Service Extension hold it
+— the push brings the envelope and the extension opens it.
 
-Два процесса над одним файлом означают, что цикл «прочитать состояние — шагнуть
-— записать» надо разводить. Разводит `CryptoGate`: `flock` на файле
-`.cryptogate` в контейнере группы плюс лок внутри процесса. Правила — гейт
-берётся до транзакции базы и не удерживается через `await`; расширение вдобавок
-делает шаг и запись сообщения одной транзакцией (`IdentityStore.joining`), так
-что убитое системой расширение не оставляет ни шага без сообщения, ни сообщения
-без шага.
+Two processes over one file mean the "read the state — step — write" cycle has to
+be kept apart. `CryptoGate` keeps it apart: `flock` on the `.cryptogate` file in
+the group container plus a lock inside the process. The rules — the gate is taken
+before the database transaction and is not held across an `await`; the extension
+additionally does the step and the message write in a single transaction
+(`IdentityStore.joining`), so an extension killed by the system leaves neither a
+step without a message nor a message without a step.
 
-Ядро проблемы — не потерянное входящее (симметричная цепочка выводится заново),
-а отправная сторона: чужая запись поверх откатывает `sendN`, номер уходит в эфир
-дважды, и второе сообщение получатель не откроет уже никогда.
+The heart of the problem is not a lost incoming message (the symmetric chain is
+derived again), it is the sending side: someone else's write on top rolls `sendN`
+back, the number goes on the air twice, and the second message is one the
+recipient will never open.

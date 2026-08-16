@@ -1,14 +1,14 @@
 import SwiftUI
 import MsngrCore
 
-/// The tabs above the list: «Все» and the user's folders. A tab switches on a
+/// The tabs above the list: the "all" tab and the user's folders. A tab switches on a
 /// tap, the list itself switches on a swipe (see ChatListView), and the
 /// underline moves on the same spring either way.
 struct ChatFolderBar: View {
     let folders: [ChatFolder]
-    /// How many chats have unread messages, per folder; the key for «Все» is an empty string.
+    /// How many chats have unread messages, per folder; the key for the "all" tab is an empty string.
     let unread: [String: Int]
-    /// The selected tab; nil means «Все».
+    /// The selected tab; nil means the "all" tab.
     @Binding var selection: String?
     var onManage: () -> Void
     var onEdit: (ChatFolder) -> Void

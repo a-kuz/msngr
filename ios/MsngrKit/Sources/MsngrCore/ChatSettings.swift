@@ -44,7 +44,7 @@ public enum MuteState {
         return mutedUntil <= now
     }
 
-    /// "до 14:30" / "до 21 августа" for the row in the chat profile; nil when muted
+    /// Localized "until <time>" / "until <date>" for the row in the chat profile; nil when muted
     /// forever or not muted at all.
     public static func untilLabel(muted: Bool, mutedUntil: Double?,
                                   now: Double = Date().timeIntervalSince1970) -> String? {

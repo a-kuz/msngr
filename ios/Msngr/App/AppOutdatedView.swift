@@ -3,7 +3,7 @@ import SwiftUI
 /// The build fell behind what it works with: either the server no longer
 /// serves its protocol version, or the storage on the device was written by a
 /// newer build. Neither is something the app can get out of on its own, so it
-/// shows the state instead of an endless «Подключение…».
+/// shows the state instead of an endless connecting spinner.
 struct AppOutdatedView: View {
     @EnvironmentObject var app: AppState
     let reason: OutdatedBuild

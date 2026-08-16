@@ -1,87 +1,92 @@
-# Протокол
+# Protocol
 
-Источник истины — код: `server/src/index.ts` (роутер), `server/src/types.ts`
-(фреймы), `server/src/do/*.ts` (логика DO), `ios/MsngrKit/Sources/MsngrCore/Protocol.swift`
-(клиентское зеркало).
+The source of truth is the code: `server/src/index.ts` (the router),
+`server/src/types.ts` (frames), `server/src/do/*.ts` (DO logic),
+`ios/MsngrKit/Sources/MsngrCore/Protocol.swift` (the client mirror).
 
-## Транспорт
+## Transport
 
-- HTTP `/api/*` — регистрация, ключи, профили, чаты, медиа, контакты, блокировки.
-- WS `/ws?token=…&v=…` — один сокет на устройство, JSON-фреймы `{t, ...}`.
-  Апгрейд авторизуется в Worker, сам сокет держит `UserSessionDO`.
+- HTTP `/api/*` — registration, keys, profiles, chats, media, contacts, blocks.
+- WS `/ws?token=…&v=…` — one socket per device, JSON frames `{t, ...}`.
+  The upgrade is authorized in the Worker, the socket itself is held by
+  `UserSessionDO`.
   `v` is the client's protocol version, read before auth: below the server's
   floor the upgrade answers `426 client_too_old` with both numbers, and the
   client stops reconnecting instead of retrying into silence.
-- Auth: токен устройства (`Authorization: Bearer <token>` или `?token=`),
-  в D1 хранится SHA-256 токена. Вход на новом устройстве — не пароль, а согласие
-  устройства, которое уже в аккаунте: `/api/provision/*` (раздел «Вход на новом
-  устройстве»). Ключи сессии провижининга ходят в заголовке
-  `x-provision-token` — у нового устройства ещё нет токена устройства.
-- Отзыв токена: `devices.revoked_at`. Проверяется в middleware авторизации, так
-  что отозванный токен даёт 401 и на `/api/*`, и на апгрейде `/ws`. Отзыв рвёт
-  живые сокеты этого устройства (код закрытия 4401), стирает его APNs-токен и
-  удаляет его `identity_keys` и `one_time_prekeys`: список устройств собеседник
-  перечитывает на каждой отправке, поэтому именно это перестаёт адресовать
-  отозванному устройству конверты. Срока жизни у токена нет: он действует, пока
-  не отозван.
-- Все клиент-видимые метки времени — в секундах (`nowSec()` на сервере,
-  `timeIntervalSince1970` на клиенте).
+- Auth: a device token (`Authorization: Bearer <token>` or `?token=`), stored in
+  D1 as the SHA-256 of the token. Signing in on a new device is not a password
+  but the consent of a device that is already in the account:
+  `/api/provision/*` (the "Signing in on a new device" section). Provisioning
+  session keys travel in the `x-provision-token` header — a new device has no
+  device token yet.
+- Token revocation: `devices.revoked_at`. It is checked in the authorization
+  middleware, so a revoked token gives 401 both on `/api/*` and on the `/ws`
+  upgrade. Revocation cuts that device's live sockets (close code 4401), erases
+  its APNs token and deletes its `identity_keys` and `one_time_prekeys`: a peer
+  re-reads the device list on every send, so that is what stops envelopes being
+  addressed to the revoked device. A token has no lifetime: it works until it is
+  revoked.
+- Every client-visible timestamp is in seconds (`nowSec()` on the server,
+  `timeIntervalSince1970` on the client).
 
-## Идентификаторы
+## Identifiers
 
-- `userId`, `deviceId`, `msgId` — ULID (собственная реализация в `server/src/util.ts`).
-- `chatId`: группа — ULID; direct — детерминированное имя `direct:<userIdA>:<userIdB>`
-  с отсортированными id, за счёт этого direct-чат дедуплицируется без индекса.
-- `seq` — монотонный номер сообщения в чате (1..N), присваивает `ConversationDO`.
-- `clientMsgId` — UUID клиента, ключ идемпотентности отправки. Дедуп-ключ на
-  сервере — `cmid:<from>/<clientMsgId>`, повтор возвращает исходные `msgId`/`seq`.
+- `userId`, `deviceId`, `msgId` — ULID (own implementation in `server/src/util.ts`).
+- `chatId`: a group is a ULID; a direct chat is the deterministic name
+  `direct:<userIdA>:<userIdB>` with sorted ids, which is how a direct chat
+  deduplicates without an index.
+- `seq` — the monotonic number of a message inside a chat (1..N), assigned by
+  `ConversationDO`.
+- `clientMsgId` — the client's UUID, the idempotency key of a send. The dedup key
+  on the server is `cmid:<from>/<clientMsgId>`; a repeat returns the original
+  `msgId`/`seq`.
 
 ## HTTP API
 
-Ответы: `{ok:true, ...}` либо `{ok:false, error}` с ненулевым HTTP-статусом.
+Responses: `{ok:true, ...}` or `{ok:false, error}` with a non-2xx HTTP status.
 
 ```
 POST /api/register    {username, displayName, device:{name}, identityKey, identitySignKey,
                        signedPrekey:{id,key,sig}, oneTimePrekeys:[{id,key}], phoneHash?}
-                      → {userId, deviceId, token}    (без auth; username [a-zA-Z0-9_]{3,32})
+                      → {userId, deviceId, token}    (no auth; username [a-zA-Z0-9_]{3,32})
 GET  /api/me                      → {user, deviceId}
 GET  /api/sessions                → {sessions:[{deviceId,name,createdAt,lastSeen,hasPushToken,current}]}
-POST /api/logout                  отозвать токен текущего устройства
-POST /api/sessions/:deviceId/revoke   отозвать токен другого своего устройства
+POST /api/logout                  revoke the token of the current device
+POST /api/sessions/:deviceId/revoke   revoke the token of another device of yours
 
-POST /api/provision/start         {ephemeralKey, device:{name,platform}}   (без auth)
+POST /api/provision/start         {ephemeralKey, device:{name,platform}}   (no auth)
                                   → {provisionId, code, provisionToken, expiresIn}
 GET  /api/provision/:id           (x-provision-token) → {status:"pending"|"approved", envelope?}
 POST /api/provision/lookup        {code} → {provisionId, ephemeralKey, device, expiresIn}
-POST /api/provision/:id/approve   {envelope} — согласие с устройства, уже вошедшего в аккаунт
+POST /api/provision/:id/approve   {envelope} — consent from a device already in the account
 POST /api/provision/:id/claim     (x-provision-token) {identityKey, identitySignKey,
                                   signedPrekey, oneTimePrekeys, device:{name}}
                                   → {userId, deviceId, token}
 POST /api/provision/:id/cancel    (x-provision-token)
-GET  /api/users?q=                поиск по username/displayName (LOWER LIKE, лимит 20)
+GET  /api/users?q=                search by username/displayName (LOWER LIKE, limit 20)
 GET  /api/users/:id               → {user, presence:{online,lastSeen}}
-GET  /api/devices?ids=a,b,c       устройства и identity-ключи; ничего не расходует
-GET  /api/users/:id/prekeys       X3DH-бандлы всех устройств; one-time prekey выдаётся и удаляется
-GET  /api/prekeys/count           остаток собственных one-time prekeys
-POST /api/prekeys                 {oneTimePrekeys:[{id,key}]} — пополнение (до 200 за раз)
+GET  /api/devices?ids=a,b,c       devices and identity keys; spends nothing
+GET  /api/users/:id/prekeys       X3DH bundles of every device; a one-time prekey is handed out and deleted
+GET  /api/prekeys/count           how many of your own one-time prekeys are left
+POST /api/prekeys                 {oneTimePrekeys:[{id,key}]} — a top-up (up to 200 at a time)
 POST /api/profile                 {displayName?, bio?, avatarId?}
 POST /api/avatar                  raw body (image/jpeg) → {avatarId};  GET /api/avatar/:id
-                                  ?chatId=<id> — аватар чата вместо своего профиля
+                                  ?chatId=<id> — the chat's avatar instead of your own profile
 POST /api/chats                   {kind:"direct"|"group", memberIds[], title?} → {chatId}
-GET  /api/chats                   снапшот: [{flags, state}] + профили всех участников
+GET  /api/chats                   snapshot: [{flags, state}] + the profiles of all members
 GET  /api/chats/:id/history       ?fromSeq=&toSeq=&limit=&dir=back
                                   → {msgs:[StoredMsg], scanned, lastScannedSeq}
-POST /api/chats/:id/accept        принять message request
+POST /api/chats/:id/accept        accept a message request
 POST /api/chats/:id/members       {add[], remove[]}
-POST /api/chats/:id/delete        удалить чат у себя: группу покидает, переписку
-                                  убирает из своего списка (журнал и участие
-                                  остаются, собеседник ничего не узнаёт); своя
-                                  read-марка при этом уходит в конец журнала
+POST /api/chats/:id/delete        delete the chat for yourself: a group is left, a direct
+                                  chat is only taken out of your own list (the journal and
+                                  the membership stay, the peer learns nothing); your own
+                                  read mark moves to the end of the journal in the process
 POST /api/chats/:id/settings      {title?, avatarId?, description?}
 POST /api/chats/:id/admins        {userId, admin:bool}
 POST /api/chats/:id/pin-message   {msgId|null}
-POST /api/chats/:id/flags         {pinned?, muted?, mutedUntil?, archived?} — локальные
-                                  для пользователя; mutedUntil — секунды, null = бессрочно
+POST /api/chats/:id/flags         {pinned?, muted?, mutedUntil?, archived?} — local to
+                                  the user; mutedUntil is in seconds, null = indefinitely
 GET  /api/chats/:id/fanout        fanout queue of the chat →
                                   {pending, cursor, targets, attempt, oldestMs, armed};
                                   oldestMs is the head job's wait, armed says a drain
@@ -89,75 +94,77 @@ GET  /api/chats/:id/fanout        fanout queue of the chat →
 POST /api/chats/:id/invite        → {code, link:"msngr://join/<code>"}
 POST /api/join/:code              → {chatId}
 POST /api/media                   raw body (ciphertext) → {mediaId, size}
-GET  /api/media/:id               стрим блоба, поддерживает Range (206)
+GET  /api/media/:id               streams the blob, supports Range (206)
 POST /api/push-token              {apnsToken, env}
 POST /api/phone                   {phoneHash|null}
-POST /api/contacts/discover       {hashes[]} → {matches[]}  (до 5000 хэшей, чанками по 100)
+POST /api/contacts/discover       {hashes[]} → {matches[]}  (up to 5000 hashes, in chunks of 100)
 POST /api/block                   {userId, blocked}
 GET  /api/blocked                 → {blocked:[userId]}
 POST /api/dev/fault               {failEvents} — dev hook: the caller's own session
                                   object rejects that many frame deliveries
 ```
 
-Права: удалять участников и менять настройки группы может только админ; добавить
-может админ, а не-админ — только самого себя; вступление по инвайт-ссылке
-разрешено не-участнику (`viaInvite`); создать инвайт может любой участник чата.
-Блокировки — в разделе ниже.
+Rights: only an admin can remove members and change group settings; an admin can
+add anyone, a non-admin only themselves; joining by an invite link is allowed to
+a non-member (`viaInvite`); any member of the chat can create an invite. Blocks
+are covered in the section below.
 
-## Вход на новом устройстве
+## Signing in on a new device
 
-Пароля нет, номера нет: новое устройство пускает в аккаунт то, которое уже в нём.
-Новое устройство открывает сессию провижининга и показывает восьмизначный код
-(Crockford base32), владелец набирает код на старом устройстве, старое
-запечатывает бандл аккаунта на эфемерный ключ сессии и кладёт его на сервер.
-Сервер внутрь `envelope` не заглядывает.
+There is no password and no phone number: a new device is let into the account by
+one that is already in it. The new device opens a provisioning session and shows
+an eight-character code (Crockford base32), the owner types the code on the old
+device, and the old device seals the account bundle to the session's ephemeral
+key and puts it on the server. The server does not look inside the `envelope`.
 
-- `provisionToken` выдаётся один раз тому устройству, которое открыло сессию, и
-  хранится хэшем: код называет сессию, токен делает право на неё именным.
-- Сессия одноразовая и живёт 120 секунд. Одобренную нельзя одобрить ещё раз, а
-  `lookup` её больше не находит.
-- `claim` заводит устройство под тем аккаунтом, чьё устройство одобрило сессию, и
-  требует те же `identityKey`/`identitySignKey`, что уже записаны у аккаунта:
-  identity принадлежит аккаунту, а не устройству (`docs/crypto-flows.md`).
-  Расхождение — `identity_mismatch`.
+- `provisionToken` is issued once, to the device that opened the session, and is
+  stored as a hash: the code names the session, the token makes the right to it
+  personal.
+- A session is single-use and lives 120 seconds. An approved one cannot be
+  approved again, and `lookup` no longer finds it.
+- `claim` registers the device under the account whose device approved the
+  session, and requires the same `identityKey`/`identitySignKey` that are already
+  recorded for the account: the identity belongs to the account, not to the
+  device (`docs/crypto-flows.md`). A mismatch is `identity_mismatch`.
 
-Подробности решения и то, чего этот механизм не защищает, —
-`docs/research/2026-08-16-second-device.md`.
+The reasoning behind the design, and what this mechanism does not protect
+against, are in `docs/research/2026-08-16-second-device.md`.
 
-## Блокировки
+## Blocks
 
-Блокировка симметрично гасит доставку в уже существующем direct-чате: сообщение
-автора принимается, занимает `seq` и лежит в журнале, но `ConversationDO` не
-рассылает его заблокированной стороне — ни `msg`-фреймом, ни пушем. Так же
-режутся `typing` и `presence`. Автор получает обычный `sent` и видит одну
-галочку: `delivered` не приходит никогда.
+A block symmetrically kills delivery inside an already existing direct chat: the
+author's message is accepted, takes a `seq` and sits in the journal, but
+`ConversationDO` does not send it to the blocked side, neither as a `msg` frame
+nor as a push. `typing` and `presence` are cut the same way. The author gets an
+ordinary `sent` and sees a single tick: `delivered` never arrives.
 
-Чтобы непрочитанное блокирующего не росло на невидимые сообщения, его read-марка
-двигается до `seq` придержанного сообщения прямо в `/send` (без `receipt`-фрейма
-автору). После разблокировки придержанные сообщения доезжают обычным `sync`:
-журнал их хранит, отдельного отсева в истории нет.
+So that the blocker's unread count does not grow on invisible messages, their
+read mark moves up to the `seq` of the held message right inside `/send` (with no
+`receipt` frame to the author). Once unblocked, the held messages arrive through
+an ordinary `sync`: the journal keeps them, and there is no separate filtering in
+history.
 
-## WS: клиент → сервер
+## WS: client → server
 
 ```
-{t:"sync",  cursors:{chatId: lastSeq, ...}}    // весь известный клиенту мир
-{t:"catchup", cursors:{chatId: cursor, ...}}   // следующая порция догона
-{t:"send",  chatId, clientMsgId, sentAt, body, service?}   // body — E2E-конверт
-{t:"recv",  chatId, seqs:[...]}                            // → delivered-квитанции автору
+{t:"sync",  cursors:{chatId: lastSeq, ...}}    // the whole world as the client knows it
+{t:"catchup", cursors:{chatId: cursor, ...}}   // the next catch-up portion
+{t:"send",  chatId, clientMsgId, sentAt, body, service?}   // body is the E2E envelope
+{t:"recv",  chatId, seqs:[...]}                            // → delivered receipts to the author
 {t:"read",  chatId, upToSeq}
-{t:"typing",chatId, kind}                                  // kind: строка или null (стоп)
+{t:"typing",chatId, kind}                                  // kind: a string or null (stop)
 {t:"delete",chatId, msgIds:[...], forAll}
 {t:"ping"}
-{t:"bg"}    // приложение свернулось: presence offline немедленно
-{t:"fg"}    // вернулось: presence online
+{t:"bg"}    // the app went to background: presence goes offline at once
+{t:"fg"}    // it came back: presence goes online
 ```
 
-`service: true` — служебный фрейм (раздача sender key, реакция, правка,
-переключение TTL). Он занимает `seq` и хранится в журнале, но не растит unread
-и не порождает пуш. Клиент помечает так `edit`, `reaction`, `disappearing`
-(`SyncEngine.serviceKinds`) и все skd-конверты.
+`service: true` marks a service frame (a sender key handout, a reaction, an edit,
+a TTL switch). It takes a `seq` and is kept in the journal, but it does not grow
+unread and raises no push. The client marks `edit`, `reaction` and `disappearing`
+this way (`SyncEngine.serviceKinds`), along with every skd envelope.
 
-## WS: сервер → клиент
+## WS: server → client
 
 ```
 {t:"hello",   serverTime, protocol, minProtocol}
@@ -174,14 +181,14 @@ POST /api/dev/fault               {failEvents} — dev hook: the caller's own se
 {t:"pong"}
 ```
 
-`error` — отказ по клиентскому фрейму; `error` несёт машиночитаемый код
-(`blocked`, `not_member`, `send_failed`). На `send` он приходит вместо `sent`
-с тем же `clientMsgId`.
+`error` is a rejection of a client frame; `error` carries a machine-readable code
+(`blocked`, `not_member`, `send_failed`). For a `send` it arrives instead of
+`sent`, with the same `clientMsgId`.
 
-`state` в `chat`-фрейме — полный снапшот чата: `members` (userId, role, joinedAt,
-accepted), `title`, `avatarId`, `description`, `pinnedMsgId`, `lastSeq`,
-`readMarks`, `deliveredMarks`. Профили участников фрейм не несёт: клиент
-дотягивает недостающих через `GET /api/users/:id`.
+`state` in a `chat` frame is the chat's full snapshot: `members` (userId, role,
+joinedAt, accepted), `title`, `avatarId`, `description`, `pinnedMsgId`,
+`lastSeq`, `readMarks`, `deliveredMarks`. The frame does not carry member
+profiles: the client pulls the ones it is missing through `GET /api/users/:id`.
 
 ## Delivery order
 
@@ -192,11 +199,11 @@ twice (a retried fanout pass), so the client dedupes by `msgId`.
 
 ## Presence
 
-`UserSessionDO` считает пользователя онлайн, пока хотя бы один сокет присылал
-`ping` не позже 35 секунд назад (`PRESENCE_TTL_MS`); клиент пингует каждые 12 с.
-Открытый, но замолчавший сокет онлайном не считается — iOS держит соединение
-минутами после сворачивания. Смену статуса рассылает alarm DO, `bg`/`fg`
-переключают его сразу.
+`UserSessionDO` counts a user as online while at least one socket has sent a
+`ping` no more than 35 seconds ago (`PRESENCE_TTL_MS`); the client pings every
+12 s. An open but silent socket does not count as online — iOS holds the
+connection for minutes after the app is backgrounded. A status change is
+broadcast by the DO's alarm; `bg`/`fg` switch it at once.
 
 ## Catch-up after a reconnect
 
@@ -232,47 +239,49 @@ what moves past it.
 
 Tombstones are skipped as `msg` frames in a page and arrive as `deleted`.
 
-## Блокировки
+## Blocks in detail
 
-Список блокировок — таблица `blocks` в D1, направленная: строка `(user_id,
-blocked_id)` значит «user_id заблокировал blocked_id». `ConversationDO`
-direct-чата читает пару лениво и держит в памяти; `POST /api/block` сбрасывает
-этот кэш фреймом `/block-changed` (чат при этом может ещё не существовать).
-В группах блокировки не проверяются.
+The block list is the `blocks` table in D1, directed: a row `(user_id,
+blocked_id)` means "user_id has blocked blocked_id". The `ConversationDO` of a
+direct chat reads the pair lazily and holds it in memory; `POST /api/block`
+drops that cache with a `/block-changed` frame (the chat may not exist yet at
+that point). Blocks are not checked in groups.
 
-Поведение в существующем direct-чате — как принято в мессенджерах: заблокированный
-по ответам сервера не отличает блокировку от молчания собеседника.
+The behaviour inside an existing direct chat is the one messengers have settled
+on: from the server's answers, a blocked user cannot tell a block from a peer who
+has gone quiet.
 
-- Заблокированный шлёт `send`: сервер отвечает обычным `sent` (сообщение
-  получает `seq` и остаётся в его собственной истории), но не рассылает его
-  получателю, не шлёт пуш и помечает запись `blockedFor: <userId блокирующего>`.
-  Такое сообщение не попадает ни в `/history` блокирующего, ни в его `sync` —
-  в том числе после снятия блокировки.
-- Блокирующий шлёт `send` тому, кого заблокировал: явный отказ, фрейм
-  `{t:"error", error:"blocked"}` (HTTP-эквивалент — 403 `blocked`). Он знает
-  про свою блокировку, скрывать нечего.
-- При блокировке в любую сторону `receipt`, `typing` и `presence` между парой
-  не рассылаются, а `delivered`/`read`-марки заблокированного даже не
-  записываются: они видны в `state` `chat`-фрейма.
-- Создать direct с тем, кто заблокировал (или кого заблокировали), нельзя:
-  403 `blocked`.
+- A blocked user sends `send`: the server answers with an ordinary `sent` (the
+  message gets a `seq` and stays in their own history), but does not send it to
+  the recipient, sends no push and marks the record `blockedFor: <userId of the
+  blocker>`. Such a message reaches neither the blocker's `/history` nor their
+  `sync` — including after the block is lifted.
+- A blocker sends `send` to the one they blocked: an explicit refusal, the frame
+  `{t:"error", error:"blocked"}` (the HTTP equivalent is 403 `blocked`). They
+  know about their own block, there is nothing to hide.
+- With a block in either direction, `receipt`, `typing` and `presence` are not
+  passed between the pair, and the blocked user's `delivered`/`read` marks are
+  not even written: they are visible in the `state` of a `chat` frame.
+- Creating a direct chat with someone who blocked you (or whom you blocked) is
+  not possible: 403 `blocked`.
 
-`/history` отдаёт рядом с `msgs` два счётчика: `scanned` — сколько записей
-прочитано до фильтрации, `lastScannedSeq` — `seq` последней прочитанной. По ним
-двигается курсор в `sync`, иначе страница, целиком выпавшая из выдачи по
-блокировке, останавливала бы доигрывание.
+`/history` returns two counters next to `msgs`: `scanned` — how many records were
+read before filtering, and `lastScannedSeq` — the `seq` of the last one read.
+They are what moves the cursor in `sync`; otherwise a page that dropped out of
+the result entirely because of a block would stop the catch-up.
 
 ## Message requests
 
-В direct-чате получатель помечен `accepted: false`, пока не вызвал `/accept`.
-До этого автору заявки не уходят ни `receipt`, ни `typing`, ни `presence`
-получателя; `GET /api/users/:id` тоже отдаёт автору `presence: null`, пока
-получатель не принял. Непрочитанное такого чата не входит в бейдж пуша
-(`/unread-count` возвращает 0). В группах все участники считаются принявшими.
+In a direct chat the recipient is marked `accepted: false` until they call
+`/accept`. Until then the author of the request receives neither `receipt` nor
+`typing` nor the recipient's `presence`; `GET /api/users/:id` also returns
+`presence: null` to the author while the recipient has not accepted. Unread
+counts of such a chat do not enter the push badge (`/unread-count` returns 0). In
+groups every member counts as having accepted.
 
-## E2E-конверт (`body`)
+## E2E envelope (`body`)
 
-Сервер не заглядывает внутрь. Два режима:
+The server does not look inside. Two modes:
 
 ```
 {v:1, mode:"pw",  msgs:{ "<userId>/<deviceId>": PairwiseBox, ... }}
@@ -283,21 +292,21 @@ direct-чата читает пару лениво и держит в памят
 
 ```
 {type:"pk"|"dr", c,        // base64 JSON RatchetMessage {header:{dhPub,pn,n}, ciphertext}
- ik?, isk?, ek?, spkId?, otpId?}   // только для pk: наши identity DH/Ed25519 pub,
-                                   // ephemeral и id использованных prekey
+ ik?, isk?, ek?, spkId?, otpId?}   // pk only: our identity DH/Ed25519 pub,
+                                   // the ephemeral and the ids of the prekeys used
 ```
 
-Раздача sender key (`skd`) отдельным режимом конверта не является: это обычное
-pairwise-сообщение, внутри которого лежит `InnerMessage` с `type:"skd"`.
+A sender key handout (`skd`) is not a separate envelope mode: it is an ordinary
+pairwise message carrying an `InnerMessage` with `type:"skd"` inside.
 
-Внутри pairwise-ciphertext:
+Inside the pairwise ciphertext:
 
 ```
 {type:"content", content: ContentPayload}
 {type:"skd", skd:{keyId, iteration, chainKey, signingPub}, chatId}
 ```
 
-`ContentPayload` (он же plaintext в `skm`):
+`ContentPayload` (also the plaintext in `skm`):
 
 ```
 {kind, text?, media?, album?, replyTo?, fwd?, targetMsgId?, emoji?, ttlSeconds?,
@@ -309,140 +318,148 @@ pairwise-сообщение, внутри которого лежит `InnerMess
 - `media` / `album` — `MediaInfo`: `type, mediaId, key, hash, size, mime, name?,
   w?, h?, dur?, waveform?, blurhash?, thumbMediaId?, thumbKey?, thumbHash?`;
 - `replyTo` — `{msgId, authorId, text, kind}`, `fwd` — `{fromUserId, fromName}`;
-- `edit` и `reaction` адресуются `targetMsgId`, `emoji: null` снимает реакцию;
-- `disappearing` несёт `ttlSeconds` — новый TTL чата;
-- `to` — адресный фрейм: конверт шифруется pairwise одному участнику, даже в
-  группе. Так едет весь протокол ремонта.
+- `edit` and `reaction` address a `targetMsgId`, `emoji: null` removes the
+  reaction;
+- `disappearing` carries `ttlSeconds` — the chat's new TTL;
+- `to` — an addressed frame: the envelope is encrypted pairwise to a single
+  member, even in a group. The whole repair protocol travels this way.
 
-### Ремонт нечитаемого
+### Repairing an unreadable message
 
-Идёт сам, без участия пользователя, служебными фреймами (`service: true`).
+It runs on its own, with no user involved, over service frames (`service: true`).
 
-- `repairRequest` — «не смог прочитать сообщение»: `targetMsgId`, `repairSeq`,
-  `reason` (причина отказа расшифровки), `attempt` (номер попытки), `to` —
-  автор сообщения. `clientMsgId` детерминирован (`rq:<msgId>:<attempt>`):
-  повтор той же попытки гасится дедупом сервера, следующая попытка проходит.
-- `repair` — ответ автора: `repairOf` (исходный msgId), `repairSeq`,
-  `origSentAt` и `orig` — исходный `ContentPayload` строкой JSON. Получатель
-  кладёт его под исходным `msgId`, поэтому в ленте копия занимает место
-  пропавшего сообщения, а не появляется рядом. `clientMsgId` —
+- `repairRequest` — "could not read a message": `targetMsgId`, `repairSeq`,
+  `reason` (why decryption failed), `attempt` (the attempt number), `to` — the
+  author of the message. `clientMsgId` is deterministic (`rq:<msgId>:<attempt>`):
+  a repeat of the same attempt is swallowed by the server's dedup, the next
+  attempt goes through.
+- `repair` — the author's answer: `repairOf` (the original msgId), `repairSeq`,
+  `origSentAt` and `orig` — the original `ContentPayload` as a JSON string. The
+  recipient stores it under the original `msgId`, so in the feed the copy takes
+  the place of the lost message instead of appearing next to it. `clientMsgId` is
   `rp:<msgId>:<attempt>`.
-- `skdAck` — подтверждение раздачи sender key: `keyId` цепочки. Пока
-  подтверждения нет, отправитель раздаёт цепочку заново; `repairRequest` с
-  `reason: "no_sender_key"` заставляет раздать её этому участнику снова.
+- `skdAck` — an acknowledgement of a sender key handout: the `keyId` of the
+  chain. While the acknowledgement is missing, the sender hands the chain out
+  again; a `repairRequest` with `reason: "no_sender_key"` makes it hand the chain
+  to that member once more.
 
-Поля `localPath`/`thumbLocalPath` в `MediaInfo` существуют только локально
-(исходник вложения, ещё не выгруженный на сервер) и в конверт не попадают.
+The `localPath`/`thumbLocalPath` fields in `MediaInfo` exist locally only (the
+attachment's source, not yet uploaded to the server) and never reach the
+envelope.
 
-## Доставка и порядок
+## Delivery and order
 
-At-least-once. Порядок — по `seq` внутри чата. Клиент дедуплицирует входящие по
-`msgId`, свои отправки — по `clientMsgId`. Конверт, который не удалось
-расшифровать, складывается в `pendingDecrypt` целиком — при любой причине: это
-единственная локальная копия. Он переигрывается, когда в чате появляется ключ, и
-проходами при старте движка, на реконнекте и по кругу в фоне; счётчик попыток и
-срок жизни лежат на той же строке. `edit`/`reaction`/`deleted`, чья цель ещё не
-в БД, складываются в `pendingApply` и применяются при появлении оригинала.
+At-least-once. Order is by `seq` inside a chat. The client dedupes incoming
+messages by `msgId` and its own sends by `clientMsgId`. An envelope that could
+not be decrypted is stored in `pendingDecrypt` whole, whatever the reason: it is
+the only local copy. It is replayed when a key appears in the chat, and by passes
+at engine start, on a reconnect and round the clock in the background; the
+attempt counter and the lifetime sit on the same row. `edit`/`reaction`/`deleted`
+whose target is not in the database yet go into `pendingApply` and are applied
+once the original shows up.
 
-Что переигрыванием не берётся, чинится через отправителя (`repairRequest` →
-`repair`). Сам seq записан в `historyGap` с причиной и счётчиком: пагинация
-вверх не ходит за ним на сервер снова, а нейтральная заглушка в ленте
-появляется, только когда попытки ремонта потрачены.
+What replaying does not recover is repaired through the sender (`repairRequest` →
+`repair`). The seq itself is written into `historyGap` with a reason and a
+counter: pagination upwards does not go to the server for it again, and a neutral
+placeholder appears in the feed only once the repair attempts are spent.
 
-## Пуши
+## Pushes
 
-APNs уходит немедленно для каждого контентного `msg` — независимо от presence и
-живых сокетов. Исключения: `service:true`, собственное эхо автора, muted-чат,
-блокировка. Mute со сроком (`mutedUntil`) истекает сам: `UserSessionDO` снимает
-флаг при первой же проверке после срока — на пуше и в снапшоте `/api/chats`.
-Дедуп на клиенте: `willPresent` гасит баннер, если сообщение уже показано по WS
-(матч по chatId/msgId, см. `NotificationDecision`).
+APNs is called immediately for every content `msg` — regardless of presence and
+live sockets. The exceptions: `service:true`, the author's own echo, a muted
+chat, a block. A mute with an expiry (`mutedUntil`) runs out on its own:
+`UserSessionDO` clears the flag at the first check after the deadline — on a push
+and in the `/api/chats` snapshot. Dedup on the client: `willPresent` suppresses
+the banner if the message has already been shown over WS (matched by
+chatId/msgId, see `NotificationDecision`).
 
 ```
 POST {APNS_HOST}/3/device/{apnsToken}
-заголовки: apns-topic, apns-push-type: alert, apns-priority: 10,
-           apns-collapse-id: <msgId>     // повторная доставка не плодит баннеры
+headers: apns-topic, apns-push-type: alert, apns-priority: 10,
+         apns-collapse-id: <msgId>     // a repeated delivery does not multiply banners
 {
   "aps": {
     "alert": {"title": "Msngr", "body": "Новое сообщение"},
-    "badge": <суммарный unread пользователя>,
+    "badge": <the user's total unread>,
     "sound": "default",
     "mutable-content": 1,
     "thread-id": "<chatId>"
   },
-  "chatId": "...", "msgId": "...", "seq": <позиция в чате>,
-  "sentAt": <мс>, "badgeStamp": <номер счётчика>,
-  "from": "<userId автора>", "fromDevice": "<deviceId автора>",
-  "ts": <серверные секунды>,
-  "env": "<E2E-конверт этого устройства, компактным JSON>"
+  "chatId": "...", "msgId": "...", "seq": <position in the chat>,
+  "sentAt": <ms>, "badgeStamp": <counter number>,
+  "from": "<author's userId>", "fromDevice": "<author's deviceId>",
+  "ts": <server seconds>,
+  "env": "<this device's E2E envelope, as compact JSON>"
 }
 ```
 
-`env` — то самое сообщение, а не ссылка на него: расширение расшифровывает его
-и пишет в базу, поэтому прочитанное в баннере остаётся в чате даже без сети
-(`PushMessageWriter`). Конверт режется под адресата: у `pw` остаётся один бокс
-`userId/deviceId`, `skm` едет целиком. `from`/`fromDevice` называют отправителя
-— по ним выбирается сессия, которой открывать.
+`env` is the message itself, not a reference to it: the extension decrypts it and
+writes it into the database, so what was read in the banner stays in the chat
+even with no network (`PushMessageWriter`). The envelope is cut down to the
+addressee: for `pw` a single `userId/deviceId` box is left, `skm` travels whole.
+`from`/`fromDevice` name the sender — they pick the session to open it with.
 
-APNs не принимает payload больше 4 КБ и отказывает целиком, поэтому `env`
-выбрасывается первым: остальное доезжает, а сообщение приходит следующим
-соединением. Так уходят вложения — картинка с текстом за границей влезает,
-большое медиа нет.
+APNs does not accept a payload larger than 4 KB and refuses it entirely, so `env`
+is dropped first: the rest gets through, and the message arrives on the next
+connection. That is how attachments go — a picture with a caption fits over the
+edge, large media does not.
 
-Бейдж считает сервер: `aps.badge` — суммарный unread пользователя по чатам,
-заявка до принятия в него не входит. Клиент число не пересчитывает, а только
-сообщает своё, когда сам сдвинул прочитанное.
+The badge is counted by the server: `aps.badge` is the user's total unread across
+chats, and a request that has not been accepted is not part of it. The client
+does not recount the number, it only reports its own when it has moved its read
+mark itself.
 
-`badgeStamp` — порядковый номер счётчика, который `UserSessionDO` выдаёт на
-каждую рассылку пуша. APNs доставляет лавину в произвольном порядке, и по
-`badgeStamp` устройство отличает свежий счётчик от обогнавшего его старого:
-меньший номер на иконку не попадает (`BadgeStore`).
+`badgeStamp` is the sequence number of the counter that `UserSessionDO` issues
+for every push it sends. APNs delivers an avalanche in arbitrary order, and
+`badgeStamp` is how a device tells a fresh counter from an older one that
+overtook it: a smaller number does not reach the icon (`BadgeStore`).
 
-Ответ APNs разбирается:
+The APNs answer is parsed:
 
-- `410` — токен устройства мёртв: запись удаляется и из storage `UserSessionDO`,
-  и из `devices.apns_token` в D1;
-- `429` и `5xx` — до двух повторов с задержкой 500 мс и 1500 мс;
-- `403 ExpiredProviderToken` — принудительный перевыпуск JWT и одна повторная
-  попытка;
-- `400` и остальное — код и `reason` уходят в лог, повтора нет.
+- `410` — the device token is dead: the record is deleted both from
+  `UserSessionDO` storage and from `devices.apns_token` in D1;
+- `429` and `5xx` — up to two retries, after 500 ms and 1500 ms;
+- `403 ExpiredProviderToken` — a forced JWT re-issue and one more attempt;
+- `400` and everything else — the code and `reason` go to the log, no retry.
 
-Устройства обрабатываются независимо: отказ по одному токену не отменяет
-отправку на остальные.
+Devices are handled independently: a failure on one token does not cancel the
+send to the rest.
 
-Провайдерский JWT (ES256, p8) принадлежит синглтон-объекту `ApnsTokenDO`
-(имя `apns-jwt`): кэш лежит в его storage и живёт 3000 секунд. Владелец один,
-потому что Apple ограничивает частоту генерации токена, а изолятов, в которых
-живут `UserSessionDO`, может быть много. Принудительный перевыпуск не чаще
-одного раза в минуту.
+The provider JWT (ES256, p8) belongs to the singleton object `ApnsTokenDO` (named
+`apns-jwt`): the cache sits in its storage and lives 3000 seconds. There is a
+single owner because Apple limits how often the token may be generated, while
+there can be many isolates holding `UserSessionDO`s. A forced re-issue happens at
+most once a minute.
 
-Бейдж: `UserSessionDO` держит в storage кэш unread
-по чатам (`unreadCache`), инвалидирует его по входящему `msg` и собственному
-`read`, а в момент отправки пуша лениво пересчитывает инвалидированные чаты
-запросом `GET /unread-count?userId=` к `ConversationDO` (`lastSeq` минус
-read-марка). Приближение: muted-чаты входят в бейдж до прочтения.
+Badge: `UserSessionDO` keeps a per-chat unread cache in storage (`unreadCache`),
+invalidates it on an incoming `msg` and on its own `read`, and at the moment of
+sending a push lazily recounts the invalidated chats with a `GET
+/unread-count?userId=` request to `ConversationDO` (`lastSeq` minus the read
+mark). An approximation: muted chats enter the badge until they are read.
 
-Dev без Apple-аккаунта: `APNS_HOST` (в `server/.dev.vars` — `http://localhost:9871`)
-уводит пуши в мок `server/tools/apns-mock.mjs`, который доставляет их в симулятор
-через `xcrun simctl push` (apnsToken = UDID симулятора). На не-яблочном хосте
-запрос уходит без JWT-подписи, p8-ключ не нужен, `apns-topic` по умолчанию
-`ai.enface.Msngr`. Ограничение канала: `simctl push` не запускает Notification
-Service Extension — см. `docs/research/nse-simulator-experiment.md`.
+Dev without an Apple account: `APNS_HOST` (in `server/.dev.vars` —
+`http://localhost:9871`) diverts pushes into the mock
+`server/tools/apns-mock.mjs`, which delivers them to the simulator through
+`xcrun simctl push` (apnsToken = the simulator's UDID). On a non-Apple host the
+request goes out without a JWT signature, no p8 key is needed, and `apns-topic`
+defaults to `ai.enface.Msngr`. A limit of that channel: `simctl push` does not
+launch the Notification Service Extension — see
+`docs/research/nse-simulator-experiment.md`.
 
-## Схема D1 и миграции
+## D1 schema and migrations
 
-Схема живёт в `server/migrations/` нумерованными файлами (`0001_init.sql`,
-`0002_…`), применяет их штатный раннер wrangler; каталог и таблица журнала
-заданы в `wrangler.jsonc` (`migrations_dir`, `migrations_table: d1_migrations`).
+The schema lives in `server/migrations/` as numbered files (`0001_init.sql`,
+`0002_…`), applied by wrangler's own runner; the directory and the journal table
+are set in `wrangler.jsonc` (`migrations_dir`, `migrations_table: d1_migrations`).
 
 ```
-npm run migrate:local     # локальная база wrangler dev
-npm run migrate           # удалённая база
-npm run deploy            # миграции на удалённой базе, затем wrangler deploy
+npm run migrate:local     # the local wrangler dev database
+npm run migrate           # the remote database
+npm run deploy            # migrations on the remote database, then wrangler deploy
 ```
 
-Новая миграция — новый файл со следующим номером; ранее применённые файлы не
-редактируются, раннер сверяется с `d1_migrations`.
+A new migration is a new file with the next number; files already applied are not
+edited, the runner checks against `d1_migrations`.
 
 ## Versions
 
