@@ -1,18 +1,17 @@
 import Foundation
 import MsngrCore
 
-/// Нижняя граница окна ленты и его вместимость. Наблюдение читает состояние на
-/// каждой выборке, с очереди базы, поэтому доступ под замком.
+/// The lower bound of the feed window and its capacity. The observation reads this state
+/// on every fetch, from the database queue, so access goes under a lock.
 ///
-/// Окно держит не больше `capacity` сообщений в обоих положениях ленты. У низа
-/// оно скользит: граница пересчитывается по вместимости, и приходящие сообщения
-/// выталкивают самые старые. Пока пользователь смотрит историю, граница стоит на
-/// месте — ничто из прочитанного не уезжает, — а вместимость отсекает сверху
-/// всё, что пришло за это время. Без потолка окно растёт всё время, что открыт
-/// чат, и каждая вставка перечитывает, декодирует и диффит всё, что в нём
-/// накопилось.
+/// The window holds no more than `capacity` messages in either position of the feed. At
+/// the bottom it slides: the bound is recomputed from the capacity and arriving messages
+/// push the oldest ones out. While the reader is in the history the bound stays put, so
+/// nothing already read moves away, and the capacity cuts off everything that arrived in
+/// the meantime from the top. Without that ceiling the window grows for as long as the
+/// chat is open, and every insert re-reads, decodes and diffs everything piled up in it.
 final class FeedWindow: @unchecked Sendable {
-    /// Что подставить в выборку и надо ли сперва пересчитать границу.
+    /// What to put into the fetch, and whether the bound has to be recomputed first.
     struct Plan: Equatable {
         let floor: Int?
         let recompute: Bool
@@ -42,14 +41,14 @@ final class FeedWindow: @unchecked Sendable {
         return Plan(floor: seq, recompute: seq == nil || atBottom, capacity: capacity)
     }
 
-    /// Пользователь подгрузил историю: окну разрешено держать на столько больше.
+    /// The reader pulled in more history: the window may hold that many more.
     func grow(by count: Int) {
         lock.lock(); capacity += count; lock.unlock()
     }
 
-    /// Переход к сообщению глубже окна: граница встаёт прямо на него, а
-    /// вместимость растягивается до самого свежего сообщения — из точки перехода
-    /// остаётся дорога вниз, к концу переписки.
+    /// Jumping to a message deeper than the window: the bound lands right on it and the
+    /// capacity stretches up to the newest message, so from the landing point there is
+    /// still a way down to the end of the conversation.
     func anchor(floor: Int, capacity: Int) {
         lock.lock()
         seq = floor

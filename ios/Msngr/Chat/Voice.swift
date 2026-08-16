@@ -2,7 +2,7 @@ import UIKit
 import AVFoundation
 import MsngrCore
 
-/// Запись голосовых: AAC 48kbps, амплитуды для waveform в реальном времени.
+/// Voice recording: AAC at 48kbps, with waveform amplitudes produced in real time.
 final class VoiceRecorder: NSObject, ObservableObject {
     @Published var isRecording = false
     @Published var duration: TimeInterval = 0
@@ -34,16 +34,16 @@ final class VoiceRecorder: NSObject, ObservableObject {
             guard let self, let r = self.recorder else { return }
             r.updateMeters()
             self.duration = r.currentTime
-            // -60дБ..0дБ → 0..1
+            // -60dB..0dB mapped onto 0..1
             let level = max(0, (r.averagePower(forChannel: 0) + 60) / 60)
             self.liveAmplitudes.append(level)
             if self.liveAmplitudes.count > 60 { self.liveAmplitudes.removeFirst() }
         }
     }
 
-    /// Возвращает (файл, длительность, waveform из 100 бакетов 0..31).
-    /// Отменяется (nil) только случайное касание микрофона (<0.3с);
-    /// короткие голосовые вроде «ок» (0.3–1с) — полноценные сообщения.
+    /// Returns (file, duration, a waveform of 100 buckets in 0..31).
+    /// Only an accidental touch of the microphone (under 0.3s) is dropped and gives nil;
+    /// a short voice message like «ок» (0.3 to 1s) is a message like any other.
     func stop() -> (url: URL, duration: TimeInterval, waveform: [Int])? {
         timer?.invalidate()
         guard let r = recorder, let url = fileURL else { return nil }
@@ -66,7 +66,7 @@ final class VoiceRecorder: NSObject, ObservableObject {
         if let url = fileURL { try? FileManager.default.removeItem(at: url) }
     }
 
-    /// Реальные амплитуды файла → 100 бакетов 0..31.
+    /// The file's real amplitudes reduced to 100 buckets in 0..31.
     static func waveform(from url: URL, buckets: Int = 100) -> [Int] {
         guard let file = try? AVAudioFile(forReading: url) else { return [] }
         let format = file.processingFormat
@@ -92,8 +92,7 @@ final class VoiceRecorder: NSObject, ObservableObject {
     }
 }
 
-/// Глобальный плеер голосовых: один на приложение, продолжает между чатами,
-/// скорость x1/x1.5/x2.
+/// Global voice player: one per app, keeps playing across chats, speeds x1/x1.5/x2.
 final class VoicePlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
     static let shared = VoicePlayer()
     @Published var playingMsgId: String?
@@ -153,7 +152,7 @@ final class VoicePlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
     }
 }
 
-/// Waveform: столбики, закрашиваются по прогрессу, тап/драг — seek.
+/// Waveform: bars filled in as playback progresses, a tap or drag seeks.
 final class WaveformView: UIView {
     var amplitudes: [Int] = [] {
         didSet { setNeedsDisplay() }
@@ -201,7 +200,7 @@ final class WaveformView: UIView {
     }
 }
 
-/// Ячейка голосового/файла внутри баббла.
+/// The voice or file plate inside a bubble.
 final class VoiceMessageView: UIView {
     private let playButton = UIButton(type: .system)
     private let waveform = WaveformView()
@@ -245,7 +244,7 @@ final class VoiceMessageView: UIView {
         self.msg = msg
         durationLabel.font = Theme.Text.voiceDuration.uiFont
         fileName.font = Theme.Text.fileName.uiFont
-        // на тёмном исходящем баббле акцентные цвета нечитаемы
+        // accent colours are unreadable on the dark outgoing bubble
         let tint = outgoing ? UIColor(Theme.outgoingText) : UIColor(Theme.accent)
         playButton.tintColor = tint
         fileIcon.tintColor = tint
@@ -263,10 +262,10 @@ final class VoiceMessageView: UIView {
             waveform.amplitudes = msg.media?.waveform ?? []
             let raw = msg.media?.dur ?? 0
             if raw < 1 {
-                // сабсекундные голосовые («ок») показывают десятые: «0:00,5»
+                // a sub-second voice message («ок») shows tenths: «0:00,5»
                 durationLabel.text = String(format: "0:00,%01d", Int(raw * 10))
             } else {
-                // округление к ближайшей секунде: 2.7с — «0:03», а не «0:02»
+                // rounded to the nearest second: 2.7s reads «0:03», not «0:02»
                 let dur = Int(raw.rounded())
                 durationLabel.text = String(format: "%d:%02d", dur / 60, dur % 60)
             }
@@ -295,7 +294,7 @@ final class VoiceMessageView: UIView {
         Task {
             guard let mm = AppState.shared.media,
                   let url = try? await mm.fetch(media) else { return }
-            // AVAudioPlayer требует расширение — даём симлинк .m4a
+            // AVAudioPlayer insists on an extension, so it gets an .m4a copy
             let linked = url.deletingPathExtension().appendingPathExtension("m4a")
             if !FileManager.default.fileExists(atPath: linked.path) {
                 try? FileManager.default.copyItem(at: url, to: linked)
@@ -306,8 +305,8 @@ final class VoiceMessageView: UIView {
         }
     }
 
-    // одна строка: play-кнопка слева, волна справа, длительность мелко под волной;
-    // время сообщения кладёт BubbleLayout в правый нижний угол на линии длительности
+    // one row: play button on the left, waveform on the right, the duration small beneath
+    // it; BubbleLayout puts the message time in the bottom right on the duration's line
     override func layoutSubviews() {
         super.layoutSubviews()
         playButton.frame = CGRect(x: 0, y: 1, width: 40, height: 40)
@@ -319,8 +318,8 @@ final class VoiceMessageView: UIView {
 }
 
 extension VoiceMessageView: UIGestureRecognizerDelegate {
-    /// Просмотр открывается только по файлам; удержание уходит контекстному меню,
-    /// двойной тап — реакции.
+    /// Only files open a preview; a long press goes to the context menu and a double tap
+    /// to the reaction.
     func gestureRecognizer(_ g: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         msg?.kind == .file
     }
