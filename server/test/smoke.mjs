@@ -252,6 +252,58 @@ cb.send({ t: "typing", chatId: chat.chatId, kind: "text" });
 const typing = await ca.waitFor((f) => f.t === "typing" && f.from === bob.userId);
 check("typing", !!typing);
 
+// 7a. A changed card reaches the people who see it, over the socket
+const renameMark = ca.mark();
+const renamed = await api("/api/profile", { token: bob.token, body: { displayName: "Bob Renamed" } });
+check("profile update", renamed.ok);
+const nameFrame = await ca.waitAfter(renameMark, (f) => f.t === "profile" && f.user?.id === bob.userId);
+check("rename reaches the peer", !!nameFrame && nameFrame.user.display_name === "Bob Renamed",
+  JSON.stringify(nameFrame));
+
+check("empty name refused on profile",
+  (await api("/api/profile", { token: bob.token, body: { displayName: "  " } })).error === "bad_name");
+check("empty name refused at registration",
+  (await api("/api/register", { body: {
+    username: "noname_" + suffix, displayName: "", ...fakeKeys("n") } })).error === "bad_name");
+
+// the avatar blob sits behind the device token, and the frame carries its id
+const avatarMark = ca.mark();
+const upload = await (await fetch(BASE + "/api/avatar", {
+  method: "POST",
+  headers: { authorization: `Bearer ${bob.token}`, "content-type": "image/jpeg" },
+  body: Buffer.from("not-a-real-jpeg-but-bytes"),
+})).json();
+check("avatar upload", upload.ok && upload.avatarId.startsWith("avatar-"), JSON.stringify(upload));
+const avatarFrame = await ca.waitAfter(avatarMark, (f) => f.t === "profile" && f.user?.id === bob.userId);
+check("avatar reaches the peer", !!avatarFrame && avatarFrame.user.avatar_id === upload.avatarId,
+  JSON.stringify(avatarFrame));
+check("avatar blob needs a token",
+  (await fetch(BASE + "/api/avatar/" + upload.avatarId)).status === 401);
+const avatarBytes = await fetch(BASE + "/api/avatar/" + upload.avatarId,
+  { headers: { authorization: `Bearer ${alice.token}` } });
+check("peer reads the avatar blob with theirs", avatarBytes.status === 200);
+
+// 7b. Renaming the handle: the new one is taken and the old one freed by the
+// same statement, under the index that already guards registration
+const oldHandle = "bob_" + suffix;
+const newHandle = "bobby_" + suffix;
+check("username taken by someone else is refused",
+  (await api("/api/username", { token: bob.token, body: { username: "alice_" + suffix } }))
+    .error === "username_taken");
+check("bad username refused",
+  (await api("/api/username", { token: bob.token, body: { username: "no" } })).error === "bad_username");
+check("username changed", (await api("/api/username", { token: bob.token, body: { username: newHandle } })).ok);
+check("found under the new handle",
+  (await api(`/api/users?q=${newHandle}`, { token: alice.token })).users.length === 1);
+check("gone from the old handle",
+  (await api(`/api/users?q=${oldHandle}`, { token: alice.token })).users.length === 0);
+const reuse = await api("/api/register", { body: {
+  username: oldHandle, displayName: "Someone Else", ...fakeKeys("r") } });
+check("the old handle is free", reuse.ok, JSON.stringify(reuse));
+check("the freed handle is taken only once",
+  (await api("/api/username", { token: bob.token, body: { username: oldHandle } }))
+    .error === "username_taken");
+
 // 8. Offline → sync: Bob disconnects, Alice sends, Bob comes back with a cursor
 cb.ws.close();
 await new Promise((r) => setTimeout(r, 300));
