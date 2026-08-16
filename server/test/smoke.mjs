@@ -305,6 +305,49 @@ check("group message delivered", !!gmsg);
 const snap = await api("/api/chats", { token: bob.token });
 check("chats snapshot", snap.ok && snap.chats.length === 2 && snap.users.length >= 3);
 
+// 10a. Состав, пропущенный офлайн. Живой chat-фрейм об уходе участника получают
+// только подключённые; остальные узнают о нём при догоне, иначе оставшийся
+// продолжал бы шифровать в цепочку, которая есть у ушедшего.
+const mgrp = await api("/api/chats", { token: alice.token,
+  body: { kind: "group", memberIds: [bob.userId, carol.userId], title: "Roster" } });
+check("create roster group", mgrp.ok, JSON.stringify(mgrp));
+ca.send({ t: "send", chatId: mgrp.chatId, clientMsgId: "cm-r1", sentAt: Date.now(),
+  body: { v: 1, mode: "skm", c: "Zm9v", senderKeyId: "sk1" } });
+await ca.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-r1");
+
+const rm = await api(`/api/chats/${mgrp.chatId}/members`, { token: alice.token,
+  body: { add: [], remove: [carol.userId] } });
+check("admin removes member", rm.ok, JSON.stringify(rm));
+
+// оставшийся участник догоняет: состав приезжает вместе с хвостом чата
+const cbR = new Client("bob-roster", bob.token);
+await cbR.connect();
+const bobRosterMark = cbR.mark();
+cbR.send({ t: "sync", cursors: { [mgrp.chatId]: 1 } });
+await cbR.waitAfter(bobRosterMark, (f) => f.t === "syncDone");
+const rosterFrame = cbR.frames.slice(bobRosterMark)
+  .find((f) => f.t === "chat" && f.chatId === mgrp.chatId);
+check("catch-up replays the roster", !!rosterFrame?.state, JSON.stringify(rosterFrame ?? null));
+check("replayed roster has the removed member out",
+  !rosterFrame?.state?.members.some((m) => m.userId === carol.userId),
+  JSON.stringify(rosterFrame?.state?.members ?? null));
+cbR.ws.close();
+
+// убранный участник узнаёт об этом при догоне, состав ему не отдаётся
+const ccR = new Client("carol-roster", carol.token);
+await ccR.connect();
+const carolRosterMark = ccR.mark();
+ccR.send({ t: "sync", cursors: { [mgrp.chatId]: 0 } });
+await ccR.waitAfter(carolRosterMark, (f) => f.t === "syncDone");
+const removedFrame = ccR.frames.slice(carolRosterMark)
+  .find((f) => f.t === "chat" && f.chatId === mgrp.chatId);
+check("catch-up tells the removed member", removedFrame?.event === "removed",
+  JSON.stringify(removedFrame ?? null));
+check("removal carries no roster", removedFrame && removedFrame.state === undefined);
+check("removed member gets no history",
+  !ccR.frames.slice(carolRosterMark).some((f) => f.t === "msg" && f.chatId === mgrp.chatId));
+ccR.ws.close();
+
 // 11. delete for all
 ca.send({ t: "delete", chatId: chat.chatId, msgIds: [sent.msgId], forAll: true });
 const del = await cb2.waitFor((f) => f.t === "deleted");

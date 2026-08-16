@@ -430,9 +430,13 @@ export class UserSessionDO implements DurableObject {
       );
       const r = (await res.json()) as {
         ok: boolean; msgs?: Array<Record<string, unknown>>;
-        scanned?: number; lastScannedSeq?: number | null;
+        scanned?: number; lastScannedSeq?: number | null; error?: string;
       };
       if (!r.ok) {
+        // из чата убрали, пока клиент был офлайн: живой chat-фрейм он не
+        // застал, а журнал ему больше не отдаётся — говорим об этом прямо,
+        // иначе чат остался бы у него навсегда
+        if (r.error === "not_member") this.send(ws, { t: "chat", chatId, event: "removed" });
         // чата больше нет — клиенту нечего догонять, курсор остаётся на месте
         this.send(ws, { t: "syncState", chatId, cursor: from, more: false });
         continue;
@@ -467,8 +471,9 @@ export class UserSessionDO implements DurableObject {
     this.send(ws, { t: "syncDone", more: pending });
   }
 
-  /// Tombstones and read/delivered marks of a chat the client has caught up
-  /// with: what happened to already delivered messages while it was offline.
+  /// Roster, tombstones and read/delivered marks of a chat the client has caught
+  /// up with: what happened to the chat itself and to already delivered messages
+  /// while it was offline.
   private async sendChatTail(ws: WebSocket, userId: string, chatId: string) {
     const er = await this.convStub(chatId).fetch(`https://do/events?userId=${userId}`);
     const e = (await er.json()) as {
@@ -476,8 +481,10 @@ export class UserSessionDO implements DurableObject {
       deleted?: Array<{ msgId: string; by: string }>;
       readMarks?: Record<string, number>;
       deliveredMarks?: Record<string, number>;
+      state?: unknown;
     };
     if (!e.ok) return;
+    if (e.state) this.send(ws, { t: "chat", chatId, event: "sync", state: e.state } as ServerFrame);
     for (const d of e.deleted ?? []) {
       this.send(ws, { t: "deleted", chatId, msgIds: [d.msgId], forAll: true, by: d.by });
     }

@@ -485,8 +485,10 @@ export class ConversationDO implements DurableObject {
       }
 
       case "/events": {
-        // тумбстоуны удалённых сообщений и текущие read/delivered-марки —
-        // для доигрывания при sync после офлайна
+        // тумбстоуны удалённых сообщений, текущие read/delivered-марки и состав —
+        // для доигрывания при sync после офлайна. Состав здесь потому, что
+        // chat-фрейм о нём рассылается только живым: тот, кто пропустил уход
+        // участника, иначе так и шифровал бы в цепочку, которая у ушедшего есть
         const viewer = url.searchParams.get("userId");
         if (!(await this.loadMembers()).has(viewer ?? "")) return err("not_member", 403);
         const deleted: Array<{ msgId: string; by: string }> = [];
@@ -498,7 +500,7 @@ export class ConversationDO implements DurableObject {
           (await this.state.storage.get<Record<string, number>>("readMarks")) ?? {};
         const deliveredMarks =
           (await this.state.storage.get<Record<string, number>>("deliveredMarks")) ?? {};
-        return json({ ok: true, deleted, readMarks, deliveredMarks });
+        return json({ ok: true, deleted, readMarks, deliveredMarks, state: await this.chatState() });
       }
 
       case "/unread-count": {
