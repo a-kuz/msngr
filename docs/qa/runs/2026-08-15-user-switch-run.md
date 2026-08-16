@@ -1,7 +1,7 @@
 # Storage owner change: a new registration inherits nothing (#64)
 
 Verification of the fix proposed in
-`docs/qa/runs/2026-08-15-reactions-diagnosis.md`. The local database lives in the
+`docs/qa/runs/2026-08-15-reactions-diagnosis-run.md`. The local database lives in the
 app group container and outlives the account, so once `session.json` disappeared
 the newly registered user opened the previous personality's chats, and its
 reaction landed on top of foreign user ids — that is where reaction counters
