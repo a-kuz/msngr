@@ -278,8 +278,7 @@ struct ChatGalleryView: View {
     /// доезжает до баббла (догрузив историю, если он глубже окна).
     private func showInChat(_ entry: GalleryEntry) {
         Haptics.light()
-        NotificationCenter.default.post(name: .showMessageInChat,
-                                        object: MessageJump(chatId: chatId, msgId: entry.messageId))
+        MessageJump.request(chatId: chatId, msgId: entry.messageId)
     }
 
     // MARK: - Пустые вкладки
@@ -420,14 +419,4 @@ enum WebPresenter {
         safari.preferredControlTintColor = UIColor(Theme.accent)
         top.present(safari, animated: true)
     }
-}
-
-/// Запрос «показать это сообщение в ленте».
-struct MessageJump {
-    let chatId: String
-    let msgId: String
-}
-
-extension Notification.Name {
-    static let showMessageInChat = Notification.Name("showMessageInChat")
 }
