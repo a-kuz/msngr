@@ -17,7 +17,7 @@ with what the check found. Fixes made during that sweep are in
 | 7 | fixed | Read receipts / delete-for-all / recv офлайн: try? ws.send без очереди |
 | 8 | fixed | Sync не реплеит тумбстоуны/read-марки — только msg-фреймы |
 | 9 | fixed | Черновик: onAppear читает chat.draft пока chat nil; onDisappear затирает |
-| 10 | confirmed | expiresAt никогда не применяется — автоудаление не работает |
+| 10 | fixed | expiresAt никогда не применяется — автоудаление не работает |
 | 11 | fixed | identityChanged в группе: outbox blocked, но баннер только для direct |
 | 12 | fixed | Push не шлётся пока жив подвешенный сокет (live.length === 0) |
 | 13 | confirmed | Реакции/edit/skd растят unreadCount — бейдж без сообщения |
@@ -69,7 +69,7 @@ with what the check found. Fixes made during that sweep are in
 9. `ChatScreen.swift:53` — `text = model.chat?.draft` в `onAppear`, но `chat` грузится асинхронно и в этот момент nil; `onDisappear` перезапишет draft пустым.
    2026-08-16: fixed earlier. The draft is filled when the chat arrives, into an empty field only (`ChatScreen.swift:101-115`), and every keystroke persists it (`ChatViewModel.swift:580-601`).
 10. `expiresAt` проставляется входящим (`SyncEngine.swift:337`), но нигде не читается; исходящие без `expiresAt`.
-    2026-08-16: confirmed — the field was written and never read, and outgoing copies were never stamped, so the TTL switch in ChatInfo promised and did nothing. Fix pending.
+    2026-08-16: confirmed — the field was written and never read, and outgoing copies were never stamped, so the TTL switch in ChatInfo promised and did nothing. Fixed on the device: the outgoing copy is stamped when its ack arrives and the historic one when it is pulled, and a sweep takes what expired along with its attachments, closing the seq with a `historyGap` record the way clearing does. The server journal still keeps the envelope — the expiry is this device's, not the conversation's. Tests in `DisappearingTests`.
 11. `SyncEngine.swift:456` ставит outbox `blocked` и для групповых, но `keyChangePending` считается только для direct (`ChatViewModel.swift:106`).
     2026-08-16: confirmed — in a group the block is reachable (a changed key means a new device, so `missing` is non-empty and the distribution goes pairwise) and the banner was direct-only, leaving the send blocked with no action. Fixed: the pending change is read over every member of the chat and accepting covers all of them. Tests `KeyChangeTests.testAcceptCoversEveryMemberOfTheChat`, `testAcceptLeavesOutsidersPending`.
 12. `UserSessionDO.ts:102` — push только при `live.length === 0`; iOS держит WS живым минуты после сворачивания.
