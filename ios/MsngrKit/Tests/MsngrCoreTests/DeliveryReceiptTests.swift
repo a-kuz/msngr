@@ -72,10 +72,12 @@ final class DeliveryReceiptTests: XCTestCase {
 
         await engine.apply(try receipt("read", by: "b", upToSeq: 1))
         await engine.apply(try receipt("delivered", by: "c", upToSeq: 1))
-        XCTAssertEqual(try await status(db, seq: 1), .delivered)
+        let afterOne = try await status(db, seq: 1)
+        XCTAssertEqual(afterOne, .delivered)
 
         await engine.apply(try receipt("read", by: "c", upToSeq: 1))
-        XCTAssertEqual(try await status(db, seq: 1), .read)
+        let afterBoth = try await status(db, seq: 1)
+        XCTAssertEqual(afterBoth, .read)
     }
 
     /// Reading is having received: a read mark alone moves the delivered tick
@@ -87,7 +89,8 @@ final class DeliveryReceiptTests: XCTestCase {
 
         await engine.apply(try receipt("read", by: "b", upToSeq: 1))
 
-        XCTAssertEqual(try await status(db, seq: 1), .read)
+        let read = try await status(db, seq: 1)
+        XCTAssertEqual(read, .read)
         let chat = try await db.read { dbc in try Chat.fetchOne(dbc, key: "c1") }
         XCTAssertEqual(chat?.peerDeliveredUpTo, 1)
     }
@@ -101,8 +104,10 @@ final class DeliveryReceiptTests: XCTestCase {
 
         await engine.apply(try receipt("delivered", by: "b", upToSeq: 1))
 
-        XCTAssertEqual(try await status(db, seq: 1), .delivered)
-        XCTAssertEqual(try await status(db, seq: 2), .sent)
+        let named = try await status(db, seq: 1)
+        let beyond = try await status(db, seq: 2)
+        XCTAssertEqual(named, .delivered)
+        XCTAssertEqual(beyond, .sent)
     }
 
     /// Our own mark from another device says nothing about the peer.
@@ -113,7 +118,8 @@ final class DeliveryReceiptTests: XCTestCase {
 
         await engine.apply(try receipt("read", by: "me", upToSeq: 1))
 
-        XCTAssertEqual(try await status(db, seq: 1), .sent)
+        let unmoved = try await status(db, seq: 1)
+        XCTAssertEqual(unmoved, .sent)
     }
 
     /// Someone joining a group later has no marks of his own, and the ticks
@@ -123,14 +129,16 @@ final class DeliveryReceiptTests: XCTestCase {
         let engine = try makeEngine(db: db)
         try seedChat(db, members: ["b"], seqs: [1])
         await engine.apply(try receipt("read", by: "b", upToSeq: 1))
-        XCTAssertEqual(try await status(db, seq: 1), .read)
+        let given = try await status(db, seq: 1)
+        XCTAssertEqual(given, .read)
 
         try await db.write { dbc in
             try ChatMemberRow(chatId: "c1", userId: "c", role: "member", joinedAt: 5).save(dbc)
             try SyncEngine.applyPeerMarks(dbc, chatId: "c1", ownUserId: "me")
         }
 
-        XCTAssertEqual(try await status(db, seq: 1), .read)
+        let kept = try await status(db, seq: 1)
+        XCTAssertEqual(kept, .read)
         let chat = try await db.read { dbc in try Chat.fetchOne(dbc, key: "c1") }
         XCTAssertEqual(chat?.peerReadUpTo, 1)
     }
