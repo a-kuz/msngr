@@ -366,6 +366,7 @@ struct ChatScreen: View {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("chat.header")
     }
 
     /// Shortens a header string with an ellipsis to the width the principal view has
