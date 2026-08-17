@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Screenshot a simulator with a coordinate grid drawn over it.
+
+A tap is aimed in points, a screenshot is measured in pixels, and mixing the two
+sends the touch to the wrong place — a mistake that reads as "the button does not
+work". This takes the shot, draws the grid in the units a tap actually takes, and
+labels every crossing, so a coordinate can be read off the picture:
+
+    scripts/grid.py <udid>                  # shot + grid, prints the paths
+    scripts/grid.py <udid> --step 40        # coarser grid
+    scripts/grid.py <udid> --tap 201 421    # tap that point, then shoot again
+
+The labelled numbers are what `idb ui tap <udid> X Y` expects.
+"""
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFont
+
+FONT = "/System/Library/Fonts/Supplemental/Arial.ttf"
+INK = (255, 45, 85)
+HALO = (255, 255, 255)
+
+
+def shoot(udid, path):
+    subprocess.run(["xcrun", "simctl", "io", udid, "screenshot", str(path)],
+                   check=True, capture_output=True)
+
+
+def draw_grid(src, dst, step):
+    image = Image.open(src).convert("RGB")
+    # the shot is in pixels, a tap is in points: the ratio is the device scale
+    scale = 3 if image.width >= 1000 else 2
+    points = (image.width // scale, image.height // scale)
+    canvas = ImageDraw.Draw(image, "RGBA")
+    font = ImageFont.truetype(FONT, 11 * scale // 2)
+
+    for x in range(0, points[0] + 1, step):
+        canvas.line([(x * scale, 0), (x * scale, image.height)], fill=(*INK, 60), width=1)
+    for y in range(0, points[1] + 1, step):
+        canvas.line([(0, y * scale), (image.width, y * scale)], fill=(*INK, 60), width=1)
+
+    for x in range(0, points[0] + 1, step):
+        for y in range(0, points[1] + 1, step):
+            label = f"{x},{y}"
+            at = (x * scale + 2, y * scale + 1)
+            for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                canvas.text((at[0] + dx, at[1] + dy), label, font=font, fill=(*HALO, 200))
+            canvas.text(at, label, font=font, fill=(*INK, 255))
+
+    image.save(dst)
+    return points, scale
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("udid")
+    parser.add_argument("--step", type=int, default=40, help="grid step in points")
+    parser.add_argument("--tap", nargs=2, type=int, metavar=("X", "Y"),
+                        help="tap this point (in points) before shooting")
+    parser.add_argument("--out", default=None, help="where to write the grid image")
+    args = parser.parse_args()
+
+    if args.tap:
+        subprocess.run(["idb", "ui", "tap", "--udid", args.udid,
+                        str(args.tap[0]), str(args.tap[1])], check=True)
+
+    out = Path(args.out) if args.out else Path(f"/tmp/grid-{args.udid[:8]}.png")
+    raw = out.with_name(out.stem + "-raw.png")
+    shoot(args.udid, raw)
+    points, scale = draw_grid(raw, out, args.step)
+    print(f"{out}  ({points[0]}x{points[1]} points, @{scale}x, grid every {args.step})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
