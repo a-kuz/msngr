@@ -28,6 +28,9 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     /// свайп от левой кромки: возврат к списку чатов
     var onSwipeBack: (() -> Void)?
 
+    /// Whose feed this is: a group event about this member is worded as "вас".
+    var ownUserId = ""
+
     private(set) var collectionView: UICollectionView!
     private var items: [ChatFeedItem] = []
     private var width: CGFloat = 0
@@ -652,7 +655,7 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
         case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName):
             if msg.kind == .system {
                 let cell = cv.dequeueReusableCell(withReuseIdentifier: "system", for: indexPath) as! SystemCell
-                cell.configure(msg)
+                cell.configure(msg, ownUserId: ownUserId)
                 return cell
             }
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "msg", for: indexPath) as! MessageCell
@@ -690,7 +693,8 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
         case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName):
             if msg.kind == .system {
                 return CGSize(width: cv.bounds.width,
-                              height: FeedNote.height(SystemCell.text(for: msg), width: cv.bounds.width) + 12)
+                              height: FeedNote.height(SystemCell.text(for: msg, ownUserId: ownUserId),
+                                                      width: cv.bounds.width) + 12)
             }
             let plan = BubbleLayout.plan(for: msg, width: cv.bounds.width, tightGap: tightGap,
                                          showTail: showTail, showName: showName, authorName: authorName,
@@ -850,13 +854,16 @@ final class SystemCell: UICollectionViewCell {
     static let unreadableText = "Сообщение ещё не загружено"
     static let historyStartText = "История начинается здесь"
 
-    static func text(for msg: Message) -> String {
+    static func text(for msg: Message, ownUserId: String = "") -> String {
         let t = msg.text ?? ""
+        if let event = GroupEvent.decode(t) {
+            return event.sentence(isOwn: msg.isOutgoing, ownUserId: ownUserId)
+        }
         return t.hasPrefix("identity_changed:") ? "Код безопасности собеседника изменился" : t
     }
 
-    func configure(_ msg: Message) {
-        configure(text: Self.text(for: msg))
+    func configure(_ msg: Message, ownUserId: String = "") {
+        configure(text: Self.text(for: msg, ownUserId: ownUserId))
     }
 
     func configure(text: String) {

@@ -42,6 +42,8 @@ final class ChatViewModel: ObservableObject {
     @Published var chat: Chat?
     @Published var peer: User?
     @Published var members: [User] = []
+    /// My role in this chat; nil while it is being read or once I am out of it.
+    @Published var myRole: String?
     /// The feed is inverted: [0] is the newest item.
     @Published var feed: [ChatFeedItem] = []
     @Published private(set) var typingUsers: [String] = []
@@ -83,6 +85,7 @@ final class ChatViewModel: ObservableObject {
         let chat: Chat?
         let msgs: [Message]
         let users: [User]
+        let myRole: String?
         let unreadableSeqs: [Int]
         let atHistoryStart: Bool
         /// TOFU: the peer's identity key changed and was not accepted yet.
@@ -231,8 +234,11 @@ final class ChatViewModel: ObservableObject {
                 WHERE changedPending IS NOT NULL AND userId IN (\(databaseQuestionMarks(count: peers.count))))
                 """, arguments: StatementArguments(peers)) ?? false
         }
+        let myRole = try String.fetchOne(
+            dbc, sql: "SELECT role FROM member WHERE chatId = ? AND userId = ?",
+            arguments: [chatId, ownId])
         return Snapshot(
-            chat: chat, msgs: msgs, users: users,
+            chat: chat, msgs: msgs, users: users, myRole: myRole,
             unreadableSeqs: try HistoryWindow.exhaustedGapSeqs(dbc, chatId: chatId, floor: floor),
             atHistoryStart: try !HistoryWindow.hasOlder(dbc, chatId: chatId, floor: floor),
             keyChangePending: keyChangePending)
@@ -241,6 +247,7 @@ final class ChatViewModel: ObservableObject {
     private func apply(_ snapshot: Snapshot, ownId: String) {
         chat = snapshot.chat
         members = snapshot.users
+        myRole = snapshot.myRole
         peer = snapshot.users.first { $0.id != ownId }
         askPresence()
         updateUnreadMarker(chat: snapshot.chat, msgs: snapshot.msgs)
@@ -507,6 +514,33 @@ final class ChatViewModel: ObservableObject {
             for: Date(timeIntervalSince1970: lastSeen), relativeTo: now)
     }
 
+    // MARK: - Rights
+
+    private var kind: ChatKind { chat?.kind ?? .direct }
+
+    /// Whether this chat takes my messages at all. A group whose rights are set
+    /// to admins is read-only for everyone else, and the input field gives way
+    /// to a note instead of standing there disabled.
+    var canSend: Bool {
+        ChatPermissions.canSend(kind: kind, role: myRole,
+                                sendPolicy: chat?.sendPolicy ?? ChatPermissions.openPolicy)
+    }
+
+    /// My own display name, as the other members see it: it goes into the group
+    /// events I publish.
+    var ownDisplayName: String {
+        members.first { $0.id == ownUserId }?.displayName ?? ""
+    }
+
+    /// Publishes a group event from me. Service content: no unread, no push, a
+    /// system line in the feed.
+    func announce(_ verb: GroupEvent.Verb, member: String? = nil, memberId: String? = nil,
+                  text: String? = nil) {
+        let event = GroupEvent(verb: verb, actor: ownDisplayName, member: member,
+                               memberId: memberId, text: text)
+        Task { [chatId] in await app.engine?.announce(event, chatId: chatId) }
+    }
+
     // MARK: - Actions
 
     /// Puts content into the send queue. The queue is local and the network plays
@@ -672,10 +706,18 @@ final class ChatViewModel: ObservableObject {
     }
 
     /// Deleting the chat: the screen closes and the chat leaves the device.
+    /// Leaving a group is announced first and the announcement is waited for:
+    /// once the membership is gone the server refuses the frame, and the others
+    /// would never learn who left.
     func deleteChat() {
+        let leaving = chat?.kind == .group
+        let event = GroupEvent(verb: .left, actor: ownDisplayName)
         stop()
         NotificationCenter.default.post(name: .chatDeleted, object: chatId)
-        Task { [chatId] in await app.engine.deleteChat(chatId: chatId) }
+        Task { [chatId] in
+            if leaving { await app.engine?.announce(event, chatId: chatId, waitForSend: true) }
+            await app.engine.deleteChat(chatId: chatId)
+        }
     }
 
     /// Rejecting a request: the sender is blocked, the chat and its messages are

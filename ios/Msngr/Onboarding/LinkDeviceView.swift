@@ -91,11 +91,9 @@ struct LinkDeviceView: View {
             Button {
                 Task { await finish() }
             } label: {
-                Text("Войти").bold()
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity).frame(height: 48)
-                    .background(Theme.accent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                Text("Войти")
             }
+            .buttonStyle(.primaryAction)
             .accessibilityIdentifier("link.confirm")
             Button("Отмена") { cancelPending(); dismiss() }
                 .font(.footnote)

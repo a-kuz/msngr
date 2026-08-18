@@ -402,6 +402,13 @@ public enum AppDatabase {
             // table, so the cost of an answer grows with the size of the chat.
             try db.create(indexOn: "message", columns: ["clientMsgId"])
         }
+        m.registerMigration("v19-chatPolicies") { db in
+            for column in ["sendPolicy", "invitePolicy"] {
+                try db.alter(table: "chat") { t in
+                    t.add(column: column, .text).notNull().defaults(to: ChatPermissions.openPolicy)
+                }
+            }
+        }
         return m
     }
 }
