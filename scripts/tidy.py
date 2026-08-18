@@ -182,8 +182,10 @@ def idle_booted(agents, working):
         idle = app_quiet_for(dev["udid"])
         if idle < IDLE_BOOT:
             continue
+        # a simulator our app has never been installed on has no quiet time to name
+        quiet = "app never ran" if idle == float("inf") else f"app quiet for {int(idle / 60)}m"
         out.append({"what": f"simulator {dev['name']}", "bytes": 0,
-                    "why": f"{note}, app quiet for {int(idle / 60)}m",
+                    "why": f"{note}, {quiet}",
                     "verb": ("shut down", "would shut down"),
                     "do": lambda u=dev["udid"]: subprocess.run(
                         ["xcrun", "simctl", "shutdown", u], capture_output=True)})
