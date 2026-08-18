@@ -100,6 +100,13 @@ Counts hold on both: how many queries a screen makes, how many rows it reads,
 how many times a cell is rebuilt do not change with the machine, and an
 improvement shown in those is an improvement everywhere.
 
+Aiming a tap: `scripts/grid.py <udid>` takes a screenshot and draws a coordinate
+grid over it, labelled in the units a tap actually takes. `idb ui tap` counts in
+points, a screenshot is in pixels, and passing one for the other sends the touch
+to empty space — which reads as "the button does not work" and has already cost
+an afternoon of chasing a defect that was not there. Read the coordinate off the
+picture, and use `--tap X Y` to tap and re-shoot in one step.
+
 - Do not touch the owner's simulators: `44CE2242-EBB9-48EA-A605-5988A00E4C31`
   (iPhone 17 dev) and `0E0CF155-B4B7-4794-A963-AD7C76EFDCEA` (iPhone 17 Pro Max).
   They are handed out only on an explicit exclusive reservation.
