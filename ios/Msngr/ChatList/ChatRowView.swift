@@ -182,21 +182,21 @@ struct DoubleTick: View {
 
 /// An avatar: a photo, or initials on a gradient, with an online dot.
 ///
-/// The picture comes through `AvatarCache`: the blob endpoint is authenticated,
-/// so a bare URL load answers 401, and the cache keeps the file the notification
-/// extension needs anyway.
+/// The picture comes from `AvatarCache`, not straight off the URL: the blob
+/// sits behind the device token, and the file the cache leaves in the app group
+/// is the one the notification extension shows as well.
 struct AvatarView: View {
     let name: String
     let avatarId: String?
     var online: Bool = false
-    @State private var photo: UIImage?
+    @State private var image: UIImage?
 
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .bottomTrailing) {
                 Group {
-                    if let photo {
-                        Image(uiImage: photo).resizable().scaledToFill()
+                    if let image {
+                        Image(uiImage: image).resizable().scaledToFill()
                     } else {
                         initialsView
                     }
@@ -214,19 +214,11 @@ struct AvatarView: View {
             }
         }
         .animation(Theme.springFast, value: online)
-        .task(id: avatarId) { await loadPhoto() }
-    }
-
-    private func loadPhoto() async {
-        photo = nil
-        guard let avatarId, !avatarId.isEmpty else { return }
-        if let cached = AvatarCache.shared.cachedFile(avatarId) {
-            photo = UIImage(contentsOfFile: cached.path)
-            return
+        .task(id: avatarId) {
+            image = nil
+            guard let avatarId else { return }
+            image = await AvatarImageLoader.shared.image(avatarId)
         }
-        guard let api = AppState.shared.api,
-              let file = await AvatarCache.shared.ensure(avatarId, api: api) else { return }
-        photo = UIImage(contentsOfFile: file.path)
     }
 
     private var gradientColors: [Color] {
