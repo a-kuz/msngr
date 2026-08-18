@@ -93,6 +93,8 @@ final class ChatViewModel: ObservableObject {
     private var typingTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
     private var typing = TypingState()
+    private var presenceTask: Task<Void, Never>?
+    private var presenceAsked = false
     private var typingExpiryTask: Task<Void, Never>?
     private let app = AppState.shared
     var ownUserId: String { app.session?.userId ?? "" }
@@ -118,6 +120,9 @@ final class ChatViewModel: ObservableObject {
                     // what arrived in the background is already on screen, so send
                     // the read receipt now instead of waiting for the next db change
                     self.markVisibleRead()
+                    // presence transitions that happened while the app was away
+                    // never reached this device
+                    self.askPresence(force: true)
                 }
                 self.rebuildFeed()
             }
@@ -237,6 +242,7 @@ final class ChatViewModel: ObservableObject {
         chat = snapshot.chat
         members = snapshot.users
         peer = snapshot.users.first { $0.id != ownId }
+        askPresence()
         updateUnreadMarker(chat: snapshot.chat, msgs: snapshot.msgs)
         lastMsgs = snapshot.msgs
         unreadableSeqs = snapshot.unreadableSeqs
@@ -269,6 +275,24 @@ final class ChatViewModel: ObservableObject {
         typingUsers = []
         connectionTask?.cancel()
         connectionTask = nil
+        presenceTask?.cancel()
+        presenceTask = nil
+        presenceAsked = false
+    }
+
+    /// Where the peer is right now. Presence arrives as a transition, so a device
+    /// that was not connected when the peer came online holds a row that says
+    /// «был(а)» while the peer is reading. The chat asks once when it opens and
+    /// again when the app comes back to the screen.
+    private func askPresence(force: Bool = false) {
+        guard chat?.kind == .direct, let peerId = peer?.id else { return }
+        if presenceAsked && !force { return }
+        presenceAsked = true
+        presenceTask?.cancel()
+        presenceTask = Task { [weak self] in
+            guard let engine = self?.app.engine else { return }
+            await engine.refreshPresence(of: [peerId])
+        }
     }
 
     // MARK: - Unread banner
