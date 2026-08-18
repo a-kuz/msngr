@@ -378,11 +378,12 @@ struct ChatScreen: View {
     /// Shortens a header string with an ellipsis to the width the principal view has
     /// (the screen minus the bar buttons, the avatar and the padding).
     private static func fitted(_ s: String, font: UIFont) -> String {
-        // the principal view is centred, so a bar button costs it twice; the
-        // avatar and the gap after it come off what is left
-        let barButton: CGFloat = 44 + 16
+        // the bar keeps 16pt outside a 44pt button and the principal view is
+        // centred, so that side costs it twice; 20pt more keeps the title clear
+        // of the button's glass, and the avatar with its gap comes off the rest
+        let side: CGFloat = 16 + 44 + 20
         let avatar: CGFloat = 34 + 8
-        let maxWidth = UIScreen.main.bounds.width - barButton * 2 - avatar
+        let maxWidth = UIScreen.main.bounds.width - side * 2 - avatar
         guard s.size(withAttributes: [.font: font]).width > maxWidth else { return s }
         var t = s
         while !t.isEmpty, (t + "…").size(withAttributes: [.font: font]).width > maxWidth {
