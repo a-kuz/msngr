@@ -15,6 +15,9 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     var onReply: ((Message) -> Void)?
     var onReact: ((Message, String) -> Void)?
     var onContextAction: ((Message, MessageContextAction) -> Void)?
+    /// The message the chat holds pinned, so the context menu of that one offers
+    /// to take the pin off instead of putting it on again.
+    var pinnedMsgId: String?
     var onTapMedia: ((Message, Int, UIView) -> Void)?
     /// Tap on the quote inside a reply bubble, which jumps to the original.
     var onTapReplyQuote: ((Message) -> Void)?
@@ -440,6 +443,9 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         cell.onTapLink = { [weak self] url in self?.open(url) }
         cell.onTapReplyQuote = { [weak self] in self?.onTapReplyQuote?(msg) }
         cell.onToggleSelection = { [weak self] in self?.onToggleSelection?(msg) }
+        // asked when the menu opens, not when the cell is filled: pinning changes
+        // the chat, not the message, so no cell is reconfigured for it
+        cell.isPinned = { [weak self] in self?.pinnedMsgId == msg.msgId }
         cell.setSelection(mode: selectionMode, selected: selectedIds.contains(msg.id), animated: false)
     }
 
@@ -617,7 +623,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
 }
 
 enum MessageContextAction {
-    case reply, copy, forward, select, edit, pin, delete
+    case reply, copy, forward, select, edit, pin, unpin, delete
 }
 
 extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
