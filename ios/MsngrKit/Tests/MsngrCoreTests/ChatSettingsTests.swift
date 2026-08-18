@@ -76,10 +76,23 @@ final class ChatSettingsTests: XCTestCase {
         XCTAssertFalse(ChatPermissions.canRemoveMembers(kind: .group, role: "member"))
         XCTAssertFalse(ChatPermissions.canRemoveMembers(kind: .direct, role: "admin"))
 
-        XCTAssertTrue(ChatPermissions.canAddMembers(kind: .group, role: "admin"))
-        XCTAssertFalse(ChatPermissions.canAddMembers(kind: .group, role: "member"))
-        XCTAssertTrue(ChatPermissions.canAddMembers(kind: .group, role: "member", onlySelf: true))
-        XCTAssertFalse(ChatPermissions.canAddMembers(kind: .direct, role: "admin"))
+        XCTAssertTrue(ChatPermissions.canInvite(kind: .group, role: "admin", invitePolicy: "all"))
+        XCTAssertTrue(ChatPermissions.canInvite(kind: .group, role: "member", invitePolicy: "all"))
+        XCTAssertFalse(ChatPermissions.canInvite(kind: .direct, role: "admin", invitePolicy: "all"))
+    }
+
+    func testInvitingLockedToAdmins() {
+        XCTAssertTrue(ChatPermissions.canInvite(kind: .group, role: "admin", invitePolicy: "admins"))
+        XCTAssertFalse(ChatPermissions.canInvite(kind: .group, role: "member", invitePolicy: "admins"))
+        XCTAssertFalse(ChatPermissions.canInvite(kind: .group, role: nil, invitePolicy: "all"))
+    }
+
+    func testWritingUnderTheSendPolicy() {
+        XCTAssertTrue(ChatPermissions.canSend(kind: .group, role: "member", sendPolicy: "all"))
+        XCTAssertFalse(ChatPermissions.canSend(kind: .group, role: "member", sendPolicy: "admins"))
+        XCTAssertTrue(ChatPermissions.canSend(kind: .group, role: "admin", sendPolicy: "admins"))
+        // a direct chat has no roles to check
+        XCTAssertTrue(ChatPermissions.canSend(kind: .direct, role: nil, sendPolicy: "admins"))
     }
 
     func testAdminsAndLeave() {
