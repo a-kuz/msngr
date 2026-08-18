@@ -119,14 +119,18 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ the «непрочитанное/непрочитанных сообщение/сообщения/сообщений» declension (units + a run)
   - 🟡 the banner's disappearance animation (not captured frame by frame)
 - The header and the bars
-  - ✅ a pinned message as a bar on top (design-review 03b)
+  - ✅ a pinned message as a bar on top, its tap flashing the message, «Открепить»
+    over the pinned one (design-review 03b; header-run)
   - ✅ an empty chat: «Напишите первое сообщение» and the encryption note (palettes/chat-empty-hint)
-  - 🟡 the subtitle: «подключение…», «печатает…», «в сети», «был(а)…» (not verified live)
-  - 🟡 tapping the pinned message scrolls to it (not verified live)
+  - ✅ the subtitle: «подключение…», «печатает…», «в сети», «был(а)…», «N участников»
+    (header-run, two devices)
+  - 🟡 tapping the pinned message scrolls to it (in the window: header-run; older
+    than the window waits for run-feedwindow)
 - Input
   - ✅ a growing field, the attachment menu «Фото или видео» / «Файл» (design-review 04, 05a)
   - ✅ a draft survives leaving the chat and a kill (offline-run 5)
-  - 🟡 the reply strip and the edit mode above the field (not verified live)
+  - ✅ the reply strip and the edit mode above the field, cancel returning the
+    draft (header-run)
   - ⬜ pasting an image from the clipboard
   - ⬜ mentions and autocomplete
 
