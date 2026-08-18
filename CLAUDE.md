@@ -264,6 +264,11 @@ version, `migrations` in `wrangler.jsonc`. The details are in `docs/PROCESS.md`.
   group unread until the owner reported it from the outside. A symptom found
   in passing goes into `docs/qa/defects.md` and into the report, even when the
   test is already green.
+- A defect reported by the owner is never answered with "that was out of
+  scope" or "nobody logged it". Scope divides the work, not the
+  responsibility: the end goal of every run is the quality of the product as a
+  whole, and the only right first response to a report is to investigate it —
+  who should have caught it is settled after, in process, not in the reply.
 - Commits and PRs without `Co-Authored-By`.
 - Everything in the repository is in English: comments, commit messages,
   documentation, run reports. Comments describe only the current behaviour;
