@@ -98,8 +98,8 @@ enum Palette: String, CaseIterable, Identifiable {
     }
 
     /// Label on a filled accent control. Every accent here is dark enough to
-    /// carry white except the graphite orange, which needs a dark label to stay
-    /// legible.
+    /// carry white except the graphite orange, where white holds only 2.9:1;
+    /// the dark label on it holds 6.0:1.
     var accentLabel: Color {
         switch self {
         case .imessage, .telegram: return .white
@@ -337,8 +337,9 @@ enum Theme {
     static var controlFill: Color { palette.accent }
     static var controlLabel: Color { palette.accentLabel }
     /// A control that cannot be used yet is a neutral surface rather than a
-    /// pale accent: the accent at 40% left its white label a contrast around
-    /// 1.5:1, and the button read as painted over rather than as waiting.
+    /// pale accent: the accent at 40% left its white label 1.4:1 in the light
+    /// appearance, and the button read as painted over rather than as waiting.
+    /// These greys hold 5.3:1 light and 5.1:1 dark.
     static var controlFillDisabled: Color {
         Color(light: Color(white: 0.88), dark: Color(white: 0.24))
     }
