@@ -197,6 +197,74 @@ final class DeliveryReceiptTests: XCTestCase {
         XCTAssertEqual(pending.first?.upToSeq, 2)
     }
 
+    // MARK: - A mark that never arrived
+
+    private func state(lastSeq: Int, read: [String: Int], delivered: [String: Int],
+                       accepted: Bool = true) -> ChatStateDTO {
+        ChatStateDTO(
+            chatId: "c1", kind: "direct", title: nil, avatarId: nil, description: nil,
+            createdBy: "peer", createdAt: 1, members: [
+                .init(userId: "peer", role: "member", joinedAt: 1, accepted: true),
+                .init(userId: "me", role: "member", joinedAt: 1, accepted: accepted),
+            ],
+            pinnedMsgId: nil, lastSeq: lastSeq, readMarks: read, deliveredMarks: delivered)
+    }
+
+    /// The read went out on a socket that was already dying, so the server never
+    /// heard it. The next snapshot says so, and the mark is queued again.
+    func testSnapshotRequeuesAMarkTheServerNeverHeard() throws {
+        let db = try AppDatabase.openInMemory()
+        try db.write { dbc in
+            try SyncEngine.upsertChatState(dbc, state(lastSeq: 5, read: [:], delivered: [:]),
+                                           ownUserId: "me", flags: nil)
+            try dbc.execute(sql: "UPDATE chat SET myReadUpTo = 5, syncedSeq = 5 WHERE id = 'c1'")
+            try SyncEngine.upsertChatState(dbc, state(lastSeq: 5, read: [:], delivered: [:]),
+                                           ownUserId: "me", flags: nil)
+        }
+
+        let queued = try db.read { dbc in
+            try Row.fetchAll(dbc, sql: "SELECT type, payload FROM pendingAction ORDER BY type")
+        }
+        XCTAssertEqual(queued.map { $0["type"] as String }, ["read", "recv"])
+        for row in queued {
+            XCTAssertTrue((row["payload"] as String).contains("5"), "the mark carries where this device stands")
+        }
+    }
+
+    /// The server is level with this device: there is nothing to say again.
+    func testSnapshotQueuesNothingWhenTheServerIsLevel() throws {
+        let db = try AppDatabase.openInMemory()
+        try db.write { dbc in
+            try SyncEngine.upsertChatState(dbc, state(lastSeq: 5, read: ["me": 5], delivered: ["me": 5]),
+                                           ownUserId: "me", flags: nil)
+            try dbc.execute(sql: "UPDATE chat SET myReadUpTo = 5, syncedSeq = 5 WHERE id = 'c1'")
+            try SyncEngine.upsertChatState(dbc, state(lastSeq: 5, read: ["me": 5], delivered: ["me": 5]),
+                                           ownUserId: "me", flags: nil)
+        }
+
+        let count = try db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingAction")
+        }
+        XCTAssertEqual(count, 0)
+    }
+
+    /// A request this device has not accepted owes nothing, and a repair must
+    /// not become the one thing that tells its author he was heard.
+    func testSnapshotQueuesNothingForARequest() throws {
+        let db = try AppDatabase.openInMemory()
+        try db.write { dbc in
+            let s = state(lastSeq: 5, read: [:], delivered: [:], accepted: false)
+            try SyncEngine.upsertChatState(dbc, s, ownUserId: "me", flags: nil)
+            try dbc.execute(sql: "UPDATE chat SET myReadUpTo = 5, syncedSeq = 5 WHERE id = 'c1'")
+            try SyncEngine.upsertChatState(dbc, s, ownUserId: "me", flags: nil)
+        }
+
+        let count = try db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingAction")
+        }
+        XCTAssertEqual(count, 0)
+    }
+
     /// A request nobody accepted tells its author nothing, not even that his
     /// message arrived.
     func testBurstQueuesNothingForARequest() throws {

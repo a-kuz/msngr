@@ -375,6 +375,12 @@ a push with no app running. The receipt is written down before it is sent, so an
 extension the system kills leaves it queued and the app sends it on its next
 connection.
 
+Every chat state carries where the server thinks each member stands, including
+the reader itself, so a mark that never arrived is queued again on the next
+snapshot: a frame handed to a socket that is already dying goes nowhere and
+reports no error, and without the comparison the author would keep a tick that
+never moves.
+
 The tick the author sees speaks for the whole chat: it turns delivered when the
 member furthest behind has the message, and read when the last of them has read
 it. In a direct chat that is the peer; in a group of three both members have to
