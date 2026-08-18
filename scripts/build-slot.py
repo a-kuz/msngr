@@ -18,7 +18,7 @@ import sys
 import time
 from pathlib import Path
 
-SLOTS = int(os.environ.get("MSNGR_BUILD_SLOTS") or 2)
+SLOTS = int(os.environ.get("MSNGR_BUILD_SLOTS") or 3)
 DIR = Path.home() / ".msngr-build-slots"
 REPORT_EVERY = 30
 
