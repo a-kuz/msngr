@@ -49,9 +49,12 @@ answers on :8787; the rest of the tests need no server.
 ## The gate before delivery
 
 `make check` at the root: `xcodegen` → build → `swift test` → MsngrTests →
-MsngrUITests → the server smoke test → collecting fresh simulator crashes (a
-fresh crash fails the gate). The UI tests and the smoke test need `wrangler dev`
-running.
+the server smoke test → collecting fresh simulator crashes (a fresh crash
+fails the gate). The smoke test needs `wrangler dev` running.
+
+The UI smoke is a separate target — `make uicheck DEV_UDID=<yours>` — run when
+the change touches the UI layer, on your own simulator. It is outside the gate
+because its reds have almost always been the host, not the code.
 
 The Makefile builds on the owner's simulator by default, so an agent runs the
 gate with its own:
