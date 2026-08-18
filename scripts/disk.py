@@ -50,7 +50,7 @@ SNAPSHOT = ROOT / ".claude" / "disk.json"
 KEEP_DEVICES = {
     "44CE2242-EBB9-48EA-A605-5988A00E4C31": "owner",
     "0E0CF155-B4B7-4794-A963-AD7C76EFDCEA": "owner",
-    "74B78AFC-E8D7-4317-B16F-E51A65504B2D": "gate",
+    "14C70E21-A23A-4492-8E6A-113AE0BC6B6D": "gate",
 }
 SHARED_STAND = ROOT / "server" / ".wrangler"
 DEVICES = HOME / "Library" / "Developer" / "CoreSimulator" / "Devices"
