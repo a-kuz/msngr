@@ -137,12 +137,13 @@ def stale_simulators(agents, working):
         if time.time() - home.stat().st_ctime < SETTLE:
             continue
         if note.endswith(", gone"):
-            # The registry named this agent and the agent has finished. Nothing
-            # else has to agree: an abandoned app keeps writing for as long as
-            # the simulator is up — one left a trace file ticking every second
-            # hours after its agent was gone — so waiting for quiet here would
-            # be waiting forever.
-            why = f"agent {note.split()[1].rstrip(',')} is gone"
+            # The registry still names this agent, and a named agent is only
+            # paused, never gone: `claude -p` exits between resumes, so an
+            # absent process proves nothing. Its simulators were once deleted
+            # in such a pause and the resumed agent came back to nothing. The
+            # devices are taken when the orchestrator strikes the name from
+            # .claude/agents.tsv, not before.
+            continue
         else:
             # Nobody claims this name at all, which is also what an agent that
             # never registered looks like. Its app would still be writing.
