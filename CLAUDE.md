@@ -83,6 +83,30 @@ make check DEV_UDID=74B78AFC-E8D7-4317-B16F-E51A65504B2D   # gate-runner
 
 A simulator is an exclusive resource: at any moment it belongs to one agent.
 
+A simulator reads speed in one direction only. It does not emulate a phone: the
+same arm64 code runs natively on the host, over the host's memory and its NVMe,
+so "iPhone 13" there is a screen size and a system version and nothing else.
+
+Slow on the simulator is a verdict. A screen that stutters on an M4 Pro stutters
+on every phone we ship to, and it needs no device to be believed — a 27-second
+frame, a 5-second query, a jump that freezes the feed is a defect the moment it
+is seen. Fix it and say so.
+
+Fast on the simulator proves nothing, and closes no performance line in the
+ROADMAP: the host has memory and a disk the phone does not. Only a device says
+what a frame costs.
+
+Counts hold on both: how many queries a screen makes, how many rows it reads,
+how many times a cell is rebuilt do not change with the machine, and an
+improvement shown in those is an improvement everywhere.
+
+Aiming a tap: `scripts/grid.py <udid>` takes a screenshot and draws a coordinate
+grid over it, labelled in the units a tap actually takes. `idb ui tap` counts in
+points, a screenshot is in pixels, and passing one for the other sends the touch
+to empty space — which reads as "the button does not work" and has already cost
+an afternoon of chasing a defect that was not there. Read the coordinate off the
+picture, and use `--tap X Y` to tap and re-shoot in one step.
+
 - Do not touch the owner's simulators: `44CE2242-EBB9-48EA-A605-5988A00E4C31`
   (iPhone 17 dev) and `0E0CF155-B4B7-4794-A963-AD7C76EFDCEA` (iPhone 17 Pro Max).
   They are handed out only on an explicit exclusive reservation.
