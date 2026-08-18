@@ -29,7 +29,7 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ the avatar in chats and in the list, live to the peer and kept across a restart
     (qa/runs/2026-08-17-profile)
   - ✅ the username can be changed; the old one is released in the same statement
-    (smoke `username change`, qa/runs/2026-08-17-profile)
+    (smoke `username changed`, `the old handle is free`, qa/runs/2026-08-17-profile)
   - ⬜ a card change on a device of the same account (one device per account was run)
 - Sign-in and devices
   - ✅ logout: the device token is invalidated, local data is wiped
