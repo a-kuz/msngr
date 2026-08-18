@@ -184,8 +184,21 @@ A ✅ goes in only together with a link to the evidence.
 - Optimistic send
   - ✅ the message appears before the network, with the clock status (offline-run 1–3)
   - ✅ statuses: sent → delivered → read (media-run, case 32)
+  - ✅ read only while the recipient is in front of the message: not from the
+    chat list, not from the background, not with the feed scrolled up, and at
+    once when it arrives with the reader at the end (receipts-run)
+  - ✅ the tick of a group waits for the member furthest behind, in a group of
+    three (receipts-run)
+  - ✅ a mark the server never heard is queued again from the chat state, so a
+    receipt lost into a dying socket still arrives (receipts-run, `DeliveryReceiptTests`)
+  - 🟡 the receipt from the notification extension, with the app not running:
+    `POST /api/chats/:id/recv` and the queue behind it (integration test
+    `testDeliveredReceiptWithoutASocket`, smoke `rest recv …`; the extension
+    itself needs a device, `simctl push` does not launch it)
   - ✅ idempotency by clientMsgId (smoke `idempotent resend same seq`)
   - ✅ the ack right after the seq is assigned, before the fanout and the push (smoke `ack precedes push`, `ack while apns still hanging`)
+  - ✅ «не отправлено» when the server refuses the send, and «Отправить заново»
+    repeating the message from the payload it was written with (receipts-run)
   - 🟡 the «не отправлено» status once the attempts are spent (not verified live)
 - Fanout
   - ✅ an alarm queue in ConversationDO: the cursor in storage, batches, retry until exhausted (smoke `fanout is queued, not inline`, `queue replays the whole burst`, `queue drains to empty cursor`)
@@ -195,7 +208,8 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ text, photo, voice offline → delivery after a reconnect (offline-run 1–3)
   - ✅ killing the app with something unsent: the message is still there and goes out (offline-run 4)
   - ✅ a reaction offline (offline-run 6)
-  - 🟡 the service action queue: read marks, delete-for-all, accept (units, not verified live)
+  - ✅ the service action queue: read marks and accept (receipts-run)
+  - 🟡 the service action queue: delete-for-all (units, not verified live)
   - 🟡 media: the source in a permanent folder, uploaded by the worker (partly covered by offline-run 2–3)
 - The connection
   - ✅ reconnect with backoff and a ceiling of 12 s (ReconnectBackoffTests units)
@@ -528,6 +542,9 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 
 - 🟡 registration, the chat list, the chat, sending text (not verified live)
 - 🟡 reactions and deleting a message (not verified live)
+- 🟡 the read mark under the same conditions as on iOS — the window has focus,
+    the feed is at its end, the content is not held back (in the code, not
+    verified live: the check needs the host screen)
 - ⬜ sending and viewing media
 - ⬜ voice messages
 - ⬜ notifications
