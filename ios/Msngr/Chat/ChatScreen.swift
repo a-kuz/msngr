@@ -342,7 +342,10 @@ struct ChatScreen: View {
             HStack(spacing: 8) {
                 AvatarView(name: model.headerTitle,
                            avatarId: model.chat?.kind == .group ? model.chat?.avatarId : model.peer?.avatarId,
-                           online: model.peer?.online ?? false)
+                           // with no connection presence is stale, and the
+                           // subtitle already says so: the dot must not go on
+                           // claiming the peer is there
+                           online: model.connected && (model.peer?.online ?? false))
                     // the back chevron leads the header, so the avatar stays under it
                     .frame(width: 34, height: 34)
                 VStack(alignment: .leading, spacing: 0) {
