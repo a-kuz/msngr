@@ -81,18 +81,22 @@ enum Palette: String, CaseIterable, Identifiable {
     /// Timestamp and unread ticks on an outgoing bubble.
     var outgoingMeta: Color {
         switch self {
-        case .imessage: return Color.white.opacity(0.75)
+        case .imessage: return Color.white.opacity(0.65)
         case .telegram: return Color(light: Color(red: 0.28, green: 0.47, blue: 0.36),
                                      dark: Color(red: 0.55, green: 0.75, blue: 0.63))
         case .graphite: return Color(red: 0.78, green: 0.80, blue: 0.92)
         }
     }
 
-    /// Read tick on an outgoing bubble.
+    /// Read tick on an outgoing bubble. Colour is the only thing that separates a
+    /// read message from a delivered one, so it carries a hue of its own rather
+    /// than a brighter shade of the meta colour: against a blue or a green bubble
+    /// a lighter version of the same green reads as the same tick.
     var outgoingTickRead: Color {
         switch self {
-        case .imessage: return .white
-        case .telegram: return Color(red: 0.13, green: 0.59, blue: 0.42)
+        case .imessage: return Color(red: 0.42, green: 0.93, blue: 1.0)
+        case .telegram: return Color(light: Color(red: 0.05, green: 0.45, blue: 0.82),
+                                     dark: Color(red: 0.45, green: 0.85, blue: 1.0))
         case .graphite: return Color(red: 1.0, green: 0.73, blue: 0.35)
         }
     }
