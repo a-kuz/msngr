@@ -14,7 +14,8 @@ list shows. Code reading points at `ConversationDO`: the counting mark
 group event still bumps `lastSeq`, so the server-side unread — and the badge
 built from it — grows by a frame the client never shows. Groups feel it most:
 membership events are frequent. Unverified live; needs a reproducing check in
-the server smoke first.
+the server smoke first. Assigned to the receipts run: red smoke check first,
+then the fix.
 
 ### Bubble resize on a reaction change is not animated
 Reported 2026-08-18. Adding or removing a reaction snaps the bubble to its new
