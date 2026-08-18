@@ -75,6 +75,22 @@ where the server thinks each member stands, including the reader itself. The mar
 the server never heard is queued again from there: `readMarks` moved to 23 and
 the tick on A turned amber, with nothing touched on either side.
 
+## The gate
+
+`make check DEV_UDID=74B78AFC…` green: build, `swift test` (321 tests, three
+benchmarks skipped), MsngrTests, the UI smoke (5 of 5), the server smoke
+(`ALL PASS`, including six checks of the REST receipt), no fresh crashes.
+
+It took three attempts to get there, and the first two were red for a reason
+worth writing down. The gate runner is shared, and its database keeps whatever
+migrations the last agent's build applied. A build that does not know the newest
+of them refuses to open the file and shows «Приложение устарело» instead of the
+chat list, so every UI test dies on a screen that has no chats: the failure
+wandered between cases («no user search field», «the chat list never opened»)
+and looked like flakiness. `simctl uninstall ai.enface.Msngr` on the gate runner
+before the gate clears it; the UI tests register their own user, and the fixture
+they need lives on the shared stand, not on the device.
+
 ## What the run did not cover
 
 The receipt from the notification extension — two ticks on delivery to a device

@@ -57,8 +57,16 @@ The Makefile builds on the owner's simulator by default, so an agent runs the
 gate with its own:
 
 ```bash
+xcrun simctl uninstall 74B78AFC-E8D7-4317-B16F-E51A65504B2D ai.enface.Msngr
 make check DEV_UDID=74B78AFC-E8D7-4317-B16F-E51A65504B2D   # gate-runner
 ```
+
+The uninstall first because the gate runner is shared and its database keeps the
+migrations of whichever build ran last. A branch that does not know the newest of
+them leaves the file closed and shows «Приложение устарело» in place of the chat
+list, and then every UI test fails on a screen with no chats — as a wandering
+assertion, not as anything that names the cause. The UI tests register their own
+user, and the fixtures they need are on the stand, not on the device.
 
 ## The stand
 
