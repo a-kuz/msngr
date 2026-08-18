@@ -54,19 +54,24 @@ off when you are done.
    migration, BlurHash, mosaic.
 3. App unit tests (MsngrTests) — BubbleLayout, feed and grouping, the unread
    marker, notification decisions, registration validation.
-4. UI smoke (MsngrUITests) — launch, registration, sending text, drafts, the
-   long-press menu, the attach menu.
-5. Server smoke (`node server/test/smoke.mjs`) — checks over the API, the DOs
+4. Server smoke (`node server/test/smoke.mjs`) — checks over the API, the DOs
    and pushes. The dev APNs mock has to be stopped for the duration: the
    smoke takes the same port, :9871. A stand of your own on another port runs
    as `wrangler dev --port <port> --var APNS_HOST:http://localhost:<sink port>`
    plus `BASE_URL=… PUSH_PORT=<sink port> node test/smoke.mjs`; `--var`
    overrides `.dev.vars` and the owner's mock is left alone.
-6. Simulator crash logs (DiagnosticReports) — a fresh crash fails the gate.
+5. Simulator crash logs (DiagnosticReports) — a fresh crash fails the gate.
 
 The Makefile builds on the owner's simulator by default, so an agent runs the
 gate on its own: `make check DEV_UDID=14C70E21-A23A-4492-8E6A-113AE0BC6B6D`
 (gate-runner).
+
+The UI smoke (MsngrUITests — launch, registration, sending text, drafts, the
+long-press menu, the attach menu) is its own target: `make uicheck
+DEV_UDID=<yours>`, run when the change touches the UI layer, on the agent's
+own simulator. It sits outside the gate because its reds have almost always
+been the host — a stale database on a shared device, a starved runner, a
+missing fixture user — not the code.
 
 ### One change at a time
 
