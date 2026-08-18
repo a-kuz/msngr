@@ -424,6 +424,14 @@ public actor SyncEngine {
                                     arguments: [online, f.lastSeen ?? 0, userId])
                 }
             }
+        case "profile":
+            // a peer renamed themselves or put up a new avatar; the card is
+            // public, so the frame carries it whole and nothing is refetched
+            if let user = f.user {
+                try? await db.write { dbc in
+                    try SyncEngine.upsertUser(dbc, user)
+                }
+            }
         case "chat":
             // removed from the chat while the device was offline: such a frame
             // carries no roster, and there is nothing left to catch up on

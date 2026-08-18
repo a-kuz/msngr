@@ -24,7 +24,7 @@ final class SmokeTests: XCTestCase {
         if username.waitForExistence(timeout: 3) {
             username.tap()
             username.typeText("ui\(Int(Date().timeIntervalSince1970) % 100_000_000)")
-            // submit stays disabled until a display name (>= 3 chars) is filled too
+            // submit stays disabled until a display name is filled too
             let displayName = app.textFields["reg.displayName"]
             displayName.tap()
             displayName.typeText("UI Tester")

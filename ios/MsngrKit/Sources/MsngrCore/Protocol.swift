@@ -122,6 +122,8 @@ public struct WSIncoming: Decodable {
     public let lastSeen: Double?
     public let event: String?
     public let state: ChatStateDTO?
+    /// profile: the whole card of whoever changed theirs
+    public let user: APIClient.UserDTO?
     public let msgIds: [String]?
     public let forAll: Bool?
     public let serverTime: Double?

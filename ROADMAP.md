@@ -18,14 +18,19 @@ A ✅ goes in only together with a link to the evidence.
 
 - Registration
   - ✅ username + display name, keys created on the device (design-review 01-onboarding)
-  - ✅ name and username validation with a hint (palettes/register-name-hint, RegistrationValidator units)
+  - ✅ name and username validation with a hint, per field (palettes/register-name-hint,
+    AccountValidator units, qa/runs/2026-08-17-profile)
   - ✅ a taken username gives a clear error (smoke `username uniqueness`)
-  - 🟡 the button's disabled state is barely readable (design-review, P2)
-  - ⬜ whether the name is required or explicitly optional — not decided
+  - ✅ the disabled button reads in both appearances, 5.3:1 and 5.1:1, and does not clip
+    at the largest type size (qa/runs/2026-08-17-profile)
+  - ✅ the name is required everywhere, one character minimum (qa/runs/2026-08-17-profile)
 - Profile
   - ✅ name, bio, avatar in settings (design-review 08-settings)
-  - 🟡 the avatar in chats and in the list (not verified live that it reaches the peer)
-  - ⬜ the username cannot be changed
+  - ✅ the avatar in chats and in the list, live to the peer and kept across a restart
+    (qa/runs/2026-08-17-profile)
+  - ✅ the username can be changed; the old one is released in the same statement
+    (smoke `username changed`, `the old handle is free`, qa/runs/2026-08-17-profile)
+  - ⬜ a card change on a device of the same account (one device per account was run)
 - Sign-in and devices
   - ✅ logout: the device token is invalidated, local data is wiped
     (smoke `logout invalidates token`, qa/runs/2026-08-15-sessions)
@@ -489,6 +494,8 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 ## Settings
 
 - ✅ profile: name, bio, avatar (design-review 08)
+- ✅ the username on its own screen, with the taken case seen live
+  (qa/runs/2026-08-17-profile)
 - ✅ picking a palette from cards with instant application (palettes/live-*, settings-appearance)
 - 🟡 the PIN: setting it, repeating it, checking it (not verified live)
 - 🟡 Face ID and auto-lock after 30 s (not verified live)

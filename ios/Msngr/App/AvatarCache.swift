@@ -1,6 +1,7 @@
 import Foundation
 import GRDB
 import MsngrCore
+import UIKit
 
 /// Avatars as files in the container shared with the NSE: `avatars/<avatarId>.jpg`.
 /// A notification needs the image bytes locally (INImage is built from data),
@@ -42,6 +43,12 @@ actor AvatarCache {
         return url
     }
 
+    /// Drops the file of an id whose bytes turned out to be unusable, so the
+    /// next ask downloads it again instead of decoding the same bad file.
+    func discard(_ avatarId: String) {
+        try? FileManager.default.removeItem(at: dir.appendingPathComponent(avatarId + ".jpg"))
+    }
+
     /// Pulls in avatars of every known contact and group: by the time a
     /// notification arrives the image has to be on disk already.
     func prefetchAll(db: DatabaseQueue, api: APIClient) async {
@@ -52,5 +59,41 @@ actor AvatarCache {
         for id in Set(ids) where cachedFile(id) == nil {
             _ = await ensure(id, api: api)
         }
+    }
+}
+
+/// Decoded avatars for the screen. A chat list scrolls the same faces past the
+/// eye over and over, and reading plus decoding a JPEG per row per appearance
+/// is work with one answer; an id changes only when its owner puts up a new
+/// picture, so the entry never goes stale.
+actor AvatarImageLoader {
+    static let shared = AvatarImageLoader()
+
+    private let cache: NSCache<NSString, UIImage> = {
+        let c = NSCache<NSString, UIImage>()
+        c.countLimit = 200
+        return c
+    }()
+    private var inFlight: [String: Task<UIImage?, Never>] = [:]
+
+    func image(_ avatarId: String) async -> UIImage? {
+        if let hit = cache.object(forKey: avatarId as NSString) { return hit }
+        if let running = inFlight[avatarId] { return await running.value }
+        let task = Task<UIImage?, Never> {
+            let api = await AppState.shared.api
+            guard let url = await AvatarCache.shared.ensure(avatarId, api: api) else { return nil }
+            guard let data = try? Data(contentsOf: url), let image = UIImage(data: data) else {
+                // half a file, or bytes that are not an image: keeping it would
+                // answer every later ask with the same nothing
+                await AvatarCache.shared.discard(avatarId)
+                return nil
+            }
+            return image
+        }
+        inFlight[avatarId] = task
+        let image = await task.value
+        inFlight[avatarId] = nil
+        if let image { cache.setObject(image, forKey: avatarId as NSString) }
+        return image
     }
 }

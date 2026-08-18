@@ -478,6 +478,13 @@ public final class APIClient: @unchecked Sendable {
         _ = try await request("api/profile", method: "POST", jsonBody: Body(displayName: displayName, bio: bio, avatarId: avatarId))
     }
 
+    /// A rename. Throws `APIError("username_taken")` when the handle is
+    /// somebody else's; the old one is free the moment this returns.
+    public func updateUsername(_ username: String) async throws {
+        struct Body: Encodable { let username: String }
+        _ = try await request("api/username", method: "POST", jsonBody: Body(username: username))
+    }
+
     public struct DiscoverResponse: Decodable {
         public struct Match: Decodable {
             public let id: String
