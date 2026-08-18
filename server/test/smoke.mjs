@@ -970,6 +970,46 @@ const pushSvc = await waitPush(pushFor("eve-sim-udid", psvc.msgId));
 check("service frame does not grow the badge", pushSvc?.body.aps.badge === 1,
   `badge=${pushSvc?.body.aps.badge}`);
 
+// (c1a) The same frame in a chat that is *not* read to the end. The badge counts
+// what the reader will be shown, and a service frame is never shown: an edit, a
+// reaction or the sender key handed out after a membership change must leave the
+// number where it is. A group is where this shows up most, because every change
+// of the roster hands the key out again.
+{
+  const nils = await api("/api/register", { body: {
+    username: "nils_" + suffix, displayName: "Nils", ...fakeKeys("x") } });
+  const olga = await api("/api/register", { body: {
+    username: "olga_" + suffix, displayName: "Olga", ...fakeKeys("y") } });
+  const piet = await api("/api/register", { body: {
+    username: "piet_" + suffix, displayName: "Piet", ...fakeKeys("z") } });
+  await api("/api/push-token", { token: olga.token,
+    body: { apnsToken: "olga-sim-udid", env: "development" } });
+  const gchat = await api("/api/chats", { token: nils.token,
+    body: { kind: "group", title: "Counting", memberIds: [olga.userId, piet.userId] } });
+  check("unread group created", gchat.ok, JSON.stringify(gchat));
+  const cni = new Client("nils", nils.token);
+  await cni.connect();
+  const gsend = async (id, service) => {
+    cni.send({ t: "send", chatId: gchat.chatId, clientMsgId: id, sentAt: Date.now(),
+      body: { v: 1, mode: "sk", msgs: {} }, ...(service ? { service: true } : {}) });
+    return cni.waitFor((f) => f.t === "sent" && f.clientMsgId === id);
+  };
+
+  const u1 = await gsend("cm-u1");
+  const badge1 = (await waitPush(pushFor("olga-sim-udid", u1.msgId)))?.body.aps.badge;
+  check("group badge counts the first message", badge1 === 1, `badge=${badge1}`);
+
+  // nothing is read here: this is where the number used to grow on its own
+  const s1 = await gsend("cm-u2", true);
+  check("no push for the group's service frame",
+    !(await waitPush(pushFor("olga-sim-udid", s1.msgId), 1500)));
+
+  const u3 = await gsend("cm-u3");
+  const badge2 = (await waitPush(pushFor("olga-sim-udid", u3.msgId)))?.body.aps.badge;
+  check("a service frame does not grow an unread badge", badge2 === 2, `badge=${badge2}`);
+  cni.ws.close();
+}
+
 // (c2) The push carries the message itself, addressed to the device it goes to:
 // the extension decrypts it and writes it, so a chat opened offline holds what
 // the banner said. A pairwise envelope is trimmed to this device's own box.
