@@ -36,20 +36,25 @@ def draw_grid(src, dst, step):
     scale = 3 if image.width >= 1000 else 2
     points = (image.width // scale, image.height // scale)
     canvas = ImageDraw.Draw(image, "RGBA")
-    font = ImageFont.truetype(FONT, 11 * scale // 2)
+    font = ImageFont.truetype(FONT, 9 * scale)
 
     for x in range(0, points[0] + 1, step):
-        canvas.line([(x * scale, 0), (x * scale, image.height)], fill=(*INK, 60), width=1)
+        canvas.line([(x * scale, 0), (x * scale, image.height)], fill=(*INK, 70), width=1)
     for y in range(0, points[1] + 1, step):
-        canvas.line([(0, y * scale), (image.width, y * scale)], fill=(*INK, 60), width=1)
+        canvas.line([(0, y * scale), (image.width, y * scale)], fill=(*INK, 70), width=1)
 
+    # every label sits on a plate of its own: over a screen that is itself full of
+    # text, an outlined number is unreadable exactly where it is needed
     for x in range(0, points[0] + 1, step):
         for y in range(0, points[1] + 1, step):
             label = f"{x},{y}"
-            at = (x * scale + 2, y * scale + 1)
-            for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                canvas.text((at[0] + dx, at[1] + dy), label, font=font, fill=(*HALO, 200))
-            canvas.text(at, label, font=font, fill=(*INK, 255))
+            box = canvas.textbbox((0, 0), label, font=font)
+            w, h = box[2] - box[0], box[3] - box[1]
+            left = min(x * scale + 3, image.width - w - 5)
+            top = min(y * scale + 2, image.height - h - 6)
+            canvas.rectangle([left - 2, top - 2, left + w + 3, top + h + 4],
+                             fill=(255, 255, 255, 235))
+            canvas.text((left, top), label, font=font, fill=(*INK, 255))
 
     image.save(dst)
     return points, scale
