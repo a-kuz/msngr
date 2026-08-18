@@ -65,7 +65,7 @@ off when you are done.
 6. Simulator crash logs (DiagnosticReports) — a fresh crash fails the gate.
 
 The Makefile builds on the owner's simulator by default, so an agent runs the
-gate on its own: `make check DEV_UDID=74B78AFC-E8D7-4317-B16F-E51A65504B2D`
+gate on its own: `make check DEV_UDID=14C70E21-A23A-4492-8E6A-113AE0BC6B6D`
 (gate-runner).
 
 ### One change at a time

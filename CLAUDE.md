@@ -57,7 +57,7 @@ The Makefile builds on the owner's simulator by default, so an agent runs the
 gate with its own:
 
 ```bash
-make check DEV_UDID=74B78AFC-E8D7-4317-B16F-E51A65504B2D   # gate-runner
+make check DEV_UDID=14C70E21-A23A-4492-8E6A-113AE0BC6B6D   # gate-runner
 ```
 
 ## The stand
@@ -110,7 +110,7 @@ picture, and use `--tap X Y` to tap and re-shoot in one step.
 - Do not touch the owner's simulators: `44CE2242-EBB9-48EA-A605-5988A00E4C31`
   (iPhone 17 dev) and `0E0CF155-B4B7-4794-A963-AD7C76EFDCEA` (iPhone 17 Pro Max).
   They are handed out only on an explicit exclusive reservation.
-- `74B78AFC-E8D7-4317-B16F-E51A65504B2D` (gate-runner) — for running the gate.
+- `14C70E21-A23A-4492-8E6A-113AE0BC6B6D` (gate-runner) — for running the gate.
 - For your own scenarios, create your own simulator
   (`xcrun simctl create <name> "iPhone 17"` → `boot` → `install` → register a
   fresh user) and delete it after yourself (`shutdown` + `delete`).
