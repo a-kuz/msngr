@@ -283,6 +283,16 @@ System messages are rendered as human sentences: `identity_changed:<uid>` as
 «Код безопасности собеседника изменился», `undecryptable` as «Сообщение не может
 быть расшифровано на этом устройстве».
 
+A group event is a system line too: «Аня добавил(а): Боря», «Боря покинул(а)
+группу», «Аня изменил(а) название на «Крыша»», «Аня обновил(а) фото группы»,
+«Аня удалил(а) описание группы», «Аня назначил(а) вас администратором». The one
+who performed it reads «Вы …», the one it happened to reads «вас», everyone else
+reads the name. The line does not raise unread, does not raise a push and does
+not move the chat up the list.
+
+In a group where only admins may write, the input bar is replaced by «Писать в
+этой группе могут только администраторы».
+
 ## Chat info
 
 For a direct chat: the safety number (60 digits in groups of 5, fetching the
@@ -290,10 +300,19 @@ peer's key from the prekey bundle if it is not at hand), «Заблокиров�
 звука», and disappearing messages («Выкл», «24 часа», «7 дней», «90 дней»,
 delivered as a `disappearing` service message).
 
-For a group: the member list (the creator marked «админ»), removing a member by
-swipe, adding one through search, an invite link with a copy button, and leaving
-the group. Granting and revoking roles is not exposed in the interface; the
-server checks the rights.
+For a group: the member list (an admin marked «админ»), adding a member through
+search, an invite link with a copy button, and leaving the group. A swipe over a
+member row gives an admin «Удалить» and «Сделать админом» / «Снять админа».
+
+An admin also gets the title and the group photo, a description under «Описание»
+with a save button, and «Права участников»: «Кто может писать» and «Кто может
+приглашать», each of them «Все участники» or «Только администраторы».
+
+What a member cannot do is not shown to them at all, rather than shown disabled:
+without the right to invite there is no «Добавить участника» and no invite link,
+a plain member sees the description as plain text and no «Права участников»
+section, and a swipe over a member row offers nothing. Every change is announced
+in the feed as a group event once the server has accepted it.
 
 ## The chat list
 

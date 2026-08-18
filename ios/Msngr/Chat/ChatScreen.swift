@@ -72,6 +72,8 @@ struct ChatScreen: View {
                     } else if searching {
                         ChatSearchMatchBar(session: search, onStep: stepSearch,
                                            onShowList: { search.resultsShown = true })
+                    } else if !model.canSend {
+                        readOnlyNote
                     } else {
                         InputBar(model: model, text: $text,
                                  onAttachPhoto: { photoPickerPresented = true },
@@ -109,14 +111,15 @@ struct ChatScreen: View {
                         .accessibilityIdentifier("chat.selection.count")
                 }
             } else if !searching {
-                // own button instead of the system one: going back is the header's
-                // primary action and has to read before anything else in it
+                // own button instead of the system one, only so that the tests and the
+                // scenarios have an identifier to aim at; it is drawn to match the back
+                // button every other screen gets from the system
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button { dismiss() } label: {
                         Image(systemName: "chevron.backward")
-                            .font(Theme.glyph(34, max: 40).weight(.bold))
-                            .foregroundStyle(Theme.accent)
-                            .frame(width: 56, height: 44)
+                            .font(Theme.glyph(17, max: 19).weight(.medium))
+                            .foregroundStyle(.primary)
+                            .frame(width: 44, height: 44)
                             .contentShape(Rectangle())
                     }
                     .accessibilityLabel("Назад")
@@ -354,6 +357,13 @@ struct ChatScreen: View {
                         .animation(.easeInOut(duration: 0.15), value: model.headerSubtitle)
                 }
             }
+            // the feed runs under the bar, so the name needs a ground of its own:
+            // without it the bubbles show through the title the way they do through
+            // no other control in the bar
+            .padding(.leading, 5)
+            .padding(.trailing, 12)
+            .padding(.vertical, 3)
+            .background(.regularMaterial, in: Capsule())
         }
         .buttonStyle(.plain)
     }
@@ -566,6 +576,21 @@ struct ChatScreen: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.bar)
+    }
+
+    /// A group only its admins may write in. The note takes the place of the
+    /// input field: an empty field that refuses everything typed into it would
+    /// be worse than none.
+    private var readOnlyNote: some View {
+        Text("Писать в этой группе могут только администраторы")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .background(.bar)
+            .accessibilityIdentifier("chat.readOnly")
     }
 
     /// A message leaving the feed dissolves into the header instead of being cut by it.
@@ -864,6 +889,7 @@ struct MessagesView: UIViewControllerRepresentable {
         }
         // замыкание с dismiss живёт не дольше тела body — переустанавливаем
         vc.onSwipeBack = onSwipeBack
+        vc.ownUserId = model.ownUserId
         vc.noteSendTick(sendTick)
         vc.apply(items)
         vc.setSelection(mode: selecting, ids: selectedIds)

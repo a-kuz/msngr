@@ -173,17 +173,29 @@ def idle_booted(agents, working):
     and the rest of the host gets its memory back.
     """
     out = []
+    try:
+        ps = subprocess.run(["ps", "-Ao", "command"], capture_output=True,
+                            text=True, errors="replace", timeout=30).stdout
+    except subprocess.SubprocessError:
+        ps = ""
     for dev in disk.devices():
         if dev.get("state") != "Booted" or dev["udid"] in disk.KEEP_DEVICES:
             continue
         note, loose = disk.claim(dev, agents, working)
         if loose:
             continue  # the litter rules own this one
+        if dev["udid"] in ps:
+            # a test run drives the simulator from outside — xcodebuild, simctl,
+            # idb — and none of that counts as the app writing; shutting the
+            # device down mid-run fails the run on the runner, not on the code
+            continue
         idle = app_quiet_for(dev["udid"])
         if idle < IDLE_BOOT:
             continue
+        # a simulator our app has never been installed on has no quiet time to name
+        quiet = "app never ran" if idle == float("inf") else f"app quiet for {int(idle / 60)}m"
         out.append({"what": f"simulator {dev['name']}", "bytes": 0,
-                    "why": f"{note}, app quiet for {int(idle / 60)}m",
+                    "why": f"{note}, {quiet}",
                     "verb": ("shut down", "would shut down"),
                     "do": lambda u=dev["udid"]: subprocess.run(
                         ["xcrun", "simctl", "shutdown", u], capture_output=True)})
