@@ -873,6 +873,7 @@ struct MessagesView: UIViewControllerRepresentable {
             case .copy: MessageClipboard.copy(msg)
             case .edit: withAnimation(Theme.springFast) { model.editing = msg }
             case .pin: model.pin(msg)
+            case .unpin: model.pin(nil)
             case .forward: NotificationCenter.default.post(name: .forwardRequested, object: msg)
             case .select: withAnimation(Theme.springFast) { model.beginSelection(with: msg) }
             // удаление начинается с выбора: сообщение видно, к нему можно
@@ -885,6 +886,7 @@ struct MessagesView: UIViewControllerRepresentable {
         }
         // замыкание с dismiss живёт не дольше тела body — переустанавливаем
         vc.onSwipeBack = onSwipeBack
+        vc.pinnedMsgId = model.chat?.pinnedMsgId
         vc.noteSendTick(sendTick)
         vc.apply(items)
         vc.setSelection(mode: selecting, ids: selectedIds)
