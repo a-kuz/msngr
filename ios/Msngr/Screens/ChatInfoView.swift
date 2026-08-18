@@ -38,6 +38,7 @@ struct ChatInfoView: View {
     @State private var inviteLink: String?
     @State private var safetyNumber: String?
     @State private var editTitle = ""
+    @State private var editDescription = ""
     @State private var ttl: Int = 0
     @State private var showMuteOptions = false
     @State private var showBlockConfirm = false
@@ -56,6 +57,10 @@ struct ChatInfoView: View {
     /// Only an admin changes the group's name and avatar; the server checks the same.
     private var canEditSettings: Bool {
         ChatPermissions.canEditSettings(kind: kind, role: myRole)
+    }
+    private var canInvite: Bool {
+        ChatPermissions.canInvite(kind: kind, role: myRole,
+                                  invitePolicy: model.chat?.invitePolicy ?? ChatPermissions.openPolicy)
     }
     private var isMuted: Bool {
         MuteState.isMuted(muted: model.chat?.muted ?? false, mutedUntil: model.chat?.mutedUntil)
@@ -93,6 +98,8 @@ struct ChatInfoView: View {
                 .frame(maxWidth: .infinity)
                 .listRowBackground(Color.clear)
             }
+
+            if isGroup { descriptionSection }
 
             Section {
                 NavigationLink {
@@ -161,27 +168,30 @@ struct ChatInfoView: View {
             }
 
             if isGroup {
+                if canEditSettings { rightsSection }
                 Section("Участники") {
                     ForEach(model.members) { member in
                         memberRow(member)
                     }
-                    if ChatPermissions.canAddMembers(kind: kind, role: myRole) {
+                    if canInvite {
                         Button {
                             showAddMembers = true
                         } label: {
                             Label("Добавить участника", systemImage: "person.badge.plus")
                         }
-                    }
-                    Button {
-                        Task {
-                            if let inv = try? await app.api.createInvite(model.chatId) {
-                                inviteLink = inv.link
-                                UIPasteboard.general.string = inv.link
+                        .accessibilityIdentifier("chatInfo.addMember")
+                        Button {
+                            Task {
+                                if let inv = try? await app.api.createInvite(model.chatId) {
+                                    inviteLink = inv.link
+                                    UIPasteboard.general.string = inv.link
+                                }
                             }
+                        } label: {
+                            Label(inviteLink == nil ? "Ссылка-приглашение" : "Скопировано!",
+                                  systemImage: "link")
                         }
-                    } label: {
-                        Label(inviteLink == nil ? "Ссылка-приглашение" : "Скопировано!",
-                              systemImage: "link")
+                        .accessibilityIdentifier("chatInfo.invite")
                     }
                 }
             }
@@ -195,7 +205,11 @@ struct ChatInfoView: View {
         .onAppear {
             ttl = model.chat?.ttlSeconds ?? 0
             editTitle = model.chat?.title ?? ""
+            editDescription = model.chat?.chatDescription ?? ""
             rolesModel.start(chatId: model.chatId, db: app.db)
+        }
+        .onChange(of: model.chat?.chatDescription) { _, new in
+            if !descriptionChanged || editDescription.isEmpty { editDescription = new ?? "" }
         }
         // the title may have changed on another device while this screen was open
         .onChange(of: model.chat?.title) { _, new in
@@ -203,7 +217,9 @@ struct ChatInfoView: View {
         }
         .task { await app.engine?.refreshBlocked() }
         .sheet(isPresented: $showAddMembers) {
-            AddMembersView(chatId: model.chatId, existing: Set(model.members.map(\.id)))
+            AddMembersView(chatId: model.chatId, existing: Set(model.members.map(\.id))) { user in
+                model.announce(.added, member: user.display_name, memberId: user.id)
+            }
         }
         .confirmationDialog("Без звука", isPresented: $showMuteOptions, titleVisibility: .visible) {
             ForEach(MuteOption.allCases, id: \.self) { option in
@@ -242,9 +258,74 @@ struct ChatInfoView: View {
             Task {
                 guard let data = try? await item.loadTransferable(type: Data.self),
                       let prepared = ImageProcessor.prepareForSending(data, maxDimension: 640) else { return }
-                _ = try? await app.api.uploadChatAvatar(chatId: model.chatId, jpeg: prepared.data)
+                guard (try? await app.api.uploadChatAvatar(chatId: model.chatId,
+                                                           jpeg: prepared.data)) != nil else { return }
+                if isGroup { model.announce(.avatar) }
             }
         }
+    }
+
+    /// The group's description. An admin edits it in place; everyone else reads
+    /// it, and sees nothing at all while there is none.
+    @ViewBuilder
+    private var descriptionSection: some View {
+        if canEditSettings {
+            Section("Описание") {
+                TextField("О чём эта группа", text: $editDescription, axis: .vertical)
+                    .lineLimit(1...5)
+                    .accessibilityIdentifier("chatInfo.description")
+                if descriptionChanged {
+                    Button("Сохранить описание", action: saveDescription)
+                        .disabled(savingSettings)
+                        .accessibilityIdentifier("chatInfo.saveDescription")
+                }
+            }
+        } else if let text = model.chat?.chatDescription, !text.isEmpty {
+            Section("Описание") {
+                Text(text).accessibilityIdentifier("chatInfo.description")
+            }
+        }
+    }
+
+    /// Who may write and who may bring people in. The rows are an admin's to
+    /// see: a member cannot change them and reads the outcome instead — the
+    /// note in place of the input field, the missing invite button.
+    private var rightsSection: some View {
+        Section("Права участников") {
+            Picker(selection: sendPolicyBinding) {
+                Text("Все участники").tag(ChatPermissions.openPolicy)
+                Text("Только администраторы").tag(ChatPermissions.adminPolicy)
+            } label: {
+                Label("Кто может писать", systemImage: "square.and.pencil")
+            }
+            .accessibilityIdentifier("chatInfo.sendPolicy")
+
+            Picker(selection: invitePolicyBinding) {
+                Text("Все участники").tag(ChatPermissions.openPolicy)
+                Text("Только администраторы").tag(ChatPermissions.adminPolicy)
+            } label: {
+                Label("Кто может приглашать", systemImage: "person.badge.plus")
+            }
+            .accessibilityIdentifier("chatInfo.invitePolicy")
+        }
+    }
+
+    /// The rights the chat row holds; the picker follows the server's answer,
+    /// which comes back as a chat frame.
+    private var sendPolicyBinding: Binding<String> {
+        Binding(get: { model.chat?.sendPolicy ?? ChatPermissions.openPolicy },
+                set: { value in
+                    guard value != model.chat?.sendPolicy else { return }
+                    Task { try? await app.api.chatSettings(model.chatId, sendPolicy: value) }
+                })
+    }
+
+    private var invitePolicyBinding: Binding<String> {
+        Binding(get: { model.chat?.invitePolicy ?? ChatPermissions.openPolicy },
+                set: { value in
+                    guard value != model.chat?.invitePolicy else { return }
+                    Task { try? await app.api.chatSettings(model.chatId, invitePolicy: value) }
+                })
     }
 
     /// Chat avatar: a photo picker for a group admin, a plain picture for everyone else.
@@ -292,7 +373,12 @@ struct ChatInfoView: View {
             if member.id != model.ownUserId,
                ChatPermissions.canRemoveMembers(kind: kind, role: myRole) {
                 Button(role: .destructive) {
-                    Task { try? await app.api.updateMembers(model.chatId, add: [], remove: [member.id]) }
+                    Task {
+                        do {
+                            try await app.api.updateMembers(model.chatId, add: [], remove: [member.id])
+                            model.announce(.removed, member: member.displayName, memberId: member.id)
+                        } catch {}
+                    }
                 } label: {
                     Label("Удалить", systemImage: "person.badge.minus")
                 }
@@ -301,7 +387,13 @@ struct ChatInfoView: View {
                ChatPermissions.canManageAdmins(kind: kind, role: myRole) {
                 let isAdmin = role == ChatPermissions.adminRole
                 Button {
-                    Task { try? await app.api.setAdmin(model.chatId, userId: member.id, admin: !isAdmin) }
+                    Task {
+                        do {
+                            try await app.api.setAdmin(model.chatId, userId: member.id, admin: !isAdmin)
+                            model.announce(isAdmin ? .adminRevoked : .adminGranted,
+                                           member: member.displayName, memberId: member.id)
+                        } catch {}
+                    }
                 } label: {
                     Label(isAdmin ? "Снять админа" : "Сделать админом",
                           systemImage: isAdmin ? "person.badge.minus" : "star")
@@ -350,17 +442,40 @@ struct ChatInfoView: View {
             && !editTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var descriptionChanged: Bool {
+        editDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+            != (model.chat?.chatDescription ?? "")
+    }
+
     private var blockConfirmTitle: String {
         (model.peer?.isBlocked ?? false ? "Разблокировать " : "Заблокировать ")
             + (model.peer?.displayName ?? "")
     }
 
+    /// The group hears about a change only once the server has taken it: an
+    /// event about a title that was refused would be a line about nothing.
     private func saveTitle() {
         let title = editTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, title != model.chat?.title else { return }
         savingSettings = true
         Task {
-            try? await app.api.chatSettings(model.chatId, title: title)
+            do {
+                try await app.api.chatSettings(model.chatId, title: title)
+                model.announce(.title, text: title)
+            } catch {}
+            savingSettings = false
+        }
+    }
+
+    private func saveDescription() {
+        let text = editDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text != (model.chat?.chatDescription ?? "") else { return }
+        savingSettings = true
+        Task {
+            do {
+                try await app.api.chatSettings(model.chatId, description: text)
+                model.announce(text.isEmpty ? .descriptionCleared : .description)
+            } catch {}
             savingSettings = false
         }
     }
@@ -425,6 +540,9 @@ struct ChatInfoView: View {
 struct AddMembersView: View {
     let chatId: String
     let existing: Set<String>
+    /// Called with the new member once the server has taken them in, so the
+    /// chat can announce it.
+    let onAdded: (APIClient.UserDTO) -> Void
     @EnvironmentObject var app: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
@@ -435,7 +553,10 @@ struct AddMembersView: View {
             List(results.filter { !existing.contains($0.id) }, id: \.id) { u in
                 Button {
                     Task {
-                        try? await app.api.updateMembers(chatId, add: [u.id], remove: [])
+                        do {
+                            try await app.api.updateMembers(chatId, add: [u.id], remove: [])
+                            onAdded(u)
+                        } catch {}
                         dismiss()
                     }
                 } label: {

@@ -246,8 +246,10 @@ def held_by_dead_files():
     process does.
     """
     try:
+        # a path on the disk need not be valid UTF-8, and one such name used to end
+        # the whole sweep
         out = subprocess.run(["lsof", "-nP", "+L1"], capture_output=True,
-                             text=True, timeout=180).stdout
+                             text=True, errors="replace", timeout=180).stdout
     except subprocess.SubprocessError:
         return 0, []
     total, procs = 0, {}

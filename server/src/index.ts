@@ -1,7 +1,10 @@
 import { Hono } from "hono";
-import type { Env, AuthCtx, ChatState } from "./types";
+import type { Env, AuthCtx, ChatState, PublicUser } from "./types";
 import { authenticate } from "./auth";
-import { ulid, newToken, sha256hex, json, err, directChatName, b64url, provisionCode } from "./util";
+import {
+  ulid, newToken, sha256hex, json, err, directChatName, b64url, provisionCode,
+  isValidUsername, isValidDisplayName,
+} from "./util";
 import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "./version";
 
 export { UserSessionDO } from "./do/UserSessionDO";
@@ -33,7 +36,8 @@ app.post("/api/register", async (c) => {
     oneTimePrekeys: Array<{ id: number; key: string }>;
     phoneHash?: string;
   }>();
-  if (!/^[a-zA-Z0-9_]{3,32}$/.test(b.username)) return err("bad_username");
+  if (!isValidUsername(b.username)) return err("bad_username");
+  if (!isValidDisplayName(b.displayName)) return err("bad_name");
   if (!b.identityKey || !b.signedPrekey?.key) return err("bad_keys");
 
   const now = Date.now();
@@ -46,7 +50,7 @@ app.post("/api/register", async (c) => {
     await c.env.DB.batch([
       c.env.DB.prepare(
         "INSERT INTO users (id, username, display_name, created_at) VALUES (?,?,?,?)"
-      ).bind(userId, b.username, b.displayName || b.username, now),
+      ).bind(userId, b.username, b.displayName.trim(), now),
       c.env.DB.prepare(
         "INSERT INTO devices (id, user_id, name, token_hash, created_at) VALUES (?,?,?,?,?)"
       ).bind(deviceId, userId, b.device?.name ?? null, tokenHash, now),
@@ -451,12 +455,49 @@ app.post("/api/prekeys", async (c) => {
 app.post("/api/profile", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{ displayName?: string; bio?: string; avatarId?: string }>();
+  if (b.displayName !== undefined && !isValidDisplayName(b.displayName)) return err("bad_name");
   await c.env.DB.prepare(
     `UPDATE users SET display_name = COALESCE(?, display_name),
      bio = COALESCE(?, bio), avatar_id = COALESCE(?, avatar_id) WHERE id = ?`
-  ).bind(b.displayName ?? null, b.bio ?? null, b.avatarId ?? null, userId).run();
+  ).bind(b.displayName?.trim() ?? null, b.bio ?? null, b.avatarId ?? null, userId).run();
+  await broadcastProfile(c.env, userId);
   return json({ ok: true });
 });
+
+// A rename. The handle is the one thing about a person that other people type,
+// so it is checked by the same rule as at registration and taken under the same
+// UNIQUE index: the row holds one username, and the single UPDATE that takes the
+// new one is what frees the old.
+app.post("/api/username", async (c) => {
+  const { userId } = c.get("auth");
+  const b = await c.req.json<{ username?: string }>();
+  if (!isValidUsername(b.username)) return err("bad_username");
+  try {
+    const res = await c.env.DB.prepare(
+      "UPDATE users SET username = ? WHERE id = ?"
+    ).bind(b.username, userId).run();
+    if (!res.meta.changes) return err("not_found", 404);
+  } catch (e) {
+    if (String(e).includes("UNIQUE")) return err("username_taken", 409);
+    throw e;
+  }
+  await broadcastProfile(c.env, userId);
+  return json({ ok: true, username: b.username });
+});
+
+/// Tells everyone this user shares a chat with, and their own other devices,
+/// that the card changed. The card is public — GET /api/users/:id serves it to
+/// anyone — so the frame carries the whole row instead of asking for a refetch.
+async function broadcastProfile(env: Env, userId: string) {
+  const user = await env.DB.prepare(
+    "SELECT id, username, display_name, bio, avatar_id FROM users WHERE id = ?"
+  ).bind(userId).first<PublicUser>();
+  if (!user) return;
+  await userStub(env, userId).fetch("https://do/profile-changed", {
+    method: "POST",
+    body: JSON.stringify({ user }),
+  });
+}
 
 // --- chats ---
 app.post("/api/chats", async (c) => {
@@ -629,11 +670,14 @@ app.post("/api/chats/:id/flags", async (c) => {
 app.post("/api/chats/:id/invite", async (c) => {
   const { userId } = c.get("auth");
   const chatId = c.req.param("id");
-  // only a member of the chat may mint an invite
+  // only a member of the chat may mint an invite, and only while the group's
+  // rights let them bring anyone in
   const sr = await convStub(c.env, chatId).fetch("https://do/state");
   const sj = (await sr.json()) as { ok: boolean; state?: ChatState };
-  if (!sj.ok || !sj.state?.members.some((m) => m.userId === userId))
-    return err("not_member", 403);
+  const me = sj.state?.members.find((m) => m.userId === userId);
+  if (!sj.ok || !me) return err("not_member", 403);
+  if (sj.state!.kind === "group" && sj.state!.invitePolicy === "admins" && me.role !== "admin")
+    return err("not_allowed", 403);
   const code = b64url(crypto.getRandomValues(new Uint8Array(9)));
   await c.env.DB.prepare(
     "INSERT INTO invites (code, chat_id, created_by, created_at) VALUES (?,?,?,?)"
@@ -717,6 +761,7 @@ app.post("/api/avatar", async (c) => {
   } else {
     await c.env.DB.prepare("UPDATE users SET avatar_id = ? WHERE id = ?")
       .bind(mediaId, userId).run();
+    await broadcastProfile(c.env, userId);
   }
   return json({ ok: true, avatarId: mediaId });
 });
