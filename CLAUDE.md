@@ -36,7 +36,7 @@ cd server && node test/smoke.mjs                    # API/DO/pushes, needs wrang
 Every build and every test run goes through `scripts/build-slot.py`: several
 agents share this host, and six xcodebuilds at once took the load average past
 600 and started failing tests on timing instead of on code. The wrapper holds one
-of three slots for the duration of the command and releases it with the process.
+of two slots for the duration of the command and releases it with the process.
 
 `ios/Msngr.xcodeproj` is in `.gitignore` and is generated from `ios/project.yml`.
 Do not edit `.pbxproj` by hand — the next `xcodegen` will overwrite the edits. The
