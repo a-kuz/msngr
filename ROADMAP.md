@@ -487,6 +487,8 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 ## Settings
 
 - ✅ profile: name, bio, avatar (design-review 08)
+- ✅ the username on its own screen, with the taken case seen live
+  (qa/runs/2026-08-17-profile)
 - ✅ picking a palette from cards with instant application (palettes/live-*, settings-appearance)
 - 🟡 the PIN: setting it, repeating it, checking it (not verified live)
 - 🟡 Face ID and auto-lock after 30 s (not verified live)
