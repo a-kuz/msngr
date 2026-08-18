@@ -72,6 +72,8 @@ struct ChatScreen: View {
                     } else if searching {
                         ChatSearchMatchBar(session: search, onStep: stepSearch,
                                            onShowList: { search.resultsShown = true })
+                    } else if !model.canSend {
+                        readOnlyNote
                     } else {
                         InputBar(model: model, text: $text,
                                  onAttachPhoto: { photoPickerPresented = true },
@@ -576,6 +578,21 @@ struct ChatScreen: View {
         .background(.bar)
     }
 
+    /// A group only its admins may write in. The note takes the place of the
+    /// input field: an empty field that refuses everything typed into it would
+    /// be worse than none.
+    private var readOnlyNote: some View {
+        Text("Писать в этой группе могут только администраторы")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .background(.bar)
+            .accessibilityIdentifier("chat.readOnly")
+    }
+
     /// A message leaving the feed dissolves into the header instead of being cut by it.
     private var headerFade: some View {
         HeaderFade(tone: Theme.chatBackground)
@@ -872,6 +889,7 @@ struct MessagesView: UIViewControllerRepresentable {
         }
         // замыкание с dismiss живёт не дольше тела body — переустанавливаем
         vc.onSwipeBack = onSwipeBack
+        vc.ownUserId = model.ownUserId
         vc.noteSendTick(sendTick)
         vc.apply(items)
         vc.setSelection(mode: selecting, ids: selectedIds)
