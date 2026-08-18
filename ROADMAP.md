@@ -174,7 +174,9 @@ A ✅ goes in only together with a link to the evidence.
   - ⬜ previewing a file in the app
 - System messages
   - 🟡 «Код безопасности собеседника изменился» (not verified live)
-  - ⬜ group events (joined, left, title changed) as separate messages
+  - ✅ group events (left, title, photo, description, the admin role) as separate
+    messages, worded for the actor, for the member it touches and for everyone else
+    (qa/runs/2026-08-17-groups-run)
 - Other
   - ⬜ contact and location
   - ⬜ stickers and GIFs
@@ -424,13 +426,18 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ✅ creating a group and delivering a message to its members (smoke `create group`, `group message delivered`)
 - ✅ an admin adding a member, a non-admin barred from removing one (smoke `admin adds member`, `non-admin cannot remove`)
 - ✅ the invite link: created by a member, joining, idempotency (smoke, four checks)
-- 🟡 creating a group from the interface, picking members and a title (not verified live)
-- 🟡 the info screen: members, adding, removing by swipe, the link, leaving (not verified live)
+- ✅ creating a group from the interface, picking members and a title (qa/runs/2026-08-17-groups-run)
+- ✅ the info screen: the member list, the row's swipe actions, leaving a group (qa/runs/2026-08-17-groups-run)
+- 🟡 adding a member and the invite link from the info screen (not verified live)
 - 🟡 the author's name in group bubbles (not verified live)
-- ⬜ granting and revoking the admin role from the interface (the server can do it)
-- ⬜ changing a group's title, avatar and description from the interface (the server can do it)
-- ⬜ member rights (who can write, who can invite)
-- ⬜ system messages about group events
+- ✅ granting and revoking the admin role from the interface, live on all three
+  devices (qa/runs/2026-08-17-groups-run)
+- ✅ changing a group's title, avatar and description from the interface (qa/runs/2026-08-17-groups-run)
+- ✅ member rights: who can write, who can invite; what a member cannot do is not
+  shown to them (qa/runs/2026-08-17-groups-run; smoke `member cannot write in a
+  read-only group`, `member cannot add once inviting is locked`)
+- ✅ system messages about group events, raising no unread count and no push
+  (qa/runs/2026-08-17-groups-run)
 
 ## Channels
 
