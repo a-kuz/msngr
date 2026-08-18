@@ -601,6 +601,7 @@ cdave.ws.close();
 const rgrpEntry = (await api("/api/chats", { token: alice.token }))
   .chats.find((e) => e.state.chatId === rgrp.chatId);
 ca.send({ t: "read", chatId: rgrp.chatId, upToSeq: rgrpEntry.state.lastSeq });
+await new Promise((r) => setTimeout(r, 300));
 const rgrpRead = (await api("/api/chats", { token: alice.token }))
   .chats.find((e) => e.state.chatId === rgrp.chatId);
 check("the rights group leaves no unread behind",
