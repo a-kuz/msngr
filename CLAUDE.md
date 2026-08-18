@@ -256,6 +256,14 @@ version, `migrations` in `wrangler.jsonc`. The details are in `docs/PROCESS.md`.
 
 - Micro-scope: one behaviour per change, commits incremental. A live run of the
   affected scenario on the simulator, then `make check`.
+- A red check on a product number or behaviour is a defect report until proven
+  otherwise. It is never answered from the test's side — moving a cursor,
+  widening an expectation, adding a sleep — before the product is shown right,
+  in writing. Noticing that a number "counts one too many" and absorbing it
+  into the fixture buries a live defect: that exact move hid the inflated
+  group unread until the owner reported it from the outside. A symptom found
+  in passing goes into `docs/qa/defects.md` and into the report, even when the
+  test is already green.
 - Commits and PRs without `Co-Authored-By`.
 - Everything in the repository is in English: comments, commit messages,
   documentation, run reports. Comments describe only the current behaviour;
