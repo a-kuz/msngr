@@ -320,8 +320,10 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
                                     y: plan.statusFrame.midY - tickH / 2,
                                     width: tickW - 2, height: tickH)
             tickView.image = Self.tickImage(msg.status)
-            tickView.tintColor = plan.statusOnMedia ? .white
-                : (msg.status == .read ? UIColor(Theme.outgoingTickRead) : UIColor(Theme.outgoingMeta))
+            // read keeps its own colour over media too: the white the rest of the
+            // capsule uses would make a read photo look the same as a delivered one
+            tickView.tintColor = msg.status == .read ? UIColor(Theme.outgoingTickRead)
+                : (plan.statusOnMedia ? .white : UIColor(Theme.outgoingMeta))
         } else {
             tickView.isHidden = true
         }
@@ -515,23 +517,46 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
     static func tickImage(_ status: MessageStatus) -> UIImage? {
         switch status {
-        case .failed: return UIImage(systemName: "exclamationmark.circle.fill")
-        case .sending: return UIImage(systemName: "clock")
-        case .sent: return UIImage(systemName: "checkmark")
+        case .failed: return failedMark
+        case .sending: return clockMark
+        case .sent: return singleTick
         case .delivered, .read: return doubleTick
         }
     }
 
-    static let doubleTick: UIImage = {
-        let size = CGSize(width: 18, height: 13)
-        return UIGraphicsImageRenderer(size: size).image { ctx in
-            let cfg = UIImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
-            let check = UIImage(systemName: "checkmark", withConfiguration: cfg)!
-                .withTintColor(.white, renderingMode: .alwaysOriginal)
-            check.draw(in: CGRect(x: 0, y: 1.5, width: 11, height: 10))
-            check.draw(in: CGRect(x: 5, y: 1.5, width: 11, height: 10))
+    /// Canvas every status glyph is drawn into, so the mark keeps its size when the
+    /// status moves on: the single tick is one of the pair, not a stretched symbol
+    /// filling the whole frame the pair needs.
+    private static let markCanvas = CGSize(width: 18, height: 13)
+
+    private static func mark(_ draw: (UIImage) -> Void) -> UIImage {
+        UIGraphicsImageRenderer(size: markCanvas).image { _ in
+            draw(UIImage(systemName: "checkmark", withConfiguration: markConfig)!
+                .withTintColor(.white, renderingMode: .alwaysOriginal))
         }.withRenderingMode(.alwaysTemplate)
-    }()
+    }
+
+    private static let markConfig = UIImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
+
+    private static func glyph(_ name: String) -> UIImage {
+        let symbol = UIImage(systemName: name, withConfiguration: markConfig)!
+            .withTintColor(.white, renderingMode: .alwaysOriginal)
+        return UIGraphicsImageRenderer(size: markCanvas).image { _ in
+            symbol.draw(in: CGRect(x: 4, y: 1.5, width: 10, height: 10))
+        }.withRenderingMode(.alwaysTemplate)
+    }
+
+    static let singleTick: UIImage = mark { check in
+        check.draw(in: CGRect(x: 3.5, y: 1.5, width: 11, height: 10))
+    }
+
+    static let doubleTick: UIImage = mark { check in
+        check.draw(in: CGRect(x: 0, y: 1.5, width: 11, height: 10))
+        check.draw(in: CGRect(x: 5, y: 1.5, width: 11, height: 10))
+    }
+
+    static let clockMark: UIImage = glyph("clock")
+    static let failedMark: UIImage = glyph("exclamationmark.circle.fill")
 }
 
 // MARK: - Components

@@ -147,12 +147,24 @@ struct TickView: View {
             switch status {
             case .failed: Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
             case .sending: Image(systemName: "clock").foregroundStyle(.secondary)
-            case .sent: Image(systemName: "checkmark").foregroundStyle(.secondary)
+            case .sent: SingleTick(color: .secondary)
             case .delivered: DoubleTick(color: .secondary)
             case .read: DoubleTick(color: Theme.readTick)
             }
         }
         .contentTransition(.symbolEffect(.replace))
+    }
+}
+
+/// One tick sitting where the pair sits, so the row does not shift when the
+/// status moves from sent to delivered.
+struct SingleTick: View {
+    let color: Color
+    var body: some View {
+        Image(systemName: "checkmark")
+            .offset(x: 2.25)
+            .foregroundStyle(color)
+            .padding(.trailing, 4.5)
     }
 }
 
