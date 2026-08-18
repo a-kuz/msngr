@@ -353,6 +353,8 @@ public actor SyncEngine {
                                      mutedUntil: entry.flags.mutedUntil, archived: entry.flags.archived))
             }
         }
+        // the snapshot may have put a lost mark back into the queue
+        actionWakeup.continuation.yield()
     }
 
     /// Chats that still had history past their cursor after the last portion.
@@ -457,6 +459,8 @@ public actor SyncEngine {
                 try? await db.write { [ownUserId] dbc in
                     try SyncEngine.upsertChatState(dbc, state, ownUserId: ownUserId, flags: nil)
                 }
+                // a mark the server never heard is queued again by the state above
+                actionWakeup.continuation.yield()
                 // removed from the chat: it goes from this device as well
                 if !state.members.contains(where: { $0.userId == ownUserId }) {
                     try? await db.write { dbc in
@@ -2083,6 +2087,31 @@ public actor SyncEngine {
             try recordMark(dbc, chatId: s.chatId, userId: userId, upToSeq: upTo, isRead: true)
         }
         try applyPeerMarks(dbc, chatId: s.chatId, ownUserId: ownUserId)
+        try requeueOwnMarks(dbc, s, ownUserId: ownUserId, isRequest: isRequest)
+    }
+
+    /// The snapshot also says where the server thinks this device stands, and a
+    /// mark it never heard is queued again.
+    ///
+    /// A frame handed to a socket that is already dying goes nowhere and reports
+    /// no error, and a receipt the notification extension could not post is in
+    /// the same position. Either way the author would be left with a tick that
+    /// never moves, so the marks this device has already made are compared with
+    /// the server's and the difference is sent once more.
+    static func requeueOwnMarks(_ dbc: GRDB.Database, _ s: ChatStateDTO,
+                                ownUserId: String, isRequest: Bool) throws {
+        guard !isRequest else { return }
+        guard let row = try Row.fetchOne(
+            dbc, sql: "SELECT myReadUpTo, syncedSeq FROM chat WHERE id = ?", arguments: [s.chatId])
+        else { return }
+        let myRead: Int = row["myReadUpTo"]
+        let mine: Int = row["syncedSeq"]
+        if myRead > (s.readMarks[ownUserId] ?? 0) {
+            try upsertReadAction(dbc, chatId: s.chatId, upToSeq: myRead)
+        }
+        if mine > (s.deliveredMarks[ownUserId] ?? 0) {
+            try DeliveryReceipts.record(dbc, chatId: s.chatId, upToSeq: mine)
+        }
     }
 
     /// Returns false when the target message is not stored and the reaction
