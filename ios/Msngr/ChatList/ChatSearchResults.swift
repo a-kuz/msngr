@@ -73,7 +73,7 @@ struct ChatSearchResults: View {
                                 Text(user.display_name)
                                     .textRole(Theme.Text.rowTitle)
                                 Text("@\(user.username)")
-                                    .textRole(Theme.Text.rowTime)
+                                    .textRole(Theme.Text.personHandle)
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
