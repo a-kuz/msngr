@@ -1,5 +1,5 @@
 import type { Env, ClientFrame, ServerFrame, PublicUser } from "../types";
-import { json, err, nowSec } from "../util";
+import { json, err, nowSec, shouldArmAlarm } from "../util";
 import { sendPush, envelopeForDevice } from "../push/apns";
 import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "../version";
 import {
@@ -45,11 +45,52 @@ interface SocketAttachment {
   lastPing: number;
 }
 
+/// Push queue. A frame's delivery is acknowledged the moment the sockets have
+/// it; the APNs call runs from this queue afterwards, so its latency paces no
+/// chat and its failure fails no delivery. A job lives until every device has
+/// its push or refuses it for good: a transient failure moves the job's
+/// deadline out on a growing pause and never gives it up, with the devices
+/// already served written down so a retry reaches only the ones still owed.
+/// Jobs waiting out a pause hold nothing behind them — banner order and the
+/// badge are kept by seq and badgeStamp, not by the queue.
+const PUSH_PREFIX = "pq:";
+/// Pushes sent per alarm invocation; the queue re-arms for the rest.
+const PUSH_DRAIN = 10;
+/// Pause before retrying a job whose APNs call failed in transit, by the
+/// number of passes already failed; the last value repeats until it lands.
+const PUSH_RETRY_MS = [1_000, 5_000, 15_000, 30_000];
+
+function pushKey(id: number): string {
+  return PUSH_PREFIX + String(id).padStart(16, "0");
+}
+
+interface PushJob {
+  chatId: string;
+  msgId?: string;
+  seq?: number;
+  sentAt?: number;
+  from?: string;
+  fromDevice?: string;
+  ts?: number;
+  body?: unknown;
+  /// passes already failed in transit
+  attempt?: number;
+  /// not retried before this (ms since epoch)
+  nextAt?: number;
+  /// devices whose push already landed; a retry skips them
+  pushed?: string[];
+}
+
 // One object per user: the sockets of all their devices, the chat list, presence, pushes.
 export class UserSessionDO implements DurableObject {
   private userId: string | null = null;
   /// Dev test hook (/dev-fault): how many frame deliveries to reject next.
   private devFailEvents = 0;
+  /// True while alarm() runs. setAlarm during a running alarm handler cancels
+  /// the handler mid-await (workerd), so while it runs, arming requests
+  /// collect here and the handler arms the nearest one as it leaves.
+  private alarmRunning = false;
+  private rearmAt: number | undefined;
 
   /// dev measurement (PERF_LOG); never installed otherwise
   private perf: PerfCounters | null = null;
@@ -110,6 +151,29 @@ export class UserSessionDO implements DurableObject {
       const att = ws.deserializeAttachment() as SocketAttachment | null;
       return (att?.lastPing ?? 0) > cutoff;
     });
+  }
+
+  /// Arms the alarm, keeping whichever deadline is nearer. The one alarm is
+  /// shared by the push queue and the presence check.
+  private async armAlarm(atMs: number) {
+    if (this.alarmRunning) {
+      this.rearmAt = this.rearmAt === undefined ? atMs : Math.min(this.rearmAt, atMs);
+      return;
+    }
+    const now = Date.now();
+    const at = Math.max(atMs, now + 1);
+    const pending = await this.state.storage.getAlarm();
+    if (!shouldArmAlarm(pending, at, now)) return;
+    await this.state.storage.setAlarm(at);
+  }
+
+  /// Schedules the freshness check the presence TTL asks for. The deadline is
+  /// stored because the alarm is shared: an alarm firing early for a push must
+  /// not read as the TTL running out.
+  private async armPresenceCheck() {
+    const at = Date.now() + PRESENCE_TTL_MS;
+    await this.state.storage.put("presenceCheckAt", at);
+    await this.armAlarm(at);
   }
 
   /// Lifts a mute whose deadline has passed and returns the chat's current flags.
@@ -184,7 +248,7 @@ export class UserSessionDO implements DurableObject {
         protocol: PROTOCOL_VERSION, minProtocol: MIN_CLIENT_PROTOCOL,
       });
 
-      await this.state.storage.setAlarm(Date.now() + PRESENCE_TTL_MS);
+      await this.armPresenceCheck();
       if (this.sockets().length === 1) {
         await this.broadcastPresence(true);
       }
@@ -198,6 +262,18 @@ export class UserSessionDO implements DurableObject {
           return err("dev_fault", 500);
         }
         const frame = (await req.json()) as ServerFrame;
+        // The delivery is idempotent: the chat's seq orders its msg frames and
+        // they arrive per chat in order, so anything at or below the mark has
+        // been applied already — a retry of a delivery that in fact succeeded
+        // is answered "already have it", and never costs a second push.
+        // Receipts and marks are monotonic and chat/presence frames are
+        // snapshots, so they need no mark.
+        let inboxKey: string | undefined;
+        if (frame.t === "msg" && typeof frame.seq === "number") {
+          inboxKey = "in:" + frame.chatId;
+          const applied = (await this.state.storage.get<number>(inboxKey)) ?? 0;
+          if (frame.seq <= applied) return json({ ok: true, dupe: true });
+        }
         for (const ws of this.sockets()) this.send(ws, frame);
         if (frame.t === "msg" && !frame.service) {
           // a chat this user deleted comes back on the next message written to
@@ -209,12 +285,14 @@ export class UserSessionDO implements DurableObject {
           const muted = muteActive(flags, nowSec());
           const userId = await this.getUserId();
           const isOwnEcho = userId !== null && frame.from === userId;
-          // The call is awaited here rather than deferred: waitUntil gives no
-          // timing guarantee. The sender is not waiting on it — his ack left
-          // ConversationDO before this delivery was queued.
+          // the push leaves through the object's own queue: this delivery is
+          // acknowledged now, and APNs' latency paces no chat
           if (!muted && !isOwnEcho) {
-            await this.pushToDevices(frame);
+            await this.enqueuePush(frame);
           }
+        }
+        if (inboxKey && frame.t === "msg") {
+          await this.state.storage.put(inboxKey, frame.seq);
         }
         return json({ ok: true });
       }
@@ -421,17 +499,68 @@ export class UserSessionDO implements DurableObject {
     return next;
   }
 
+  /// Queues a push for the alarm loop and wakes it.
+  private async enqueuePush(frame: PushJob) {
+    const id = (await this.state.storage.get<number>("pqNext")) ?? 1;
+    const job: PushJob = {
+      chatId: frame.chatId, msgId: frame.msgId, seq: frame.seq, sentAt: frame.sentAt,
+      from: frame.from, fromDevice: frame.fromDevice, ts: frame.ts, body: frame.body,
+    };
+    await this.state.storage.put({ [pushKey(id)]: job, pqNext: id + 1 });
+    await this.armAlarm(Date.now());
+  }
+
+  /// Sends the queued pushes oldest first, a bounded number per invocation,
+  /// and asks to be woken again for the rest: at once when ready jobs remain,
+  /// at the nearest deadline when the head of the queue is waiting one out.
+  private async drainPushes() {
+    const listed = await this.state.storage.list<PushJob>({
+      prefix: PUSH_PREFIX,
+      limit: PUSH_DRAIN + 1,
+    });
+    let sent = 0;
+    let skippedReady = false;
+    let nextWake: number | undefined;
+    for (const [key, job] of listed) {
+      if (sent >= PUSH_DRAIN) {
+        skippedReady = true;
+        break;
+      }
+      const wait = (job.nextAt ?? 0) - Date.now();
+      if (wait > 0) {
+        nextWake = nextWake === undefined ? job.nextAt! : Math.min(nextWake, job.nextAt!);
+        continue;
+      }
+      const owed = await this.pushToDevices(job, job.pushed ?? []);
+      sent++;
+      if (!owed.length) {
+        await this.state.storage.delete(key);
+        continue;
+      }
+      const attempt = (job.attempt ?? 0) + 1;
+      const retryMs = PUSH_RETRY_MS[Math.min(attempt - 1, PUSH_RETRY_MS.length - 1)];
+      const nextAt = Date.now() + retryMs;
+      const tokens =
+        (await this.state.storage.get<Record<string, unknown>>("apns")) ?? {};
+      const pushed = Object.keys(tokens).filter((d) => !owed.includes(d));
+      await this.state.storage.put(key, { ...job, attempt, nextAt, pushed });
+      nextWake = nextWake === undefined ? nextAt : Math.min(nextWake, nextAt);
+    }
+    if (skippedReady) await this.armAlarm(Date.now());
+    else if (nextWake !== undefined) await this.armAlarm(nextWake);
+  }
+
   /// The push carries the message itself, addressed to the device it goes to:
   /// the extension decrypts it and writes it, so the chat holds what the banner
-  /// showed even if the socket never comes up.
-  private async pushToDevices(frame: {
-    chatId: string; msgId?: string; seq?: number; sentAt?: number;
-    from?: string; fromDevice?: string; ts?: number; body?: unknown;
-  }) {
+  /// showed even if the socket never comes up. Returns the devices still owed
+  /// their push — the ones that failed in transit and are worth another try. A
+  /// refusal APNs actually pronounced is final: retrying the same payload buys
+  /// nothing, and a dead token is dropped here.
+  private async pushToDevices(frame: PushJob, skip: string[] = []): Promise<string[]> {
     const tokens =
       (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
-    const devices = Object.entries(tokens);
-    if (!devices.length) return;
+    const devices = Object.entries(tokens).filter(([d]) => !skip.includes(d));
+    if (!devices.length) return [];
     const badge = await this.totalUnread();
     const badgeStamp = await this.nextBadgeStamp();
     const userId = await this.getUserId();
@@ -457,6 +586,10 @@ export class UserSessionDO implements DurableObject {
     );
     const dead = results.filter((r) => r.res?.dead).map((r) => r.deviceId);
     if (dead.length) await this.dropPushTokens(dead);
+    // no response at all — the endpoint, not the push, was the problem
+    return results
+      .filter((r) => r.res === null || (!r.res.ok && r.res.status === 0))
+      .map((r) => r.deviceId);
   }
 
   /// A token APNs answered 410 for is removed from both the DO and D1.
@@ -606,7 +739,7 @@ export class UserSessionDO implements DurableObject {
         const wasFresh = this.presenceFresh();
         ws.serializeAttachment({ ...att, lastPing: nowSec() } satisfies SocketAttachment);
         this.send(ws, { t: "pong" });
-        await this.state.storage.setAlarm(Date.now() + PRESENCE_TTL_MS);
+        await this.armPresenceCheck();
         if (!wasFresh) await this.broadcastPresence(true);
         return;
       }
@@ -618,7 +751,7 @@ export class UserSessionDO implements DurableObject {
 
       case "fg": {
         ws.serializeAttachment({ ...att, lastPing: nowSec() } satisfies SocketAttachment);
-        await this.state.storage.setAlarm(Date.now() + PRESENCE_TTL_MS);
+        await this.armPresenceCheck();
         await this.broadcastPresence(true);
         return;
       }
@@ -702,12 +835,35 @@ export class UserSessionDO implements DurableObject {
     }
   }
 
-  /// Silence past the TTL means offline, however open the socket still looks.
+  /// One alarm serves two queues: pushes owed, and the presence TTL — silence
+  /// past it means offline, however open the socket still looks. The stored
+  /// deadline tells the check apart from a push wake-up, so a push arriving
+  /// while the user is offline does not re-broadcast the offline.
   async alarm() {
-    if (!this.presenceFresh()) {
-      await this.broadcastPresence(false);
-    } else {
-      await this.state.storage.setAlarm(Date.now() + PRESENCE_TTL_MS);
+    this.alarmRunning = true;
+    this.rearmAt = undefined;
+    try {
+      await this.drainPushes();
+      const checkAt = await this.state.storage.get<number>("presenceCheckAt");
+      if (checkAt !== undefined) {
+        if (Date.now() >= checkAt) {
+          if (this.presenceFresh()) {
+            await this.armPresenceCheck();
+          } else {
+            await this.state.storage.delete("presenceCheckAt");
+            await this.broadcastPresence(false);
+          }
+        } else {
+          await this.armAlarm(checkAt);
+        }
+      }
+    } finally {
+      this.alarmRunning = false;
+      if (this.rearmAt !== undefined) {
+        const at = this.rearmAt;
+        this.rearmAt = undefined;
+        await this.armAlarm(at);
+      }
     }
   }
 
