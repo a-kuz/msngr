@@ -38,32 +38,61 @@ handle object is the authority.
 
 `ConversationDO` stays what it is: the journal of one chat.
 
-## The device set is pushed, not polled
+A user is not a chat. Someone can be in the contacts with a name and an avatar of
+this device's own choosing and never have a conversation, so the two objects own
+different things: the chat object owns the correspondence, the user object owns
+the person. The id of a direct chat stays derived from the two user ids, sorted,
+which is what `directChatName` already does.
 
-Once a user's object owns their devices, nobody has to ask for them. The object
-keeps a version on the set and a list of the objects that hold a replica of it.
-Adding or revoking a device bumps the version and sends an RPC to each of them;
-they store the new set and push a frame to whatever sockets they have open. A send
-then reads a local replica: no HTTP call before a message, and no cache to drop on
-a reconnect. The client compares one number after reconnecting, so a change missed
-while the socket was down is picked up by that comparison instead of by throwing
-every list away — which is what `SyncEngine` does today on every `connected`.
+## Subscription instead of asking
 
-Who holds the replica is the union of two lists in the object: the people this
-user shares a chat with, which `ConversationDO` already knows, and the people who
-put this user in their contacts. The second list is what carries a name, an
-avatar, a bio and presence to someone who added a person but has never written to
-them — the chats alone answer only for keys.
+The client's only counterpart is the API in front of its own object; nothing else
+is addressable from outside, and no request of a client reaches another person's
+object. Freshness comes from a subscription between objects.
 
-That list lives in the object and is served by no endpoint, not even to its owner:
-storage inside a DO is ours, and the graph is something the server holds anyway
-(chats, members, blocks), but "who added me" must not become a product feature
-through an API we did not intend.
+Starting a conversation with someone, or putting them in the contacts, makes the
+user's own object subscribe: an RPC to that person's object, which answers with
+the current snapshot — name, avatar, presence, identity keys and the signed
+prekey, the privacy settings, the stories — and remembers the subscriber. Every
+later change fans out over that list, so the object always holds a fresh copy and
+one call to the API answers for every peer at once.
 
-The replica is a cache of signed material, never the authority. The set travels
-with the signature over each identity, trust stays on TOFU on the device, and a
-message from a device the replica does not know refreshes that one user rather
-than being refused.
+The source decides what to put in the snapshot and in the delta for a given
+subscriber, which is what makes a privacy setting real rather than a checkbox: a
+hidden last seen is not in the payload, and a block drops the subscriber at the
+source. Unsubscribing on a removed contact or a deleted chat is part of the
+mechanism, otherwise the lists grow forever and changes are broadcast to nobody.
+
+Copies of another object's data are normal here, not a compromise: DO storage is
+ours, unreachable from a client, and what a client is allowed to see is decided by
+the API, not by where the bytes sit. Trust in keys is a separate matter and stays
+on the device: the copy carries the signature over each identity, TOFU decides.
+
+One-time prekeys are not pre-distributed. The first message to a device the sender
+has no session with is one RPC from the sender's object to the recipient's, since
+the address is derived from the user id; the client is not involved and is holding
+its first tick by then.
+
+## Delivery is outbox to inbox
+
+The sender's object writes the message and an outbox record in one transaction. A
+persisted task carries it to the recipient's object, which writes an inbox key
+(`from:<userId>/<msgId>`) and the message in one transaction of its own, and
+answers "already have it" to a repeat. Only that answer clears the outbox record;
+until then the task is retried with a growing pause and is never given up on.
+
+What we have today is the first half without the second. The fanout queue in
+`ConversationDO` is an outbox — a persisted job, a cursor, a backoff — but it drops
+the frame after three attempts (`FANOUT_MAX_ATTEMPTS`, pauses of 200 ms and 1 s),
+and `UserSessionDO./event` applies whatever arrives with no idempotency key at
+all. Nothing is lost only because the journal sits in the chat object and the
+client's catch-up asks for what its cursors are missing: the safety net is the
+journal, not the delivery. A repeat after a delivery that had in fact succeeded is
+sorted out by the client, by `msgId` and by the `notificationShown` claim.
+
+With the journal in a user's object that net is gone, so the inbox side is not
+optional. Versions stay where they belong — reconciling a snapshot on subscribe —
+and have nothing to do with the delivery guarantee.
 
 The cost to keep in view: a person in a very large number of chats turns one
 device change into a wide fan of RPCs. Device changes are rare, but that fan needs
