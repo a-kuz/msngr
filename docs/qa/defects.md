@@ -155,6 +155,11 @@ but the action menu itself sits behind the keyboard: only «Ответить» p
 it, the rest is unreachable. The keyboard has to go down when the context menu
 opens — the composer keeps its draft — or the menu has to lay itself out above
 the keyboard's frame.
+Closed by c5c0ab4: the overlay sends the keyboard down as it opens
+(`window.endEditing`), so the card lays out against the full screen; the draft
+stays in the composer. Verified live on a simulator with the keyboard up:
+all seven actions on screen, the draft intact after the menu closes
+(`docs/qa/runs/2026-08-19-longpress-run.md`).
 
 ### The lifted bubble doubles its shape in the context menu
 Reported 2026-08-19 from the device, with a screenshot. In the opened context
@@ -165,6 +170,24 @@ state at 0.96 (`14c3a0a`), so the likely spot is the snapshot taken at the
 presentation layer's scale but laid out at the identity frame, or the original
 left visible under the overlay. Seen together with the keyboard defect above, in
 the same long-press.
+Closed by c5c0ab4: it was the original left visible under the overlay — the
+scrim's gradient is transparent at the focus, and whenever the snapshot moved
+away from the origin (with the keyboard up it always does) the source bubble
+read through the blur as a second outline. The overlay now hides the source
+bubble for its lifetime and returns the snapshot to the bubble's current frame
+on dismissal, since the feed relayouts underneath when the keyboard leaves.
+
+### The «ack precedes push» smoke check races within milliseconds
+Seen 2026-08-19 in a gate run on `run-longpress` (server code untouched by the
+branch), not reported from outside. `smoke.mjs` check 21 asserts the sender's
+`sent` frame arrives before the push request reaches the APNs mock, comparing
+receive timestamps at the test process; one run out of three had the push 2 ms
+earlier (`ack 1787167581274 push 1787167581272`) and failed the gate. The
+1500 ms hold on the mock delays its response, not the request's arrival, so
+when the DO fires the ack and the push concurrently the arrival order within
+a few milliseconds is host scheduling, not the product. The check either needs
+the mock to stamp after the hold, or a tolerance the size of the real claim
+(«the ack does not wait 1.5 s for APNs»), decided on the server side.
 
 ### A pin frame stood in the fanout queue for 235 seconds
 Seen 2026-08-19 in the live run on `run-pin`, not reported from outside. The

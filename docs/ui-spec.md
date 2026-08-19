@@ -184,6 +184,11 @@ The reaction row is «❤️», «👍», «🔥», «😂», «😮», «😢»
 highlighted. The card is 252 wide with 44 pt rows; the menu and the bar hug the
 side the bubble is on.
 
+Opening the menu sends the keyboard down so the card has the whole screen; the
+composer keeps its draft. The bubble itself is hidden while the overlay is up —
+the lifted snapshot is the only copy on screen — and dismissal returns the
+snapshot to wherever the bubble stands after the feed has relaid itself out.
+
 ## Media
 
 Photos are downscaled to 1280 on the long side and encoded as JPEG at quality
