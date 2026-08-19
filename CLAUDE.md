@@ -76,6 +76,16 @@ own user, and the fixtures they need are on the stand, not on the device.
 - `wrangler dev` on :8787 — shared and live. Do not restart it and do not wipe
   its state (`server/.wrangler/`) without being asked to: it holds the
   conversations and keys of the test users.
+- The cloudflared tunnel `msngr.a-kuz.online` → :8787 must always be up: device
+  builds default to it (`make device`). It runs under launchd with KeepAlive
+  (`scripts/launchd/ai.enface.msngr.tunnel.plist`, installed the same way as the
+  tidy job); its log is `~/.cloudflared/msngr.log`. Do not start a second
+  cloudflared by hand — launchd owns it.
+- A branch that lands a migration in `server/migrations/` needs it applied on
+  the shared stand after the merge:
+  `cd server && ./node_modules/.bin/wrangler d1 migrations apply msngr --local`.
+  The gate never catches this — its smoke runs on a throwaway stand — and the
+  stale schema answers 500 to the first request that touches the new table.
 - The dev APNs mock `node server/tools/apns-mock.mjs` listens on :9871 and
   delivers pushes to the simulator through `simctl push`. `node test/smoke.mjs`
   brings up its own receiver on the same port, so the mock has to be stopped
