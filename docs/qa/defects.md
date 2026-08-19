@@ -57,6 +57,16 @@ thing in the product and have to be flawless — WhatsApp-grade, where every
 tick updates the instant the state changes. That is the acceptance test, not
 «the receipt eventually arrives».
 
+### A pin frame stood in the fanout queue for 235 seconds
+Seen 2026-08-19 in the live run on `run-pin`, not reported from outside. The
+server delivered the pin's chat frame after 235 s in the queue, and the second
+device was still on its previous seq. It belongs with the two entries above: the
+queue in `ConversationDO` is the one place all three symptoms pass through, and it
+gives up on a frame after three attempts with pauses of 200 ms and 1 s
+(`FANOUT_MAX_ATTEMPTS`) — after which nothing is retried and the client only
+recovers by asking for the range on its next catch-up. Measure the queue itself
+before touching the paths around it.
+
 ### Typing in the chat input misbehaves under load
 Reported 2026-08-19. Hard to catch: when the app stutters, letters appear with
 a delay, the input's resize lags behind, and sometimes the caret ends up not
