@@ -47,11 +47,18 @@ interface SocketAttachment {
 
 /// Push queue. A frame's delivery is acknowledged the moment the sockets have
 /// it; the APNs call runs from this queue afterwards, so its latency paces no
-/// chat and its failure fails no delivery. The records survive eviction: a
-/// push owed is a push sent, however late.
+/// chat and its failure fails no delivery. A job lives until every device has
+/// its push or refuses it for good: a transient failure moves the job's
+/// deadline out on a growing pause and never gives it up, with the devices
+/// already served written down so a retry reaches only the ones still owed.
+/// Jobs waiting out a pause hold nothing behind them — banner order and the
+/// badge are kept by seq and badgeStamp, not by the queue.
 const PUSH_PREFIX = "pq:";
 /// Pushes sent per alarm invocation; the queue re-arms for the rest.
 const PUSH_DRAIN = 10;
+/// Pause before retrying a job whose APNs call failed in transit, by the
+/// number of passes already failed; the last value repeats until it lands.
+const PUSH_RETRY_MS = [1_000, 5_000, 15_000, 30_000];
 
 function pushKey(id: number): string {
   return PUSH_PREFIX + String(id).padStart(16, "0");
@@ -66,6 +73,12 @@ interface PushJob {
   fromDevice?: string;
   ts?: number;
   body?: unknown;
+  /// passes already failed in transit
+  attempt?: number;
+  /// not retried before this (ms since epoch)
+  nextAt?: number;
+  /// devices whose push already landed; a retry skips them
+  pushed?: string[];
 }
 
 // One object per user: the sockets of all their devices, the chat list, presence, pushes.
@@ -498,30 +511,56 @@ export class UserSessionDO implements DurableObject {
   }
 
   /// Sends the queued pushes oldest first, a bounded number per invocation,
-  /// and asks to be woken again for the rest.
+  /// and asks to be woken again for the rest: at once when ready jobs remain,
+  /// at the nearest deadline when the head of the queue is waiting one out.
   private async drainPushes() {
     const listed = await this.state.storage.list<PushJob>({
       prefix: PUSH_PREFIX,
       limit: PUSH_DRAIN + 1,
     });
     let sent = 0;
+    let skippedReady = false;
+    let nextWake: number | undefined;
     for (const [key, job] of listed) {
-      if (sent >= PUSH_DRAIN) break;
-      await this.pushToDevices(job);
-      await this.state.storage.delete(key);
+      if (sent >= PUSH_DRAIN) {
+        skippedReady = true;
+        break;
+      }
+      const wait = (job.nextAt ?? 0) - Date.now();
+      if (wait > 0) {
+        nextWake = nextWake === undefined ? job.nextAt! : Math.min(nextWake, job.nextAt!);
+        continue;
+      }
+      const owed = await this.pushToDevices(job, job.pushed ?? []);
       sent++;
+      if (!owed.length) {
+        await this.state.storage.delete(key);
+        continue;
+      }
+      const attempt = (job.attempt ?? 0) + 1;
+      const retryMs = PUSH_RETRY_MS[Math.min(attempt - 1, PUSH_RETRY_MS.length - 1)];
+      const nextAt = Date.now() + retryMs;
+      const tokens =
+        (await this.state.storage.get<Record<string, unknown>>("apns")) ?? {};
+      const pushed = Object.keys(tokens).filter((d) => !owed.includes(d));
+      await this.state.storage.put(key, { ...job, attempt, nextAt, pushed });
+      nextWake = nextWake === undefined ? nextAt : Math.min(nextWake, nextAt);
     }
-    if (listed.size > sent) await this.armAlarm(Date.now());
+    if (skippedReady) await this.armAlarm(Date.now());
+    else if (nextWake !== undefined) await this.armAlarm(nextWake);
   }
 
   /// The push carries the message itself, addressed to the device it goes to:
   /// the extension decrypts it and writes it, so the chat holds what the banner
-  /// showed even if the socket never comes up.
-  private async pushToDevices(frame: PushJob) {
+  /// showed even if the socket never comes up. Returns the devices still owed
+  /// their push — the ones that failed in transit and are worth another try. A
+  /// refusal APNs actually pronounced is final: retrying the same payload buys
+  /// nothing, and a dead token is dropped here.
+  private async pushToDevices(frame: PushJob, skip: string[] = []): Promise<string[]> {
     const tokens =
       (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
-    const devices = Object.entries(tokens);
-    if (!devices.length) return;
+    const devices = Object.entries(tokens).filter(([d]) => !skip.includes(d));
+    if (!devices.length) return [];
     const badge = await this.totalUnread();
     const badgeStamp = await this.nextBadgeStamp();
     const userId = await this.getUserId();
@@ -547,6 +586,10 @@ export class UserSessionDO implements DurableObject {
     );
     const dead = results.filter((r) => r.res?.dead).map((r) => r.deviceId);
     if (dead.length) await this.dropPushTokens(dead);
+    // no response at all — the endpoint, not the push, was the problem
+    return results
+      .filter((r) => r.res === null || (!r.res.ok && r.res.status === 0))
+      .map((r) => r.deviceId);
   }
 
   /// A token APNs answered 410 for is removed from both the DO and D1.
