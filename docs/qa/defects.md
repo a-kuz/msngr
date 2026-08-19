@@ -70,6 +70,23 @@ work with APNs fully down — the socket delivery and the push must not share a
 fate. run-delivery is the fix in flight; its live run has to include this exact
 scenario.
 
+How the worker died, from `~/.wrangler/logs/wrangler-2026-08-19_16-15-26_335.log`
+(7.8M lines): the delivery timeout aborts `/event` after 10 s, but the push
+fetches that call had already started keep running; the retry invokes `/event`
+again and starts three more. 20 067 `waited before delivery` errors and 19 816
+accepted pushes of one message later, workerd hit `Too many open files`
+(`kj/async-io-unix.c++:918`) and stopped opening sockets at all. An aborted
+delivery must cancel what it started — that is its own line in the fix, separate
+from decoupling the push.
+
+### The context menu opens under the keyboard
+Reported 2026-08-19 from the device, with a screenshot. Long-pressing a bubble
+while the keyboard is up shows the reaction bar and the lifted bubble correctly,
+but the action menu itself sits behind the keyboard: only «Ответить» peeks above
+it, the rest is unreachable. The keyboard has to go down when the context menu
+opens — the composer keeps its draft — or the menu has to lay itself out above
+the keyboard's frame.
+
 ### A pin frame stood in the fanout queue for 235 seconds
 Seen 2026-08-19 in the live run on `run-pin`, not reported from outside. The
 server delivered the pin's chat frame after 235 s in the queue, and the second
