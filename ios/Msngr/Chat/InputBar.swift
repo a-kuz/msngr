@@ -160,23 +160,24 @@ struct InputBar: View {
                 }
                 Spacer()
                 Button {
+                    // the strip carries one mode at a time, so the cross leaves the
+                    // one it is showing: editing on top of a reply gives the reply back
                     withAnimation(Theme.springFast) {
-                        model.replyingTo = nil
                         if model.editing != nil {
                             model.editing = nil
-                            text = ""
+                        } else {
+                            model.replyingTo = nil
                         }
                     }
                 } label: {
                     Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
                 }
+                .accessibilityIdentifier("chat.strip.cancel")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .transition(.move(edge: .bottom).combined(with: .opacity))
-            .onAppear {
-                if let e = model.editing { text = e.text ?? "" }
-            }
+            .accessibilityIdentifier(model.editing != nil ? "chat.strip.edit" : "chat.strip.reply")
         }
     }
 

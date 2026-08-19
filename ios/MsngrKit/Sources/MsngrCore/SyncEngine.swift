@@ -539,6 +539,19 @@ public actor SyncEngine {
         }
     }
 
+    /// Asks the server where a user is right now.
+    ///
+    /// Presence reaches a device as a transition: the peer went online, the peer
+    /// went offline. A device that was not connected at that moment never hears
+    /// it, and the row it holds keeps saying what was true then. Opening a chat
+    /// is where the difference shows, so the chat asks.
+    public func refreshPresence(of ids: [String]) async {
+        for id in ids where !userFetchesInFlight.contains(id) {
+            userFetchesInFlight.insert(id)
+            await fetchAndStoreUser(id)
+        }
+    }
+
     private func fetchAndStoreUser(_ id: String) async {
         defer { userFetchesInFlight.remove(id) }
         guard let resp = try? await api.user(id) else { return }
