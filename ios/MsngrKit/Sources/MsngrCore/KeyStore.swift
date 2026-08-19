@@ -276,17 +276,17 @@ public final class IdentityStore: @unchecked Sendable {
     }
 
     public func saveSession(_ session: DoubleRatchetSession, peerUserId: String,
-                            peerDeviceId: String, theirIdentityDH: String) throws {
+                            peerDeviceId: String) throws {
         let plain = try JSONEncoder().encode(session)
         let sealed = try StateCrypto.seal(plain, with: master)
         try write { dbc in
             try dbc.execute(
                 sql: """
-                INSERT INTO ratchetSession (peerUserId, peerDeviceId, state, theirIdentityDH)
-                VALUES (?,?,?,?)
+                INSERT INTO ratchetSession (peerUserId, peerDeviceId, state)
+                VALUES (?,?,?)
                 ON CONFLICT(peerUserId, peerDeviceId) DO UPDATE SET state = excluded.state
                 """,
-                arguments: [peerUserId, peerDeviceId, sealed, theirIdentityDH]
+                arguments: [peerUserId, peerDeviceId, sealed]
             )
         }
     }

@@ -14,7 +14,6 @@ struct InputBar: View {
 
     @StateObject private var recorder = VoiceRecorder()
     @ObservedObject private var theme = ThemeStore.shared
-    @State private var inputHeight: CGFloat = GrowingTextView.minHeight
     /// where the take is in its life: asked for, running, locked, dropped
     @State private var gesture = RecordingGesture()
     @State private var dragOffset: CGFloat = 0
@@ -79,12 +78,10 @@ struct InputBar: View {
                             .frame(width: TypeScale.scaled(36, max: 48), height: TypeScale.scaled(36, max: 48))
                     }
                     .accessibilityIdentifier("chat.attach")
-                    GrowingTextView(text: $text, height: $inputHeight,
+                    GrowingTextView(text: $text,
                                     onChange: { model.textChanged($0) },
                                     onPasteImages: { addPending($0) })
                         .frame(maxWidth: .infinity)
-                        .frame(height: inputHeight)
-                        .animation(.easeOut(duration: 0.16), value: inputHeight)
                 }
                 actionButton
             }
@@ -423,7 +420,6 @@ struct LiveWaveView: View {
 /// stretches the UITextView over all the free space and the field eats half the screen.
 struct GrowingTextView: UIViewRepresentable {
     @Binding var text: String
-    @Binding var height: CGFloat
     var onChange: (String) -> Void
     var onPasteImages: ([UIImage]) -> Void = { _ in }
     /// Reading the size is what brings `updateUIView` back when the reader
@@ -465,7 +461,22 @@ struct GrowingTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ tv: UITextView, context: Context) {
-        if tv.text != text { tv.text = text }
+        // Text flows from the view into the binding while the user types; the
+        // binding writes back only a value the view itself never held — a clear
+        // after send, a restored draft. Writing on every render echoes a stale
+        // binding under load: just-typed letters vanish and the caret lands
+        // behind the text, because a programmatic write resets it. The guard is
+        // the coordinator's record of what the view last reported, and the write
+        // keeps the caret where it was, clamped to the new length.
+        if text != context.coordinator.viewText {
+            let caret = tv.selectedRange
+            tv.text = text
+            context.coordinator.viewText = text
+            tv.selectedRange = NSRange(location: min(caret.location, (text as NSString).length),
+                                       length: 0)
+            Self.fitScrolling(tv)
+            tv.invalidateIntrinsicContentSize()
+        }
         let font = Theme.Text.input.uiFont
         if tv.font != font { tv.font = font }
         if let placeholder = tv.viewWithTag(777) as? UILabel {
@@ -474,17 +485,23 @@ struct GrowingTextView: UIViewRepresentable {
             placeholder.frame = CGRect(x: 14, y: 8, width: tv.bounds.width - 20,
                                        height: ceil(font.lineHeight))
         }
-        recalcHeight(tv)
     }
 
-    private func recalcHeight(_ tv: UITextView) {
+    /// The height SwiftUI gives the field. Computed synchronously on request —
+    /// no state hop, so the field resizes in the same frame as the keystroke.
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView tv: UITextView,
+                      context: Context) -> CGSize? {
+        let width = proposal.width ?? (tv.bounds.width > 0 ? tv.bounds.width
+                                       : UIScreen.main.bounds.width - 100)
+        let fit = tv.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+        return CGSize(width: width, height: min(max(fit, Self.minHeight), Self.maxHeight))
+    }
+
+    /// Past six lines the field scrolls instead of growing.
+    fileprivate static func fitScrolling(_ tv: UITextView) {
         let width = tv.bounds.width > 0 ? tv.bounds.width : UIScreen.main.bounds.width - 100
         let fit = tv.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
-        let clamped = min(max(fit, Self.minHeight), Self.maxHeight)
         tv.isScrollEnabled = fit > Self.maxHeight
-        if abs(height - clamped) > 0.5 {
-            DispatchQueue.main.async { height = clamped }
-        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -511,12 +528,17 @@ struct GrowingTextView: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         let parent: GrowingTextView
+        /// What the view last reported: the one value the binding is allowed
+        /// to differ from before it may write into the field.
+        var viewText: String = ""
         init(_ p: GrowingTextView) { parent = p }
         func textViewDidChange(_ tv: UITextView) {
+            viewText = tv.text
             parent.text = tv.text
             parent.onChange(tv.text)
             tv.viewWithTag(777)?.isHidden = !tv.text.isEmpty
-            parent.recalcHeight(tv)
+            GrowingTextView.fitScrolling(tv)
+            tv.invalidateIntrinsicContentSize()
         }
     }
 }
