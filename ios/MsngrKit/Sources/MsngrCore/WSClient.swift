@@ -92,7 +92,20 @@ public actor WSClient {
         task = t
         t.resume()
         receiveLoop(t)
-        // the first frame from the server ("hello") is what confirms the connection
+        // The first frame from the server ("hello") is what confirms the connection,
+        // and until it arrives nothing else watches this socket: the ping only starts
+        // on that frame. An upgrade that succeeded into a dead stream would otherwise
+        // hang as "connecting" forever, with `task != nil` blocking every retry.
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            await self?.handshakeDeadline(for: t)
+        }
+    }
+
+    /// Fires 8 s after an upgrade: a socket still unconfirmed by then is dead.
+    private func handshakeDeadline(for t: URLSessionWebSocketTask) {
+        guard task === t, !isConnected else { return }
+        socketDied()
     }
 
     private func receiveLoop(_ t: URLSessionWebSocketTask) {
