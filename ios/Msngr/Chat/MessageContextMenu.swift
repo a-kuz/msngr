@@ -34,6 +34,12 @@ final class MessageContextOverlay: UIView {
     private let scrimMask = CAGradientLayer()
     private let snapshot: UIView
     private let originFrame: CGRect
+    /// The bubble the snapshot stands in for. It is hidden while the overlay is up —
+    /// the scrim is transparent at the focus and the original would show through the
+    /// blur as a second outline next to the lifted copy — and dismiss returns the
+    /// snapshot to wherever the bubble stands now, not to the remembered origin: the
+    /// feed relayouts underneath when the keyboard goes away.
+    private weak var sourceBubble: UIView?
     private let isOutgoing: Bool
     private let myReaction: String?
     private let onReact: (String) -> Void
@@ -87,6 +93,12 @@ final class MessageContextOverlay: UIView {
                                             selectableText: selectableText,
                                             showsReactions: showsReactions,
                                             pressScale: min(max(lift, 0.8), 1), onReact: onReact)
+        overlay.sourceBubble = bubble
+        bubble.isHidden = true
+        // the keyboard would cover the action card, so it goes down with the menu
+        // opening; the composer keeps its draft. The origin frame above is already
+        // captured, so the lift still starts under the finger
+        window.endEditing(true)
         overlay.frame = window.bounds
         window.addSubview(overlay)
         overlay.animateIn()
@@ -438,8 +450,17 @@ final class MessageContextOverlay: UIView {
 
     private func dismiss() {
         isUserInteractionEnabled = false
+        // the feed relayouts under the blur when the keyboard leaves, so the bubble
+        // is asked where it stands now; a bubble that left the hierarchy gets a fade
+        var returnFrame = originFrame
+        if let bubble = sourceBubble, let window = window, bubble.window === window {
+            let t = bubble.transform
+            bubble.transform = .identity
+            returnFrame = bubble.convert(bubble.bounds, to: window)
+            bubble.transform = t
+        }
         UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0) {
-            self.snapshot.frame = self.originFrame
+            self.snapshot.frame = returnFrame
             self.reactionBar.alpha = 0
             self.reactionBar.transform = CGAffineTransform(scaleX: 0.4, y: 0.4)
             self.menuCard.alpha = 0
@@ -449,6 +470,7 @@ final class MessageContextOverlay: UIView {
             self.blurView.effect = nil
             self.scrim.alpha = 0
         } completion: { _ in
+            self.sourceBubble?.isHidden = false
             self.removeFromSuperview()
         }
     }
