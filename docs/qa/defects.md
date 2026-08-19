@@ -57,6 +57,19 @@ thing in the product and have to be flawless — WhatsApp-grade, where every
 tick updates the instant the state changes. That is the acceptance test, not
 «the receipt eventually arrives».
 
+### A dead APNs endpoint stops chats
+Reported 2026-08-19 from the shared stand: with nothing listening on the APNs
+port, new messages stopped arriving entirely — the owner hit it right after
+deleting a 20k-message chat, but the deletion was incidental. The chain:
+`UserSessionDO./event` awaits `pushToDevices`, the push retries three times
+against a dead endpoint, and the fanout queue of the chat is head-of-line, so one
+undeliverable push holds every following frame; the stand had piled up ~20k
+retried pushes of a single message by the time the mock came back, and the worker
+itself wedged along the way. The owner's bar, recorded as acceptance: chats must
+work with APNs fully down — the socket delivery and the push must not share a
+fate. run-delivery is the fix in flight; its live run has to include this exact
+scenario.
+
 ### A pin frame stood in the fanout queue for 235 seconds
 Seen 2026-08-19 in the live run on `run-pin`, not reported from outside. The
 server delivered the pin's chat frame after 235 s in the queue, and the second
