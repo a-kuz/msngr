@@ -8,13 +8,23 @@ import PulseUI
 /// every request on it; release builds get the plain shared session and none
 /// of the Pulse code below exists.
 enum AppNet {
+    /// A request that hangs is worse than one that fails: a stale connection —
+    /// the far side of a tunnel restarted, a network switch the socket never
+    /// noticed — swallows requests silently, and the default 60 s is a frozen
+    /// screen. 15 s turns it into a failure the caller's retry can act on.
+    private static var config: URLSessionConfiguration {
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 15
+        return cfg
+    }
+
     #if DEBUG
     static let session = URLSession(
-        configuration: .default,
+        configuration: config,
         delegate: URLSessionProxyDelegate(),
         delegateQueue: nil)
     #else
-    static let session = URLSession.shared
+    static let session = URLSession(configuration: config)
     #endif
 }
 
