@@ -6,6 +6,15 @@ with the commit that closed it.
 
 ## Open
 
+### Impersonation by display name, and a freed username taken instantly
+Raised 2026-08-19 while answering whether a stranger can register someone
+else's username (they cannot: `[a-zA-Z0-9_]{3,32}`, UNIQUE COLLATE NOCASE,
+the race resolved by the index). What remains: the display name is free text —
+three accounts named «Akuz» differ only by the small @handle in search — and a
+renamed account's old username is up for grabs the same second, so whoever
+watches it inherits the searches for @oldname. Worth deciding: highlight the
+@handle in search, a cool-down before a freed name re-enters circulation.
+
 ### Interaction smoothness below Telegram
 Reported 2026-08-18. Overall animation quality and frame pacing feel worse
 than Telegram across the app. Umbrella item; closes on the owner's judgement,
