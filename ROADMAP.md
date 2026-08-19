@@ -138,6 +138,9 @@ A ✅ goes in only together with a link to the evidence.
     draft (header-run)
   - ⬜ pasting an image from the clipboard
   - ⬜ mentions and autocomplete
+  - ⬜ sending at a chosen time: the message waits in the outbox, the chat shows
+    what is queued for when, and it can be edited or cancelled before it leaves
+  - ⬜ a send that survives a killed app and a cold start at the appointed time
 
 ## Message kinds
 
@@ -149,6 +152,12 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ tapping a link opens the built-in browser, copying keeps the markup
     (qa/runs/2026-08-15-markdown)
   - ✅ selecting and copying part of the text from the menu (qa/runs/2026-08-15-multiselect, 07–08)
+- Mentions
+  - ⬜ a mention in the text renders as a link and its tap opens the profile
+  - ⬜ your own mention is marked in the feed and in the chat list row
+  - ⬜ a counter of unread mentions and a jump to the earliest one
+  - ⬜ a mention survives a rename: it carries the userId, not the handle
+  - ⬜ @all in a group, and who is allowed to use it
 - Photo
   - ✅ sending, downscale to 1280 + JPEG 0.8, a preview in the feed (media-run, case 21)
   - ✅ a blurhash placeholder until the download finishes: a cold cache on the
@@ -444,6 +453,15 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   - ⬜ a group avatar in the notification
   - ⬜ quick reply straight from the push
   - ⬜ a photo preview as an image in the notification
+- Sounds and exceptions
+  - ⬜ a sound of its own for one chat, overriding the default
+  - ⬜ separate defaults for direct chats and for groups
+  - ⬜ a sound of its own for a person, applied wherever they write
+  - ⬜ a sound of its own for a mention, louder than the chat's own
+  - ⬜ a muted chat still notifying on a mention or a reply to you
+  - ⬜ a set of sounds to pick from, and a silent choice
+  - ⬜ the sound travels with the push (`apns-sound`) so the extension does not
+    have to be running for it to be right
 
 ## Groups
 
@@ -521,7 +539,8 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - 🟡 the blur in the app switcher (not verified live)
 - 🟡 the blocked list and unblocking (not verified live)
 - 🟡 clearing the media cache with its size shown (not verified live)
-- ⬜ notification settings (sound, previews)
+- ⬜ notification settings: previews on the banner, the default sound, and the
+  per-chat and per-person exceptions listed under Notifications → Sounds
 - ⬜ language choice and localization
 - ⬜ exporting and deleting the account
 
