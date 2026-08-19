@@ -78,8 +78,12 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ swipes: archive, mute, pin, delete (qa/runs/2026-08-16-chatlist)
   - ✅ the archive section and the archive screen (qa/runs/2026-08-16-chatlist)
   - ✅ the requests section with «Принять» / «Заблокировать» swipes (qa/runs/2026-08-16-chatlist)
-  - ⬜ folders and tabs
+  - 🟡 folders and tabs: a rule plus chats put in and taken out by hand, a chat in
+    any number of folders, the tab switched by a long horizontal swipe over the
+    list (built and unit-covered, the live run is still open)
   - ⬜ animated reordering on a new message
+  - ⬜ a chat with yourself for saved messages, first in the list and never a
+    push; forwarding into it from any chat
 - Search and empty states
   - ✅ local search over the chat title and the username (design-review 02c)
   - ✅ an empty list with a «Начать переписку» button (palettes/chatlist-empty)
@@ -131,6 +135,10 @@ A ✅ goes in only together with a link to the evidence.
     (header-run, two devices)
   - 🟡 tapping the pinned message scrolls to it (in the window: header-run; older
     than the window waits for run-feedwindow)
+  - ⬜ several pinned messages at once: the bar counts them, tapping walks
+    through them, and a list opens all of them
+  - ⬜ a jump to a date: the calendar over the history and the feed landing on
+    that day
 - Input
   - ✅ a growing field, the attachment menu «Фото или видео» / «Файл» (design-review 04, 05a)
   - ✅ a draft survives leaving the chat and a kill (offline-run 5)
@@ -152,6 +160,14 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ tapping a link opens the built-in browser, copying keeps the markup
     (qa/runs/2026-08-15-markdown)
   - ✅ selecting and copying part of the text from the menu (qa/runs/2026-08-15-multiselect, 07–08)
+- A link in the text
+  - ⬜ a preview card under the message: the title, the description and the
+    picture. The server never sees the plaintext, so the sender's client fetches
+    the page and carries the card inside the encrypted message
+  - ⬜ the sender decides: the card can be dropped before sending, and a setting
+    keeps the client from fetching pages at all
+  - ⬜ the picture of the card travels like any other media, encrypted, not as a
+    third-party URL the receiver would fetch in the clear
 - Mentions
   - ⬜ a mention in the text renders as a link and its tap opens the profile
   - ⬜ your own mention is marked in the feed and in the chat list row
@@ -188,9 +204,20 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ speed ×1/×1.5/×2, kept between messages (voice-run)
   - ✅ playback continuing while moving between chats (voice-run)
   - ✅ a take interrupted by the screen or the app going away is dropped (voice-run)
+  - ⬜ a transcript of a voice message on demand, on the device
+- Round video messages
+  - ⬜ recording from the front camera by holding, the same gesture as a voice
+    message, with slide-to-cancel and lock
+  - ⬜ a round bubble in the feed, playing without sound until it is tapped
+  - ⬜ playback continuing in a small circle while the reader scrolls away
 - Files
   - 🟡 sending up to 100 MB with the name (not verified live)
   - ⬜ previewing a file in the app
+- Polls
+  - ⬜ creating one: the question, the options, single or multiple choice
+  - ⬜ voting, the result as a share of the votes, retracting a vote
+  - ⬜ an anonymous poll and one with the voters visible; the count is the server's
+    but the wording stays encrypted, so a poll is a message kind of its own
 - System messages
   - 🟡 «Код безопасности собеседника изменился» (not verified live)
   - ✅ group events (left, title, photo, description, the admin role) as separate
@@ -199,6 +226,10 @@ A ✅ goes in only together with a link to the evidence.
 - Other
   - ⬜ contact and location
   - ⬜ stickers and GIFs
+  - ⬜ shooting a photo or a video from the attachment sheet, without leaving the
+    chat for the system camera
+  - ⬜ receiving what other apps share: a photo, a file or a link arrives through
+    a share extension and lands in a chat picked there
 
 ## Sending, statuses, offline
 
@@ -375,6 +406,8 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   - ✅ after unblocking delivery resumes and what was hidden stays hidden
     (smoke `block: delivery resumes after unblock`)
   - ⬜ visibility settings for last seen and read receipts
+  - ⬜ reporting a chat or a message: what leaves the device is only what the
+    reporter chose to attach, and blocking is offered in the same step
   - ✅ a request's content is hidden until it is accepted: the feed, the chat list,
     the in-app banner, the badge (ChatPrivacyTests, ChatFeedTests units, request-privacy-run)
 
@@ -534,6 +567,8 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ✅ the username on its own screen, with the taken case seen live
   (qa/runs/2026-08-17-profile)
 - ✅ picking a palette from cards with instant application (palettes/live-*, settings-appearance)
+- ⬜ a background for the feed: a set to pick from and a picture of your own, set
+  everywhere or for one chat
 - 🟡 the PIN: setting it, repeating it, checking it (not verified live)
 - 🟡 Face ID and auto-lock after 30 s (not verified live)
 - 🟡 the blur in the app switcher (not verified live)
