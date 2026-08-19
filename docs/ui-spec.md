@@ -17,9 +17,14 @@ are updated; otherwise the inserts and deletes go through
 `performWithoutAnimation { performBatchUpdates }`. A full `reloadData()` is kept
 for a complicated reordering, or when `deletes + inserts >= 60`.
 
-A live cell is updated by reconfiguring it in place as long as its height held
-(`|Δh| < 0.5`). `reloadItems` would cut off the appearance animation when the
-`sending → sent` ack lands in the first milliseconds after the insert.
+A live cell is always updated by reconfiguring it in place, inside a 0.35 s
+spring at damping 0.86; when the plan height moved (`|Δh| ≥ 0.5`, a reaction
+arrived or left) a `performBatchUpdates(nil)` joins the same animation, so the
+bubble resizes on screen and the neighbours slide instead of jumping.
+`contentOffset` stays untouched, which in the inverted feed keeps the bubble's
+bottom edge anchored. `reloadItems` is not used on a visible cell: it would
+recreate it and cut off the appearance animation when the `sending → sent` ack
+lands in the first milliseconds after the insert.
 
 What the feed reads is a window rather than the whole chat. `FeedWindow` holds a
 floor and a capacity of `HistoryWindow.pageSize` (60); while the reader sits at
@@ -139,18 +144,26 @@ With the socket down the header subtitle reads «подключение…».
   0.42 s spring, damping 0.82. Both start after the inserted cell has laid out.
 - Someone else's message scrolls the feed down only if the reader was at the
   bottom (`contentOffset.y < 60`); your own always scrolls, immediately.
+- The press dip: a touch that settles on a bubble for 0.1 s scales it to 0.96
+  over 0.22 s ease-out. It runs alongside every other gesture, releases on a
+  0.35/0.8 spring, lets go as soon as the finger moves 12 pt (a scroll or a
+  swipe), and hands the transform to swipe-to-reply without a restore.
 - The context menu: a 0.35 s long press with `Haptics.medium()`; a
-  `systemUltraThinMaterial` backdrop over 0.25 s; the bubble snapshot on a
-  0.45/0.8 spring; the reaction bar and the card from `scale 0.2` over 0.4 s
-  after a 0.05 s delay, damping 0.75; the emoji cascade 0.35 s at a 0.03 step.
-  Dismissal takes 0.3 s at damping 0.9, and stepping into the delete submenu is
-  a 0.2 s cross-dissolve.
+  `systemUltraThinMaterial` backdrop over 0.25 s; the bubble snapshot starts at
+  the press-dip scale read off the presentation layer and lifts on a 0.45/0.8
+  spring, so the dip flows into the menu; the reaction bar and the card from
+  `scale 0.2` over 0.4 s after a 0.05 s delay, damping 0.75; the emoji cascade
+  0.35 s at a 0.03 step. Dismissal takes 0.3 s at damping 0.9, and stepping
+  into the delete submenu is a 0.2 s cross-dissolve.
 - Swipe to reply: the pan only starts on horizontal movement to the right,
   travel is capped at 90 pt with resistance `60 * (1 - exp(-x/60))`, the icon
   fades in along the way, the threshold is 44 pt with `Haptics.medium()`, and
   the return is a 0.35/0.8 spring.
 - Reactions: a new capsule appears over 0.4 s at damping 0.6 from `scale 0.5`;
-  tapping a capsule runs 0.12 s up to 1.25 and back.
+  tapping a capsule runs 0.12 s up to 1.25 and back. Capsules are reused by
+  emoji, so a count change animates in the same view, and a withdrawn reaction
+  shrinks away over 0.2 s to `scale 0.5`. The bubble's own resize rides the
+  feed's reconfigure spring above.
 - A double tap on a bubble leaves «❤️» with `Haptics.medium()`.
 - The scroll-to-bottom button appears when the newest message (item 0 of the
   inverted feed) is off screen, transitioning on `scale + opacity` with
