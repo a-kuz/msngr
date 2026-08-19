@@ -177,9 +177,14 @@ final class VoiceRecorder: NSObject, ObservableObject {
         }
     }
 
-    /// Returns (file, duration, a waveform of 100 buckets in 0..31).
-    /// Only an accidental touch of the microphone (under 0.3s) is dropped and gives nil;
-    /// a short voice message like a quick "ok" (0.3 to 1s) is a message like any other.
+    /// A touch of the microphone shorter than this is an accident. A quick "ok" of half a
+    /// second is a message like any other, so the cut sits below it.
+    static let minimumTake: TimeInterval = 0.3
+
+    static func isAccidental(_ duration: TimeInterval) -> Bool { duration < minimumTake }
+
+    /// Returns (file, duration, a waveform of 100 buckets in 0..31); an accidental touch
+    /// gives nothing back and takes its file with it.
     func stop() -> (url: URL, duration: TimeInterval, waveform: [Int])? {
         timer?.invalidate()
         guard let r = recorder, let url = fileURL else { return nil }
@@ -189,7 +194,7 @@ final class VoiceRecorder: NSObject, ObservableObject {
         fileURL = nil
         isRecording = false
         releaseSession()
-        guard dur >= 0.3 else {
+        guard !Self.isAccidental(dur) else {
             try? FileManager.default.removeItem(at: url)
             return nil
         }

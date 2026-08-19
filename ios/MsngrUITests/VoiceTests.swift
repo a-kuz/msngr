@@ -151,8 +151,37 @@ final class VoiceTests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: "voice.play").count
     }
 
+    /// How far along the wave the player has got, in percent. Every wave that is not the
+    /// one playing stands at zero, so the largest of them is the position; a failure then
+    /// carries the number instead of a missing-element error.
     private func progress() -> Int {
-        Int(playingWave.value as? String ?? "") ?? -1
+        app.descendants(matching: .any).matching(identifier: "voice.wave")
+            .allElementsBoundByIndex
+            .compactMap { Int($0.value as? String ?? "") }
+            .max() ?? -1
+    }
+
+    /// The position once it has passed `mark`, or whatever it still is when the wait runs
+    /// out. A host with a dozen builds on it can leave the app without a frame for
+    /// seconds, and a position read once at a fixed moment then says "stopped" about a
+    /// message that is playing perfectly well.
+    private func progress(above mark: Int, timeout: TimeInterval = 15) -> Int {
+        let deadline = Date().addingTimeInterval(timeout)
+        var value = progress()
+        while value <= mark, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.5)
+            value = progress()
+        }
+        return value
+    }
+
+    /// Puts the position of the message that is playing back to the start, so a borrowed
+    /// take of unknown length still has room for what comes next. A tap on the wave of a
+    /// running message moves inside it and leaves it running.
+    private func rewind() {
+        newestWave.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.5)).tap()
+        XCTAssertTrue(pauseButton.waitForExistence(timeout: 3),
+                      "the message stopped when the position was moved")
     }
 
     /// Records a take of the given length with the lock and sends it.
@@ -262,14 +291,17 @@ final class VoiceTests: XCTestCase {
         openPeerChat()
         XCTAssertTrue(play.waitForExistence(timeout: 15), "no voice message in the chat")
         newestPlay.tap()
+        XCTAssertTrue(pauseButton.waitForExistence(timeout: 5), "the message never started")
         XCTAssertTrue(rateButton.waitForExistence(timeout: 5),
                       "the message being played has no speed button")
-        Thread.sleep(forTimeInterval: 1.5)
-        let first = progress()
+        let first = progress(above: 0)
         XCTAssertGreaterThan(first, 0, "the position stayed at the start")
-        Thread.sleep(forTimeInterval: 1.5)
-        XCTAssertGreaterThan(progress(), first, "the position stopped moving")
+        XCTAssertGreaterThan(progress(above: first), first,
+                             "the position stopped moving at \(first)")
 
+        // the speed belongs to a message that is still running, and the take this test
+        // borrows can be a few seconds long, so the position goes back to the start first
+        rewind()
         XCTAssertEqual(rateButton.label, "Скорость 1×")
         rateButton.tap()
         XCTAssertEqual(rateButton.label, "Скорость 1,5×", "the speed button did not step to 1,5×")
@@ -310,8 +342,7 @@ final class VoiceTests: XCTestCase {
         openPeerChat()
         sendVoice(seconds: 25)
         newestPlay.tap()
-        Thread.sleep(forTimeInterval: 1)
-        let left = progress()
+        let left = progress(above: 0)
         XCTAssertGreaterThan(left, 0, "playback never started")
 
         app.buttons["chat.back"].tap()
@@ -358,7 +389,7 @@ final class VoiceTests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.7)
         XCTAssertEqual(rateButton.label, "Скорость 1,5×",
                        "the speed went back to 1× when another message started")
-        XCTAssertGreaterThan(progress(), 0, "the other message never started")
+        XCTAssertGreaterThan(progress(above: 0), 0, "the other message never started")
     }
 
     /// The receiving side of the same rule: a message that came in goes on playing while
@@ -369,8 +400,10 @@ final class VoiceTests: XCTestCase {
         XCTAssertTrue(play.waitForExistence(timeout: 15), "no voice message in the chat")
         newestPlay.tap()
         XCTAssertTrue(pauseButton.waitForExistence(timeout: 5), "the message never started")
-        Thread.sleep(forTimeInterval: 1)
-        let left = progress()
+        // the whole take has to be ahead of the walk, or a message that simply ended reads
+        // the same as one that was cut off
+        rewind()
+        let left = progress(above: 0)
         XCTAssertGreaterThan(left, 0, "the position stayed at the start")
 
         app.buttons["chat.back"].tap()
