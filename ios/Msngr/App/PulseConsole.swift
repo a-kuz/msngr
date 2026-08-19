@@ -1,7 +1,9 @@
 import SwiftUI
+import MsngrCore
 #if DEBUG
 import Pulse
 import PulseUI
+import PulseProxy
 #endif
 
 /// The URLSession the app's HTTP goes through. In debug builds Pulse records
@@ -19,13 +21,24 @@ enum AppNet {
     }
 
     #if DEBUG
-    static let session = URLSession(
-        configuration: config,
-        delegate: URLSessionProxyDelegate(),
-        delegateQueue: nil)
+    /// Recording rides on PulseProxy's session swizzle (`NetworkLogger.enableProxy()`
+    /// in `install`): the delegate-based hook cannot see async/await requests
+    /// finish — Pulse's own docs mark URLSessionProxyDelegate as not working with
+    /// the async URLSession APIs, and every request showed as pending forever.
+    static let session = URLSession(configuration: config)
+    /// Called once at startup, before the first request.
+    static func install() {
+        NetworkLogger.enableProxy()
+    }
     #else
     static let session = URLSession(configuration: config)
+    static func install() {}
     #endif
+
+    /// The one way the app builds its API client, so every caller records alike.
+    static func client(token: String? = nil) -> APIClient {
+        APIClient(baseURL: AppState.httpBase, token: token, session: session)
+    }
 }
 
 #if DEBUG

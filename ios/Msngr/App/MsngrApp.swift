@@ -9,6 +9,7 @@ struct MsngrApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
+        AppNet.install()
         TypeScale.start()
     }
 
