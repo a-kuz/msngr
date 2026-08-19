@@ -7,8 +7,15 @@ import MsngrCore
 struct ChatFoldersView: View {
     @ObservedObject var model: ChatListModel
     @Environment(\.dismiss) private var dismiss
+    /// `EditButton()` reads the real system locale and not the app's own, so on
+    /// a device where they disagree it lands in a different language than every
+    /// other string on this screen. A button of our own, on the same catalog as
+    /// the rest of the toolbar, can't drift out of step with it.
+    @Environment(\.editMode) private var editMode
     /// The folder open in the editor; a target holding no folder creates a new one.
     @State private var editing: EditorTarget?
+
+    private var isEditing: Bool { editMode?.wrappedValue.isEditing ?? false }
 
     private struct EditorTarget: Identifiable {
         var folder: ChatFolder?
@@ -61,7 +68,11 @@ struct ChatFoldersView: View {
             .navigationTitle("Folders")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) { EditButton() }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(isEditing ? "Done" : "Edit") {
+                        editMode?.wrappedValue = isEditing ? .inactive : .active
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
                 }

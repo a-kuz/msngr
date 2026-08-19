@@ -1,64 +1,50 @@
 # Where the work stands
 
-Written 2026-08-16. This file exists because agent work lives on branches that
+Written 2026-08-19. This file exists because agent work lives on branches that
 outlive the conversation that started them; without it a branch with a day of
 work in it looks like clutter.
 
 Delete an entry when its branch is merged and gone.
 
-## Branches waiting to be merged
+## Branches with work in them
 
-**run-english** — 24 commits, finished. `PROCESS.md` and `ui-spec.md` translated,
-the five Russian run reports translated, Russian comments swept out of the
-sources. While translating the UI spec it also corrected what that document said
-about the feed window and the badge, which had gone stale. Ready to merge.
+**run-pin** — one commit. The pinned bar reads its own message row through an
+observation instead of the feed window, so a pin deeper than the window still
+draws. Two behaviours are still open: the tap has to load history before it jumps,
+and a pin does not apply until the next chat-state sync. Both measured in
+`docs/qa/runs/2026-08-16-large-chat-perf-run.md`. Never watched live. Its agent
+`pin` is waiting out the token limit and continues in its own session.
 
-**run-media** — 2 commits, finished. Media close-out: video playback, blurhash,
-album mosaic, photo caption. Report in `docs/qa/runs/2026-08-16-media-close-out-run.md`.
-Ready to merge.
+**run-identityui** — one commit. A username freed by a rename stays out of
+circulation for two weeks for everyone but its previous owner
+(`server/migrations/0004_username_quarantine.sql`, renumbered to 0005 after the
+crypto merge took 0004), and the @handle in people search has a text role of its
+own. The migration has never been applied and the rewritten smoke has never run.
+Its agent `identityui` is working on it, on a stand of its own on :8803.
 
-**run-audit** — running. Triaging `docs/audits/2026-08-12-code-audit.md`, fixing
-what survives triage. 11 commits so far.
+## Merged and free to delete
 
-**run-device** — running. Signing in on a second device: design in
-`docs/research/2026-08-16-second-device.md`, then server and client. 6 commits so
-far, and the live run has both devices exchanging messages after linking.
+`run-crypto-identity` is in main as of `eed62e8`: the identity binding, the replay
+rule, sender key messages signed whole, skipped message keys evicted by age, and
+`docs/audits/2026-08-16-crypto.md`. Merging it changes registration, so users on
+the shared stand register again.
 
-**worktree-agent-ab653cb1fa7bfbfa5** — 12 commits, agent died (session limit).
-Chat screen defects from `docs/audits/2026-08-16-chat-ui.md`: delete through
-selection, status-bar tap, send-scrolls-to-end, reaction insets, in-place text
-selection, back-swipe. Never verified live. Its worktree is gone; the branch is
-not. Pick it up with a fresh agent reading the diff.
-
-**worktree-agent-ad5c9c3de9254ee23** — 5 commits, superseded by the branch above,
-which merged it. Keep until that one lands, then delete both together.
+These branches carry nothing main does not already have: `run-chatlist`,
+`run-chatsearch`, `run-english2`, `run-housekeeping`, `run-perfdb`, `run-perfnet`,
+`run-search`, `run-statusbar`, `run-crypto-identity`.
 
 ## Not started, specified
 
 - Reaction animations — waiting for a model that can debug animation frame by
   frame; the owner asked not to hand this to a general-purpose agent.
-- Search inside one chat — `docs/audits/2026-08-16-chat-ui.md` item 4. The query
-  layer for it already exists (`MessageSearch.page(chatId:)`), only the screen is
-  missing.
-- `docs/protocol.md` and `docs/crypto-flows.md` are still in Russian; they were
-  left out of the English sweep because the second-device agent is rewriting
-  them. They get their own pass afterwards.
+- `docs/protocol.md` and `docs/crypto-flows.md` are still in Russian and get their
+  own pass.
 - Splitting into three private repositories, and rewriting the commit history in
-  English. The history also carries the deleted screenshots and build artefacts,
-  so `.git` is around 460 MB against 368 KB of docs.
+  English. The history also carries deleted screenshots and build artefacts, so
+  `.git` is around 460 MB against 368 KB of docs.
 
 ## How agents are run
 
-As their own processes, not through the Agent tool:
-
-    cd .claude/worktrees/<name>
-    nohup claude -p --session-id <uuid> --permission-mode bypassPermissions \
-      "$(cat task.md)" < /dev/null >> run.log 2>&1 &
-
-The session id is ours, so `claude -r <uuid> -p "..."` resumes after any
-interruption, and no stall watchdog applies. To steer one mid-flight: `kill` the
-pid, then resume with new instructions — nothing on disk is lost.
-
-`scripts/agents.sh` reads `.claude/agents.tsv` (name, session id, worktree) and
-says which are alive, stuck or done. `scripts/tidy.sh` reclaims what dead agents
-leave behind; launchd runs it hourly.
+`.claude/ORCHESTRATION.md` holds it: two slots, a session per agent continued with
+`claude -r`, the token limit waited out rather than replaced with a fresh session,
+and course corrections sent with `SendMessage` instead of a kill.
