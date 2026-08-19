@@ -31,9 +31,13 @@ final class AppState: ObservableObject {
     // used only when it parses into a URL
     static let httpBase: URL = {
         let fallback = URL(string: "http://localhost:8787")!
-        guard let raw = ProcessInfo.processInfo.environment["MSNGR_SERVER"],
-              let url = URL(string: raw), url.scheme != nil else { return fallback }
-        return url
+        if let raw = ProcessInfo.processInfo.environment["MSNGR_SERVER"],
+           let url = URL(string: raw), url.scheme != nil { return url }
+        // a physical device gets no environment: `make device` bakes the Mac's
+        // address into the Info instead (empty when not a device build)
+        if let raw = Bundle.main.object(forInfoDictionaryKey: "MSNGRServer") as? String,
+           let url = URL(string: raw), url.scheme != nil { return url }
+        return fallback
     }()
 
     @Published var session: Session?

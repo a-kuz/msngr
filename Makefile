@@ -38,6 +38,23 @@ uitest:
 	@test "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 $(MSNGR_SERVER)/api/me)" != "000" || (echo "wrangler dev is not running ($(MSNGR_SERVER)): npx wrangler dev"; exit 1)
 	MSNGR_SERVER=$(MSNGR_SERVER) $(XCODE) -scheme Msngr $(DEST) test -only-testing:MsngrUITests 2>&1 | tail -5 | grep -q "TEST SUCCEEDED"
 
+# Build and install on a physical iPhone with a free Apple ID (Personal Team).
+# One-time on the phone: Developer Mode on, trust this Mac; in Xcode: Settings →
+# Accounts → your Apple ID, copy the Team ID. Then:
+#   make device TEAM=ABCDE12345 [SERVER=http://<mac-lan-ip>:8787]
+# The communication-notifications entitlement is stripped: a personal team
+# cannot sign it, and pushes need a paid account anyway.
+DEVICE_APP := ios/build/device/Build/Products/Debug-iphoneos/Msngr.app
+device:
+	@test -n "$(TEAM)" || (echo "make device TEAM=<Team ID из Xcode → Settings → Accounts>"; exit 1)
+	cd ios && MSNGR_DEVICE_SERVER="$(or $(SERVER),https://msngr.a-kuz.online)" xcodegen
+	plutil -remove "com\.apple\.developer\.usernotifications\.communication" ios/Msngr/Msngr.entitlements || true
+	$(SLOT) xcodebuild -project ios/Msngr.xcodeproj -scheme Msngr \
+	  -destination 'generic/platform=iOS' -derivedDataPath ios/build/device \
+	  -allowProvisioningUpdates CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=$(TEAM) build
+	xcrun devicectl device install app --device "$$(xcrun devicectl list devices --hide-headers 2>/dev/null | awk '/iPhone/{print $$NF; exit}')" $(DEVICE_APP)
+	cd ios && xcodegen
+
 server-smoke:
 	bash scripts/smoke-stand.sh
 
