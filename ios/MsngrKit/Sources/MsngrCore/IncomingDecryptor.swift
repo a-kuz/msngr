@@ -90,17 +90,16 @@ public struct IncomingDecryptor: Sendable {
 
         // Always try the sessions we already know first, active one before archived ones.
         // A message must not be lost just because the two sides' state drifted apart.
-        if var existing = try store.loadSession(peerUserId: fromUserId, peerDeviceId: fromDeviceId),
-           let plain = try? existing.decrypt(ratchetMsg) {
-            try store.saveSession(existing, peerUserId: fromUserId, peerDeviceId: fromDeviceId,
-                                  theirIdentityDH: box.ik ?? "")
-            return try handleInner(plain, fromUserId: fromUserId, trustIssue: nil)
+        let current = try store.loadSession(peerUserId: fromUserId, peerDeviceId: fromDeviceId)
+        if var existing = current, let plain = try? existing.decrypt(ratchetMsg) {
+            try store.saveSession(existing, peerUserId: fromUserId, peerDeviceId: fromDeviceId)
+            return try handleInner(plain, chatId: chatId, fromUserId: fromUserId, trustIssue: nil)
         }
         var archive = try store.archivedSessions(peerUserId: fromUserId, peerDeviceId: fromDeviceId)
         for i in archive.indices {
             if let plain = try? archive[i].decrypt(ratchetMsg) {
                 try store.saveArchivedSessions(archive, peerUserId: fromUserId, peerDeviceId: fromDeviceId)
-                return try handleInner(plain, fromUserId: fromUserId, trustIssue: nil)
+                return try handleInner(plain, chatId: chatId, fromUserId: fromUserId, trustIssue: nil)
             }
         }
 
@@ -108,17 +107,29 @@ public struct IncomingDecryptor: Sendable {
             // A pk that no known session could open: build a fresh responder session and
             // move the current one to the archive, where messages still in flight can
             // reach it. This resolves both simultaneous initiation (glare) and plain drift.
-            try store.archiveCurrentSession(peerUserId: fromUserId, peerDeviceId: fromDeviceId)
             guard let ikB64 = box.ik, let ik = Data(base64urlEncoded: ikB64),
+                  let iskB64 = box.isk, let isk = Data(base64urlEncoded: iskB64),
+                  let sigB64 = box.iksig, let iksig = Data(base64urlEncoded: sigB64),
                   let ekB64 = box.ek, let ek = Data(base64urlEncoded: ekB64),
                   let spkId = box.spkId,
                   let spkPriv = try store.signedPrekey(id: spkId) else {
                 return .undecryptable(reason: "bad_pk")
             }
-            if let iskB64 = box.isk {
-                let trust = try store.checkTrust(userId: fromUserId, identitySigning: iskB64)
-                if case .changed = trust { trustIssue = iskB64 }
+            // The identity is trusted by its signing key and the session runs on its
+            // DH key, so an envelope that does not tie the two together is one where
+            // the trust answer would be about a key nothing here uses.
+            guard IdentityBinding.verify(dh: ik, signature: iksig, signingPub: isk) else {
+                return .undecryptable(reason: "unbound_identity")
             }
+            // The handshake this session already came out of, arriving again: a replay,
+            // and rebuilding on it would put a live session in the archive and leave
+            // this device with a responder session that cannot send.
+            if current?.isReplayedHandshake(ephemeral: ek) == true
+                || archive.contains(where: { $0.isReplayedHandshake(ephemeral: ek) }) {
+                return .undecryptable(reason: MessageRepair.stalePrekeyReason)
+            }
+            let trust = try store.checkTrust(userId: fromUserId, identitySigning: iskB64)
+            if case .changed = trust { trustIssue = iskB64 }
             var otpPriv: Curve25519.KeyAgreement.PrivateKey?
             if let otpId = box.otpId {
                 otpPriv = try store.oneTimePrekey(id: otpId)
@@ -133,16 +144,19 @@ public struct IncomingDecryptor: Sendable {
                                                 ourOneTimePreKey: otp,
                                                 theirIdentityDH: ik, theirEphemeral: ek) {
                     candidates.append(DoubleRatchetSession.initBob(
-                        sharedSecret: x3dh.sharedSecret, ourRatchetKey: spkPriv, ad: x3dh.associatedData))
+                        sharedSecret: x3dh.sharedSecret, ourRatchetKey: spkPriv,
+                        ad: x3dh.associatedData, handshakeEphemeral: ek))
                 }
                 if otpPriv == nil { break }
             }
             for var candidate in candidates {
                 if let plain = try? candidate.decrypt(ratchetMsg) {
                     if let otpId = box.otpId { try store.consumeOneTimePrekey(id: otpId) }
-                    try store.saveSession(candidate, peerUserId: fromUserId, peerDeviceId: fromDeviceId,
-                                          theirIdentityDH: box.ik ?? "")
-                    return try handleInner(plain, fromUserId: fromUserId, trustIssue: trustIssue)
+                    // the session in place goes to the archive only now, with a
+                    // replacement that has opened something in hand
+                    try store.archiveCurrentSession(peerUserId: fromUserId, peerDeviceId: fromDeviceId)
+                    try store.saveSession(candidate, peerUserId: fromUserId, peerDeviceId: fromDeviceId)
+                    return try handleInner(plain, chatId: chatId, fromUserId: fromUserId, trustIssue: trustIssue)
                 }
             }
             return .undecryptable(reason: "pk_decrypt_failed")
@@ -153,19 +167,26 @@ public struct IncomingDecryptor: Sendable {
         return .undecryptable(reason: "no_session")
     }
 
-    private func handleInner(_ plaintext: Data, fromUserId: String, trustIssue: String?) throws -> DecryptedIncoming {
+    private func handleInner(_ plaintext: Data, chatId: String, fromUserId: String,
+                             trustIssue: String?) throws -> DecryptedIncoming {
         let inner = try JSONDecoder().decode(InnerMessage.self, from: plaintext)
-        if inner.type == "skd", let skd = inner.skd, let chatId = inner.chatId {
+        if inner.type == "skd", let skd = inner.skd, let chainChatId = inner.chatId {
             // Re-distributing the same chain must not roll the receiver back: the stored
             // one may already have stepped forward through several iterations.
-            if try store.loadSenderKeyIn(chatId: chatId, senderUserId: fromUserId, keyId: skd.keyId) == nil {
+            if try store.loadSenderKeyIn(chatId: chainChatId, senderUserId: fromUserId, keyId: skd.keyId) == nil {
                 let receiver = SenderKeyReceiver(distribution: skd)
-                try store.saveSenderKeyIn(chatId: chatId, senderUserId: fromUserId,
+                try store.saveSenderKeyIn(chatId: chainChatId, senderUserId: fromUserId,
                                           keyId: skd.keyId, state: receiver)
             }
-            return .senderKeyDistribution(chatId: chatId, keyId: skd.keyId)
+            return .senderKeyDistribution(chatId: chainChatId, keyId: skd.keyId)
         }
         guard let content = inner.content else { return .undecryptable(reason: "empty_inner") }
+        // The sender named the chat inside the sealed box; the chat the envelope
+        // was delivered in comes from the server. A message put into another
+        // conversation is not a message of this one.
+        guard inner.chatId == chatId else {
+            return .undecryptable(reason: MessageRepair.wrongChatReason)
+        }
         if trustIssue != nil {
             return .identityChanged(userId: fromUserId, content: content)
         }

@@ -41,9 +41,7 @@ public struct SenderKeyState: Codable, Sendable {
 
     public init() {
         self.keyId = UUID().uuidString
-        var bytes = Data(count: 32)
-        _ = bytes.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!) }
-        self.chainKey = bytes
+        self.chainKey = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
         self.iteration = 0
         self.signingPriv = Curve25519.Signing.PrivateKey().rawRepresentation
     }
@@ -57,6 +55,15 @@ public struct SenderKeyState: Codable, Sendable {
         }
     }
 
+    /// What the signature covers and what the box is sealed against: the chain
+    /// and the position inside it, so neither can be restated around a
+    /// ciphertext that was signed at another one.
+    static func binding(keyId: String, iteration: UInt32) -> Data {
+        var d = Data(keyId.utf8)
+        withUnsafeBytes(of: iteration.bigEndian) { d.append(contentsOf: $0) }
+        return d
+    }
+
     static func kdf(_ chainKey: Data) -> (next: Data, message: Data) {
         let next = HMAC<SHA256>.authenticationCode(for: Data([0x02]), using: SymmetricKey(data: chainKey))
         let msg = HMAC<SHA256>.authenticationCode(for: Data([0x01]), using: SymmetricKey(data: chainKey))
@@ -65,9 +72,11 @@ public struct SenderKeyState: Codable, Sendable {
 
     public mutating func encrypt(_ plaintext: Data) throws -> SenderKeyMessage {
         let (next, msgKey) = Self.kdf(chainKey)
-        let sealed = try ChaChaPoly.seal(plaintext, using: SymmetricKey(data: msgKey))
+        let binding = Self.binding(keyId: keyId, iteration: iteration)
+        let sealed = try ChaChaPoly.seal(plaintext, using: SymmetricKey(data: msgKey),
+                                         authenticating: binding)
         let priv = try Curve25519.Signing.PrivateKey(rawRepresentation: signingPriv)
-        let sig = try priv.signature(for: sealed.combined)
+        let sig = try priv.signature(for: binding + sealed.combined)
         let msg = SenderKeyMessage(keyId: keyId, iteration: iteration,
                                    ciphertext: sealed.combined, signature: sig)
         chainKey = next
@@ -101,7 +110,8 @@ public struct SenderKeyReceiver: Codable, Sendable {
 
     public mutating func decrypt(_ message: SenderKeyMessage) throws -> Data {
         let pub = try Curve25519.Signing.PublicKey(rawRepresentation: signingPub)
-        guard pub.isValidSignature(message.signature, for: message.ciphertext) else {
+        let binding = SenderKeyState.binding(keyId: message.keyId, iteration: message.iteration)
+        guard pub.isValidSignature(message.signature, for: binding + message.ciphertext) else {
             throw CryptoError.invalidSignature
         }
         let msgKey: Data
@@ -127,7 +137,8 @@ public struct SenderKeyReceiver: Codable, Sendable {
         }
         do {
             let box = try ChaChaPoly.SealedBox(combined: message.ciphertext)
-            return try ChaChaPoly.open(box, using: SymmetricKey(data: msgKey))
+            return try ChaChaPoly.open(box, using: SymmetricKey(data: msgKey),
+                                       authenticating: binding)
         } catch {
             throw CryptoError.decryptionFailed
         }

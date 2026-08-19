@@ -50,6 +50,11 @@ targets:
         UILaunchScreen: {}
         NSMicrophoneUsageDescription: "Запись голосовых сообщений"
         NSCameraUsageDescription: "Фото и видео для отправки в чаты"
+        # a device build points at the dev stand over the LAN; empty otherwise
+        MSNGRServer: ${MSNGR_DEVICE_SERVER}
+        # the stand speaks plain http, which ATS only tolerates for local hosts
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
         NSPhotoLibraryUsageDescription: "Выбор фото и видео для отправки"
         NSContactsUsageDescription: "Поиск знакомых, которые уже в Msngr"
         NSFaceIDUsageDescription: "Разблокировка приложения"
@@ -61,6 +66,9 @@ targets:
           - CFBundleURLSchemes: [msngr]
     settings:
       base:
+        # ai.enface.Msngr everywhere; a device build under a foreign team
+        # substitutes its own (make device)
+        PRODUCT_BUNDLE_IDENTIFIER: ${MSNGR_APP_ID}
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
@@ -144,7 +152,7 @@ targets:
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: ai.enface.Msngr.NotificationService
+        PRODUCT_BUNDLE_IDENTIFIER: ${MSNGR_APP_ID}.NotificationService
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
