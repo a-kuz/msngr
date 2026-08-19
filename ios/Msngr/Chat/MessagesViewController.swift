@@ -15,6 +15,9 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     var onReply: ((Message) -> Void)?
     var onReact: ((Message, String) -> Void)?
     var onContextAction: ((Message, MessageContextAction) -> Void)?
+    /// The message the chat holds pinned, so the context menu of that one offers
+    /// to take the pin off instead of putting it on again.
+    var pinnedMsgId: String?
     var onTapMedia: ((Message, Int, UIView) -> Void)?
     /// Tap on the quote inside a reply bubble, which jumps to the original.
     var onTapReplyQuote: ((Message) -> Void)?
@@ -24,6 +27,9 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     var onScrollToStart: (() -> Void)?
     /// свайп от левой кромки: возврат к списку чатов
     var onSwipeBack: (() -> Void)?
+
+    /// Whose feed this is: a group event about this member is worded as "вас".
+    var ownUserId = ""
 
     private(set) var collectionView: UICollectionView!
     private var items: [ChatFeedItem] = []
@@ -36,6 +42,8 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     /// feed, so the first recomputation stays quiet.
     private var atBottom = true
     private var recomputingAtBottom = false
+    /// The next feed comes from a window that was moved: it is shown from the bottom.
+    private var showBottomOnUpdate = false
     /// Счётчик своих отправок, уже отработанный лентой.
     private var seenSendTick = 0
     /// Возврат свайпом: кромка своя, потому что системный жест на этом экране
@@ -254,9 +262,27 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         }
     }
 
+    /// The window was moved back to the end of the chat: the feed arriving next is a
+    /// different stretch of the conversation, and it is shown from its newest message
+    /// rather than diffed against the one the reader was standing in.
+    func showBottomOnNextUpdate() {
+        showBottomOnUpdate = true
+    }
+
     private func applyDiff(_ newItems: [ChatFeedItem]) {
         let old = items
         guard isViewLoaded else { items = newItems; return }
+        if showBottomOnUpdate, !newItems.isEmpty {
+            showBottomOnUpdate = false
+            items = newItems
+            collectionView.layer.removeAllAnimations()
+            collectionView.reloadData()
+            collectionView.layoutIfNeeded()
+            collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.contentInset.top),
+                                            animated: false)
+            updateAtBottom(layoutFirst: true)
+            return
+        }
         // the feed went empty (history cleared): a diff would delete every position
         // at once in the middle of a running insert animation, and the reading
         // anchor would point at nothing
@@ -403,7 +429,10 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     /// Refreshes a position that already stands in the feed and whose content changed.
     /// A reload recreates the cell and instantly cuts off a running appearance animation
     /// (the pending→sent ack lands in the first milliseconds of the flight), so a visible
-    /// cell of the same height is reconfigured in place instead.
+    /// cell of the same height is reconfigured in place instead. A visible cell whose
+    /// height changed (a reaction arrived or left) resizes in place under a spring: the
+    /// cell survives, its subviews slide to the new plan, and the neighbours follow
+    /// through the batch update instead of jumping in a single frame.
     private func refreshItem(at index: Int, item: ChatFeedItem) {
         let indexPath = IndexPath(item: index, section: 0)
         switch item {
@@ -413,10 +442,19 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
                 let plan = BubbleLayout.plan(for: msg, width: collectionView.bounds.width, tightGap: tightGap,
                                              showTail: showTail, showName: showName, authorName: authorName,
                                              replyAuthorName: replyAuthorName)
-                if abs(cell.bounds.height - plan.cellHeight) < 0.5 {
-                    configureMessageCell(cell, msg: msg, plan: plan)
-                    return
+                // an inline reaction changes only the width, so the spring wraps every
+                // reconfigure; the batch update joins in only when the height moved. It
+                // re-reads sizeForItemAt, which serves the new plan from the cache;
+                // contentOffset is untouched, so in the inverted feed the bubble's
+                // bottom edge stays put and the content above slides
+                let sameHeight = abs(cell.bounds.height - plan.cellHeight) < 0.5
+                UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: 0.86,
+                               initialSpringVelocity: 0,
+                               options: [.allowUserInteraction, .beginFromCurrentState]) {
+                    self.configureMessageCell(cell, msg: msg, plan: plan)
+                    if !sameHeight { self.collectionView.performBatchUpdates(nil) }
                 }
+                return
             }
         case .unreadMarker(_, let count):
             if let cell = collectionView.cellForItem(at: indexPath) as? UnreadMarkerCell {
@@ -440,6 +478,9 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         cell.onTapLink = { [weak self] url in self?.open(url) }
         cell.onTapReplyQuote = { [weak self] in self?.onTapReplyQuote?(msg) }
         cell.onToggleSelection = { [weak self] in self?.onToggleSelection?(msg) }
+        // asked when the menu opens, not when the cell is filled: pinning changes
+        // the chat, not the message, so no cell is reconfigured for it
+        cell.isPinned = { [weak self] in self?.pinnedMsgId == msg.msgId }
         cell.setSelection(mode: selectionMode, selected: selectedIds.contains(msg.id), animated: false)
     }
 
@@ -563,12 +604,29 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         }
     }
 
+    /// The message at the top edge of the screen, or nil while the feed is at its
+    /// bottom. Search remembers it and brings the reader back to it.
+    func topVisibleMessageId() -> String? {
+        guard isViewLoaded, !atBottom else { return nil }
+        let visibleRect = collectionView.bounds.inset(by: collectionView.adjustedContentInset)
+        // the list is inverted: the visual top of the screen is the largest maxY
+        let top = collectionView.indexPathsForVisibleItems.compactMap { path -> (String, CGFloat)? in
+            guard path.item < items.count,
+                  case .message(let msg, _, _, _, _, _) = items[path.item],
+                  let attrs = collectionView.layoutAttributesForItem(at: path),
+                  attrs.frame.intersects(visibleRect) else { return nil }
+            return (msg.msgId ?? msg.id, attrs.frame.maxY)
+        }.max { $0.1 < $1.1 }
+        return top?.0
+    }
+
     /// Scrolls to a message by its server msgId or its local id.
     /// Returns false when the message is not in the loaded feed and history has to be fetched.
     @discardableResult
-    func scrollTo(msgId: String, highlight: Bool = false) -> Bool {
+    func scrollTo(msgId: String, highlight: Bool = false, animated: Bool = true) -> Bool {
         guard let idx = index(ofMsgId: msgId) else { return false }
-        collectionView.scrollToItem(at: IndexPath(item: idx, section: 0), at: .centeredVertically, animated: true)
+        collectionView.scrollToItem(at: IndexPath(item: idx, section: 0), at: .centeredVertically,
+                                    animated: animated)
         if highlight {
             pendingHighlightId = msgId
             // if the cell is already on screen the flash runs alongside the scroll settling;
@@ -600,7 +658,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
 }
 
 enum MessageContextAction {
-    case reply, copy, forward, select, edit, pin, delete
+    case reply, copy, forward, select, edit, pin, unpin, delete, resend
 }
 
 extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
@@ -629,7 +687,7 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
         case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName):
             if msg.kind == .system {
                 let cell = cv.dequeueReusableCell(withReuseIdentifier: "system", for: indexPath) as! SystemCell
-                cell.configure(msg)
+                cell.configure(msg, ownUserId: ownUserId)
                 return cell
             }
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "msg", for: indexPath) as! MessageCell
@@ -667,7 +725,8 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
         case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName):
             if msg.kind == .system {
                 return CGSize(width: cv.bounds.width,
-                              height: FeedNote.height(SystemCell.text(for: msg), width: cv.bounds.width) + 12)
+                              height: FeedNote.height(SystemCell.text(for: msg, ownUserId: ownUserId),
+                                                      width: cv.bounds.width) + 12)
             }
             let plan = BubbleLayout.plan(for: msg, width: cv.bounds.width, tightGap: tightGap,
                                          showTail: showTail, showName: showName, authorName: authorName,
@@ -827,13 +886,16 @@ final class SystemCell: UICollectionViewCell {
     static let unreadableText = "Сообщение ещё не загружено"
     static let historyStartText = "История начинается здесь"
 
-    static func text(for msg: Message) -> String {
+    static func text(for msg: Message, ownUserId: String = "") -> String {
         let t = msg.text ?? ""
+        if let event = GroupEvent.decode(t) {
+            return event.sentence(isOwn: msg.isOutgoing, ownUserId: ownUserId)
+        }
         return t.hasPrefix("identity_changed:") ? "Код безопасности собеседника изменился" : t
     }
 
-    func configure(_ msg: Message) {
-        configure(text: Self.text(for: msg))
+    func configure(_ msg: Message, ownUserId: String = "") {
+        configure(text: Self.text(for: msg, ownUserId: ownUserId))
     }
 
     func configure(text: String) {

@@ -17,9 +17,14 @@ are updated; otherwise the inserts and deletes go through
 `performWithoutAnimation { performBatchUpdates }`. A full `reloadData()` is kept
 for a complicated reordering, or when `deletes + inserts >= 60`.
 
-A live cell is updated by reconfiguring it in place as long as its height held
-(`|Δh| < 0.5`). `reloadItems` would cut off the appearance animation when the
-`sending → sent` ack lands in the first milliseconds after the insert.
+A live cell is always updated by reconfiguring it in place, inside a 0.35 s
+spring at damping 0.86; when the plan height moved (`|Δh| ≥ 0.5`, a reaction
+arrived or left) a `performBatchUpdates(nil)` joins the same animation, so the
+bubble resizes on screen and the neighbours slide instead of jumping.
+`contentOffset` stays untouched, which in the inverted feed keeps the bubble's
+bottom edge anchored. `reloadItems` is not used on a visible cell: it would
+recreate it and cut off the appearance animation when the `sending → sent` ack
+lands in the first milliseconds after the insert.
 
 What the feed reads is a window rather than the whole chat. `FeedWindow` holds a
 floor and a capacity of `HistoryWindow.pageSize` (60); while the reader sits at
@@ -139,18 +144,26 @@ With the socket down the header subtitle reads «подключение…».
   0.42 s spring, damping 0.82. Both start after the inserted cell has laid out.
 - Someone else's message scrolls the feed down only if the reader was at the
   bottom (`contentOffset.y < 60`); your own always scrolls, immediately.
+- The press dip: a touch that settles on a bubble for 0.1 s scales it to 0.96
+  over 0.22 s ease-out. It runs alongside every other gesture, releases on a
+  0.35/0.8 spring, lets go as soon as the finger moves 12 pt (a scroll or a
+  swipe), and hands the transform to swipe-to-reply without a restore.
 - The context menu: a 0.35 s long press with `Haptics.medium()`; a
-  `systemUltraThinMaterial` backdrop over 0.25 s; the bubble snapshot on a
-  0.45/0.8 spring; the reaction bar and the card from `scale 0.2` over 0.4 s
-  after a 0.05 s delay, damping 0.75; the emoji cascade 0.35 s at a 0.03 step.
-  Dismissal takes 0.3 s at damping 0.9, and stepping into the delete submenu is
-  a 0.2 s cross-dissolve.
+  `systemUltraThinMaterial` backdrop over 0.25 s; the bubble snapshot starts at
+  the press-dip scale read off the presentation layer and lifts on a 0.45/0.8
+  spring, so the dip flows into the menu; the reaction bar and the card from
+  `scale 0.2` over 0.4 s after a 0.05 s delay, damping 0.75; the emoji cascade
+  0.35 s at a 0.03 step. Dismissal takes 0.3 s at damping 0.9, and stepping
+  into the delete submenu is a 0.2 s cross-dissolve.
 - Swipe to reply: the pan only starts on horizontal movement to the right,
   travel is capped at 90 pt with resistance `60 * (1 - exp(-x/60))`, the icon
   fades in along the way, the threshold is 44 pt with `Haptics.medium()`, and
   the return is a 0.35/0.8 spring.
 - Reactions: a new capsule appears over 0.4 s at damping 0.6 from `scale 0.5`;
-  tapping a capsule runs 0.12 s up to 1.25 and back.
+  tapping a capsule runs 0.12 s up to 1.25 and back. Capsules are reused by
+  emoji, so a count change animates in the same view, and a withdrawn reaction
+  shrinks away over 0.2 s to `scale 0.5`. The bubble's own resize rides the
+  feed's reconfigure spring above.
 - A double tap on a bubble leaves «❤️» with `Haptics.medium()`.
 - The scroll-to-bottom button appears when the newest message (item 0 of the
   inverted feed) is off screen, transitioning on `scale + opacity` with
@@ -201,6 +214,14 @@ Recording runs while the microphone is held; the gesture begins on the first
 `onChanged`. The format is m4a, AAC, 24 kHz, mono, 48 kbit/s. Anything under
 0.3 s is dropped as an accidental touch and anything longer is a real message.
 
+The take belongs to the finger that started it, and `RecordingGesture` is where
+that is written down. Access is asked for before the recorder runs, so a touch
+that ends while the request is still in flight starts nothing at all; a take
+dropped by the slide is not started again by the same finger going on moving
+over the button; and a take that loses the screen, the foreground or the
+microphone to a call is dropped whole rather than sent as a stump of what was
+said before.
+
 While recording: the button pulses, a timer counts tenths, and a live waveform
 is drawn (a 0.05 s timer over `averagePower` from −60 to 0 dB, keeping the last
 60 values). Swiping left past 110 pt cancels; swiping up past 70 pt locks the
@@ -209,7 +230,15 @@ recording, after which a cancel button and a send button appear.
 The message carries a waveform of 100 buckets valued 0 to 31, computed from the
 finished file. The voice bubble is fixed at 220×42 with a 40×40 play button, a
 waveform 22 high and the duration beneath it. Tapping or panning the waveform
-seeks. The file bubble uses the same slot: up to 240 wide, 42 high.
+seeks, along the wave only: a drag that goes up or down over the bubble is the
+reader scrolling the feed. The file bubble uses the same slot: up to 240 wide,
+42 high.
+
+One player serves the whole app (`VoicePlayer`), so a message goes on playing
+while the reader walks into another chat and its bubble picks the position back
+up when they return. The plate of the message being played shows a pause icon
+and a speed button stepping ×1 → ×1,5 → ×2; the speed belongs to the player and
+carries on to the next message.
 
 ## The input field
 
@@ -234,6 +263,22 @@ or «был(а) …».
 
 A pinned message gets a bar at the top, and tapping it scrolls to the message.
 
+A magnifier in the header opens search over this chat. The field stands where the
+header was, with the keyboard up and «Отмена» beside it; the matches cover the
+feed, newest first, each row carrying the author, the time and a slice of the
+text with the word highlighted. Tapping a row shows that message in the feed and
+leaves a bar in place of the input field: the position in the result («3 из 47»)
+and two arrows, up towards older matches and down towards newer ones. Tapping the
+position brings the list back. The bar reads «Ищем в переписке…» until both the
+first page and the count of all matches are in, «Ничего не нашлось» when the chat
+has no such text. «Отмена» closes search and puts the reader back on the message
+they were reading when they opened it.
+
+The matches come from the same paged full-text query the chat list runs, scoped
+to this chat. A match already in the feed window costs a scroll; one deeper than
+it makes the feed load the history between it and the end, so search asks for
+that only when a match is chosen.
+
 A message request takes the whole screen in place of the feed: a 96×96 avatar,
 the name, the username, «хочет вам написать», the explanation «Сообщения
 откроются после принятия», and the buttons «Принять» and «Заблокировать». There
@@ -251,6 +296,16 @@ System messages are rendered as human sentences: `identity_changed:<uid>` as
 «Код безопасности собеседника изменился», `undecryptable` as «Сообщение не может
 быть расшифровано на этом устройстве».
 
+A group event is a system line too: «Аня добавил(а): Боря», «Боря покинул(а)
+группу», «Аня изменил(а) название на «Крыша»», «Аня обновил(а) фото группы»,
+«Аня удалил(а) описание группы», «Аня назначил(а) вас администратором». The one
+who performed it reads «Вы …», the one it happened to reads «вас», everyone else
+reads the name. The line does not raise unread, does not raise a push and does
+not move the chat up the list.
+
+In a group where only admins may write, the input bar is replaced by «Писать в
+этой группе могут только администраторы».
+
 ## Chat info
 
 For a direct chat: the safety number (60 digits in groups of 5, fetching the
@@ -258,10 +313,19 @@ peer's key from the prekey bundle if it is not at hand), «Заблокиров�
 звука», and disappearing messages («Выкл», «24 часа», «7 дней», «90 дней»,
 delivered as a `disappearing` service message).
 
-For a group: the member list (the creator marked «админ»), removing a member by
-swipe, adding one through search, an invite link with a copy button, and leaving
-the group. Granting and revoking roles is not exposed in the interface; the
-server checks the rights.
+For a group: the member list (an admin marked «админ»), adding a member through
+search, an invite link with a copy button, and leaving the group. A swipe over a
+member row gives an admin «Удалить» and «Сделать админом» / «Снять админа».
+
+An admin also gets the title and the group photo, a description under «Описание»
+with a save button, and «Права участников»: «Кто может писать» and «Кто может
+приглашать», each of them «Все участники» or «Только администраторы».
+
+What a member cannot do is not shown to them at all, rather than shown disabled:
+without the right to invite there is no «Добавить участника» and no invite link,
+a plain member sees the description as plain text and no «Права участников»
+section, and a swipe over a member row offers nothing. Every change is announced
+in the feed as a group event once the server has accepted it.
 
 ## The chat list
 

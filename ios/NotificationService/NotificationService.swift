@@ -70,6 +70,28 @@ private let decryption: Decryption? = {
                       store: store, ownUserId: session.userId, gate: gate)
 }()
 
+/// The client the delivery receipt goes out on. The extension has no socket, so
+/// it answers over HTTP; the address comes from the app group, the token from
+/// the session this device holds.
+private let receiptAPI: APIClient? = {
+    struct StoredSession: Decodable { let token: String }
+    guard let location = sharedLocation,
+          let data = try? Data(contentsOf: location.sessionURL),
+          let session = try? JSONDecoder().decode(StoredSession.self, from: data),
+          let base = ServerEndpoint.base(in: AppGroup.defaults) else { return nil }
+    return APIClient(baseURL: base, token: session.token)
+}()
+
+/// Answers for the messages this burst put on the device, and for anything an
+/// earlier extension queued and was killed before sending. The send is not
+/// waited for: the banner does not owe the network anything, and a receipt that
+/// does not make it stays in the queue and leaves with the app's next
+/// connection.
+private func sendDeliveryReceipts() {
+    guard let db = sharedDatabase, let api = receiptAPI else { return }
+    Task.detached { await DeliveryReceipts.flush(db: db, api: api) }
+}
+
 /// An empty plan leaves every push with the content it arrived with: a neutral
 /// banner is the right answer when the database cannot be consulted.
 ///
@@ -78,6 +100,7 @@ private let decryption: Decryption? = {
 /// and only one of them may be inside a step at a time (see `CryptoGate`).
 private func burstPlan(_ items: [BurstItem]) async -> BurstPlan {
     guard let db = sharedDatabase else { return BurstPlan() }
+    defer { sendDeliveryReceipts() }
     let showsText = NotificationPreferences.showsMessageText(in: AppGroup.defaults)
     let carried = envelopes.take(items.map(\.msgId))
     guard let decryption, !carried.isEmpty else {

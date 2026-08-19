@@ -69,6 +69,23 @@ export function directChatName(a: string, b: string): string {
   return "direct:" + [a, b].sort().join(":");
 }
 
+/// The handle a person is found by. Registration and a later rename apply the
+/// same rule, and it matches `RegistrationValidator.isValidUsername` on the
+/// client; uniqueness is the UNIQUE COLLATE NOCASE index on users.username.
+export function isValidUsername(username: unknown): username is string {
+  return typeof username === "string" && /^[a-zA-Z0-9_]{3,32}$/.test(username);
+}
+
+/// The name a peer reads in their chat list. Required: it is the only place a
+/// person's own spelling of their name can live, and every screen renders it
+/// with no fallback. Trimmed length, so spaces alone are not a name.
+export const DISPLAY_NAME_MAX = 64;
+export function isValidDisplayName(name: unknown): name is string {
+  if (typeof name !== "string") return false;
+  const trimmed = name.trim();
+  return trimmed.length >= 1 && trimmed.length <= DISPLAY_NAME_MAX;
+}
+
 /// Whether a drain has to be armed for `at` given the alarm the storage
 /// reports as pending.
 ///

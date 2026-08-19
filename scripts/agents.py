@@ -18,7 +18,27 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+def repo_root():
+    """The main working tree, wherever this copy of the script lives.
+
+    Agents run in worktrees, and each worktree carries its own copy of this file.
+    The registry lives in the main tree only, so a copy that trusts `__file__`
+    answers "no agents registered" from inside a worktree — which reads as
+    information and is a lie. Git knows where the common dir is; ask it.
+    """
+    here = Path(__file__).resolve().parent.parent
+    try:
+        common = subprocess.run(
+            ["git", "-C", str(here), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, text=True, timeout=10).stdout.strip()
+        if common:
+            return Path(common).parent
+    except (subprocess.SubprocessError, OSError):
+        pass
+    return here
+
+
+ROOT = repo_root()
 REGISTRY = ROOT / ".claude" / "agents.tsv"
 PROJECTS = Path.home() / ".claude" / "projects"
 

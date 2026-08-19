@@ -297,9 +297,13 @@ public final class APIClient: @unchecked Sendable {
         public let identityKeySig: String
     }
     public struct DevicesResponse: Decodable { public let devices: [DeviceDTO] }
+    /// How many times /api/devices was actually hit; the device cache tests
+    /// assert on it.
+    public private(set) var devicesRequestCount = 0
     /// Devices of several users in one request; consumes no prekeys.
     public func devices(userIds: [String]) async throws -> [DeviceDTO] {
         guard !userIds.isEmpty else { return [] }
+        devicesRequestCount += 1
         return try await get("api/devices?ids=\(userIds.joined(separator: ","))",
                              as: DevicesResponse.self).devices
     }
@@ -388,6 +392,13 @@ public final class APIClient: @unchecked Sendable {
         return try await get(path, as: HistoryResponse.self).msgs
     }
 
+    /// Says the messages reached this device. The socket carries the same thing
+    /// as a `recv` frame; this is the door for the notification extension, which
+    /// writes a message from a push and has no connection of its own.
+    public func markDelivered(_ chatId: String, seqs: [Int]) async throws {
+        struct Body: Encodable { let seqs: [Int] }
+        _ = try await request("api/chats/\(chatId)/recv", method: "POST", jsonBody: Body(seqs: seqs))
+    }
     public func acceptChat(_ chatId: String) async throws {
         _ = try await request("api/chats/\(chatId)/accept", method: "POST", jsonBody: [String: String]())
     }
@@ -402,10 +413,15 @@ public final class APIClient: @unchecked Sendable {
         _ = try await request("api/chats/\(chatId)/members", method: "POST", jsonBody: Body(add: add, remove: remove))
     }
     public func chatSettings(_ chatId: String, title: String? = nil,
-                             avatarId: String? = nil, description: String? = nil) async throws {
-        struct Body: Encodable { let title: String?; let avatarId: String?; let description: String? }
+                             avatarId: String? = nil, description: String? = nil,
+                             sendPolicy: String? = nil, invitePolicy: String? = nil) async throws {
+        struct Body: Encodable {
+            let title: String?; let avatarId: String?; let description: String?
+            let sendPolicy: String?; let invitePolicy: String?
+        }
         _ = try await request("api/chats/\(chatId)/settings", method: "POST",
-                              jsonBody: Body(title: title, avatarId: avatarId, description: description))
+                              jsonBody: Body(title: title, avatarId: avatarId, description: description,
+                                             sendPolicy: sendPolicy, invitePolicy: invitePolicy))
     }
     public func setAdmin(_ chatId: String, userId: String, admin: Bool) async throws {
         struct Body: Encodable { let userId: String; let admin: Bool }
@@ -467,9 +483,6 @@ public final class APIClient: @unchecked Sendable {
                                     rawBody: jpeg, contentType: "image/jpeg")
         return try JSONDecoder().decode(AvatarResponse.self, from: raw).avatarId
     }
-    public func avatarURL(_ avatarId: String) -> URL {
-        baseURL.appendingPathComponent("api/avatar/\(avatarId)")
-    }
     /// Avatar bytes; the request carries the token.
     public func avatarData(_ avatarId: String) async throws -> Data {
         try await request("api/avatar/\(avatarId)")
@@ -480,6 +493,13 @@ public final class APIClient: @unchecked Sendable {
     public func updateProfile(displayName: String? = nil, bio: String? = nil, avatarId: String? = nil) async throws {
         struct Body: Encodable { let displayName: String?; let bio: String?; let avatarId: String? }
         _ = try await request("api/profile", method: "POST", jsonBody: Body(displayName: displayName, bio: bio, avatarId: avatarId))
+    }
+
+    /// A rename. Throws `APIError("username_taken")` when the handle is
+    /// somebody else's; the old one is free the moment this returns.
+    public func updateUsername(_ username: String) async throws {
+        struct Body: Encodable { let username: String }
+        _ = try await request("api/username", method: "POST", jsonBody: Body(username: username))
     }
 
     public struct DiscoverResponse: Decodable {

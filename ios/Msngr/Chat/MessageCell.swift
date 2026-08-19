@@ -6,6 +6,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     var onReply: (() -> Void)?
     var onReact: ((String) -> Void)?
     var onContextAction: ((MessageContextAction) -> Void)?
+    /// Whether this message is the pinned one, asked at the moment the menu opens.
+    var isPinned: (() -> Bool)?
     var onTapMedia: ((Int, UIView) -> Void)?
     var onTapLink: ((URL) -> Void)?
     var onTapReplyQuote: (() -> Void)?
@@ -31,6 +33,12 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private var panStartX: CGFloat = 0
     private let replyIcon = UIImageView(image: UIImage(systemName: "arrowshape.turn.up.left.fill"))
     private var replyTriggered = false
+
+    // press feedback: the bubble dips under the finger long before the context menu
+    private var pressGesture: UILongPressGestureRecognizer!
+    private var pressStart: CGPoint = .zero
+    /// swipe-to-reply owns the bubble transform while the finger drags
+    private var panDrivesBubble = false
 
     // multi-select
     private let checkbox = SelectionCheckboxView()
@@ -94,6 +102,15 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         longPress.minimumPressDuration = 0.35
         bubbleView.addGestureRecognizer(longPress)
 
+        // the dip is purely visual and runs alongside every other gesture; it does
+        // not cancel touches, so the reaction capsules still get their tap
+        let press = UILongPressGestureRecognizer(target: self, action: #selector(handlePress(_:)))
+        press.minimumPressDuration = 0.1
+        press.cancelsTouchesInView = false
+        press.delegate = self
+        bubbleView.addGestureRecognizer(press)
+        pressGesture = press
+
         // a single tap only acts on a hit inside a link; the double tap (reaction) wins,
         // and every other touch passes straight through
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
@@ -109,7 +126,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         replyBar.addGestureRecognizer(replyTap)
 
         // in selection mode only the row tap works, every other gesture is switched off
-        gestures = [pan, doubleTap, longPress, tap, replyTap]
+        gestures = [pan, doubleTap, longPress, tap, replyTap, press]
         selectionTap = UITapGestureRecognizer(target: self, action: #selector(handleSelectionTap))
         selectionTap.isEnabled = false
         contentView.addGestureRecognizer(selectionTap)
@@ -178,10 +195,11 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         reactionViews = []
         bubbleView.viewWithTag(Self.highlightTag)?.removeFromSuperview()
         contentView.transform = CGAffineTransform(scaleX: 1, y: -1)
-        // drop an unfinished swipe-to-reply
+        // drop an unfinished swipe-to-reply or press dip
         bubbleView.transform = .identity
         replyIcon.alpha = 0
         replyTriggered = false
+        panDrivesBubble = false
     }
 
     /// An incoming or restored bubble arrives with a short lift.
@@ -320,8 +338,10 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
                                     y: plan.statusFrame.midY - tickH / 2,
                                     width: tickW - 2, height: tickH)
             tickView.image = Self.tickImage(msg.status)
-            tickView.tintColor = plan.statusOnMedia ? .white
-                : (msg.status == .read ? UIColor(Theme.outgoingTickRead) : UIColor(Theme.outgoingMeta))
+            // read keeps its own colour over media too: the white the rest of the
+            // capsule uses would make a read photo look the same as a delivered one
+            tickView.tintColor = msg.status == .read ? UIColor(Theme.outgoingTickRead)
+                : (plan.statusOnMedia ? .white : UIColor(Theme.outgoingMeta))
         } else {
             tickView.isHidden = true
         }
@@ -331,36 +351,70 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         bubbleView.bringSubviewToFront(timeLabel)
         bubbleView.bringSubviewToFront(tickView)
 
-        // reactions: only a genuinely new one animates in, and only when the same cell is
-        // being reconfigured; a cell reused during scrolling gets no animation
+        // reactions: capsules are reused by emoji, so a count change or a shifted frame
+        // animates in place when configure runs inside an animation block. Only a
+        // genuinely new one springs in, and only when the same cell is being
+        // reconfigured; a cell reused during scrolling gets no animation
         let sameCell = configuredMsgId == msg.id
-        let previousKeys = Set(reactionViews.map { $0.emojiKey })
-        reactionViews.forEach { $0.removeFromSuperview() }
+        var previous: [String: ReactionCapsuleView] = [:]
+        for v in reactionViews { previous[v.emojiKey] = v }
         reactionViews = []
         for r in plan.reactionsFrames {
-            let capsule = ReactionCapsuleView()
-            let animateIn = sameCell && !previousKeys.contains(r.emoji)
+            let capsule = previous.removeValue(forKey: r.emoji) ?? ReactionCapsuleView()
+            let isNew = capsule.superview == nil
+            if isNew { bubbleView.addSubview(capsule) }
             capsule.configure(emoji: r.emoji, count: r.count, mine: r.mine,
-                              outgoing: plan.isOutgoing, animateIn: animateIn)
-            capsule.frame = r.frame
+                              outgoing: plan.isOutgoing, animateIn: sameCell && isNew)
+            if isNew {
+                // a fresh capsule must not fly in from frame .zero when an outer
+                // animation block is running
+                UIView.performWithoutAnimation { capsule.frame = r.frame }
+            } else {
+                capsule.frame = r.frame
+            }
             capsule.onTap = { [weak self] in self?.onReact?(r.emoji) }
-            bubbleView.addSubview(capsule)
             reactionViews.append(capsule)
+        }
+        for (_, gone) in previous {
+            guard sameCell else { gone.removeFromSuperview(); continue }
+            // a withdrawn reaction shrinks away instead of vanishing
+            UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState],
+                           animations: {
+                gone.alpha = 0
+                gone.transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
+            }, completion: { _ in gone.removeFromSuperview() })
         }
         configuredMsgId = msg.id
         applySelectionLayout(animated: false)
     }
 
     private func configureMedia(msg: Message, plan: BubbleLayoutPlan) {
-        // configure also runs on a live cell (content updated in place), so the previous
-        // media views are torn down here and not only in prepareForReuse
-        mediaViews.forEach { $0.removeFromSuperview() }
-        mediaViews = []
-        guard let mediaFrame = plan.mediaFrame else { return }
+        guard let mediaFrame = plan.mediaFrame else {
+            mediaViews.forEach { $0.removeFromSuperview() }
+            mediaViews = []
+            return
+        }
         let rects: [(Int, CGRect)] = plan.albumRects.isEmpty
             ? [(0, mediaFrame)]
             : plan.albumRects.map { ($0.index, $0.frame.offsetBy(dx: mediaFrame.minX, dy: mediaFrame.minY)) }
         let medias: [MediaInfo] = msg.album ?? (msg.media.map { [$0] } ?? [])
+
+        // the same message reconfigured in place (a reaction, an ack) keeps its media
+        // views: the images are immutable, and a teardown mid-resize would flash the
+        // blurhash placeholder until the pipeline answers again
+        if configuredMsgId == msg.id, !mediaViews.isEmpty, mediaViews.count == rects.count,
+           zip(mediaViews, rects).allSatisfy({ $0.0.tag == $0.1.0 }) {
+            for (iv, (_, rect)) in zip(mediaViews, rects) {
+                iv.frame = rect
+                applyMediaCorners(iv, rect: rect, plan: plan)
+            }
+            return
+        }
+
+        // configure also runs on a live cell (content updated in place), so the previous
+        // media views are torn down here and not only in prepareForReuse
+        mediaViews.forEach { $0.removeFromSuperview() }
+        mediaViews = []
 
         for (index, rect) in rects {
             guard index < medias.count else { continue }
@@ -371,20 +425,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             iv.clipsToBounds = true
             iv.backgroundColor = .tertiarySystemFill
             iv.isUserInteractionEnabled = true
-            if plan.albumRects.isEmpty {
-                iv.layer.cornerRadius = Theme.bubbleCorner
-            } else if let mf = plan.mediaFrame {
-                // mosaic: the large radius belongs to the outer corners of the grid only
-                var corners: CACornerMask = []
-                let eps: CGFloat = 1.5
-                if abs(rect.minX - mf.minX) < eps, abs(rect.minY - mf.minY) < eps { corners.insert(.layerMinXMinYCorner) }
-                if abs(rect.maxX - mf.maxX) < eps, abs(rect.minY - mf.minY) < eps { corners.insert(.layerMaxXMinYCorner) }
-                if abs(rect.minX - mf.minX) < eps, abs(rect.maxY - mf.maxY) < eps { corners.insert(.layerMinXMaxYCorner) }
-                if abs(rect.maxX - mf.maxX) < eps, abs(rect.maxY - mf.maxY) < eps { corners.insert(.layerMaxXMaxYCorner) }
-                iv.layer.cornerRadius = corners.isEmpty ? 0 : Theme.bubbleCorner
-                iv.layer.maskedCorners = corners
-            }
-            iv.layer.cornerCurve = .continuous
+            applyMediaCorners(iv, rect: rect, plan: plan)
             iv.tag = index
             let tap = UITapGestureRecognizer(target: self, action: #selector(mediaTapped(_:)))
             iv.addGestureRecognizer(tap)
@@ -432,6 +473,26 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         }
     }
 
+    /// Rounds a media view: a single photo gets the bubble radius on all corners, a
+    /// mosaic tile only where it touches the outer corners of the grid.
+    private func applyMediaCorners(_ iv: UIImageView, rect: CGRect, plan: BubbleLayoutPlan) {
+        if plan.albumRects.isEmpty {
+            iv.layer.cornerRadius = Theme.bubbleCorner
+            iv.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner,
+                                      .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+        } else if let mf = plan.mediaFrame {
+            var corners: CACornerMask = []
+            let eps: CGFloat = 1.5
+            if abs(rect.minX - mf.minX) < eps, abs(rect.minY - mf.minY) < eps { corners.insert(.layerMinXMinYCorner) }
+            if abs(rect.maxX - mf.maxX) < eps, abs(rect.minY - mf.minY) < eps { corners.insert(.layerMaxXMinYCorner) }
+            if abs(rect.minX - mf.minX) < eps, abs(rect.maxY - mf.maxY) < eps { corners.insert(.layerMinXMaxYCorner) }
+            if abs(rect.maxX - mf.maxX) < eps, abs(rect.maxY - mf.maxY) < eps { corners.insert(.layerMaxXMaxYCorner) }
+            iv.layer.cornerRadius = corners.isEmpty ? 0 : Theme.bubbleCorner
+            iv.layer.maskedCorners = corners
+        }
+        iv.layer.cornerCurve = .continuous
+    }
+
     @objc private func mediaTapped(_ g: UITapGestureRecognizer) {
         guard let v = g.view else { return }
         onTapMedia?(v.tag, v)
@@ -468,11 +529,45 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         }
     }
 
+    // MARK: - Press feedback
+
+    /// The bubble answers the touch at once: a slight dip under the finger, the way
+    /// Telegram does it, while the 0.35 s context menu timer keeps running.
+    @objc private func handlePress(_ g: UILongPressGestureRecognizer) {
+        switch g.state {
+        case .began:
+            pressStart = g.location(in: nil)
+            guard !panDrivesBubble else { return }
+            UIView.animate(withDuration: 0.22, delay: 0,
+                           options: [.allowUserInteraction, .beginFromCurrentState, .curveEaseOut]) {
+                self.bubbleView.transform = CGAffineTransform(scaleX: 0.96, y: 0.96)
+            }
+        case .changed:
+            // the finger started scrolling or swiping: the dip lets go so the feed
+            // does not drag a pressed bubble along
+            let p = g.location(in: nil)
+            if hypot(p.x - pressStart.x, p.y - pressStart.y) > 12 {
+                g.isEnabled = false
+                g.isEnabled = true
+            }
+        case .ended, .cancelled, .failed:
+            guard !panDrivesBubble else { return }
+            UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: 0.8,
+                           initialSpringVelocity: 0.4,
+                           options: [.allowUserInteraction, .beginFromCurrentState]) {
+                self.bubbleView.transform = .identity
+            }
+        default:
+            break
+        }
+    }
+
     // MARK: - Swipe-to-reply with resistance
 
     func gestureRecognizer(_ g: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
-        false
+        // the dip runs alongside everything, scroll included; the rest stay exclusive
+        g === pressGesture || other === pressGesture
     }
 
     /// Ширина левой кромки экрана, принадлежащей возврату по свайпу.
@@ -490,6 +585,12 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         let tx = g.translation(in: contentView).x
         switch g.state {
         case .changed:
+            if !panDrivesBubble {
+                panDrivesBubble = true
+                // the dip, if any, hands the transform over without a restore animation
+                pressGesture.isEnabled = false
+                pressGesture.isEnabled = true
+            }
             let capped = min(max(tx, 0), 90)
             let resisted = 60 * (1 - exp(-capped / 60)) // resistance
             bubbleView.transform = CGAffineTransform(translationX: resisted, y: 0)
@@ -503,6 +604,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         case .ended, .cancelled:
             if replyTriggered { onReply?() }
             replyTriggered = false
+            panDrivesBubble = false
             UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: 0.8,
                            initialSpringVelocity: 0) {
                 self.bubbleView.transform = .identity
@@ -515,23 +617,46 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
     static func tickImage(_ status: MessageStatus) -> UIImage? {
         switch status {
-        case .failed: return UIImage(systemName: "exclamationmark.circle.fill")
-        case .sending: return UIImage(systemName: "clock")
-        case .sent: return UIImage(systemName: "checkmark")
+        case .failed: return failedMark
+        case .sending: return clockMark
+        case .sent: return singleTick
         case .delivered, .read: return doubleTick
         }
     }
 
-    static let doubleTick: UIImage = {
-        let size = CGSize(width: 18, height: 13)
-        return UIGraphicsImageRenderer(size: size).image { ctx in
-            let cfg = UIImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
-            let check = UIImage(systemName: "checkmark", withConfiguration: cfg)!
-                .withTintColor(.white, renderingMode: .alwaysOriginal)
-            check.draw(in: CGRect(x: 0, y: 1.5, width: 11, height: 10))
-            check.draw(in: CGRect(x: 5, y: 1.5, width: 11, height: 10))
+    /// Canvas every status glyph is drawn into, so the mark keeps its size when the
+    /// status moves on: the single tick is one of the pair, not a stretched symbol
+    /// filling the whole frame the pair needs.
+    private static let markCanvas = CGSize(width: 18, height: 13)
+
+    private static func mark(_ draw: (UIImage) -> Void) -> UIImage {
+        UIGraphicsImageRenderer(size: markCanvas).image { _ in
+            draw(UIImage(systemName: "checkmark", withConfiguration: markConfig)!
+                .withTintColor(.white, renderingMode: .alwaysOriginal))
         }.withRenderingMode(.alwaysTemplate)
-    }()
+    }
+
+    private static let markConfig = UIImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
+
+    private static func glyph(_ name: String) -> UIImage {
+        let symbol = UIImage(systemName: name, withConfiguration: markConfig)!
+            .withTintColor(.white, renderingMode: .alwaysOriginal)
+        return UIGraphicsImageRenderer(size: markCanvas).image { _ in
+            symbol.draw(in: CGRect(x: 4, y: 1.5, width: 10, height: 10))
+        }.withRenderingMode(.alwaysTemplate)
+    }
+
+    static let singleTick: UIImage = mark { check in
+        check.draw(in: CGRect(x: 3.5, y: 1.5, width: 11, height: 10))
+    }
+
+    static let doubleTick: UIImage = mark { check in
+        check.draw(in: CGRect(x: 0, y: 1.5, width: 11, height: 10))
+        check.draw(in: CGRect(x: 5, y: 1.5, width: 11, height: 10))
+    }
+
+    static let clockMark: UIImage = glyph("clock")
+    static let failedMark: UIImage = glyph("exclamationmark.circle.fill")
 }
 
 // MARK: - Components
@@ -736,10 +861,13 @@ final class ReactionCapsuleView: UIControl {
         // a hairline border separates the capsule from both the incoming and outgoing bubble
         layer.borderWidth = 0.5
         layer.borderColor = UIColor.separator.resolvedColor(with: traitCollection).cgColor
-        // the spring entrance is for a genuinely new reaction only
+        // the spring entrance is for a genuinely new reaction only; the starting state
+        // is pinned outside any outer animation block, or it would animate too
         if animateIn {
-            transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
-            alpha = 0
+            UIView.performWithoutAnimation {
+                transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
+                alpha = 0
+            }
             UIView.animate(withDuration: 0.4, delay: 0, usingSpringWithDamping: 0.6, initialSpringVelocity: 0.4) {
                 self.transform = .identity
                 self.alpha = 1
@@ -772,6 +900,24 @@ extension MessageCell {
         Haptics.medium()
 
         var items: [MessageContextOverlay.Item] = []
+        // a message that never went out has no server id: it cannot be replied
+        // to, forwarded or pinned, and the only two things to do with it are to
+        // send it again and to throw it away
+        if msg.status == .failed {
+            items.append(.init(title: "Отправить заново", icon: "arrow.clockwise") { [weak self] in
+                self?.onContextAction?(.resend)
+            })
+            if msg.kind == .text {
+                items.append(.init(title: "Копировать", icon: "doc.on.doc") { [weak self] in
+                    self?.onContextAction?(.copy)
+                })
+            }
+            items.append(.init(title: "Удалить", icon: "trash", destructive: true) { [weak self] in
+                self?.onContextAction?(.delete)
+            })
+            presentContextMenu(items, in: window, msg: msg, showsReactions: false)
+            return
+        }
         items.append(.init(title: "Ответить", icon: "arrowshape.turn.up.left") { [weak self] in
             self?.onContextAction?(.reply)
         })
@@ -787,9 +933,15 @@ extension MessageCell {
         items.append(.init(title: "Выбрать", icon: "checkmark.circle") { [weak self] in
             self?.onContextAction?(.select)
         })
-        items.append(.init(title: "Закрепить", icon: "pin") { [weak self] in
-            self?.onContextAction?(.pin)
-        })
+        if isPinned?() == true {
+            items.append(.init(title: "Открепить", icon: "pin.slash") { [weak self] in
+                self?.onContextAction?(.unpin)
+            })
+        } else {
+            items.append(.init(title: "Закрепить", icon: "pin") { [weak self] in
+                self?.onContextAction?(.pin)
+            })
+        }
         if msg.isOutgoing && msg.kind == .text {
             items.append(.init(title: "Изменить", icon: "pencil") { [weak self] in
                 self?.onContextAction?(.edit)
@@ -799,6 +951,11 @@ extension MessageCell {
             self?.onContextAction?(.delete)
         })
 
+        presentContextMenu(items, in: window, msg: msg)
+    }
+
+    private func presentContextMenu(_ items: [MessageContextOverlay.Item], in window: UIWindow,
+                                    msg: Message, showsReactions: Bool = true) {
         let mine = msg.reactions.first(where: { $0.value.contains(OwnUser.id) })?.key
         // текст приподнятого баббла выделяется протяжкой, поэтому он уходит
         // в меню живым, а снимок рендерится без него
@@ -813,8 +970,13 @@ extension MessageCell {
         textView.isHidden = selectable != nil || textWasHidden
         MessageContextOverlay.present(over: bubbleView, in: window, isOutgoing: msg.isOutgoing,
                                       myReaction: mine, items: items, selectableText: selectable,
+                                      showsReactions: showsReactions,
                                       onReact: { [weak self] emoji in self?.onReact?(emoji) })
         textView.isHidden = textWasHidden
+        // the overlay's snapshot took over from the pressed bubble, so the real one
+        // returns to rest underneath the blur
+        pressGesture.isEnabled = false
+        pressGesture.isEnabled = true
     }
 }
 
