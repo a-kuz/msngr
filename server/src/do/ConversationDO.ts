@@ -24,8 +24,10 @@ const FANOUT_PREFIX = "fr:";
 /// a fresh budget, so audience size is not capped by it.
 const FANOUT_BUDGET = 800;
 /// Pause before the next pass over a failed record, by the number of passes
-/// already failed; the last value repeats until the recipient answers.
-const FANOUT_RETRY_MS = [200, 1_000, 5_000, 15_000, 30_000];
+/// already failed; the last value repeats until the recipient answers. The
+/// ceiling is what a recovered recipient waits for their backlog at worst,
+/// and what a dead one costs per chat: one delivery call per pause.
+const FANOUT_RETRY_MS = [200, 1_000, 2_000, 5_000, 10_000];
 /// A recipient that stops answering fails its own delivery after this and is
 /// retried on the growing pause; the rest of the chat does not wait for it.
 const FANOUT_DELIVERY_TIMEOUT_MS = 10_000;
