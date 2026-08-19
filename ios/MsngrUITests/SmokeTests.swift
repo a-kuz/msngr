@@ -147,6 +147,20 @@ final class SmokeTests: XCTestCase {
                       "the search button is not in the accessibility tree")
     }
 
+    /// The debug network console. A shake cannot be sent into the simulator from
+    /// outside, so the launch argument is both the live check and the way in for
+    /// anyone driving the app by scripts.
+    func testH_PulseConsoleOpensOnLaunchArg() {
+        let console = XCUIApplication()
+        if let server = ProcessInfo.processInfo.environment["MSNGR_SERVER"] {
+            console.launchEnvironment["MSNGR_SERVER"] = server
+        }
+        console.launchArguments.append("-msngr.console")
+        console.launch()
+        XCTAssertTrue(console.navigationBars["Console"].waitForExistence(timeout: 10),
+                      "the Pulse console did not open on the launch argument")
+    }
+
     // A status bar tap goes to the beginning of the conversation. The touch is
     // SpringBoard's, and no way of aiming one at the status bar from XCUITest reaches the
     // app's delegate on the simulator, so the check lives in MsngrTests/StatusBarTapTests.
