@@ -477,8 +477,13 @@ public actor SyncEngine {
                 let previousMembers: [String] = (try? await db.read { dbc in
                     try String.fetchAll(dbc, sql: "SELECT userId FROM member WHERE chatId = ?", arguments: [state.chatId])
                 }) ?? []
-                try? await db.write { [ownUserId] dbc in
-                    try SyncEngine.upsertChatState(dbc, state, ownUserId: ownUserId, flags: nil)
+                do {
+                    try await db.write { [ownUserId] dbc in
+                        try SyncEngine.upsertChatState(dbc, state, ownUserId: ownUserId, flags: nil)
+                    }
+                } catch {
+                    MsngrLog.session.error(
+                        "chat state \(f.event ?? "?", privacy: .public) for \(state.chatId, privacy: .public) not applied: \(String(describing: error), privacy: .public)")
                 }
                 // a mark the server never heard is queued again by the state above
                 actionWakeup.continuation.yield()
