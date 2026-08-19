@@ -252,6 +252,58 @@ cb.send({ t: "typing", chatId: chat.chatId, kind: "text" });
 const typing = await ca.waitFor((f) => f.t === "typing" && f.from === bob.userId);
 check("typing", !!typing);
 
+// 7a. A changed card reaches the people who see it, over the socket
+const renameMark = ca.mark();
+const renamed = await api("/api/profile", { token: bob.token, body: { displayName: "Bob Renamed" } });
+check("profile update", renamed.ok);
+const nameFrame = await ca.waitAfter(renameMark, (f) => f.t === "profile" && f.user?.id === bob.userId);
+check("rename reaches the peer", !!nameFrame && nameFrame.user.display_name === "Bob Renamed",
+  JSON.stringify(nameFrame));
+
+check("empty name refused on profile",
+  (await api("/api/profile", { token: bob.token, body: { displayName: "  " } })).error === "bad_name");
+check("empty name refused at registration",
+  (await api("/api/register", { body: {
+    username: "noname_" + suffix, displayName: "", ...fakeKeys("n") } })).error === "bad_name");
+
+// the avatar blob sits behind the device token, and the frame carries its id
+const avatarMark = ca.mark();
+const upload = await (await fetch(BASE + "/api/avatar", {
+  method: "POST",
+  headers: { authorization: `Bearer ${bob.token}`, "content-type": "image/jpeg" },
+  body: Buffer.from("not-a-real-jpeg-but-bytes"),
+})).json();
+check("avatar upload", upload.ok && upload.avatarId.startsWith("avatar-"), JSON.stringify(upload));
+const avatarFrame = await ca.waitAfter(avatarMark, (f) => f.t === "profile" && f.user?.id === bob.userId);
+check("avatar reaches the peer", !!avatarFrame && avatarFrame.user.avatar_id === upload.avatarId,
+  JSON.stringify(avatarFrame));
+check("avatar blob needs a token",
+  (await fetch(BASE + "/api/avatar/" + upload.avatarId)).status === 401);
+const avatarBytes = await fetch(BASE + "/api/avatar/" + upload.avatarId,
+  { headers: { authorization: `Bearer ${alice.token}` } });
+check("peer reads the avatar blob with theirs", avatarBytes.status === 200);
+
+// 7b. Renaming the handle: the new one is taken and the old one freed by the
+// same statement, under the index that already guards registration
+const oldHandle = "bob_" + suffix;
+const newHandle = "bobby_" + suffix;
+check("username taken by someone else is refused",
+  (await api("/api/username", { token: bob.token, body: { username: "alice_" + suffix } }))
+    .error === "username_taken");
+check("bad username refused",
+  (await api("/api/username", { token: bob.token, body: { username: "no" } })).error === "bad_username");
+check("username changed", (await api("/api/username", { token: bob.token, body: { username: newHandle } })).ok);
+check("found under the new handle",
+  (await api(`/api/users?q=${newHandle}`, { token: alice.token })).users.length === 1);
+check("gone from the old handle",
+  (await api(`/api/users?q=${oldHandle}`, { token: alice.token })).users.length === 0);
+const reuse = await api("/api/register", { body: {
+  username: oldHandle, displayName: "Someone Else", ...fakeKeys("r") } });
+check("the old handle is free", reuse.ok, JSON.stringify(reuse));
+check("the freed handle is taken only once",
+  (await api("/api/username", { token: bob.token, body: { username: oldHandle } }))
+    .error === "username_taken");
+
 // 8. Offline → sync: Bob disconnects, Alice sends, Bob comes back with a cursor
 cb.ws.close();
 await new Promise((r) => setTimeout(r, 300));
@@ -514,6 +566,99 @@ const ownAvatar = await uploadAvatar(alice.token);
 const meOwn = await api("/api/me", { token: alice.token });
 check("own avatar still updates profile",
   ownAvatar.ok && meOwn.user.avatar_id === ownAvatar.avatarId);
+
+// 16b. Member rights: who may write and who may bring people in. Its own group,
+// because the checks below count the frames of grp.
+const rgrp = await api("/api/chats", { token: alice.token,
+  body: { kind: "group", memberIds: [bob.userId, dave.userId], title: "Rights" } });
+check("create rights group", rgrp.ok, JSON.stringify(rgrp));
+
+const policyByMember = await api(`/api/chats/${rgrp.chatId}/settings`, { token: dave.token,
+  body: { sendPolicy: "admins" } });
+check("group rights by non-admin rejected",
+  !policyByMember.ok && policyByMember.error === "not_admin");
+
+const cdave = new Client("dave-rights", dave.token);
+await cdave.connect();
+const daveOpen = cdave.mark();
+cdave.send({ t: "send", chatId: rgrp.chatId, clientMsgId: "cm-open-1", sentAt: Date.now(),
+  body: { v: 1, mode: "skm", c: "Zm9v", senderKeyId: "sk1" } });
+check("member writes while the group is open",
+  !!(await cdave.waitAfter(daveOpen, (f) => f.t === "sent" && f.clientMsgId === "cm-open-1")));
+
+const readOnly = await api(`/api/chats/${rgrp.chatId}/settings`, { token: alice.token,
+  body: { sendPolicy: "admins" } });
+const readOnlyFrame = await cb2.waitFor((f) =>
+  f.t === "chat" && f.chatId === rgrp.chatId && f.state.sendPolicy === "admins");
+check("admin makes the group read-only", readOnly.ok && !!readOnlyFrame);
+
+const daveMuted = cdave.mark();
+cdave.send({ t: "send", chatId: rgrp.chatId, clientMsgId: "cm-muted-1", sentAt: Date.now(),
+  body: { v: 1, mode: "skm", c: "Zm9v", senderKeyId: "sk1" } });
+const muteErr = await cdave.waitAfter(daveMuted,
+  (f) => f.t === "error" && f.clientMsgId === "cm-muted-1");
+check("member cannot write in a read-only group",
+  !!muteErr && muteErr.error === "not_allowed", JSON.stringify(muteErr));
+
+// the crypto keeps working: a key handout, a repair, an ack are service frames
+const daveService = cdave.mark();
+cdave.send({ t: "send", chatId: rgrp.chatId, clientMsgId: "cm-muted-skd", sentAt: Date.now(),
+  service: true, body: { v: 1, mode: "skd", c: "c2tk" } });
+check("service frames pass in a read-only group",
+  !!(await cdave.waitAfter(daveService, (f) => f.t === "sent" && f.clientMsgId === "cm-muted-skd")));
+
+const adminWrite = ca.mark();
+ca.send({ t: "send", chatId: rgrp.chatId, clientMsgId: "cm-muted-admin", sentAt: Date.now(),
+  body: { v: 1, mode: "skm", c: "Zm9v", senderKeyId: "sk1" } });
+check("admin writes in a read-only group",
+  !!(await ca.waitAfter(adminWrite, (f) => f.t === "sent" && f.clientMsgId === "cm-muted-admin")));
+
+await api(`/api/chats/${rgrp.chatId}/settings`, { token: alice.token, body: { sendPolicy: "all" } });
+const daveAgain = cdave.mark();
+cdave.send({ t: "send", chatId: rgrp.chatId, clientMsgId: "cm-open-2", sentAt: Date.now(),
+  body: { v: 1, mode: "skm", c: "Zm9v", senderKeyId: "sk1" } });
+check("the group opens again",
+  !!(await cdave.waitAfter(daveAgain, (f) => f.t === "sent" && f.clientMsgId === "cm-open-2")));
+
+// inviting: open by default, admins only once the policy says so
+const guest = await api("/api/register", { body: {
+  username: "guest" + suffix, displayName: "Guest", device: { name: "iPhone" }, ...fakeKeys("g1") } });
+const addByMember = await api(`/api/chats/${rgrp.chatId}/members`, { token: dave.token,
+  body: { add: [guest.userId], remove: [] } });
+check("member adds a member while inviting is open", addByMember.ok, JSON.stringify(addByMember));
+const invByMember = await api(`/api/chats/${rgrp.chatId}/invite`, { token: dave.token, body: {} });
+check("member mints an invite while inviting is open", invByMember.ok);
+
+const lockInvites = await api(`/api/chats/${rgrp.chatId}/settings`, { token: alice.token,
+  body: { invitePolicy: "admins" } });
+check("admin locks inviting", lockInvites.ok);
+const guest2 = await api("/api/register", { body: {
+  username: "guesttwo" + suffix, displayName: "Guest Two", device: { name: "iPhone" }, ...fakeKeys("g2") } });
+const addByMemberLocked = await api(`/api/chats/${rgrp.chatId}/members`, { token: dave.token,
+  body: { add: [guest2.userId], remove: [] } });
+check("member cannot add once inviting is locked",
+  !addByMemberLocked.ok && addByMemberLocked.error === "not_allowed",
+  JSON.stringify(addByMemberLocked));
+const invLocked = await api(`/api/chats/${rgrp.chatId}/invite`, { token: dave.token, body: {} });
+check("member cannot mint an invite once inviting is locked",
+  !invLocked.ok && invLocked.error === "not_allowed", JSON.stringify(invLocked));
+const invByAdmin = await api(`/api/chats/${rgrp.chatId}/invite`, { token: alice.token, body: {} });
+check("admin mints an invite in a locked group", invByAdmin.ok);
+// a member still leaves a group they cannot write in: leaving is not a send
+const rightsLeave = await api(`/api/chats/${rgrp.chatId}/delete`, { token: dave.token, body: {} });
+check("member leaves a locked group", rightsLeave.ok, JSON.stringify(rightsLeave));
+cdave.ws.close();
+// alice never read this group, and the badge checks further down count her unread
+// over every chat she is in
+const rgrpEntry = (await api("/api/chats", { token: alice.token }))
+  .chats.find((e) => e.state.chatId === rgrp.chatId);
+ca.send({ t: "read", chatId: rgrp.chatId, upToSeq: rgrpEntry.state.lastSeq });
+await new Promise((r) => setTimeout(r, 300));
+const rgrpRead = (await api("/api/chats", { token: alice.token }))
+  .chats.find((e) => e.state.chatId === rgrp.chatId);
+check("the rights group leaves no unread behind",
+  (rgrpRead.state.readMarks[alice.userId] ?? 0) >= rgrpRead.state.lastSeq,
+  JSON.stringify(rgrpRead.state.readMarks));
 
 // 17. Service frame: the flag reaches the recipient, dedupe by clientMsgId works
 ca.send({ t: "send", chatId: chat.chatId, clientMsgId: "cm-skd-1", sentAt: Date.now(),
@@ -970,6 +1115,46 @@ const pushSvc = await waitPush(pushFor("eve-sim-udid", psvc.msgId));
 check("service frame does not grow the badge", pushSvc?.body.aps.badge === 1,
   `badge=${pushSvc?.body.aps.badge}`);
 
+// (c1a) The same frame in a chat that is *not* read to the end. The badge counts
+// what the reader will be shown, and a service frame is never shown: an edit, a
+// reaction or the sender key handed out after a membership change must leave the
+// number where it is. A group is where this shows up most, because every change
+// of the roster hands the key out again.
+{
+  const nils = await api("/api/register", { body: {
+    username: "nils_" + suffix, displayName: "Nils", ...fakeKeys("x") } });
+  const olga = await api("/api/register", { body: {
+    username: "olga_" + suffix, displayName: "Olga", ...fakeKeys("y") } });
+  const piet = await api("/api/register", { body: {
+    username: "piet_" + suffix, displayName: "Piet", ...fakeKeys("z") } });
+  await api("/api/push-token", { token: olga.token,
+    body: { apnsToken: "olga-sim-udid", env: "development" } });
+  const gchat = await api("/api/chats", { token: nils.token,
+    body: { kind: "group", title: "Counting", memberIds: [olga.userId, piet.userId] } });
+  check("unread group created", gchat.ok, JSON.stringify(gchat));
+  const cni = new Client("nils", nils.token);
+  await cni.connect();
+  const gsend = async (id, service) => {
+    cni.send({ t: "send", chatId: gchat.chatId, clientMsgId: id, sentAt: Date.now(),
+      body: { v: 1, mode: "sk", msgs: {} }, ...(service ? { service: true } : {}) });
+    return cni.waitFor((f) => f.t === "sent" && f.clientMsgId === id);
+  };
+
+  const u1 = await gsend("cm-u1");
+  const badge1 = (await waitPush(pushFor("olga-sim-udid", u1.msgId)))?.body.aps.badge;
+  check("group badge counts the first message", badge1 === 1, `badge=${badge1}`);
+
+  // nothing is read here: this is where the number used to grow on its own
+  const s1 = await gsend("cm-u2", true);
+  check("no push for the group's service frame",
+    !(await waitPush(pushFor("olga-sim-udid", s1.msgId), 1500)));
+
+  const u3 = await gsend("cm-u3");
+  const badge2 = (await waitPush(pushFor("olga-sim-udid", u3.msgId)))?.body.aps.badge;
+  check("a service frame does not grow an unread badge", badge2 === 2, `badge=${badge2}`);
+  cni.ws.close();
+}
+
 // (c2) The push carries the message itself, addressed to the device it goes to:
 // the extension decrypts it and writes it, so a chat opened offline holds what
 // the banner said. A pairwise envelope is trimmed to this device's own box.
@@ -1295,6 +1480,50 @@ check("the others see the member gone",
 const notMember = await api(`/api/chats/${dgrp.chatId}/delete`, { token: dana.token, body: {} });
 check("deleting a chat you are not in is refused", !notMember.ok);
 cd.ws.close(); cd2.ws.close(); cer.ws.close();
+
+// 26. The delivery receipt over HTTP: what the notification extension sends
+// when it writes a message from a push and the app has no socket up.
+{
+  const gina = await api("/api/register", { body: {
+    username: "rita_" + suffix, displayName: "Rita", ...fakeKeys("u") } });
+  const hugo = await api("/api/register", { body: {
+    username: "sven_" + suffix, displayName: "Sven", ...fakeKeys("v") } });
+  check("receipt pair registered", gina.ok && hugo.ok, JSON.stringify([gina, hugo]));
+  const rchat = await api("/api/chats", { token: gina.token,
+    body: { kind: "direct", memberIds: [hugo.userId] } });
+  const cgi = new Client("gina", gina.token);
+  await cgi.connect();
+  await api(`/api/chats/${rchat.chatId}/accept`, { token: hugo.token, body: {} });
+  cgi.send({ t: "send", chatId: rchat.chatId, clientMsgId: "cm-g1", sentAt: Date.now(),
+    body: { v: 1, mode: "pw", msgs: {} } });
+  await cgi.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-g1");
+
+  // Hugo never connects: the receipt is the only thing that arrives from him
+  const rest = await api(`/api/chats/${rchat.chatId}/recv`, { token: hugo.token, body: { seqs: [1] } });
+  check("rest recv accepted", rest.ok, JSON.stringify(rest));
+  const restReceipt = await cgi.waitFor((f) => f.t === "receipt" && f.kind === "delivered");
+  check("rest recv reaches the author",
+    !!restReceipt && restReceipt.by === hugo.userId && restReceipt.upToSeq === 1,
+    JSON.stringify(restReceipt));
+
+  const again = await api(`/api/chats/${rchat.chatId}/recv`, { token: hugo.token, body: { seqs: [1] } });
+  check("rest recv repeats without harm", again.ok);
+  const emptySeqs = await api(`/api/chats/${rchat.chatId}/recv`, { token: hugo.token, body: { seqs: [] } });
+  check("rest recv without seqs is refused", !emptySeqs.ok, JSON.stringify(emptySeqs));
+
+  // a stranger holding the chat id marks nothing
+  const nosy = await api("/api/register", { body: {
+    username: "tess_" + suffix, displayName: "Tess", ...fakeKeys("w") } });
+  await api(`/api/chats/${rchat.chatId}/recv`, { token: nosy.token, body: { seqs: [1] } });
+  const rstate = await api("/api/chats", { token: gina.token });
+  const rc = rstate.chats.find((c2) => c2.state.chatId === rchat.chatId);
+  check("rest recv from a stranger marks nothing",
+    rc?.state.deliveredMarks[nosy.userId] === undefined,
+    JSON.stringify(rc?.state.deliveredMarks));
+  check("rest recv marked the member", rc?.state.deliveredMarks[hugo.userId] === 1,
+    JSON.stringify(rc?.state.deliveredMarks));
+  cgi.ws.close();
+}
 
 cmal.ws.close(); ctre.ws.close();
 ca.ws.close(); cb2.ws.close(); cb3.ws.close(); cb4.ws.close(); ca2.ws.close(); ce.ws.close();

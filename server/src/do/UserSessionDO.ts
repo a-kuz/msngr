@@ -1,4 +1,4 @@
-import type { Env, ClientFrame, ServerFrame } from "../types";
+import type { Env, ClientFrame, ServerFrame, PublicUser } from "../types";
 import { json, err, nowSec } from "../util";
 import { sendPush, envelopeForDevice } from "../push/apns";
 import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "../version";
@@ -316,6 +316,29 @@ export class UserSessionDO implements DurableObject {
         const lastSeen = (await this.state.storage.get<number>("lastSeen")) ?? 0;
         const online = this.presenceFresh();
         return json({ ok: true, online, lastSeen });
+      }
+
+      case "/profile-changed": {
+        // the card travels the same road as presence: out through every chat
+        // this user is in, and to their own other devices
+        const b = (await req.json()) as { user: PublicUser };
+        this.broadcast({ t: "profile", user: b.user });
+        const ids = await this.chatIds();
+        const results = await Promise.allSettled(
+          ids.map(async (chatId) => {
+            const res = await this.convStub(chatId).fetch("https://do/profile", {
+              method: "POST",
+              body: JSON.stringify({ userId: b.user.id, user: b.user }),
+            });
+            if (!res.ok) throw new Error(`status ${res.status}`);
+          })
+        );
+        results.forEach((r, i) => {
+          if (r.status === "rejected") {
+            console.warn(`profile of ${b.user.id} in ${ids[i]} failed: ${r.reason}`);
+          }
+        });
+        return json({ ok: true });
       }
 
       default:

@@ -158,6 +158,9 @@ struct MacChatView: View {
     @EnvironmentObject var app: MacAppState
     @StateObject private var model = MacChatModel()
     @State private var text = ""
+    /// The window this chat is in: read marks are only sent from the one the
+    /// user is actually looking at.
+    @Environment(\.controlActiveState) private var activeState
 
     var body: some View {
         Group {
@@ -168,7 +171,11 @@ struct MacChatView: View {
             }
         }
         .navigationTitle(model.title)
-        .onAppear { model.start(chatId: chatId) }
+        .onAppear {
+            model.start(chatId: chatId)
+            model.setViewing(activeState == .key)
+        }
+        .onChange(of: activeState) { _, state in model.setViewing(state == .key) }
     }
 
     /// A request before it is accepted: no content, only the name and the decision.
@@ -207,14 +214,19 @@ struct MacChatView: View {
                                     }
                                 }
                         }
+                        // the end of the feed: while this is on screen the
+                        // reader is at the bottom, which is what a new message
+                        // scrolling into view and the read mark both depend on
+                        Color.clear.frame(height: 1)
+                            .onAppear { model.setAtBottom(true) }
+                            .onDisappear { model.setAtBottom(false) }
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                 }
                 .onChange(of: model.messages.count) { _, _ in
-                    if let last = model.messages.last {
-                        withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
-                    }
+                    guard model.atBottom, let last = model.messages.last else { return }
+                    withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                 }
             }
             Divider()
@@ -257,6 +269,10 @@ final class MacChatModel: ObservableObject {
     @Published var replyingTo: Message?
     /// request before acceptance: the feed and the input field stay hidden
     @Published var contentHidden = false
+    /// the end of the feed is on screen
+    @Published private(set) var atBottom = true
+    /// the window holding this chat is the one in focus
+    private var viewing = false
     private var cancellable: AnyCancellable?
     private var members: [String: String] = [:]
     private var chatId = ""
@@ -332,8 +348,22 @@ final class MacChatModel: ObservableObject {
         }
     }
 
+    func setViewing(_ viewing: Bool) {
+        self.viewing = viewing
+        markRead()
+    }
+
+    func setAtBottom(_ atBottom: Bool) {
+        self.atBottom = atBottom
+        markRead()
+    }
+
+    /// The read mark goes out only when the message is in front of someone: the
+    /// window has focus, the feed is at its end and the content is not held back
+    /// by an unaccepted request. A chat left open behind other windows marks
+    /// nothing.
     private func markRead() {
-        guard let last = messages.last?.seq else { return }
+        guard viewing, atBottom, !contentHidden, let last = messages.last?.seq else { return }
         Task { await MacAppStateHolder.shared?.engine.markRead(chatId: chatId, upToSeq: last) }
     }
 }
@@ -395,6 +425,7 @@ struct MacBubble: View {
 
     private var systemText: String {
         let t = message.text ?? ""
+        if let event = GroupEvent.decode(t) { return event.sentence(isOwn: message.isOutgoing) }
         if t.hasPrefix("identity_changed:") { return "Код безопасности изменился" }
         return t
     }

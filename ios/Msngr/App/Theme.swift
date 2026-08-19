@@ -81,19 +81,33 @@ enum Palette: String, CaseIterable, Identifiable {
     /// Timestamp and unread ticks on an outgoing bubble.
     var outgoingMeta: Color {
         switch self {
-        case .imessage: return Color.white.opacity(0.75)
+        case .imessage: return Color.white.opacity(0.65)
         case .telegram: return Color(light: Color(red: 0.28, green: 0.47, blue: 0.36),
                                      dark: Color(red: 0.55, green: 0.75, blue: 0.63))
         case .graphite: return Color(red: 0.78, green: 0.80, blue: 0.92)
         }
     }
 
-    /// Read tick on an outgoing bubble.
+    /// Read tick on an outgoing bubble. Colour is the only thing that separates a
+    /// read message from a delivered one, so it carries a hue of its own rather
+    /// than a brighter shade of the meta colour: against a blue or a green bubble
+    /// a lighter version of the same green reads as the same tick.
     var outgoingTickRead: Color {
         switch self {
-        case .imessage: return .white
-        case .telegram: return Color(red: 0.13, green: 0.59, blue: 0.42)
+        case .imessage: return Color(red: 0.42, green: 0.93, blue: 1.0)
+        case .telegram: return Color(light: Color(red: 0.05, green: 0.45, blue: 0.82),
+                                     dark: Color(red: 0.45, green: 0.85, blue: 1.0))
         case .graphite: return Color(red: 1.0, green: 0.73, blue: 0.35)
+        }
+    }
+
+    /// Label on a filled accent control. Every accent here is dark enough to
+    /// carry white except the graphite orange, where white holds only 2.9:1;
+    /// the dark label on it holds 6.0:1.
+    var accentLabel: Color {
+        switch self {
+        case .imessage, .telegram: return .white
+        case .graphite: return Color(red: 0.16, green: 0.09, blue: 0.02)
         }
     }
 }
@@ -323,6 +337,20 @@ enum Theme {
     static var outgoingMeta: Color { palette.outgoingMeta }
     static var outgoingTickRead: Color { palette.outgoingTickRead }
 
+    // A filled action button, the one thing a screen is for.
+    static var controlFill: Color { palette.accent }
+    static var controlLabel: Color { palette.accentLabel }
+    /// A control that cannot be used yet is a neutral surface rather than a
+    /// pale accent: the accent at 40% left its white label 1.4:1 in the light
+    /// appearance, and the button read as painted over rather than as waiting.
+    /// These greys hold 5.3:1 light and 5.1:1 dark.
+    static var controlFillDisabled: Color {
+        Color(light: Color(white: 0.88), dark: Color(white: 0.24))
+    }
+    static var controlLabelDisabled: Color {
+        Color(light: Color(white: 0.35), dark: Color(white: 0.70))
+    }
+
     // Animations: one set of spring constants
     static let springFast = Animation.spring(response: 0.35, dampingFraction: 0.82)
     static let spring = Animation.spring(response: 0.45, dampingFraction: 0.84)
@@ -330,6 +358,40 @@ enum Theme {
 
     static let bubbleCorner: CGFloat = 17
     static let bubbleMaxWidthRatio: CGFloat = 0.76
+}
+
+/// The filled action a screen is built around: «Создать аккаунт», «Далее»,
+/// «Войти». The box grows with the label instead of holding 48 pt, so an
+/// accessibility size wraps the text rather than clipping it.
+struct PrimaryActionButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { Filled(configuration: configuration) }
+
+    private struct Filled: View {
+        // `isEnabled` only reaches a ButtonStyle through a view of its own.
+        @Environment(\.isEnabled) private var enabled
+        @Environment(\.dynamicTypeSize) private var typeSize
+        let configuration: Configuration
+
+        var body: some View {
+            let label = enabled ? Theme.controlLabel : Theme.controlLabelDisabled
+            configuration.label
+                .textRole(Theme.Text.controlTitle)
+                .foregroundStyle(label)
+                .tint(label)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 16)
+                .padding(.vertical, typeSize.scaled(12, max: 20))
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: typeSize.scaled(48, max: 78))
+                .background(enabled ? Theme.controlFill : Theme.controlFillDisabled,
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .opacity(configuration.isPressed ? 0.82 : 1)
+        }
+    }
+}
+
+extension ButtonStyle where Self == PrimaryActionButtonStyle {
+    static var primaryAction: PrimaryActionButtonStyle { PrimaryActionButtonStyle() }
 }
 
 extension Color {

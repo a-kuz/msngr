@@ -32,14 +32,16 @@ struct RegisterView: View {
                         .autocorrectionDisabled()
                         .textFieldStyle(.roundedBorder)
                         .accessibilityIdentifier("reg.username")
+                    // the button says nothing about why it is off, so each
+                    // field says it for itself, and only once it is wrong
+                    if let hint = AccountValidator.usernameHint(username) {
+                        fieldHint(hint, id: "reg.usernameHint")
+                    }
                     TextField("Имя", text: $displayName)
                         .textFieldStyle(.roundedBorder)
                         .accessibilityIdentifier("reg.displayName")
-                    if !trimmedName.isEmpty && !nameValid {
-                        Text("Имя — минимум 3 символа")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                    if let hint = AccountValidator.nameHint(displayName) {
+                        fieldHint(hint, id: "reg.displayNameHint")
                     }
                 }
                 .padding(.horizontal, 32)
@@ -51,16 +53,9 @@ struct RegisterView: View {
                 Button {
                     Task { await register() }
                 } label: {
-                    Group {
-                        if busy { ProgressView().tint(.white) }
-                        else { Text("Создать аккаунт").bold() }
-                    }
-                    .foregroundStyle(.white.opacity(formValid ? 1 : 0.85))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 48)
-                    .background(Theme.accent.opacity(formValid ? 1 : 0.4),
-                                in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    if busy { ProgressView() } else { Text("Создать аккаунт") }
                 }
+                .buttonStyle(.primaryAction)
                 .disabled(busy || !formValid)
                 .accessibilityIdentifier("reg.submit")
                 .padding(.horizontal, 32)
@@ -80,11 +75,19 @@ struct RegisterView: View {
         }
     }
 
-    private var usernameValid: Bool { RegistrationValidator.isValidUsername(username) }
+    private func fieldHint(_ text: String, id: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier(id)
+    }
 
-    private var trimmedName: String { RegistrationValidator.trimmedName(displayName) }
+    private var usernameValid: Bool { AccountValidator.isValidUsername(username) }
 
-    private var nameValid: Bool { RegistrationValidator.isValidName(displayName) }
+    private var trimmedName: String { AccountValidator.trimmedName(displayName) }
+
+    private var nameValid: Bool { AccountValidator.isValidName(displayName) }
 
     private var formValid: Bool { usernameValid && nameValid }
 
@@ -130,7 +133,8 @@ struct RegisterView: View {
                 return
             }
         } catch let e as APIError {
-            error = e.code == "username_taken" ? "Юзернейм занят" : "Ошибка: \(e.code)"
+            MsngrLog.session.error("registration refused: \(e.code)")
+            error = e.code == "username_taken" ? "Юзернейм занят" : "Не удалось создать аккаунт"
         } catch {
             self.error = "Нет связи с сервером"
         }
