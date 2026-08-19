@@ -3,7 +3,7 @@ import type { Env, AuthCtx, ChatState, PublicUser } from "./types";
 import { authenticate } from "./auth";
 import {
   ulid, newToken, sha256hex, json, err, directChatName, b64url, provisionCode,
-  isValidUsername, isValidDisplayName,
+  isValidUsername, isValidDisplayName, USERNAME_QUARANTINE_MS,
 } from "./util";
 import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "./version";
 
@@ -19,6 +19,14 @@ function userStub(env: Env, userId: string) {
 }
 function convStub(env: Env, chatId: string) {
   return env.CONV_DO.get(env.CONV_DO.idFromName(chatId));
+}
+
+/// The row for `username` in `released_usernames`, if a rename has ever freed
+/// it and nothing has purged the row since.
+function quarantineRow(env: Env, username: string) {
+  return env.DB.prepare(
+    "SELECT released_by, released_at FROM released_usernames WHERE username = ?"
+  ).bind(username).first<{ released_by: string; released_at: number }>();
 }
 
 // What this server speaks: its protocol version and the floor it still serves.
@@ -41,6 +49,10 @@ app.post("/api/register", async (c) => {
   if (!b.identityKey || !b.signedPrekey?.key) return err("bad_keys");
 
   const now = Date.now();
+  const quarantine = await quarantineRow(c.env, b.username);
+  if (quarantine && now - quarantine.released_at < USERNAME_QUARANTINE_MS) {
+    return err("username_taken", 409);
+  }
   const userId = ulid(now);
   const deviceId = ulid(now);
   const token = newToken();
@@ -485,11 +497,27 @@ app.post("/api/username", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{ username?: string }>();
   if (!isValidUsername(b.username)) return err("bad_username");
+
+  const now = Date.now();
+  const quarantine = await quarantineRow(c.env, b.username);
+  if (quarantine && quarantine.released_by !== userId &&
+      now - quarantine.released_at < USERNAME_QUARANTINE_MS) {
+    return err("username_taken", 409);
+  }
+
+  const current = await c.env.DB.prepare("SELECT username FROM users WHERE id = ?")
+    .bind(userId).first<{ username: string }>();
+  if (!current) return err("not_found", 404);
+
   try {
-    const res = await c.env.DB.prepare(
-      "UPDATE users SET username = ? WHERE id = ?"
-    ).bind(b.username, userId).run();
-    if (!res.meta.changes) return err("not_found", 404);
+    await c.env.DB.batch([
+      c.env.DB.prepare("UPDATE users SET username = ? WHERE id = ?").bind(b.username, userId),
+      c.env.DB.prepare(
+        `INSERT INTO released_usernames (username, released_by, released_at) VALUES (?,?,?)
+         ON CONFLICT(username) DO UPDATE SET released_by = excluded.released_by,
+                                              released_at = excluded.released_at`
+      ).bind(current.username, userId, now),
+    ]);
   } catch (e) {
     if (String(e).includes("UNIQUE")) return err("username_taken", 409);
     throw e;
