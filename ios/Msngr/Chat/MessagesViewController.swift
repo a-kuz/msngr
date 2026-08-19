@@ -419,18 +419,17 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
                 let plan = BubbleLayout.plan(for: msg, width: collectionView.bounds.width, tightGap: tightGap,
                                              showTail: showTail, showName: showName, authorName: authorName,
                                              replyAuthorName: replyAuthorName)
-                if abs(cell.bounds.height - plan.cellHeight) < 0.5 {
-                    configureMessageCell(cell, msg: msg, plan: plan)
-                    return
-                }
-                // the batch update re-reads sizeForItemAt, which serves the new plan from
-                // the cache; contentOffset is untouched, so in the inverted feed the
-                // bubble's bottom edge stays put and the content above slides
+                // an inline reaction changes only the width, so the spring wraps every
+                // reconfigure; the batch update joins in only when the height moved. It
+                // re-reads sizeForItemAt, which serves the new plan from the cache;
+                // contentOffset is untouched, so in the inverted feed the bubble's
+                // bottom edge stays put and the content above slides
+                let sameHeight = abs(cell.bounds.height - plan.cellHeight) < 0.5
                 UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: 0.86,
                                initialSpringVelocity: 0,
                                options: [.allowUserInteraction, .beginFromCurrentState]) {
                     self.configureMessageCell(cell, msg: msg, plan: plan)
-                    self.collectionView.performBatchUpdates(nil)
+                    if !sameHeight { self.collectionView.performBatchUpdates(nil) }
                 }
                 return
             }
