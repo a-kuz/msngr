@@ -561,6 +561,17 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    /// A message that ran out of tries goes back into the queue exactly as it
+    /// was written, attachments included. One that has no queue entry left
+    /// cannot be repeated, and the failure it shows says so by staying.
+    func resend(_ msg: Message) {
+        Task { [weak self] in
+            guard let self else { return }
+            let queued = await self.app.engine.retrySend(messageId: msg.id)
+            if !queued { self.sendFailure = "Это сообщение больше нельзя отправить" }
+        }
+    }
+
     func send(text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }

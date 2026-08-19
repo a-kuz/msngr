@@ -63,6 +63,14 @@ gate with its own:
 make check DEV_UDID=14C70E21-A23A-4492-8E6A-113AE0BC6B6D   # gate-runner
 ```
 
+Uninstall the app from the simulator before `make uicheck`
+(`xcrun simctl uninstall <udid> ai.enface.Msngr`). The device keeps the
+migrations of whichever build ran on it last, and a branch that does not know the
+newest of them leaves the file closed and shows «Приложение устарело» in place of
+the chat list: every UI test then fails on a screen with no chats, as a wandering
+assertion rather than anything that names the cause. The UI tests register their
+own user, and the fixtures they need are on the stand, not on the device.
+
 ## The stand
 
 - `wrangler dev` on :8787 — shared and live. Do not restart it and do not wipe

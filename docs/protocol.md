@@ -76,6 +76,8 @@ POST /api/chats                   {kind:"direct"|"group", memberIds[], title?} �
 GET  /api/chats                   snapshot: [{flags, state}] + the profiles of all members
 GET  /api/chats/:id/history       ?fromSeq=&toSeq=&limit=&dir=back
                                   → {msgs:[StoredMsg], scanned, lastScannedSeq}
+POST /api/chats/:id/recv          {seqs:[...]} — the delivery receipt without a socket,
+                                  for the notification extension; same rules as `recv`
 POST /api/chats/:id/accept        accept a message request
 POST /api/chats/:id/members       {add[], remove[]}
 POST /api/chats/:id/delete        delete the chat for yourself: a group is left, a direct
@@ -379,6 +381,29 @@ What replaying does not recover is repaired through the sender (`repairRequest` 
 `repair`). The seq itself is written into `historyGap` with a reason and a
 counter: pagination upwards does not go to the server for it again, and a neutral
 placeholder appears in the feed only once the repair attempts are spent.
+
+## Receipts and ticks
+
+`deliveredMarks` and `readMarks` hold one seq per member; both only move
+forward, and repeating a mark changes nothing. A recipient answers `recv` as soon
+as the message is on the device — over the socket while the app runs, and over
+`POST /api/chats/:id/recv` when the notification extension wrote the message from
+a push with no app running. The receipt is written down before it is sent, so an
+extension the system kills leaves it queued and the app sends it on its next
+connection.
+
+Every chat state carries where the server thinks each member stands, including
+the reader itself, so a mark that never arrived is queued again on the next
+snapshot: a frame handed to a socket that is already dying goes nowhere and
+reports no error, and without the comparison the author would keep a tick that
+never moves.
+
+The tick the author sees speaks for the whole chat: it turns delivered when the
+member furthest behind has the message, and read when the last of them has read
+it. In a direct chat that is the peer; in a group of three both members have to
+answer before the second tick appears. A member who joins later holds the ticks
+of new messages where they are, and neither the marks nor the status of a message
+ever move back.
 
 ## Pushes
 

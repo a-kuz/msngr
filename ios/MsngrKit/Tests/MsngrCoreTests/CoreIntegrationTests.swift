@@ -136,6 +136,67 @@ final class CoreIntegrationTests: XCTestCase {
         await bob.engine.stop()
     }
 
+    /// The recipient's app is not running: no socket, and the message arrives
+    /// as the notification extension takes it — written from the push and
+    /// answered over HTTP. This is the extension's path through the core, with
+    /// APNs replaced by the payload it would have carried.
+    func testDeliveredReceiptWithoutASocket() async throws {
+        guard await Self.serverUp() else { throw XCTSkip("wrangler dev is not running") }
+        let suffix = String(UUID().uuidString.prefix(6)).lowercased().replacingOccurrences(of: "-", with: "x")
+        let alice = try await Self.makeClient(username: "ra_\(suffix)")
+        let bob = try await Self.makeClient(username: "rb_\(suffix)")
+
+        let chatId = try await alice.api.createChat(kind: "direct", memberIds: [bob.userId], title: nil)
+        try await alice.engine.refreshSnapshot()
+        try await bob.api.acceptChat(chatId)
+        try await bob.engine.refreshSnapshot()
+
+        // from here Bob's app is gone: the socket is closed and the extension is
+        // the only thing that sees the message
+        await bob.engine.stop()
+
+        var content = ContentPayload(kind: "text")
+        content.text = "while the app was dead"
+        try await alice.engine.enqueue(content: content, chatId: chatId)
+        let sent = try await waitUntil {
+            try await alice.db.read { dbc in
+                try Int.fetchOne(dbc, sql: """
+                    SELECT COUNT(*) FROM message WHERE chatId = ? AND seq IS NOT NULL
+                    """, arguments: [chatId]) == 1
+            }
+        }
+        XCTAssertTrue(sent, "no ack arrived")
+        let addressed = try await alice.db.read { dbc in
+            try Row.fetchOne(dbc, sql: "SELECT msgId, seq FROM message WHERE chatId = ?",
+                             arguments: [chatId])
+        }
+        let msgId: String = addressed!["msgId"]
+        let seq: Int = addressed!["seq"]
+
+        // the extension's transaction: the message of the push goes in, the
+        // receipt it owes goes into the queue with it
+        _ = try NotificationBurstStore.resolve(
+            db: bob.db, items: [BurstItem(chatId: chatId, msgId: msgId, seq: seq, sentAt: 0)],
+            showsMessageText: true)
+        let queued = try await bob.db.read { dbc in try DeliveryReceipts.pending(dbc) }
+        XCTAssertEqual(queued.first?.upToSeq, seq, "the receipt was not written down")
+
+        await DeliveryReceipts.flush(db: bob.db, api: bob.api)
+
+        let delivered = try await waitUntil {
+            try await alice.db.read { dbc in
+                try Int.fetchOne(dbc, sql: """
+                    SELECT status FROM message WHERE chatId = ? AND isOutgoing = 1
+                    """, arguments: [chatId]) == MessageStatus.delivered.rawValue
+            }
+        }
+        XCTAssertTrue(delivered, "the author is still on one tick")
+        let empty = try await bob.db.read { dbc in try DeliveryReceipts.pending(dbc) }
+        XCTAssertTrue(empty.isEmpty, "a receipt the server took must leave the queue")
+
+        await alice.engine.stop()
+    }
+
     /// Both sides write first, initiating the session at the same time. Neither
     /// side may lose a message.
     func testSimultaneousFirstMessagesBothDecrypt() async throws {
