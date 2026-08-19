@@ -70,10 +70,18 @@ final class MessageContextOverlay: UIView {
         let image = renderer.image { ctx in bubble.layer.render(in: ctx.cgContext) }
         let snap = UIImageView(image: image)
         snap.contentMode = .scaleToFill
+        // the bubble arrives still carrying the press dip: the lift starts from that
+        // very scale so the finger-down state flows into the menu without a cut. The
+        // resting frame is taken with the transform zeroed out
+        let lift = bubble.layer.presentation()?.affineTransform().a ?? 1
+        let t = bubble.transform
+        bubble.transform = .identity
         let frame = bubble.convert(bubble.bounds, to: window)
+        bubble.transform = t
         let overlay = MessageContextOverlay(snapshot: snap, originFrame: frame, isOutgoing: isOutgoing,
                                             myReaction: myReaction, items: items,
-                                            selectableText: selectableText, onReact: onReact)
+                                            selectableText: selectableText,
+                                            pressScale: min(max(lift, 0.8), 1), onReact: onReact)
         overlay.frame = window.bounds
         window.addSubview(overlay)
         overlay.animateIn()
@@ -81,7 +89,7 @@ final class MessageContextOverlay: UIView {
 
     private init(snapshot: UIView, originFrame: CGRect, isOutgoing: Bool,
                  myReaction: String?, items: [Item], selectableText: SelectableText?,
-                 onReact: @escaping (String) -> Void) {
+                 pressScale: CGFloat, onReact: @escaping (String) -> Void) {
         self.snapshot = snapshot
         self.originFrame = originFrame
         self.isOutgoing = isOutgoing
@@ -105,6 +113,10 @@ final class MessageContextOverlay: UIView {
         addGestureRecognizer(tap)
 
         snapshot.frame = originFrame
+        // starts at the press dip the finger is holding; animateIn springs it to identity
+        if pressScale < 1 {
+            snapshot.transform = CGAffineTransform(scaleX: pressScale, y: pressScale)
+        }
         addSubview(snapshot)
         if let selectableText { buildSelectableText(selectableText) }
 
@@ -392,6 +404,9 @@ final class MessageContextOverlay: UIView {
             self.scrim.alpha = 0.82
         }
         UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.4) {
+            // the transform goes first: with it back at identity the frame set below
+            // lands on the true target geometry
+            self.snapshot.transform = .identity
             self.snapshot.frame = target
         }
         UIView.animate(withDuration: 0.4, delay: 0.05, usingSpringWithDamping: 0.75, initialSpringVelocity: 0.4) {
