@@ -157,7 +157,9 @@ final class SmokeTests: XCTestCase {
         }
         console.launchArguments.append("-msngr.console")
         console.launch()
-        XCTAssertTrue(console.navigationBars["Console"].waitForExistence(timeout: 10),
+        // Pulse 5 exposes no titled navigation bar; the Filters button is the
+        // console's own toolbar and nothing else in the app has one
+        XCTAssertTrue(console.buttons["Filters"].waitForExistence(timeout: 10),
                       "the Pulse console did not open on the launch argument")
     }
 

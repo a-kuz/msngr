@@ -195,8 +195,10 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         reactionViews = []
         bubbleView.viewWithTag(Self.highlightTag)?.removeFromSuperview()
         contentView.transform = CGAffineTransform(scaleX: 1, y: -1)
-        // drop an unfinished swipe-to-reply or press dip
+        // drop an unfinished swipe-to-reply or press dip; a bubble the context
+        // overlay hid must not stay hidden for the next message in this cell
         bubbleView.transform = .identity
+        bubbleView.isHidden = false
         replyIcon.alpha = 0
         replyTriggered = false
         panDrivesBubble = false
@@ -975,8 +977,8 @@ extension MessageCell {
                                       showsReactions: showsReactions,
                                       onReact: { [weak self] emoji in self?.onReact?(emoji) })
         textView.isHidden = textWasHidden
-        // the overlay's snapshot took over from the pressed bubble, so the real one
-        // returns to rest underneath the blur
+        // the overlay's snapshot took over from the pressed bubble: the press ends
+        // here so the hidden bubble is back at rest when the overlay reveals it
         pressGesture.isEnabled = false
         pressGesture.isEnabled = true
     }

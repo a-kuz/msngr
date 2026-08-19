@@ -62,7 +62,7 @@ class Client {
   constructor(token) { this.token = token; this.frames = []; this.msgs = 0; this.lastAt = 0; }
   connect() {
     return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(`${WS_BASE}/ws?token=${this.token}`);
+      this.ws = new WebSocket(`${WS_BASE}/ws?token=${this.token}&v=1`);
       this.ws.on("message", (d) => {
         const f = JSON.parse(d.toString());
         this.frames.push(f);

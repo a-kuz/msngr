@@ -472,6 +472,24 @@ app.get("/api/users/:id/prekeys", async (c) => {
   return json({ ok: true, userId: targetId, bundles });
 });
 
+// The device publishes the identity it encrypts under: the X25519 key, the
+// Ed25519 key and the signature binding them. A device that registered before
+// the signature was part of registration has nothing a peer accepts, and this is
+// how it heals itself instead of the person being told to register again.
+app.post("/api/identity", async (c) => {
+  const { deviceId } = c.get("auth");
+  const b = await c.req.json<{
+    identityKey?: string; identitySignKey?: string; identityKeySig?: string;
+  }>();
+  if (!b.identityKey || !b.identitySignKey || !b.identityKeySig) return err("bad_keys");
+  const res = await c.env.DB.prepare(
+    `UPDATE identity_keys SET identity_key = ?, identity_sign_key = ?, identity_key_sig = ?
+     WHERE device_id = ?`
+  ).bind(b.identityKey, b.identitySignKey, b.identityKeySig, deviceId).run();
+  if (!res.meta.changes) return err("not_found", 404);
+  return json({ ok: true });
+});
+
 app.post("/api/prekeys", async (c) => {
   const { deviceId } = c.get("auth");
   const b = await c.req.json<{ oneTimePrekeys: Array<{ id: number; key: string }> }>();

@@ -1389,8 +1389,8 @@ for (let i = 0; i < 60; i++) {
   if (drained.ok && drained.pending === 0) break;
   await new Promise((r) => setTimeout(r, 250));
 }
-check("queue drains to empty cursor",
-  !!drained && drained.pending === 0 && drained.cursor === 0, JSON.stringify(drained));
+check("queue drains to empty",
+  !!drained && drained.pending === 0 && drained.recipients === 0, JSON.stringify(drained));
 check("drained queue reports no waiting job", drained?.oldestMs === null, JSON.stringify(drained));
 
 const strangerQ = await api(`/api/chats/${fgrp.chatId}/fanout`, { token: bob.token });
@@ -1477,6 +1477,19 @@ check("message into a deleted chat still reaches the deleter", !!back);
 const danaList2 = await api("/api/chats", { token: dana.token });
 check("chat comes back on the next message",
   danaList2.chats.some((c2) => c2.state.chatId === dchat2.chatId));
+
+// the deleter opens the conversation again without waiting for a message
+const delAgain = await api(`/api/chats/${dchat2.chatId}/delete`, { token: dana.token, body: {} });
+check("direct chat deleted a second time", delAgain.ok, JSON.stringify(delAgain));
+const reopen = await api("/api/chats", { token: dana.token,
+  body: { kind: "direct", memberIds: [erik.userId] } });
+check("reopening a deleted direct chat answers with the same chat",
+  reopen.ok && reopen.chatId === dchat2.chatId, JSON.stringify(reopen));
+const danaList3 = await api("/api/chats", { token: dana.token });
+check("reopening puts the chat back into the deleter's list",
+  danaList3.chats.some((c2) => c2.state.chatId === dchat2.chatId));
+check("the journal it comes back with is the old one",
+  danaList3.chats.find((c2) => c2.state.chatId === dchat2.chatId)?.state.lastSeq === 2);
 
 // in a group, deleting means leaving
 const dgrp = await api("/api/chats", { token: dana.token,
