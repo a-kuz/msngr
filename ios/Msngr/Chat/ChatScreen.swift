@@ -515,9 +515,8 @@ struct ChatScreen: View {
         .padding(.vertical, 6)
         .background(.bar)
         .onTapGesture {
-            if let id = msg.msgId ?? msg.clientMsgId {
-                messagesVC.scrollTo(msgId: id, highlight: true)
-            }
+            // the pin can sit deeper than the window: the jump loads history first
+            jump(to: msg.msgId ?? msg.id)
         }
         .transition(.move(edge: .top).combined(with: .opacity))
     }

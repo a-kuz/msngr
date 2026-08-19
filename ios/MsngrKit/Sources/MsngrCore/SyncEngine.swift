@@ -289,7 +289,11 @@ public actor SyncEngine {
                 "server refused protocol v\(MsngrProtocol.version, privacy: .public): this build is out of date")
             protocolOutdatedStream.send(())
         case .frame(let data):
-            guard let frame = try? JSONDecoder().decode(WSIncoming.self, from: data) else { return }
+            guard let frame = try? JSONDecoder().decode(WSIncoming.self, from: data) else {
+                MsngrLog.session.error(
+                    "dropped undecodable frame: \(String(data: data.prefix(512), encoding: .utf8) ?? "<binary>", privacy: .public)")
+                return
+            }
             // frames are queued rather than applied here: the socket hands them
             // over faster than the database takes them one at a time, and a
             // queue is what lets a run of messages share a transaction
@@ -1699,6 +1703,8 @@ public actor SyncEngine {
                 }
                 // count the attempt; on a network error stop here, the
                 // reconnect wakes the drain again
+                MsngrLog.outbox.error(
+                    "send failed chat=\(item.chatId, privacy: .public) attempt=\(item.attempts + 1, privacy: .public): \(String(describing: error), privacy: .public)")
                 try? await db.write { dbc in
                     try dbc.execute(sql: "UPDATE outbox SET attempts = attempts + 1 WHERE clientMsgId = ?",
                                     arguments: [item.clientMsgId])
