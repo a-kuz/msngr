@@ -1,6 +1,6 @@
 # Msngr — feature map
 
-Updated: 2026-08-16. The state of the `main` branch.
+Updated: 2026-08-17. The state of the `main` branch.
 
 Statuses: ✅ — in the code and confirmed by a live run, a screenshot or the
 server smoke test; 🟡 — partly done, or the code is there but it has not been
@@ -18,14 +18,19 @@ A ✅ goes in only together with a link to the evidence.
 
 - Registration
   - ✅ username + display name, keys created on the device (design-review 01-onboarding)
-  - ✅ name and username validation with a hint (palettes/register-name-hint, RegistrationValidator units)
+  - ✅ name and username validation with a hint, per field (palettes/register-name-hint,
+    AccountValidator units, qa/runs/2026-08-17-profile)
   - ✅ a taken username gives a clear error (smoke `username uniqueness`)
-  - 🟡 the button's disabled state is barely readable (design-review, P2)
-  - ⬜ whether the name is required or explicitly optional — not decided
+  - ✅ the disabled button reads in both appearances, 5.3:1 and 5.1:1, and does not clip
+    at the largest type size (qa/runs/2026-08-17-profile)
+  - ✅ the name is required everywhere, one character minimum (qa/runs/2026-08-17-profile)
 - Profile
   - ✅ name, bio, avatar in settings (design-review 08-settings)
-  - 🟡 the avatar in chats and in the list (not verified live that it reaches the peer)
-  - ⬜ the username cannot be changed
+  - ✅ the avatar in chats and in the list, live to the peer and kept across a restart
+    (qa/runs/2026-08-17-profile)
+  - ✅ the username can be changed; the old one is released in the same statement
+    (smoke `username changed`, `the old handle is free`, qa/runs/2026-08-17-profile)
+  - ⬜ a card change on a device of the same account (one device per account was run)
 - Sign-in and devices
   - ✅ logout: the device token is invalidated, local data is wiped
     (smoke `logout invalidates token`, qa/runs/2026-08-15-sessions)
@@ -61,14 +66,18 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ avatar, name, preview, time, unread badge (design-review 02b)
   - ✅ ticks on the last outgoing message (media-run, case 32)
   - ✅ media-type previews as an icon and a caption (design-review)
-  - 🟡 «печатает…» in place of the preview (not verified live)
-  - 🟡 «Черновик: …» in the row (not verified live; the draft itself — offline-run 5)
-  - 🟡 the mute icon and the pin in place of the badge (not verified live)
+  - ✅ «печатает…» in place of the preview: it goes out when the peer stops
+    typing, and a message that arrives takes it down with it (qa/runs/2026-08-16-chatlist)
+  - ✅ «Черновик: …» in the row, appearing and going with the field, typing
+    outranking it (qa/runs/2026-08-16-chatlist; the draft itself — offline-run 5)
+  - ✅ the mute icon and the pin in place of the badge, unread pushing the pin out
+    (qa/runs/2026-08-16-chatlist)
 - Organising the list
-  - 🟡 sorting: pinned on top, then by activity (not verified live)
-  - 🟡 swipes: archive, mute, pin (not verified live)
-  - 🟡 the archive section and the archive screen (not verified live)
-  - 🟡 the requests section with «Принять» / «Заблокировать» swipes (not verified live)
+  - ✅ sorting: pinned on top, then by activity (qa/runs/2026-08-16-chatlist, on a
+    list with two pinned chats, a request, the archive and unread)
+  - ✅ swipes: archive, mute, pin, delete (qa/runs/2026-08-16-chatlist)
+  - ✅ the archive section and the archive screen (qa/runs/2026-08-16-chatlist)
+  - ✅ the requests section with «Принять» / «Заблокировать» swipes (qa/runs/2026-08-16-chatlist)
   - ⬜ folders and tabs
   - ⬜ animated reordering on a new message
 - Search and empty states
@@ -115,14 +124,18 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ the «непрочитанное/непрочитанных сообщение/сообщения/сообщений» declension (units + a run)
   - 🟡 the banner's disappearance animation (not captured frame by frame)
 - The header and the bars
-  - ✅ a pinned message as a bar on top (design-review 03b)
+  - ✅ a pinned message as a bar on top, its tap flashing the message, «Открепить»
+    over the pinned one (design-review 03b; header-run)
   - ✅ an empty chat: «Напишите первое сообщение» and the encryption note (palettes/chat-empty-hint)
-  - 🟡 the subtitle: «подключение…», «печатает…», «в сети», «был(а)…» (not verified live)
-  - 🟡 tapping the pinned message scrolls to it (not verified live)
+  - ✅ the subtitle: «подключение…», «печатает…», «в сети», «был(а)…», «N участников»
+    (header-run, two devices)
+  - 🟡 tapping the pinned message scrolls to it (in the window: header-run; older
+    than the window waits for run-feedwindow)
 - Input
   - ✅ a growing field, the attachment menu «Фото или видео» / «Файл» (design-review 04, 05a)
   - ✅ a draft survives leaving the chat and a kill (offline-run 5)
-  - 🟡 the reply strip and the edit mode above the field (not verified live)
+  - ✅ the reply strip and the edit mode above the field, cancel returning the
+    draft (header-run)
   - ⬜ pasting an image from the clipboard
   - ⬜ mentions and autocomplete
 
@@ -160,17 +173,20 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ recording by holding, the waveform, sending (design-review 06, offline-run 3)
   - ✅ playback with progress along the wave (offline-run 3)
   - ✅ a compact 220×42 bubble (BubbleLayout units, screenshots)
-  - 🟡 the 0.3 s threshold and cancelling an accidental touch (not verified live)
-  - 🟡 slide-to-cancel and lock (not verified live)
-  - 🟡 seeking by tapping the wave (not verified live)
-  - ⬜ speed ×1/×1.5/×2 (the player code is there, the button is not)
-  - ⬜ playback continuing while moving between chats
+  - ✅ the 0.3 s threshold and cancelling an accidental touch (voice-run)
+  - ✅ slide-to-cancel and lock (voice-run)
+  - ✅ seeking by tapping the wave (voice-run)
+  - ✅ speed ×1/×1.5/×2, kept between messages (voice-run)
+  - ✅ playback continuing while moving between chats (voice-run)
+  - ✅ a take interrupted by the screen or the app going away is dropped (voice-run)
 - Files
   - 🟡 sending up to 100 MB with the name (not verified live)
   - ⬜ previewing a file in the app
 - System messages
   - 🟡 «Код безопасности собеседника изменился» (not verified live)
-  - ⬜ group events (joined, left, title changed) as separate messages
+  - ✅ group events (left, title, photo, description, the admin role) as separate
+    messages, worded for the actor, for the member it touches and for everyone else
+    (qa/runs/2026-08-17-groups-run)
 - Other
   - ⬜ contact and location
   - ⬜ stickers and GIFs
@@ -180,8 +196,21 @@ A ✅ goes in only together with a link to the evidence.
 - Optimistic send
   - ✅ the message appears before the network, with the clock status (offline-run 1–3)
   - ✅ statuses: sent → delivered → read (media-run, case 32)
+  - ✅ read only while the recipient is in front of the message: not from the
+    chat list, not from the background, not with the feed scrolled up, and at
+    once when it arrives with the reader at the end (receipts-run)
+  - ✅ the tick of a group waits for the member furthest behind, in a group of
+    three (receipts-run)
+  - ✅ a mark the server never heard is queued again from the chat state, so a
+    receipt lost into a dying socket still arrives (receipts-run, `DeliveryReceiptTests`)
+  - 🟡 the receipt from the notification extension, with the app not running:
+    `POST /api/chats/:id/recv` and the queue behind it (integration test
+    `testDeliveredReceiptWithoutASocket`, smoke `rest recv …`; the extension
+    itself needs a device, `simctl push` does not launch it)
   - ✅ idempotency by clientMsgId (smoke `idempotent resend same seq`)
   - ✅ the ack right after the seq is assigned, before the fanout and the push (smoke `ack precedes push`, `ack while apns still hanging`)
+  - ✅ «не отправлено» when the server refuses the send, and «Отправить заново»
+    repeating the message from the payload it was written with (receipts-run)
   - 🟡 the «не отправлено» status once the attempts are spent (not verified live)
 - Fanout
   - ✅ an alarm queue in ConversationDO: the cursor in storage, batches, retry until exhausted (smoke `fanout is queued, not inline`, `queue replays the whole burst`, `queue drains to empty cursor`)
@@ -191,7 +220,8 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ text, photo, voice offline → delivery after a reconnect (offline-run 1–3)
   - ✅ killing the app with something unsent: the message is still there and goes out (offline-run 4)
   - ✅ a reaction offline (offline-run 6)
-  - 🟡 the service action queue: read marks, delete-for-all, accept (units, not verified live)
+  - ✅ the service action queue: read marks and accept (receipts-run)
+  - 🟡 the service action queue: delete-for-all (units, not verified live)
   - 🟡 media: the source in a permanent folder, uploaded by the worker (partly covered by offline-run 2–3)
 - The connection
   - ✅ reconnect with backoff and a ceiling of 12 s (ReconnectBackoffTests units)
@@ -277,6 +307,20 @@ A ✅ goes in only together with a link to the evidence.
 - 🟡 sharing a file from the viewer (not verified live)
 - ✅ video in the viewer (media-close-out)
 - ⬜ a hero transition bubble ↔ viewer
+
+## Marking up a picture before it is sent
+
+Screenshot-level tools, not a photo editor: the point is to point at something.
+
+- ⬜ the markup opens from the attachment sheet and from the viewer, over the
+  picture that is already picked
+- ⬜ an arrow, a line, a rectangle and an ellipse, drawn by dragging
+- ⬜ freehand drawing, with a colour and a thickness
+- ⬜ text on the picture with the same palette
+- ⬜ blurring a region, for what should not be readable
+- ⬜ cropping and rotating
+- ⬜ undo and redo of every step, and leaving without saving
+- ⬜ the result is a new image: the original stays untouched in the library
 
 ## E2EE, trust, privacy
 
@@ -406,13 +450,18 @@ A ✅ goes in only together with a link to the evidence.
 - ✅ creating a group and delivering a message to its members (smoke `create group`, `group message delivered`)
 - ✅ an admin adding a member, a non-admin barred from removing one (smoke `admin adds member`, `non-admin cannot remove`)
 - ✅ the invite link: created by a member, joining, idempotency (smoke, four checks)
-- 🟡 creating a group from the interface, picking members and a title (not verified live)
-- 🟡 the info screen: members, adding, removing by swipe, the link, leaving (not verified live)
+- ✅ creating a group from the interface, picking members and a title (qa/runs/2026-08-17-groups-run)
+- ✅ the info screen: the member list, the row's swipe actions, leaving a group (qa/runs/2026-08-17-groups-run)
+- 🟡 adding a member and the invite link from the info screen (not verified live)
 - 🟡 the author's name in group bubbles (not verified live)
-- ⬜ granting and revoking the admin role from the interface (the server can do it)
-- ⬜ changing a group's title, avatar and description from the interface (the server can do it)
-- ⬜ member rights (who can write, who can invite)
-- ⬜ system messages about group events
+- ✅ granting and revoking the admin role from the interface, live on all three
+  devices (qa/runs/2026-08-17-groups-run)
+- ✅ changing a group's title, avatar and description from the interface (qa/runs/2026-08-17-groups-run)
+- ✅ member rights: who can write, who can invite; what a member cannot do is not
+  shown to them (qa/runs/2026-08-17-groups-run; smoke `member cannot write in a
+  read-only group`, `member cannot add once inviting is locked`)
+- ✅ system messages about group events, raising no unread count and no push
+  (qa/runs/2026-08-17-groups-run)
 
 ## Channels
 
@@ -422,6 +471,36 @@ A ✅ goes in only together with a link to the evidence.
 - ⬜ server-side search over a channel's history
 - ⬜ channel media through CF Stream / Images
 - ⬜ subscriber comments and reactions
+
+## Stories
+
+- ⬜ a story is composed from the library: several photos and videos at once, in
+  the order they were picked
+- ⬜ shooting a video for a story from the camera, without leaving the composer
+- ⬜ text over a story: a style, a colour, a colour for the plate behind it
+- ⬜ the editor from the section above works on a story frame too, so there is one
+  set of tools and not two
+- ⬜ publishing: who sees it, how long it lives, taking it down
+- ⬜ the ring on the avatar in the chat list and the viewer with taps and holds
+- ⬜ who watched it, and answering a story into the chat
+- ⬜ no E2EE: a story is plaintext on the server, the way a channel is. Who may
+  see it is an access rule, not a key, and the composer has to say that plainly
+  before the story goes out.
+- ⬜ a public link, if the creator asks for one: the story opens in a browser
+  with no app and no account, so it can be shared outside msngr
+- ⬜ the page behind that link: the media, the text over it, and nothing that
+  identifies the audience — who watched belongs to the creator alone
+- ⬜ revoking the link, and what a revoked link shows to someone who kept it
+
+## Bots
+
+- ⬜ a bot account: a separate kind, created and owned by a person, with a token
+- ⬜ the API a bot talks over: receiving updates, sending, editing, deleting
+- ⬜ commands with a list and autocomplete in the input
+- ⬜ inline buttons under a message and a reply keyboard
+- ⬜ a bot in a group: what it sees and what rights it needs
+- ⬜ no E2EE with a bot, and the interface has to say so plainly, the way the
+  channel does
 
 ## Calls
 
@@ -434,6 +513,8 @@ A ✅ goes in only together with a link to the evidence.
 ## Settings
 
 - ✅ profile: name, bio, avatar (design-review 08)
+- ✅ the username on its own screen, with the taken case seen live
+  (qa/runs/2026-08-17-profile)
 - ✅ picking a palette from cards with instant application (palettes/live-*, settings-appearance)
 - 🟡 the PIN: setting it, repeating it, checking it (not verified live)
 - 🟡 Face ID and auto-lock after 30 s (not verified live)
@@ -460,10 +541,29 @@ A ✅ goes in only together with a link to the evidence.
 - ⬜ cleaning out stale media by cache size
 - ⬜ deleting messages automatically once their TTL expires (the timer is configurable and synchronized, there is no local cleanup)
 
+- Backup to iCloud
+  - ⬜ the backup itself: the history, the media and the settings, encrypted on
+    the device before anything leaves it
+  - ⬜ the key to the backup. Apple can read what is in iCloud unless Advanced
+    Data Protection is on, so the backup carries its own key that iCloud never
+    sees, and the user has to be able to get that key back on a new device —
+    a passphrase or a recovery code. Undecided which; nothing else in the
+    feature can be designed until it is.
+  - ⬜ what the backup does NOT carry: the ratchet state and the sender keys.
+    Restoring them on a second device would reuse a sending chain position, so a
+    restored device starts its sessions fresh.
+  - ⬜ when it runs: on a charger over Wi-Fi, with the last time shown and its size
+  - ⬜ restoring during registration, and what happens when the restore is
+    interrupted halfway
+  - ⬜ turning it off, and deleting what is already in iCloud
+
 ## The macOS client
 
 - 🟡 registration, the chat list, the chat, sending text (not verified live)
 - 🟡 reactions and deleting a message (not verified live)
+- 🟡 the read mark under the same conditions as on iOS — the window has focus,
+    the feed is at its end, the content is not held back (in the code, not
+    verified live: the check needs the host screen)
 - ⬜ sending and viewing media
 - ⬜ voice messages
 - ⬜ notifications

@@ -6,7 +6,19 @@ import MsngrCore
 struct ChatScreen: View {
     let chatId: String
     @StateObject private var model: ChatViewModel
+    /// Search inside this chat: the field in the header, the matches over the feed.
+    @StateObject private var search: ChatSearchSession
+    @State private var searching = false
+    @FocusState private var searchFocused: Bool
+    /// The message the reader was looking at when search opened; nil means they
+    /// were at the end of the conversation.
+    @State private var searchReturn: String?
+    /// A match was actually opened, so leaving search has somewhere to go back from.
+    @State private var searchMoved = false
     @State private var text = ""
+    /// What stood in the field before the edit mode took it over. Leaving the mode,
+    /// by the cross or by sending the edit, puts it back.
+    @State private var textBeforeEdit: String?
     @State private var showScrollDown = false
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showFilePicker = false
@@ -20,6 +32,7 @@ struct ChatScreen: View {
     init(chatId: String) {
         self.chatId = chatId
         _model = StateObject(wrappedValue: ChatViewModel(chatId: chatId))
+        _search = StateObject(wrappedValue: ChatSearchSession(chatId: chatId))
     }
 
     var body: some View {
@@ -30,7 +43,8 @@ struct ChatScreen: View {
                 if model.contentHidden {
                     requestCard
                 } else {
-                    if let pinned = model.pinnedMessage {
+                    if searching { searchHeader }
+                    if let pinned = model.pinnedMessage, !searching {
                         pinnedBar(pinned)
                     }
                     messagesList
@@ -44,7 +58,12 @@ struct ChatScreen: View {
                                 emptyChatHint
                             }
                         }
-                    if model.keyChangePending && !model.selecting {
+                        .overlay {
+                            if searching, search.resultsShown, !search.query.isEmpty {
+                                searchResults
+                            }
+                        }
+                    if model.keyChangePending && !model.selecting && !searching {
                         keyChangeBanner
                     }
                     if model.selecting {
@@ -53,6 +72,11 @@ struct ChatScreen: View {
                         } else {
                             selectionActionBar
                         }
+                    } else if searching {
+                        ChatSearchMatchBar(session: search, onStep: stepSearch,
+                                           onShowList: { search.resultsShown = true })
+                    } else if !model.canSend {
+                        readOnlyNote
                     } else {
                         InputBar(model: model, text: $text,
                                  onAttachPhoto: { photoPickerPresented = true },
@@ -65,10 +89,15 @@ struct ChatScreen: View {
                 }
             }
             if !model.selecting { scrollDownButton }
-            headerFade
+            // the fade dissolves bubbles running under the navigation bar; while
+            // searching the bar is gone and the field stands in its own row
+            if !searching { headerFade }
         }
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
+        // the search field lives in the screen itself: focus does not reach a text
+        // field hosted by the navigation bar, and the keyboard has to come up with it
+        .toolbar(searching ? .hidden : .visible, for: .navigationBar)
         .toolbar {
             if model.selecting {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -84,21 +113,34 @@ struct ChatScreen: View {
                         .textRole(Theme.Text.headerTitle)
                         .accessibilityIdentifier("chat.selection.count")
                 }
-            } else {
-                // own button instead of the system one: going back is the header's
-                // primary action and has to read before anything else in it
+            } else if !searching {
+                // own button instead of the system one, only so that the tests and the
+                // scenarios have an identifier to aim at; it is drawn to match the back
+                // button every other screen gets from the system
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button { dismiss() } label: {
                         Image(systemName: "chevron.backward")
-                            .font(Theme.glyph(34, max: 40).weight(.bold))
-                            .foregroundStyle(Theme.accent)
-                            .frame(width: 56, height: 44)
+                            // the size of the other bar button: the chevron leads
+                            // the header by position, not by being twice as big
+                            .font(Theme.glyph(17, max: 19).weight(.medium))
+                            .foregroundStyle(.primary)
+                            .frame(width: 44, height: 44)
                             .contentShape(Rectangle())
                     }
                     .accessibilityLabel("Назад")
                     .accessibilityIdentifier("chat.back")
                 }
                 ToolbarItem(placement: .principal) { header }
+                if !model.contentHidden {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button { openSearch() } label: {
+                            Image(systemName: "magnifyingglass")
+                                .font(Theme.glyph(17, max: 24))
+                        }
+                        .accessibilityLabel("Поиск по чату")
+                        .accessibilityIdentifier("chat.search.open")
+                    }
+                }
             }
         }
         .onAppear {
@@ -117,9 +159,14 @@ struct ChatScreen: View {
         .onChange(of: model.chat?.id) { _, _ in
             if text.isEmpty, let draft = model.chat?.draft { text = draft }
         }
+        // back into the field from a match: the matches are what the reader wants
+        // to see again
+        .onChange(of: searchFocused) { _, focused in
+            if focused { search.resultsShown = true }
+        }
         .onDisappear {
             let draft = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            model.saveDraft(draft.isEmpty ? nil : draft)
+            model.saveDraft(draft.isEmpty ? nil : draft, immediately: true)
             // on a push deeper in (ChatInfo) the subscription stays and the active chat
             // is not cleared: otherwise the feed comes back dead and pushes from this
             // chat start showing up as banners
@@ -131,8 +178,15 @@ struct ChatScreen: View {
             ChatInfoView(model: model)
         }
         .onChange(of: model.editing?.id) { _, _ in
-            // switching which message is edited (edit A → edit B included) puts its text in the field
-            if let e = model.editing { text = e.text ?? "" }
+            if let e = model.editing {
+                // entering the mode, and switching which message is edited (A → B),
+                // puts its text in the field; the draft that stood there waits
+                if textBeforeEdit == nil { textBeforeEdit = text }
+                text = e.text ?? ""
+            } else {
+                text = textBeforeEdit ?? ""
+                textBeforeEdit = nil
+            }
         }
         .photosPicker(isPresented: $photoPickerPresented, selection: $photoItems,
                       maxSelectionCount: 10, matching: .any(of: [.images, .videos]))
@@ -293,7 +347,11 @@ struct ChatScreen: View {
             HStack(spacing: 8) {
                 AvatarView(name: model.headerTitle,
                            avatarId: model.chat?.kind == .group ? model.chat?.avatarId : model.peer?.avatarId,
-                           online: model.peer?.online ?? false)
+                           // a group has no presence of its own, and with no
+                           // connection presence is stale: the subtitle already
+                           // says so, the dot must not claim otherwise
+                           online: model.chat?.kind == .direct && model.connected
+                                   && (model.peer?.online ?? false))
                     // the back chevron leads the header, so the avatar stays under it
                     .frame(width: 34, height: 34)
                 VStack(alignment: .leading, spacing: 0) {
@@ -315,21 +373,109 @@ struct ChatScreen: View {
                         .animation(.easeInOut(duration: 0.15), value: model.headerSubtitle)
                 }
             }
+            // the feed runs under the bar, so the name needs a ground of its own:
+            // without it the bubbles show through the title the way they do through
+            // no other control in the bar
+            .padding(.leading, 5)
+            .padding(.trailing, 12)
+            .padding(.vertical, 3)
+            .background(.regularMaterial, in: Capsule())
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("chat.header")
     }
 
     /// Shortens a header string with an ellipsis to the width the principal view has
-    /// (the screen minus the back button, the avatar and the padding).
+    /// (the screen minus the bar buttons, the avatar and the padding).
     private static func fitted(_ s: String, font: UIFont) -> String {
-        // the principal view is centred, so the wider back button costs it twice
-        let maxWidth = UIScreen.main.bounds.width - 208
+        // the bar keeps 16pt outside a 44pt button and the principal view is
+        // centred, so that side costs it twice; 20pt more keeps the title clear
+        // of the button's glass, and the avatar with its gap comes off the rest
+        let side: CGFloat = 16 + 44 + 20
+        let avatar: CGFloat = 34 + 8
+        let maxWidth = UIScreen.main.bounds.width - side * 2 - avatar
         guard s.size(withAttributes: [.font: font]).width > maxWidth else { return s }
         var t = s
         while !t.isEmpty, (t + "…").size(withAttributes: [.font: font]).width > maxWidth {
             t.removeLast()
         }
         return t + "…"
+    }
+
+    // MARK: - Search inside the chat
+
+    /// The header while the chat is being searched: the field takes the row it
+    /// can, with only «Отмена» beside it.
+    private var searchHeader: some View {
+        HStack(spacing: 8) {
+            ChatSearchField(text: $search.query, focused: $searchFocused)
+            Button("Отмена") { closeSearch() }
+                .textRole(Theme.Text.body)
+                .tint(Theme.accent)
+                .accessibilityIdentifier("chat.search.cancel")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
+    private var searchResults: some View {
+        ChatSearchResultsList(session: search, members: model.members,
+                              ownUserId: model.ownUserId) { hit in
+            search.select(hit)
+            searchFocused = false
+            show(hit)
+        }
+        .transition(.opacity)
+    }
+
+    /// Opening search remembers where the reader is, so that leaving it can put
+    /// them back even after a walk through the whole conversation.
+    private func openSearch() {
+        searchReturn = messagesVC.topVisibleMessageId()
+        searchMoved = false
+        withAnimation(Theme.springFast) { searching = true }
+    }
+
+    /// Leaving search: the query goes, and the feed returns to the message the
+    /// reader came from. Nothing is fetched for that — search only ever grew the
+    /// window, so the message is still in it.
+    private func closeSearch() {
+        searchFocused = false
+        withAnimation(Theme.springFast) { searching = false }
+        search.reset()
+        let anchor = searchReturn
+        searchReturn = nil
+        guard searchMoved else { return }
+        searchMoved = false
+        guard let anchor else {
+            messagesVC.scrollToBottom(animated: false)
+            return
+        }
+        if messagesVC.scrollTo(msgId: anchor, animated: false) { return }
+        Task {
+            guard await model.ensureLoaded(msgId: anchor) else { return }
+            MessagesView.scrollWhenReady(vc: messagesVC, msgId: anchor, highlight: false)
+        }
+    }
+
+    /// One step through the matches, back in time or towards the end.
+    private func stepSearch(by offset: Int) {
+        Task {
+            guard let hit = await search.step(by: offset) else {
+                Haptics.rigid()
+                return
+            }
+            searchFocused = false
+            show(hit)
+        }
+    }
+
+    /// Shows a found message. A match already in the window costs a scroll and
+    /// nothing else; only one that sits deeper makes the feed load history.
+    private func show(_ hit: MessageSearchHit) {
+        searchMoved = true
+        if messagesVC.scrollTo(msgId: hit.messageId, highlight: true) { return }
+        jump(to: hit.messageId)
     }
 
     /// Carries the feed to a message: the screens above it close and history is
@@ -453,6 +599,21 @@ struct ChatScreen: View {
         .background(.bar)
     }
 
+    /// A group only its admins may write in. The note takes the place of the
+    /// input field: an empty field that refuses everything typed into it would
+    /// be worse than none.
+    private var readOnlyNote: some View {
+        Text("Писать в этой группе могут только администраторы")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .background(.bar)
+            .accessibilityIdentifier("chat.readOnly")
+    }
+
     /// A message leaving the feed dissolves into the header instead of being cut by it.
     private var headerFade: some View {
         HeaderFade(tone: Theme.chatBackground)
@@ -462,9 +623,17 @@ struct ChatScreen: View {
 
     private var scrollDownButton: some View {
         Group {
-            if showScrollDown {
+            // a window standing on a jump target has the newest messages above it, so
+            // the way down is offered even when the loaded feed is scrolled to its end
+            if showScrollDown || !model.atNewest {
                 Button {
-                    messagesVC.scrollToBottom()
+                    if model.atNewest {
+                        messagesVC.scrollToBottom()
+                    } else {
+                        // the feed that arrives is a different stretch of the chat
+                        model.returnToBottom()
+                        messagesVC.showBottomOnNextUpdate()
+                    }
                 } label: {
                     ZStack(alignment: .topTrailing) {
                         Image(systemName: "chevron.down")
@@ -489,9 +658,11 @@ struct ChatScreen: View {
                 .padding(.bottom, 68)
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .transition(.scale.combined(with: .opacity))
+                .accessibilityIdentifier("chat.scrollDown")
             }
         }
         .animation(Theme.springFast, value: showScrollDown)
+        .animation(Theme.springFast, value: model.atNewest)
     }
 
     // MARK: - Sending attachments
@@ -737,8 +908,10 @@ struct MessagesView: UIViewControllerRepresentable {
             case .copy: MessageClipboard.copy(msg)
             case .edit: withAnimation(Theme.springFast) { model.editing = msg }
             case .pin: model.pin(msg)
+            case .unpin: model.pin(nil)
             case .forward: NotificationCenter.default.post(name: .forwardRequested, object: msg)
             case .select: withAnimation(Theme.springFast) { model.beginSelection(with: msg) }
+            case .resend: model.resend(msg)
             // удаление начинается с выбора: сообщение видно, к нему можно
             // добавить ещё, подтверждение стоит внизу
             case .delete:
@@ -749,6 +922,8 @@ struct MessagesView: UIViewControllerRepresentable {
         }
         // замыкание с dismiss живёт не дольше тела body — переустанавливаем
         vc.onSwipeBack = onSwipeBack
+        vc.pinnedMsgId = model.chat?.pinnedMsgId
+        vc.ownUserId = model.ownUserId
         vc.noteSendTick(sendTick)
         vc.apply(items)
         vc.setSelection(mode: selecting, ids: selectedIds)
@@ -757,11 +932,12 @@ struct MessagesView: UIViewControllerRepresentable {
     /// Fetched history reaches the list through updateUIViewController, so the scroll
     /// happens as soon as the message shows up in the feed. The jump from the gallery
     /// arrives the same way, only there the screens on top have to close first.
-    static func scrollWhenReady(vc: MessagesViewController, msgId: String, attempts: Int = 16) {
-        if vc.scrollTo(msgId: msgId, highlight: true) { return }
+    static func scrollWhenReady(vc: MessagesViewController, msgId: String,
+                                highlight: Bool = true, attempts: Int = 16) {
+        if vc.scrollTo(msgId: msgId, highlight: highlight) { return }
         guard attempts > 0 else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            scrollWhenReady(vc: vc, msgId: msgId, attempts: attempts - 1)
+            scrollWhenReady(vc: vc, msgId: msgId, highlight: highlight, attempts: attempts - 1)
         }
     }
 }

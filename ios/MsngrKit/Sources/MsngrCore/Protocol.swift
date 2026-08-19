@@ -123,6 +123,8 @@ public struct WSIncoming: Decodable {
     public let lastSeen: Double?
     public let event: String?
     public let state: ChatStateDTO?
+    /// profile: the whole card of whoever changed theirs
+    public let user: APIClient.UserDTO?
     public let msgIds: [String]?
     public let forAll: Bool?
     public let serverTime: Double?
@@ -149,6 +151,9 @@ public struct ChatStateDTO: Decodable {
     public let title: String?
     public let avatarId: String?
     public let description: String?
+    /// group rights: "all" or "admins"; absent on a chat older than the rights
+    public let sendPolicy: String?
+    public let invitePolicy: String?
     public let createdBy: String
     public let createdAt: Double
     public let members: [MemberDTO]

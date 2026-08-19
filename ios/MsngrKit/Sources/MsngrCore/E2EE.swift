@@ -52,6 +52,14 @@ public final class E2EEManager: @unchecked Sendable {
     let gate: CryptoGate
     private let incoming: IncomingDecryptor
 
+    /// Device lists already read from the server, by userId. A send reads from
+    /// here instead of hitting /api/devices; an entry is dropped by the
+    /// `devices` frame and the whole cache on reconnect, since a frame sent
+    /// while the socket was down is gone. In-memory only: the extension never
+    /// encrypts, and a fresh process starts empty.
+    private var deviceCache: [String: [APIClient.DeviceDTO]] = [:]
+    private let deviceCacheLock = NSLock()
+
     public init(store: IdentityStore, api: APIClient, ownUserId: String, ownDeviceId: String,
                 gate: CryptoGate = CryptoGate(url: nil)) {
         self.store = store
@@ -195,11 +203,50 @@ public final class E2EEManager: @unchecked Sendable {
         try store.deleteAllSenderKeyOut()
     }
 
-    /// Devices of every user in a single /devices call, grouped by userId. This asks for
-    /// no prekey bundles, so it spends no one-time prekeys.
+    /// The `devices` frame said this user's device set changed: the next send
+    /// re-reads their list from the server.
+    public func invalidateDeviceCache(userId: String) {
+        deviceCacheLock.lock()
+        defer { deviceCacheLock.unlock() }
+        deviceCache.removeValue(forKey: userId)
+    }
+
+    /// The socket was down, so any `devices` frame from that time is lost:
+    /// every list is re-read.
+    public func invalidateDeviceCache() {
+        deviceCacheLock.lock()
+        defer { deviceCacheLock.unlock() }
+        deviceCache.removeAll()
+    }
+
+    /// Test hook: what the cache holds for a user, nil when it holds nothing.
+    func cachedDevices(userId: String) -> [APIClient.DeviceDTO]? {
+        deviceCacheLock.lock()
+        defer { deviceCacheLock.unlock() }
+        return deviceCache[userId]
+    }
+
+    /// Devices of every user, grouped by userId: cached lists as they are, the
+    /// rest in a single /devices call. This asks for no prekey bundles, so it
+    /// spends no one-time prekeys.
     private func deviceMap(userIds: Set<String>) async throws -> [String: [APIClient.DeviceDTO]] {
-        let all = try await api.devices(userIds: [String](userIds))
-        return Dictionary(grouping: all, by: \.userId)
+        var result: [String: [APIClient.DeviceDTO]] = [:]
+        var missing: [String] = []
+        deviceCacheLock.lock()
+        for uid in userIds {
+            if let cached = deviceCache[uid] { result[uid] = cached } else { missing.append(uid) }
+        }
+        deviceCacheLock.unlock()
+        guard !missing.isEmpty else { return result }
+        let fetched = Dictionary(grouping: try await api.devices(userIds: missing), by: \.userId)
+        deviceCacheLock.lock()
+        for uid in missing {
+            let devices = fetched[uid] ?? []
+            deviceCache[uid] = devices
+            result[uid] = devices
+        }
+        deviceCacheLock.unlock()
+        return result
     }
 
     private func encryptPairwise(inner: InnerMessage, recipients: [String],

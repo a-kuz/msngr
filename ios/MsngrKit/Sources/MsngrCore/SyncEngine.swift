@@ -265,6 +265,9 @@ public actor SyncEngine {
         case .connected:
             connected = true
             connectionStream.send(true)
+            // a `devices` frame sent while the socket was down is gone, so
+            // every cached device list is suspect
+            e2ee.invalidateDeviceCache()
             await sendSyncCursors()
             outboxWakeup.continuation.yield()
             actionWakeup.continuation.yield()
@@ -353,6 +356,8 @@ public actor SyncEngine {
                                      mutedUntil: entry.flags.mutedUntil, archived: entry.flags.archived))
             }
         }
+        // the snapshot may have put a lost mark back into the queue
+        actionWakeup.continuation.yield()
     }
 
     /// Chats that still had history past their cursor after the last portion.
@@ -424,6 +429,20 @@ public actor SyncEngine {
                                     arguments: [online, f.lastSeen ?? 0, userId])
                 }
             }
+        case "profile":
+            // a peer renamed themselves or put up a new avatar; the card is
+            // public, so the frame carries it whole and nothing is refetched
+            if let user = f.user {
+                try? await db.write { dbc in
+                    try SyncEngine.upsertUser(dbc, user)
+                }
+            }
+        case "devices":
+            // someone linked or revoked a device: the next envelope to them
+            // must be addressed to the new set, so their cached list goes
+            if let userId = f.userId {
+                e2ee.invalidateDeviceCache(userId: userId)
+            }
         case "chat":
             // removed from the chat while the device was offline: such a frame
             // carries no roster, and there is nothing left to catch up on
@@ -457,6 +476,8 @@ public actor SyncEngine {
                 try? await db.write { [ownUserId] dbc in
                     try SyncEngine.upsertChatState(dbc, state, ownUserId: ownUserId, flags: nil)
                 }
+                // a mark the server never heard is queued again by the state above
+                actionWakeup.continuation.yield()
                 // removed from the chat: it goes from this device as well
                 if !state.members.contains(where: { $0.userId == ownUserId }) {
                     try? await db.write { dbc in
@@ -531,6 +552,19 @@ public actor SyncEngine {
         }
     }
 
+    /// Asks the server where a user is right now.
+    ///
+    /// Presence reaches a device as a transition: the peer went online, the peer
+    /// went offline. A device that was not connected at that moment never hears
+    /// it, and the row it holds keeps saying what was true then. Opening a chat
+    /// is where the difference shows, so the chat asks.
+    public func refreshPresence(of ids: [String]) async {
+        for id in ids where !userFetchesInFlight.contains(id) {
+            userFetchesInFlight.insert(id)
+            await fetchAndStoreUser(id)
+        }
+    }
+
     private func fetchAndStoreUser(_ id: String) async {
         defer { userFetchesInFlight.remove(id) }
         guard let resp = try? await api.user(id) else { return }
@@ -573,6 +607,17 @@ public actor SyncEngine {
         }
         guard !items.isEmpty else { return }
         var chatIds = Set(items.map(\.chatId))
+
+        // whoever has just sent a message is no longer typing: the sender's own
+        // stop frame can be late or lost, and the indicator would then cover the
+        // message that has already arrived. One event per sender per batch: a
+        // catch-up of hundreds of messages must not cost hundreds of them
+        var stopped = Set<String>()
+        for item in items where !item.isService {
+            if stopped.insert(item.chatId + "\u{1}" + item.from).inserted {
+                typingStream.send((item.chatId, item.from, nil))
+            }
+        }
 
         // a message for a chat we do not have means we missed its creation
         func storedChats(_ ids: Set<String>) async -> Set<String> {
@@ -672,17 +717,25 @@ public actor SyncEngine {
         }
 
         // one recv ack per chat for the whole run (the author's delivered ticks);
-        // an unaccepted request sends none, the recipient is invisible to the author
+        // an unaccepted request sends none, the recipient is invisible to the author.
+        // The receipt is written down before it is sent: a socket that dies
+        // between the message and its answer would otherwise leave the author on
+        // one tick until something else arrives in the chat
+        var queued = false
         for chatId in chatIds {
-            let seqs = items.filter { $0.chatId == chatId && $0.from != ownUserId }.map(\.seq)
-            guard !seqs.isEmpty else { continue }
+            let top = items.filter { $0.chatId == chatId && $0.from != ownUserId }.map(\.seq).max()
+            guard let top else { continue }
             let isRequestChat = (try? await db.read { dbc in
                 try Bool.fetchOne(dbc, sql: "SELECT isRequest FROM chat WHERE id = ?",
                                   arguments: [chatId]) ?? false
             }) ?? false
             guard !isRequestChat else { continue }
-            try? await ws.send(.recv(chatId: chatId, seqs: seqs))
+            try? await db.write { dbc in
+                try DeliveryReceipts.record(dbc, chatId: chatId, upToSeq: top)
+            }
+            queued = true
         }
+        if queued { actionWakeup.continuation.yield() }
         // the in-app banner is told last, when the row it previews is written
         for item in announce {
             incomingMessageStream.send(IncomingMessage(
@@ -696,7 +749,7 @@ public actor SyncEngine {
                             isOwn: Bool, isService: Bool) throws {
         if isService {
             // in a chat that is fully read, myReadUpTo swallows the seq, so the
-            // derived unread of later messages does not count a service frame
+            // catch-up resumes past a frame that leaves no row behind
             try dbc.execute(
                 sql: """
                 UPDATE chat SET
@@ -707,16 +760,24 @@ public actor SyncEngine {
                 """,
                 arguments: [seq, seq, seq, isOwn, seq, seq, chatId])
         } else {
+            // The number counts messages, not seqs. A frame that shows nothing —
+            // an edit, a reaction, the sender key handed out after the roster
+            // changed — leaves it alone, so only this branch adds to it, and only
+            // for a frame that takes the chat further than it has ever been: a
+            // replayed batch carries seqs the chat already has and must not be
+            // counted twice.
             try dbc.execute(
                 sql: """
                 UPDATE chat SET
+                  unreadCount = CASE WHEN ? THEN 0
+                                     WHEN ? > lastSeq THEN unreadCount + 1
+                                     ELSE unreadCount END,
                   lastSeq = MAX(lastSeq, ?),
                   syncedSeq = CASE WHEN ? = syncedSeq + 1 THEN ? ELSE syncedSeq END,
-                  myReadUpTo = CASE WHEN ? THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END,
-                  unreadCount = MAX(0, MAX(lastSeq, ?) - CASE WHEN ? THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END)
+                  myReadUpTo = CASE WHEN ? THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END
                 WHERE id = ?
                 """,
-                arguments: [seq, seq, seq, isOwn, seq, seq, isOwn, seq, chatId])
+                arguments: [isOwn, seq, seq, seq, seq, isOwn, seq, chatId])
         }
     }
 
@@ -939,7 +1000,7 @@ public actor SyncEngine {
         case .senderKeyDistribution: return "sender_key"
         case .identityChanged(_, .none): return "identity_changed"
         case .content(let content), .identityChanged(_, .some(let content)):
-            return serviceKinds.contains(content.kind) ? "service" : nil
+            return rowlessKinds.contains(content.kind) ? "service" : nil
         case .undecryptable(let reason): return reason
         }
     }
@@ -1112,7 +1173,7 @@ public actor SyncEngine {
         try? await db.write { dbc in
             try dbc.execute(sql: "DELETE FROM pendingDecrypt WHERE chatId = ? AND msgId = ?",
                             arguments: [chatId, target])
-            if Self.serviceKinds.contains(original.kind) {
+            if Self.rowlessKinds.contains(original.kind) {
                 try HistoryWindow.recordGap(dbc, chatId: chatId, seq: seq, reason: "service")
             } else {
                 try dbc.execute(sql: "DELETE FROM historyGap WHERE chatId = ? AND seq = ?",
@@ -1199,6 +1260,9 @@ public actor SyncEngine {
         case "disappearing":
             try dbc.execute(sql: "UPDATE chat SET ttlSeconds = ? WHERE id = ?",
                             arguments: [content.ttlSeconds ?? 0, chatId])
+        case GroupEvent.kind:
+            try SyncEngine.storeGroupEvent(dbc, content, chatId: chatId, msgId: msgId, seq: seq,
+                                           from: from, sentAt: sentAt, ts: ts, ownUserId: ownUserId)
         default:
             var msg = Message(id: msgId, chatId: chatId, fromUserId: from, sentAt: sentAt,
                               kind: MessageKind(rawValue: content.kind) ?? .text,
@@ -1217,6 +1281,21 @@ public actor SyncEngine {
             try dbc.execute(sql: "UPDATE chat SET lastActivityAt = ? WHERE id = ?",
                             arguments: [max(ts, sentAt), chatId])
         }
+    }
+
+    /// A group event: service on the wire, a system line in the feed. The chat
+    /// does not move up the list for it — a system row carries no preview, so
+    /// the list would jump with nothing new to show.
+    static func storeGroupEvent(_ dbc: GRDB.Database, _ content: ContentPayload, chatId: String,
+                                msgId: String, seq: Int, from: String, sentAt: Double, ts: Double,
+                                ownUserId: String) throws {
+        var msg = Message(id: msgId, chatId: chatId, fromUserId: from, sentAt: sentAt,
+                          kind: .system, text: content.text, status: .sent,
+                          isOutgoing: from == ownUserId)
+        msg.msgId = msgId
+        msg.seq = seq
+        msg.serverTs = ts
+        try msg.upsert(dbc)
     }
 
     /// Applies a message from server history (upward pagination).
@@ -1252,6 +1331,9 @@ public actor SyncEngine {
                 }
             case "disappearing":
                 break // the chat's current TTL is in its state; a historic change is not replayed
+            case GroupEvent.kind:
+                try SyncEngine.storeGroupEvent(dbc, content, chatId: chatId, msgId: msgId, seq: seq,
+                                               from: from, sentAt: sentAt, ts: ts, ownUserId: ownUserId)
             default:
                 var msg = Message(id: msgId, chatId: chatId, fromUserId: from, sentAt: sentAt,
                                   kind: MessageKind(rawValue: content.kind) ?? .text,
@@ -1319,7 +1401,7 @@ public actor SyncEngine {
                                     from: m.from, sentAt: m.sentAt, ts: m.ts)
                 // edit/reaction/disappearing land on their target instead of
                 // taking a row of their own — the seq is processed all the same
-                if Self.serviceKinds.contains(content.kind) { reasons[m.seq] = "service" }
+                if Self.rowlessKinds.contains(content.kind) { reasons[m.seq] = "service" }
             case .identityChanged(_, .none):
                 reasons[m.seq] = "identity_changed"
             case .undecryptable(let reason):
@@ -1388,18 +1470,52 @@ public actor SyncEngine {
         outboxWakeup.continuation.yield()
     }
 
-    /// The server refused one of our frames. The send is marked failed with the
-    /// reason code and leaves the outbox: repeating what the server rejected
-    /// changes nothing and would leave the message sending forever.
+    /// The server refused one of our frames. The send stops with the reason
+    /// code: repeating what the server rejected changes nothing and would leave
+    /// the message sending forever. The queue entry stays as `failed`, so the
+    /// message the user sends again is the one they wrote, media and all.
     private func applyServerError(_ f: WSIncoming) async {
         guard let clientMsgId = f.clientMsgId else { return }
         let reason = f.error ?? SendFailure.sendFailed
         try? await db.write { dbc in
-            try dbc.execute(sql: "DELETE FROM outbox WHERE clientMsgId = ?", arguments: [clientMsgId])
-            try dbc.execute(
-                sql: "UPDATE message SET status = ?, failReason = ? WHERE clientMsgId = ?",
-                arguments: [MessageStatus.failed.rawValue, reason, clientMsgId])
+            try SyncEngine.markSendFailed(dbc, clientMsgId: clientMsgId, reason: reason)
         }
+    }
+
+    /// The send is out of tries. Both marks are set together: the failed status
+    /// the feed shows, and the queue entry that "send again" turns back on.
+    static func markSendFailed(_ dbc: GRDB.Database, clientMsgId: String, reason: String) throws {
+        try dbc.execute(sql: "UPDATE outbox SET state = 'failed' WHERE clientMsgId = ?",
+                        arguments: [clientMsgId])
+        try dbc.execute(
+            sql: "UPDATE message SET status = ?, failReason = ? WHERE clientMsgId = ?",
+            arguments: [MessageStatus.failed.rawValue, reason, clientMsgId])
+    }
+
+    /// Sends a message that failed once more, from the payload it was written
+    /// with. A message whose queue entry is gone — one this device failed before
+    /// the entry was kept — cannot be repeated and says so by staying failed.
+    @discardableResult
+    public func retrySend(messageId: String) async -> Bool {
+        let restored = (try? await db.write { dbc -> Bool in
+            guard let clientMsgId = try String.fetchOne(
+                dbc, sql: "SELECT clientMsgId FROM message WHERE id = ? OR clientMsgId = ?",
+                arguments: [messageId, messageId]),
+                try Bool.fetchOne(dbc, sql: "SELECT EXISTS(SELECT 1 FROM outbox WHERE clientMsgId = ?)",
+                                  arguments: [clientMsgId]) == true
+            else { return false }
+            try dbc.execute(
+                sql: "UPDATE outbox SET state = 'ready', attempts = 0 WHERE clientMsgId = ?",
+                arguments: [clientMsgId])
+            try dbc.execute(
+                sql: """
+                UPDATE message SET status = ?, failReason = NULL WHERE clientMsgId = ?
+                """,
+                arguments: [MessageStatus.sending.rawValue, clientMsgId])
+            return true
+        }) ?? false
+        if restored { wakeOutbox() }
+        return restored
     }
 
     private func applyReceipt(_ f: WSIncoming) async {
@@ -1407,28 +1523,105 @@ public actor SyncEngine {
         let upTo = f.upToSeq ?? f.seqs?.max() ?? 0
         guard upTo > 0 else { return }
         let isRead = f.kind == "read"
-        try? await db.write { dbc in
-            if isRead {
-                try dbc.execute(sql: "UPDATE chat SET peerReadUpTo = MAX(peerReadUpTo, ?) WHERE id = ?",
-                                arguments: [upTo, chatId])
-                try dbc.execute(
-                    sql: "UPDATE message SET status = 3 WHERE chatId = ? AND isOutgoing = 1 AND seq <= ? AND status < 3",
-                    arguments: [chatId, upTo])
-            } else {
-                try dbc.execute(sql: "UPDATE chat SET peerDeliveredUpTo = MAX(peerDeliveredUpTo, ?) WHERE id = ?",
-                                arguments: [upTo, chatId])
-                try dbc.execute(
-                    sql: "UPDATE message SET status = 2 WHERE chatId = ? AND isOutgoing = 1 AND seq <= ? AND status < 2",
-                    arguments: [chatId, upTo])
-            }
+        try? await db.write { [ownUserId] dbc in
+            try SyncEngine.recordMark(dbc, chatId: chatId, userId: by, upToSeq: upTo, isRead: isRead)
+            try SyncEngine.applyPeerMarks(dbc, chatId: chatId, ownUserId: ownUserId)
+        }
+    }
+
+    /// One member's mark. Both marks only ever move forward: a receipt that
+    /// arrives out of order says nothing new.
+    static func recordMark(_ dbc: GRDB.Database, chatId: String, userId: String,
+                           upToSeq: Int, isRead: Bool) throws {
+        let column = isRead ? "readUpTo" : "deliveredUpTo"
+        try dbc.execute(
+            sql: """
+            INSERT INTO chatMark (chatId, userId, deliveredUpTo, readUpTo) VALUES (?,?,?,?)
+            ON CONFLICT(chatId, userId) DO UPDATE SET \(column) = MAX(chatMark.\(column), excluded.\(column))
+            """,
+            arguments: [chatId, userId, isRead ? 0 : upToSeq, isRead ? upToSeq : 0])
+        // reading is having received: a read mark implies the delivery below it
+        if isRead {
+            try dbc.execute(
+                sql: """
+                UPDATE chatMark SET deliveredUpTo = MAX(deliveredUpTo, ?)
+                WHERE chatId = ? AND userId = ?
+                """, arguments: [upToSeq, chatId, userId])
+        }
+    }
+
+    /// The tick speaks for the whole chat, so it moves on the member who is
+    /// furthest behind: in a group the second tick appears when the last member
+    /// has the message, and it turns read when the last of them has read it. In
+    /// a direct chat that member is the only one there is.
+    ///
+    /// A member who joined later has no marks and holds the chat's ticks where
+    /// they are; the ones already given out stay, both cursors and the message
+    /// status only move up.
+    static func applyPeerMarks(_ dbc: GRDB.Database, chatId: String, ownUserId: String) throws {
+        guard let row = try Row.fetchOne(dbc, sql: """
+            SELECT COUNT(*) AS peers,
+                   MIN(COALESCE(k.deliveredUpTo, 0)) AS delivered,
+                   MIN(COALESCE(k.readUpTo, 0)) AS read
+            FROM member m
+            LEFT JOIN chatMark k ON k.chatId = m.chatId AND k.userId = m.userId
+            WHERE m.chatId = ? AND m.userId <> ?
+            """, arguments: [chatId, ownUserId]), (row["peers"] as Int) > 0 else { return }
+        let delivered: Int = row["delivered"]
+        let read: Int = row["read"]
+        try dbc.execute(
+            sql: """
+            UPDATE chat SET peerDeliveredUpTo = MAX(peerDeliveredUpTo, ?),
+                            peerReadUpTo = MAX(peerReadUpTo, ?)
+            WHERE id = ?
+            """, arguments: [delivered, read, chatId])
+        if read > 0 {
+            try dbc.execute(
+                sql: "UPDATE message SET status = 3 WHERE chatId = ? AND isOutgoing = 1 AND seq <= ? AND status < 3",
+                arguments: [chatId, read])
+        }
+        if delivered > 0 {
+            try dbc.execute(
+                sql: "UPDATE message SET status = 2 WHERE chatId = ? AND isOutgoing = 1 AND seq <= ? AND status < 2",
+                arguments: [chatId, delivered])
         }
     }
 
     // MARK: - Sending
 
-    /// Content kinds with no feed row of their own; they go out service-flagged.
-    public static let serviceKinds: Set<String> = Set(["edit", "reaction", "disappearing"])
+    /// Content that goes out service-flagged: it takes a seq and reaches
+    /// everyone, but raises no unread count and no push.
+    public static let serviceKinds: Set<String> =
+        Set(["edit", "reaction", "disappearing", GroupEvent.kind])
         .union(SyncEngine.repairKinds)
+
+    /// Service content with no feed row of its own. A group event is the
+    /// exception: it is service on the wire and a system message in the feed.
+    public static let rowlessKinds: Set<String> = serviceKinds.subtracting([GroupEvent.kind])
+
+    /// Publishes what just happened to the group, from whoever did it. The frame
+    /// is service content: it takes a seq and reaches every member, raises no
+    /// unread count and no push, and shows up as a system line in the feed.
+    ///
+    /// `waitForSend` holds until the frame has left the device. Leaving is the
+    /// one event that has to be published before the membership it describes is
+    /// gone: a former member's send is refused.
+    public func announce(_ event: GroupEvent, chatId: String, waitForSend: Bool = false) async {
+        var content = ContentPayload(kind: GroupEvent.kind)
+        content.text = event.encoded
+        let clientMsgId = UUID().uuidString
+        try? await enqueue(content: content, chatId: chatId, clientMsgId: clientMsgId)
+        guard waitForSend else { return }
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            let queued = (try? await db.read { dbc in
+                try Bool.fetchOne(dbc, sql: "SELECT EXISTS(SELECT 1 FROM outbox WHERE clientMsgId = ?)",
+                                  arguments: [clientMsgId]) ?? false
+            }) ?? false
+            if !queued { return }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+    }
 
     /// The only way out: writes the row and the outbox entry, wakes the worker,
     /// works offline. clientMsgId is passed in where a repeat has to collapse
@@ -1436,8 +1629,9 @@ public actor SyncEngine {
     public func enqueue(content: ContentPayload, chatId: String,
                         clientMsgId: String = UUID().uuidString) async throws {
         let now = Date().timeIntervalSince1970
+        let isGroupEvent = content.kind == GroupEvent.kind
         var msg = Message(id: clientMsgId, chatId: chatId, fromUserId: ownUserId, sentAt: now,
-                          kind: MessageKind(rawValue: content.kind) ?? .text,
+                          kind: isGroupEvent ? .system : (MessageKind(rawValue: content.kind) ?? .text),
                           text: content.text, status: .sending, isOutgoing: true)
         msg.clientMsgId = clientMsgId
         msg.media = content.media
@@ -1446,10 +1640,12 @@ public actor SyncEngine {
         msg.forward = content.fwd
         let payload = try JSONEncoder().encode(content)
         try await db.write { [msg] dbc in
-            let visible = !SyncEngine.serviceKinds.contains(content.kind)
+            let visible = !SyncEngine.rowlessKinds.contains(content.kind)
             if visible { try msg.save(dbc) }
             try OutboxItem(clientMsgId: clientMsgId, chatId: chatId, createdAt: now, payload: payload).save(dbc)
-            if visible {
+            // a group event leaves a line but no preview, so the chat stays
+            // where the conversation left it
+            if visible && !isGroupEvent {
                 try dbc.execute(sql: "UPDATE chat SET lastActivityAt = ? WHERE id = ?", arguments: [now, chatId])
             }
             // an edit takes effect here before it is sent
@@ -1519,11 +1715,8 @@ public actor SyncEngine {
                 let attempts = item.attempts + 1
                 if attempts > 10 {
                     try? await db.write { dbc in
-                        try dbc.execute(
-                            sql: "UPDATE message SET status = -1, failReason = ? WHERE clientMsgId = ?",
-                            arguments: [SendFailure.tooManyAttempts, item.clientMsgId])
-                        try dbc.execute(sql: "DELETE FROM outbox WHERE clientMsgId = ?",
-                                        arguments: [item.clientMsgId])
+                        try SyncEngine.markSendFailed(dbc, clientMsgId: item.clientMsgId,
+                                                      reason: SendFailure.tooManyAttempts)
                     }
                     continue
                 }
@@ -1726,6 +1919,12 @@ public actor SyncEngine {
                 case "read":
                     let p = try JSONDecoder().decode(ReadActionPayload.self, from: Data(a.payload.utf8))
                     try await ws.send(.read(chatId: a.chatId ?? "", upToSeq: p.upToSeq))
+                case DeliveryReceipts.actionType:
+                    // a receipt this device owes: for a message off the socket,
+                    // or one the notification extension wrote and could not send
+                    let p = try JSONDecoder().decode(DeliveryReceipts.Payload.self,
+                                                     from: Data(a.payload.utf8))
+                    try await ws.send(.recv(chatId: a.chatId ?? "", seqs: [p.upToSeq]))
                 case "delete":
                     let p = try JSONDecoder().decode(DeleteActionPayload.self, from: Data(a.payload.utf8))
                     try await ws.send(.delete(chatId: a.chatId ?? "", msgIds: p.msgIds, forAll: p.forAll))
@@ -1876,6 +2075,14 @@ public actor SyncEngine {
                         sql: "UPDATE message SET deletedForAll = 1, text = NULL, media = NULL, album = NULL WHERE chatId = ? AND (msgId = ? OR id = ?)",
                         arguments: [chatId, id, id])
                 } else {
+                    // a message thrown away is not sent afterwards: its queue
+                    // entry goes with it, whether it is still waiting for its
+                    // turn or holding the payload of a send that failed
+                    try dbc.execute(sql: """
+                        DELETE FROM outbox WHERE clientMsgId IN
+                          (SELECT clientMsgId FROM message
+                           WHERE chatId = ? AND (msgId = ? OR id = ?) AND clientMsgId IS NOT NULL)
+                        """, arguments: [chatId, id, id])
                     try dbc.execute(sql: "DELETE FROM message WHERE chatId = ? AND (msgId = ? OR id = ?)",
                                     arguments: [chatId, id, id])
                 }
@@ -1925,8 +2132,6 @@ public actor SyncEngine {
         let me = s.members.first { $0.userId == ownUserId }
         let iAccepted = me?.accepted ?? true
         let isRequest = s.kind == "direct" && !iAccepted
-        let peerRead = s.readMarks.filter { $0.key != ownUserId }.values.max() ?? 0
-        let peerDelivered = s.deliveredMarks.filter { $0.key != ownUserId }.values.max() ?? 0
         let myRead = s.readMarks[ownUserId] ?? 0
         // a chat this device deleted and got back starts at the position its
         // tombstone kept, so the catch-up resumes instead of replaying a
@@ -1934,14 +2139,17 @@ public actor SyncEngine {
         let resume = try ChatCleanup.tombstoneSeq(dbc, chatId: s.chatId)
         try dbc.execute(
             sql: """
-            INSERT INTO chat (id, kind, title, avatarId, chatDescription, createdBy, createdAt,
+            INSERT INTO chat (id, kind, title, avatarId, chatDescription, sendPolicy, invitePolicy,
+                              createdBy, createdAt,
                               pinnedMsgId, lastSeq, syncedSeq, syncCursor, myReadUpTo, peerReadUpTo,
                               peerDeliveredUpTo, lastActivityAt, isRequest, iAccepted, pinned, muted,
                               archived, unreadCount)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
               title = excluded.title, avatarId = excluded.avatarId,
-              chatDescription = excluded.chatDescription, pinnedMsgId = excluded.pinnedMsgId,
+              chatDescription = excluded.chatDescription,
+              sendPolicy = excluded.sendPolicy, invitePolicy = excluded.invitePolicy,
+              pinnedMsgId = excluded.pinnedMsgId,
               lastSeq = MAX(chat.lastSeq, excluded.lastSeq),
               myReadUpTo = MAX(chat.myReadUpTo, excluded.myReadUpTo),
               peerReadUpTo = MAX(chat.peerReadUpTo, excluded.peerReadUpTo),
@@ -1950,11 +2158,17 @@ public actor SyncEngine {
               -- snapshot the server built before our /accept reached it
               isRequest = MIN(chat.isRequest, excluded.isRequest),
               iAccepted = MAX(chat.iAccepted, excluded.iAccepted),
+              -- what the chat holds beyond this device is counted in seqs: the
+              -- frames behind them have not been seen, and whatever they turn
+              -- out to be, the ones that arrive from here on are counted one by
+              -- one as they come
               unreadCount = MAX(0, MAX(chat.lastSeq, excluded.lastSeq) - MAX(chat.myReadUpTo, excluded.myReadUpTo))
             """,
-            arguments: [s.chatId, s.kind, s.title, s.avatarId, s.description, s.createdBy,
+            arguments: [s.chatId, s.kind, s.title, s.avatarId, s.description,
+                        s.sendPolicy ?? ChatPermissions.openPolicy,
+                        s.invitePolicy ?? ChatPermissions.openPolicy, s.createdBy,
                         s.createdAt, s.pinnedMsgId, s.lastSeq, resume, resume,
-                        max(myRead, resume), peerRead, peerDelivered,
+                        max(myRead, resume), 0, 0,
                         s.createdAt, isRequest, iAccepted,
                         flags?.pinned ?? false, flags?.muted ?? false, flags?.archived ?? false,
                         max(0, s.lastSeq - max(myRead, resume))])
@@ -1966,6 +2180,40 @@ public actor SyncEngine {
         try dbc.execute(sql: "DELETE FROM member WHERE chatId = ?", arguments: [s.chatId])
         for m in s.members {
             try ChatMemberRow(chatId: s.chatId, userId: m.userId, role: m.role, joinedAt: m.joinedAt).save(dbc)
+        }
+        // the snapshot carries where every member stands, and the ticks of the
+        // chat are recomputed from them once the member list is the current one
+        for (userId, upTo) in s.deliveredMarks {
+            try recordMark(dbc, chatId: s.chatId, userId: userId, upToSeq: upTo, isRead: false)
+        }
+        for (userId, upTo) in s.readMarks {
+            try recordMark(dbc, chatId: s.chatId, userId: userId, upToSeq: upTo, isRead: true)
+        }
+        try applyPeerMarks(dbc, chatId: s.chatId, ownUserId: ownUserId)
+        try requeueOwnMarks(dbc, s, ownUserId: ownUserId, isRequest: isRequest)
+    }
+
+    /// The snapshot also says where the server thinks this device stands, and a
+    /// mark it never heard is queued again.
+    ///
+    /// A frame handed to a socket that is already dying goes nowhere and reports
+    /// no error, and a receipt the notification extension could not post is in
+    /// the same position. Either way the author would be left with a tick that
+    /// never moves, so the marks this device has already made are compared with
+    /// the server's and the difference is sent once more.
+    static func requeueOwnMarks(_ dbc: GRDB.Database, _ s: ChatStateDTO,
+                                ownUserId: String, isRequest: Bool) throws {
+        guard !isRequest else { return }
+        guard let row = try Row.fetchOne(
+            dbc, sql: "SELECT myReadUpTo, syncedSeq FROM chat WHERE id = ?", arguments: [s.chatId])
+        else { return }
+        let myRead: Int = row["myReadUpTo"]
+        let mine: Int = row["syncedSeq"]
+        if myRead > (s.readMarks[ownUserId] ?? 0) {
+            try upsertReadAction(dbc, chatId: s.chatId, upToSeq: myRead)
+        }
+        if mine > (s.deliveredMarks[ownUserId] ?? 0) {
+            try DeliveryReceipts.record(dbc, chatId: s.chatId, upToSeq: mine)
         }
     }
 

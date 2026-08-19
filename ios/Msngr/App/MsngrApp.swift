@@ -47,6 +47,7 @@ struct MsngrApp: App {
                 }
             }
             .tint(Theme.accent)
+            .pulseConsoleOnShake()
             .animation(.easeOut(duration: 0.2), value: app.isLocked)
             .onChange(of: scenePhase) { _, phase in
                 app.scenePhaseChanged(phase)

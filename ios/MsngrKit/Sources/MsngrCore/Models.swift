@@ -33,6 +33,9 @@ public struct Chat: Codable, Identifiable, Equatable, FetchableRecord, Persistab
     public var title: String?
     public var avatarId: String?
     public var chatDescription: String?
+    /// group rights, as the server states them: "all" or "admins"
+    public var sendPolicy: String = ChatPermissions.openPolicy
+    public var invitePolicy: String = ChatPermissions.openPolicy
     public var createdBy: String
     public var createdAt: Double
     public var pinnedMsgId: String?
@@ -51,7 +54,9 @@ public struct Chat: Codable, Identifiable, Equatable, FetchableRecord, Persistab
     public var archived: Bool = false
     public var draft: String?
     public var myReadUpTo: Int = 0
-    public var peerReadUpTo: Int = 0       // max over the other members
+    /// how far the member furthest behind has got: the tick of a message speaks
+    /// for the whole chat (`chatMark` holds the marks it is taken from)
+    public var peerReadUpTo: Int = 0
     public var peerDeliveredUpTo: Int = 0
     public var ttlSeconds: Int = 0          // disappearing messages
     /// message request: the chat sits in Requests for the recipient until they accept

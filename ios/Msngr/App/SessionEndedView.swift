@@ -26,17 +26,12 @@ struct SessionEndedView: View {
                     busy = true
                     Task { await app.finishRevokedSession() }
                 } label: {
-                    Group {
-                        if busy { ProgressView().tint(.white) }
-                        // the start screen offers both: a new account and
-                        // signing back in from a device still on this one
-                        else { Text("Начать заново").bold() }
-                    }
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 48)
-                    .background(Theme.accent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    if busy { ProgressView() }
+                    // the start screen offers both: a new account and
+                    // signing back in from a device still on this one
+                    else { Text("Начать заново") }
                 }
+                .buttonStyle(.primaryAction)
                 .disabled(busy)
                 .accessibilityIdentifier("session.ended.restart")
                 .padding(.horizontal, 32)

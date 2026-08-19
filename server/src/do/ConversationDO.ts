@@ -1,4 +1,4 @@
-import type { Env, ChatState, ChatMember, StoredMsg, ServerFrame } from "../types";
+import type { Env, ChatState, ChatMember, ChatPolicy, StoredMsg, ServerFrame, PublicUser } from "../types";
 import { ulid, json, err, seqKey, nowSec, shouldArmAlarm } from "../util";
 import {
   newCounters, snapshot, diff, logPerf, wrapState, wrapDB, wrapStub, type PerfCounters,
@@ -83,10 +83,23 @@ interface Meta {
   title: string | null;
   avatarId: string | null;
   description: string | null;
+  sendPolicy?: ChatPolicy;
+  invitePolicy?: ChatPolicy;
   createdBy: string;
   createdAt: number;
   pinnedMsgId: string | null;
   lastSeq: number;
+  /// How many messages of the chat are content. A seq is spent on every frame,
+  /// including the ones a client never shows — an edit, a reaction, a sender key
+  /// handed out after the roster changed — so the badge is counted in these and
+  /// not in seqs. Each message stores the count as of itself, which is what a
+  /// member's mark is measured against.
+  contentCount: number;
+}
+
+/// A policy an older chat has no value for is the permissive one.
+function policy(value: ChatPolicy | undefined): ChatPolicy {
+  return value === "admins" ? "admins" : "all";
 }
 
 export class ConversationDO implements DurableObject {
@@ -124,6 +137,22 @@ export class ConversationDO implements DurableObject {
       for (const [, m] of listed) this.members.set(m.userId, m);
     }
     return this.members;
+  }
+
+  /// Content messages written after the one a mark stands on.
+  ///
+  /// Both ends of the subtraction are counts of content, so the frames a client
+  /// never shows fall out of it: whatever seqs an edit, a reaction or a sender
+  /// key spent between the mark and the end of the chat, the number is what the
+  /// reader will actually be handed. A mark at zero has the whole chat ahead
+  /// of it.
+  private async unreadFrom(mark: number): Promise<number> {
+    const meta = await this.loadMeta();
+    if (!meta) return 0;
+    const total = meta.contentCount ?? 0;
+    if (mark <= 0) return total;
+    const at = (await this.state.storage.get<StoredMsg>(seqKey(mark)))?.contentAt;
+    return Math.max(0, total - (at ?? total));
   }
 
   private userStub(userId: string) {
@@ -406,6 +435,8 @@ export class ConversationDO implements DurableObject {
       title: meta.title,
       avatarId: meta.avatarId,
       description: meta.description,
+      sendPolicy: policy(meta.sendPolicy),
+      invitePolicy: policy(meta.invitePolicy),
       createdBy: meta.createdBy,
       createdAt: meta.createdAt,
       members: [...members.values()],
@@ -466,8 +497,9 @@ export class ConversationDO implements DurableObject {
       const now = nowSec();
       this.meta = {
         chatId: b.chatId, kind: b.kind, title: b.title ?? null,
-        avatarId: null, description: null, createdBy: b.createdBy,
-        createdAt: now, pinnedMsgId: null, lastSeq: 0,
+        avatarId: null, description: null,
+        sendPolicy: "all", invitePolicy: "all", createdBy: b.createdBy,
+        createdAt: now, pinnedMsgId: null, lastSeq: 0, contentCount: 0,
       };
       await this.state.storage.put("meta", this.meta);
       this.members = new Map();
@@ -556,7 +588,8 @@ export class ConversationDO implements DurableObject {
       }
 
       case "/unread-count": {
-        // a compact count for the badge: lastSeq minus the user's counted mark
+        // a compact count for the badge: how many content messages the chat has
+        // had since the one the member's mark stands on
         const userId = url.searchParams.get("userId") ?? "";
         // an unaccepted request stays out of the badge: the number alone would tell the
         // recipient how much has been written to him
@@ -567,7 +600,7 @@ export class ConversationDO implements DurableObject {
         const seen =
           (await this.state.storage.get<Record<string, number>>("seenMarks")) ?? {};
         const from = Math.max(marks[userId] ?? 0, seen[userId] ?? 0);
-        return json({ ok: true, unread: Math.max(0, meta.lastSeq - from) });
+        return json({ ok: true, unread: await this.unreadFrom(from) });
       }
 
       case "/send": {
@@ -576,7 +609,14 @@ export class ConversationDO implements DurableObject {
           sentAt: number; body: unknown; service?: boolean;
         };
         const members = await this.loadMembers();
-        if (!members.has(b.from)) return err("not_member", 403);
+        const sender = members.get(b.from);
+        if (!sender) return err("not_member", 403);
+        // A read-only group holds back content only. Key handouts, receipts of
+        // them, repairs, edits and reactions travel service-flagged and keep
+        // working for everyone: without them the member could not read the chat.
+        if (meta.kind === "group" && !b.service &&
+            policy(meta.sendPolicy) === "admins" && sender.role !== "admin")
+          return err("not_allowed", 403);
 
         // Blocks in a direct chat cut two ways. Writing to someone the sender himself
         // blocked is refused outright; a message to someone who blocked the sender
@@ -590,13 +630,19 @@ export class ConversationDO implements DurableObject {
         if (dupe) return json({ ok: true, ...dupe, dupe: true });
 
         const seq = meta.lastSeq + 1;
+        // the counter moves only on what a client will show, and every message
+        // keeps where it stood: one number written here answers every later
+        // question about how much of the chat a member has not seen
+        const contentAt = (meta.contentCount ?? 0) + (b.service ? 0 : 1);
         const msg: StoredMsg = {
           msgId: ulid(), seq, from: b.from, fromDevice: b.fromDevice,
           clientMsgId: b.clientMsgId, sentAt: b.sentAt, ts: nowSec(), body: b.body,
+          contentAt,
           ...(b.service ? { service: true } : {}),
           ...(blockedFor ? { blockedFor } : {}),
         };
         meta.lastSeq = seq;
+        meta.contentCount = contentAt;
         this.meta = meta;
         await this.state.storage.put({
           meta,
@@ -620,19 +666,14 @@ export class ConversationDO implements DurableObject {
           for (const u of blocked) marks[u] = Math.max(marks[u] ?? 0, seq);
           await this.state.storage.put("readMarks", marks);
         }
-        // The counting mark unread is measured against. It moves by the same rules
-        // as the client cursor (`advanceChat`): an author does not count their own
-        // sent message as unread, and a service frame in an already-read chat is
-        // absorbed. Kept apart from `readMarks` because read receipts are sent for
+        // The counting mark unread is measured against: an author does not count
+        // their own message, and neither does someone the message was withheld
+        // from. Kept apart from `readMarks` because read receipts are sent for
         // those alone: sending a message is not a claim that others were read.
+        // A service frame needs no mark of its own — it never moved the count.
         const seen = (await this.state.storage.get<Record<string, number>>("seenMarks")) ?? {};
         for (const u of blocked) seen[u] = Math.max(seen[u] ?? 0, seq);
         seen[b.from] = Math.max(seen[b.from] ?? 0, seq);
-        if (msg.service) {
-          for (const uid of members.keys()) {
-            if ((seen[uid] ?? 0) >= seq - 1) seen[uid] = seq;
-          }
-        }
         await this.state.storage.put("seenMarks", seen);
         // ack answers the sender as soon as the message owns a seq; delivery
         // (and the APNs call behind it) runs in the alarm queue afterwards.
@@ -761,10 +802,12 @@ export class ConversationDO implements DurableObject {
         if (actor) {
           // only an admin can remove a member
           if (b.remove.length && actor.role !== "admin") return err("not_admin", 403);
-          // an admin can add anyone; anyone else only themselves
+          // an admin adds anyone; a member adds others while invitePolicy
+          // allows it, and themselves in any case
           if (b.add.length && actor.role !== "admin") {
             const onlySelf = b.add.length === 1 && b.add[0] === b.actor;
-            if (!onlySelf) return err("not_admin", 403);
+            if (!onlySelf && policy(meta.invitePolicy) === "admins")
+              return err("not_allowed", 403);
           }
         }
         const now = nowSec();
@@ -807,6 +850,7 @@ export class ConversationDO implements DurableObject {
       case "/settings": {
         const b = (await req.json()) as {
           actor: string; title?: string; avatarId?: string; description?: string;
+          sendPolicy?: ChatPolicy; invitePolicy?: ChatPolicy;
         };
         const members = await this.loadMembers();
         const actor = members.get(b.actor);
@@ -815,6 +859,11 @@ export class ConversationDO implements DurableObject {
         if (b.title !== undefined) meta.title = b.title;
         if (b.avatarId !== undefined) meta.avatarId = b.avatarId;
         if (b.description !== undefined) meta.description = b.description;
+        // rights belong to a group; a direct chat has two equal sides
+        if (meta.kind === "group") {
+          if (b.sendPolicy !== undefined) meta.sendPolicy = policy(b.sendPolicy);
+          if (b.invitePolicy !== undefined) meta.invitePolicy = policy(b.invitePolicy);
+        }
         this.meta = meta;
         await this.state.storage.put("meta", meta);
         await this.broadcastChat("settings");
@@ -842,6 +891,34 @@ export class ConversationDO implements DurableObject {
         this.meta = meta;
         await this.state.storage.put("meta", meta);
         await this.broadcastChat("pinned");
+        return json({ ok: true });
+      }
+
+      case "/profile": {
+        // from UserSessionDO: a member's card changed. Unlike presence this is
+        // public, so an unaccepted request sees it too — the request screen
+        // already shows the sender's name and avatar.
+        const b = (await req.json()) as { userId: string; user: PublicUser };
+        const members = await this.loadMembers();
+        if (!members.has(b.userId)) return json({ ok: true });
+        await this.fanout(
+          { t: "profile", user: b.user },
+          { except: b.userId, skip: await this.blockedPeers(b.userId) }
+        );
+        return json({ ok: true });
+      }
+
+      case "/devices": {
+        // from UserSessionDO: a member's device set changed. Anyone who may
+        // address an envelope to them holds a device cache to drop, so the
+        // frame travels like the profile — an unaccepted request included.
+        const b = (await req.json()) as { userId: string };
+        const members = await this.loadMembers();
+        if (!members.has(b.userId)) return json({ ok: true });
+        await this.fanout(
+          { t: "devices", userId: b.userId },
+          { except: b.userId, skip: await this.blockedPeers(b.userId) }
+        );
         return json({ ok: true });
       }
 

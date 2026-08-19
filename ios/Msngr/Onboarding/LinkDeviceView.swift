@@ -25,7 +25,7 @@ struct LinkDeviceView: View {
     @State private var bundle: Provisioning.Bundle?
     @State private var secondsLeft = 0
 
-    private let api = APIClient(baseURL: AppState.httpBase)
+    private let api = APIClient(baseURL: AppState.httpBase, session: AppNet.session)
 
     var body: some View {
         VStack(spacing: 24) {
@@ -91,11 +91,9 @@ struct LinkDeviceView: View {
             Button {
                 Task { await finish() }
             } label: {
-                Text("Войти").bold()
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity).frame(height: 48)
-                    .background(Theme.accent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                Text("Войти")
             }
+            .buttonStyle(.primaryAction)
             .accessibilityIdentifier("link.confirm")
             Button("Отмена") { cancelPending(); dismiss() }
                 .font(.footnote)
@@ -168,7 +166,7 @@ struct LinkDeviceView: View {
             // the chat list comes over, the history does not: the rows are
             // written before the engine ever opens a socket, so the first sync
             // names the end of each journal instead of asking for all of it
-            let linked = APIClient(baseURL: AppState.httpBase, token: claimed.token)
+            let linked = APIClient(baseURL: AppState.httpBase, token: claimed.token, session: AppNet.session)
             let snapshot = try await linked.chatsSnapshot()
             try await db.write { dbc in
                 try DeviceLink.primeChats(dbc, snapshot: snapshot, ownUserId: claimed.userId)

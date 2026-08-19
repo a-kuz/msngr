@@ -86,6 +86,28 @@ final class MessageSearchTests: XCTestCase {
         XCTAssertEqual(try hits(db, "receipt").hits.map(\.kind), [.photo])
     }
 
+    /// The index follows the text of a message and nothing else. An edit is found by
+    /// its new wording and not by the old one, while a status update — a delivery
+    /// receipt writes one per message it covers — leaves the row indexed as it was.
+    func testIndexFollowsTheTextAndNotTheStatus() throws {
+        let db = try AppDatabase.openInMemory()
+        try seedChat(db, id: "c1")
+        try seedMessage(db, id: "m1", chatId: "c1", text: "Irina arrives tomorrow", at: 10)
+
+        try db.write { dbc in
+            try dbc.execute(sql: "UPDATE message SET status = ? WHERE id = ?",
+                            arguments: [MessageStatus.delivered.rawValue, "m1"])
+        }
+        XCTAssertEqual(try hits(db, "Irina").hits.map(\.id), ["m1"])
+
+        try db.write { dbc in
+            try dbc.execute(sql: "UPDATE message SET text = ? WHERE id = ?",
+                            arguments: ["Irina arrives on Monday", "m1"])
+        }
+        XCTAssertEqual(try hits(db, "Monday").hits.map(\.id), ["m1"])
+        XCTAssertTrue(try hits(db, "tomorrow").hits.isEmpty)
+    }
+
     // MARK: - What it must not show
 
     /// A chat waiting to be accepted hides its content everywhere; search is not
@@ -209,6 +231,44 @@ final class MessageSearchTests: XCTestCase {
         XCTAssertEqual(page.hits.first?.id, "m20000")
         XCTAssertFalse(page.reachedEnd)
         XCTAssertLessThan(elapsed, 1.0, "first page took \(elapsed)s")
+
+        // counting every match is what the bar under the feed waits for, and it
+        // waits on the reader's screen: joined to the index instead of reading it
+        // through a subquery, this same count took nineteen seconds
+        let countStarted = Date()
+        let total = try db.read { dbc in try MessageSearch.count(dbc, query: "trip", chatId: "c1") }
+        let counting = Date().timeIntervalSince(countStarted)
+        XCTAssertEqual(total, 20_000)
+        XCTAssertLessThan(counting, 1.0, "counting took \(counting)s")
+    }
+
+    // MARK: - Counting
+
+    /// Walking the matches one by one needs the size of the whole result, and it
+    /// is counted over the same messages the pages deliver: this chat, nothing
+    /// deleted, nothing system, no unaccepted request.
+    func testCountsWhatThePagesWouldDeliver() throws {
+        let db = try AppDatabase.openInMemory()
+        try seedChat(db, id: "c1")
+        try seedChat(db, id: "c2")
+        try seedChat(db, id: "req", isRequest: true, iAccepted: false)
+        for i in 1...30 {
+            try seedMessage(db, id: "m\(i)", chatId: "c1", text: "estimate \(i)", at: Double(i))
+        }
+        try seedMessage(db, id: "other", chatId: "c2", text: "estimate elsewhere", at: 40)
+        try seedMessage(db, id: "hidden", chatId: "req", text: "estimate hidden", at: 50)
+        try seedMessage(db, id: "gone", chatId: "c1", text: "estimate deleted", at: 60,
+                        deletedForAll: true)
+        try seedMessage(db, id: "note", chatId: "c1", text: "estimate system", at: 70, kind: .system)
+
+        try db.read { dbc in
+            XCTAssertEqual(try MessageSearch.count(dbc, query: "estimate", chatId: "c1"), 30)
+            XCTAssertEqual(try MessageSearch.count(dbc, query: "estimate"), 31)
+            XCTAssertEqual(try MessageSearch.count(dbc, query: "estimate", chatId: "req"), 0)
+            XCTAssertEqual(try MessageSearch.count(dbc, query: "nothing", chatId: "c1"), 0)
+            // spaces and punctuation alone are not a search here either
+            XCTAssertEqual(try MessageSearch.count(dbc, query: " ", chatId: "c1"), 0)
+        }
     }
 
     // MARK: - Snippet
