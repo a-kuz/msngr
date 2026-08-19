@@ -76,6 +76,10 @@ export function isValidUsername(username: unknown): username is string {
   return typeof username === "string" && /^[a-zA-Z0-9_]{3,32}$/.test(username);
 }
 
+/// How long a username a rename frees stays out of circulation for everyone
+/// but the person who freed it (`released_usernames.released_by`).
+export const USERNAME_QUARANTINE_MS = 14 * 24 * 60 * 60 * 1000;
+
 /// The name a peer reads in their chat list. Required: it is the only place a
 /// person's own spelling of their name can live, and every screen renders it
 /// with no fallback. Trimmed length, so spaces alone are not a name.
