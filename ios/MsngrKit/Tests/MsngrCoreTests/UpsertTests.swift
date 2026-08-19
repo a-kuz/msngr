@@ -34,7 +34,7 @@ final class UpsertTests: XCTestCase {
     func testAcceptSurvivesStaleSnapshot() throws {
         let state = ChatStateDTO(
             chatId: "direct:A:B", kind: "direct", title: nil, avatarId: nil, description: nil,
-            createdBy: "A", createdAt: 1, members: [
+            sendPolicy: nil, invitePolicy: nil, createdBy: "A", createdAt: 1, members: [
                 .init(userId: "A", role: "member", joinedAt: 1, accepted: true),
                 .init(userId: "B", role: "member", joinedAt: 1, accepted: false),
             ],

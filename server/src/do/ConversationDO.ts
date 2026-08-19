@@ -1,4 +1,4 @@
-import type { Env, ChatState, ChatMember, StoredMsg, ServerFrame } from "../types";
+import type { Env, ChatState, ChatMember, ChatPolicy, StoredMsg, ServerFrame, PublicUser } from "../types";
 import { ulid, json, err, seqKey, nowSec, shouldArmAlarm } from "../util";
 import {
   newCounters, snapshot, diff, logPerf, wrapState, wrapDB, wrapStub, type PerfCounters,
@@ -83,6 +83,8 @@ interface Meta {
   title: string | null;
   avatarId: string | null;
   description: string | null;
+  sendPolicy?: ChatPolicy;
+  invitePolicy?: ChatPolicy;
   createdBy: string;
   createdAt: number;
   pinnedMsgId: string | null;
@@ -93,6 +95,11 @@ interface Meta {
   /// not in seqs. Each message stores the count as of itself, which is what a
   /// member's mark is measured against.
   contentCount: number;
+}
+
+/// A policy an older chat has no value for is the permissive one.
+function policy(value: ChatPolicy | undefined): ChatPolicy {
+  return value === "admins" ? "admins" : "all";
 }
 
 export class ConversationDO implements DurableObject {
@@ -428,6 +435,8 @@ export class ConversationDO implements DurableObject {
       title: meta.title,
       avatarId: meta.avatarId,
       description: meta.description,
+      sendPolicy: policy(meta.sendPolicy),
+      invitePolicy: policy(meta.invitePolicy),
       createdBy: meta.createdBy,
       createdAt: meta.createdAt,
       members: [...members.values()],
@@ -488,7 +497,8 @@ export class ConversationDO implements DurableObject {
       const now = nowSec();
       this.meta = {
         chatId: b.chatId, kind: b.kind, title: b.title ?? null,
-        avatarId: null, description: null, createdBy: b.createdBy,
+        avatarId: null, description: null,
+        sendPolicy: "all", invitePolicy: "all", createdBy: b.createdBy,
         createdAt: now, pinnedMsgId: null, lastSeq: 0, contentCount: 0,
       };
       await this.state.storage.put("meta", this.meta);
@@ -599,7 +609,14 @@ export class ConversationDO implements DurableObject {
           sentAt: number; body: unknown; service?: boolean;
         };
         const members = await this.loadMembers();
-        if (!members.has(b.from)) return err("not_member", 403);
+        const sender = members.get(b.from);
+        if (!sender) return err("not_member", 403);
+        // A read-only group holds back content only. Key handouts, receipts of
+        // them, repairs, edits and reactions travel service-flagged and keep
+        // working for everyone: without them the member could not read the chat.
+        if (meta.kind === "group" && !b.service &&
+            policy(meta.sendPolicy) === "admins" && sender.role !== "admin")
+          return err("not_allowed", 403);
 
         // Blocks in a direct chat cut two ways. Writing to someone the sender himself
         // blocked is refused outright; a message to someone who blocked the sender
@@ -785,10 +802,12 @@ export class ConversationDO implements DurableObject {
         if (actor) {
           // only an admin can remove a member
           if (b.remove.length && actor.role !== "admin") return err("not_admin", 403);
-          // an admin can add anyone; anyone else only themselves
+          // an admin adds anyone; a member adds others while invitePolicy
+          // allows it, and themselves in any case
           if (b.add.length && actor.role !== "admin") {
             const onlySelf = b.add.length === 1 && b.add[0] === b.actor;
-            if (!onlySelf) return err("not_admin", 403);
+            if (!onlySelf && policy(meta.invitePolicy) === "admins")
+              return err("not_allowed", 403);
           }
         }
         const now = nowSec();
@@ -831,6 +850,7 @@ export class ConversationDO implements DurableObject {
       case "/settings": {
         const b = (await req.json()) as {
           actor: string; title?: string; avatarId?: string; description?: string;
+          sendPolicy?: ChatPolicy; invitePolicy?: ChatPolicy;
         };
         const members = await this.loadMembers();
         const actor = members.get(b.actor);
@@ -839,6 +859,11 @@ export class ConversationDO implements DurableObject {
         if (b.title !== undefined) meta.title = b.title;
         if (b.avatarId !== undefined) meta.avatarId = b.avatarId;
         if (b.description !== undefined) meta.description = b.description;
+        // rights belong to a group; a direct chat has two equal sides
+        if (meta.kind === "group") {
+          if (b.sendPolicy !== undefined) meta.sendPolicy = policy(b.sendPolicy);
+          if (b.invitePolicy !== undefined) meta.invitePolicy = policy(b.invitePolicy);
+        }
         this.meta = meta;
         await this.state.storage.put("meta", meta);
         await this.broadcastChat("settings");
@@ -866,6 +891,20 @@ export class ConversationDO implements DurableObject {
         this.meta = meta;
         await this.state.storage.put("meta", meta);
         await this.broadcastChat("pinned");
+        return json({ ok: true });
+      }
+
+      case "/profile": {
+        // from UserSessionDO: a member's card changed. Unlike presence this is
+        // public, so an unaccepted request sees it too — the request screen
+        // already shows the sender's name and avatar.
+        const b = (await req.json()) as { userId: string; user: PublicUser };
+        const members = await this.loadMembers();
+        if (!members.has(b.userId)) return json({ ok: true });
+        await this.fanout(
+          { t: "profile", user: b.user },
+          { except: b.userId, skip: await this.blockedPeers(b.userId) }
+        );
         return json({ ok: true });
       }
 

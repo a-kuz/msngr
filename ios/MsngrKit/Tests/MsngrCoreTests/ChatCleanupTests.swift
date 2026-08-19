@@ -191,7 +191,7 @@ final class ChatCleanupTests: XCTestCase {
         // a message from the peer brings the chat back and the snapshot carries its state
         let state = ChatStateDTO(
             chatId: "c1", kind: "direct", title: nil, avatarId: nil, description: nil,
-            createdBy: "peer", createdAt: 1,
+            sendPolicy: nil, invitePolicy: nil, createdBy: "peer", createdAt: 1,
             members: [.init(userId: "me", role: "member", joinedAt: 1, accepted: true),
                       .init(userId: "peer", role: "member", joinedAt: 1, accepted: true)],
             pinnedMsgId: nil, lastSeq: 121, readMarks: ["me": 100], deliveredMarks: [:])
@@ -269,7 +269,7 @@ final class ChatCleanupTests: XCTestCase {
         let db = try AppDatabase.openInMemory()
         let state = ChatStateDTO(
             chatId: "fresh", kind: "direct", title: nil, avatarId: nil, description: nil,
-            createdBy: "peer", createdAt: 1,
+            sendPolicy: nil, invitePolicy: nil, createdBy: "peer", createdAt: 1,
             members: [.init(userId: "me", role: "member", joinedAt: 1, accepted: true)],
             pinnedMsgId: nil, lastSeq: 4, readMarks: [:], deliveredMarks: [:])
         try db.write { dbc in

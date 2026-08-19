@@ -6,6 +6,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     var onReply: (() -> Void)?
     var onReact: ((String) -> Void)?
     var onContextAction: ((MessageContextAction) -> Void)?
+    /// Whether this message is the pinned one, asked at the moment the menu opens.
+    var isPinned: (() -> Bool)?
     var onTapMedia: ((Int, UIView) -> Void)?
     var onTapLink: ((URL) -> Void)?
     var onTapReplyQuote: (() -> Void)?
@@ -830,9 +832,15 @@ extension MessageCell {
         items.append(.init(title: "Выбрать", icon: "checkmark.circle") { [weak self] in
             self?.onContextAction?(.select)
         })
-        items.append(.init(title: "Закрепить", icon: "pin") { [weak self] in
-            self?.onContextAction?(.pin)
-        })
+        if isPinned?() == true {
+            items.append(.init(title: "Открепить", icon: "pin.slash") { [weak self] in
+                self?.onContextAction?(.unpin)
+            })
+        } else {
+            items.append(.init(title: "Закрепить", icon: "pin") { [weak self] in
+                self?.onContextAction?(.pin)
+            })
+        }
         if msg.isOutgoing && msg.kind == .text {
             items.append(.init(title: "Изменить", icon: "pencil") { [weak self] in
                 self?.onContextAction?(.edit)
