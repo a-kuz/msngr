@@ -122,6 +122,45 @@ final class SmokeTests: XCTestCase {
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).tap()
     }
 
+    /// The back button is the only way out of a chat that VoiceOver can take: a swipe
+    /// from the edge is not offered to it. The feed runs under the navigation bar, and
+    /// anything laid over that band takes the whole header out of the accessibility
+    /// tree with it, button included, while the chevron stays drawn.
+    func testF_BackButtonLeavesTheChat() {
+        openChatWithAkuz()
+        let back = app.buttons["chat.back"]
+        XCTAssertTrue(back.waitForExistence(timeout: 5),
+                      "the back button is not in the accessibility tree")
+        XCTAssertTrue(back.isHittable, "the back button takes no touch where it is drawn")
+        back.tap()
+        XCTAssertTrue(app.staticTexts["Чаты"].waitForExistence(timeout: 5),
+                      "the tap on the back button did not leave the chat")
+    }
+
+    /// The header itself has to stay readable: the title and the subtitle are what
+    /// says whose chat this is and whether the peer is there.
+    func testG_HeaderTitleIsInTheTree() {
+        openChatWithAkuz()
+        XCTAssertTrue(app.buttons["chat.header"].waitForExistence(timeout: 5),
+                      "the header is not in the accessibility tree")
+        XCTAssertTrue(app.buttons["chat.search.open"].exists,
+                      "the search button is not in the accessibility tree")
+    }
+
+    /// The debug network console. A shake cannot be sent into the simulator from
+    /// outside, so the launch argument is both the live check and the way in for
+    /// anyone driving the app by scripts.
+    func testH_PulseConsoleOpensOnLaunchArg() {
+        let console = XCUIApplication()
+        if let server = ProcessInfo.processInfo.environment["MSNGR_SERVER"] {
+            console.launchEnvironment["MSNGR_SERVER"] = server
+        }
+        console.launchArguments.append("-msngr.console")
+        console.launch()
+        XCTAssertTrue(console.navigationBars["Console"].waitForExistence(timeout: 10),
+                      "the Pulse console did not open on the launch argument")
+    }
+
     // A status bar tap goes to the beginning of the conversation. The touch is
     // SpringBoard's, and no way of aiming one at the status bar from XCUITest reaches the
     // app's delegate on the simulator, so the check lives in MsngrTests/StatusBarTapTests.

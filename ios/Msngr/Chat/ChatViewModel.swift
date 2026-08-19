@@ -46,7 +46,7 @@ final class ChatViewModel: ObservableObject {
     @Published var myRole: String?
     /// The feed is inverted: [0] is the newest item.
     @Published var feed: [ChatFeedItem] = []
-    @Published var typingUsers: [String] = []
+    @Published private(set) var typingUsers: [String] = []
     @Published var replyingTo: Message?
     @Published var editing: Message?
     @Published var pinnedMessage: Message?
@@ -77,25 +77,34 @@ final class ChatViewModel: ObservableObject {
     private var unreadableSeqs: [Int] = []
     /// The window covers the oldest message stored for this chat.
     private var atHistoryStart = false
+    /// The window reaches the newest message of the chat. False after a jump into the
+    /// history: the top of the feed is then a message with the rest of the conversation
+    /// above it, so nothing there counts as read and the screen keeps offering the way
+    /// back down.
+    @Published private(set) var atNewest = true
 
     private let windowFloor = FeedWindow()
 
-    /// One fetch of the chat observation.
+    /// One fetch of the feed observation.
     private struct Snapshot {
-        let chat: Chat?
         let msgs: [Message]
         let users: [User]
         let myRole: String?
         let unreadableSeqs: [Int]
         let atHistoryStart: Bool
+        let atNewest: Bool
         /// TOFU: the peer's identity key changed and was not accepted yet.
         let keyChangePending: Bool
     }
 
     private var cancellable: AnyCancellable?
+    private var chatCancellable: AnyCancellable?
     private var typingTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
-    private var typingClearTask: Task<Void, Never>?
+    private var typing = TypingState()
+    private var presenceTask: Task<Void, Never>?
+    private var presenceAsked = false
+    private var typingExpiryTask: Task<Void, Never>?
     private let app = AppState.shared
     var ownUserId: String { app.session?.userId ?? "" }
 
@@ -105,8 +114,8 @@ final class ChatViewModel: ObservableObject {
 
     /// Resubscribes after stop(): the subscription is recreated when it is missing.
     func start() {
-        guard cancellable == nil, app.db != nil else { return }
-        observeChat()
+        guard chatCancellable == nil, app.db != nil else { return }
+        observeChatRow()
 
         // background or notification shade: the unread banner goes away, whatever
         // arrives meanwhile accumulates and comes back as a new banner
@@ -120,6 +129,9 @@ final class ChatViewModel: ObservableObject {
                     // what arrived in the background is already on screen, so send
                     // the read receipt now instead of waiting for the next db change
                     self.markVisibleRead()
+                    // presence transitions that happened while the app was away
+                    // never reached this device
+                    self.askPresence(force: true)
                 }
                 self.rebuildFeed()
             }
@@ -140,20 +152,78 @@ final class ChatViewModel: ObservableObject {
             for await ev in engine.typingStream.subscribe() {
                 guard let self, ev.chatId == self.chatId else { continue }
                 if ev.kind != nil {
-                    if !self.typingUsers.contains(ev.userId) { self.typingUsers.append(ev.userId) }
-                    self.typingClearTask?.cancel()
-                    self.typingClearTask = Task {
-                        try? await Task.sleep(nanoseconds: 5_000_000_000)
-                        self.typingUsers.removeAll()
-                    }
-                } else if self.typingUsers.contains(ev.userId) {
-                    self.typingUsers.removeAll { $0 == ev.userId }
+                    self.typing.began(ev.userId, at: Date())
+                } else if self.typing.users.contains(ev.userId) {
+                    self.typing.ended(ev.userId)
+                } else {
+                    // a stop for someone who was not typing: every incoming message
+                    // brings one
+                    continue
                 }
+                self.typingUsers = self.typing.users
+                self.scheduleTypingExpiry()
             }
         }
     }
 
-    /// Installs the chat observation for the current window floor. Growing the
+    /// One timer, set to whoever falls out first. It is rearmed after every frame,
+    /// so a cancelled one must not take anybody off the header on its way out: a
+    /// peer typing without pause sends a frame every three seconds, and each one
+    /// would then blink the subtitle back to the presence line.
+    private func scheduleTypingExpiry() {
+        typingExpiryTask?.cancel()
+        guard let deadline = typing.nextExpiry() else { return }
+        typingExpiryTask = Task { [weak self] in
+            let wait = deadline.timeIntervalSinceNow
+            if wait > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+            }
+            guard !Task.isCancelled, let self else { return }
+            self.typing.expire(at: Date())
+            self.typingUsers = self.typing.users
+            self.scheduleTypingExpiry()
+        }
+    }
+
+    /// The chat row on its own. Everything the screen draws around the feed — the
+    /// header, the unread count, the pin, the draft — comes from here, and the feed
+    /// fetch does not read the row at all: a keystroke writing the draft, an arriving
+    /// envelope moving `lastSeq` and a peer's read receipt all land on this one row,
+    /// and inside the window fetch each of them re-read, rebuilt and re-diffed the
+    /// whole feed.
+    private func observeChatRow() {
+        guard let db = app.db else { return }
+        let chatId = self.chatId
+        chatCancellable = ValueObservation
+            .tracking { dbc in try Chat.fetchOne(dbc, key: chatId) }
+            .publisher(in: db, scheduling: .async(onQueue: .main))
+            .sink(receiveCompletion: { _ in }, receiveValue: { [weak self] chat in
+                self?.applyChat(chat)
+            })
+    }
+
+    /// The chat row arrived. The feed observation is installed from here, on the first
+    /// one: the unread banner is built out of the row, and a feed drawn before the row
+    /// is known would have to be rebuilt with the banner right after.
+    private func applyChat(_ chat: Chat?) {
+        let wasHidden = contentHidden
+        self.chat = chat
+        if let chat, !enteredChat {
+            enteredChat = true
+            unreadMarker.enterChat(unreadCount: chat.unreadCount, myReadUpTo: chat.myReadUpTo)
+            // everything already on the server at that moment is in the initial count
+            markerCountedUpToSeq = chat.lastSeq
+        }
+        if cancellable == nil {
+            observeChat()
+        } else {
+            if contentHidden != wasHidden { rebuildFeed() }
+            updatePinnedMessage()
+        }
+        markVisibleRead()
+    }
+
+    /// Installs the feed observation for the current window floor. Growing the
     /// window means a new floor and a fresh observation: the fetch is what
     /// carries the floor into SQL.
     private func observeChat() {
@@ -179,7 +249,6 @@ final class ChatViewModel: ObservableObject {
     /// the two flags the screen draws around it.
     private static func fetchSnapshot(_ dbc: GRDB.Database, chatId: String, ownId: String,
                                       floorBox: FeedWindow) throws -> Snapshot {
-        let chat = try Chat.fetchOne(dbc, key: chatId)
         let plan = floorBox.plan()
         var floor = plan.floor
         if plan.recompute {
@@ -211,22 +280,33 @@ final class ChatViewModel: ObservableObject {
         let myRole = try String.fetchOne(
             dbc, sql: "SELECT role FROM member WHERE chatId = ? AND userId = ?",
             arguments: [chatId, ownId])
+        // a window filled to its capacity may have been cut short of the end of the
+        // conversation; a shorter one took everything above the floor there was
+        var atNewest = plan.recompute || msgs.count < plan.capacity
+        if !atNewest {
+            atNewest = try !HistoryWindow.hasNewer(dbc, chatId: chatId, topSeq: msgs.first?.seq)
+        }
         return Snapshot(
-            chat: chat, msgs: msgs, users: users, myRole: myRole,
+            msgs: msgs, users: users, myRole: myRole,
             unreadableSeqs: try HistoryWindow.exhaustedGapSeqs(dbc, chatId: chatId, floor: floor),
             atHistoryStart: try !HistoryWindow.hasOlder(dbc, chatId: chatId, floor: floor),
+            atNewest: atNewest,
             keyChangePending: keyChangePending)
     }
 
     private func apply(_ snapshot: Snapshot, ownId: String) {
-        chat = snapshot.chat
         members = snapshot.users
         myRole = snapshot.myRole
         peer = snapshot.users.first { $0.id != ownId }
-        updateUnreadMarker(chat: snapshot.chat, msgs: snapshot.msgs)
+        askPresence()
+        countIncoming(snapshot.msgs)
         lastMsgs = snapshot.msgs
         unreadableSeqs = snapshot.unreadableSeqs
         atHistoryStart = snapshot.atHistoryStart
+        atNewest = snapshot.atNewest
+        // a jump that landed near the end of the chat holds the newest message anyway,
+        // so the window is free to follow it again
+        if snapshot.atNewest { windowFloor.releaseAnchor() }
         // a deferred decrypt may have landed a message below the window
         if !snapshot.atHistoryStart { reachedStart = false }
         feed = PerfTrace.shared.measure("feed.build", info: ["msgs": Double(snapshot.msgs.count)]) {
@@ -235,22 +315,51 @@ final class ChatViewModel: ObservableObject {
                            unreadableSeqs: snapshot.unreadableSeqs,
                            atHistoryStart: snapshot.atHistoryStart)
         }
-        if let pinId = snapshot.chat?.pinnedMsgId, !contentHidden {
-            pinnedMessage = snapshot.msgs.first { $0.msgId == pinId }
-        } else {
-            pinnedMessage = nil
-        }
+        updatePinnedMessage()
         keyChangePending = snapshot.keyChangePending
         markVisibleRead()
     }
 
+    /// The pinned bar is drawn from the window, so it follows both the chat row and
+    /// the messages in it.
+    private func updatePinnedMessage() {
+        guard let pinId = chat?.pinnedMsgId, !contentHidden else {
+            pinnedMessage = nil
+            return
+        }
+        pinnedMessage = lastMsgs.first { $0.msgId == pinId }
+    }
+
     func stop() {
         cancellable = nil
+        chatCancellable = nil
         obscuredCancellable = nil
         typingTask?.cancel()
         typingTask = nil
+        typingExpiryTask?.cancel()
+        typingExpiryTask = nil
+        typing = TypingState()
+        typingUsers = []
         connectionTask?.cancel()
         connectionTask = nil
+        presenceTask?.cancel()
+        presenceTask = nil
+        presenceAsked = false
+    }
+
+    /// Where the peer is right now. Presence arrives as a transition, so a device
+    /// that was not connected when the peer came online holds a row that says
+    /// «был(а)» while the peer is reading. The chat asks once when it opens and
+    /// again when the app comes back to the screen.
+    private func askPresence(force: Bool = false) {
+        guard chat?.kind == .direct, let peerId = peer?.id else { return }
+        if presenceAsked && !force { return }
+        presenceAsked = true
+        presenceTask?.cancel()
+        presenceTask = Task { [weak self] in
+            guard let engine = self?.app.engine else { return }
+            await engine.refreshPresence(of: [peerId])
+        }
     }
 
     // MARK: - Unread banner
@@ -260,18 +369,11 @@ final class ChatViewModel: ObservableObject {
         return (anchorSeq: anchor, count: unreadMarker.count)
     }
 
-    /// The first snapshot of the chat sets the anchor and the initial count; after
+    /// The chat row sets the anchor and the initial count when the screen opens; after
     /// that every incoming message with a new seq bumps the count, or accumulates
     /// while the screen is not visible.
-    private func updateUnreadMarker(chat: Chat?, msgs: [Message]) {
-        guard let chat else { return }
-        if !enteredChat {
-            enteredChat = true
-            unreadMarker.enterChat(unreadCount: chat.unreadCount, myReadUpTo: chat.myReadUpTo)
-            // everything already on the server at that moment is in the initial count
-            markerCountedUpToSeq = chat.lastSeq
-            return
-        }
+    private func countIncoming(_ msgs: [Message]) {
+        guard enteredChat else { return }
         let newIncoming = msgs
             .compactMap { m -> Int? in m.isOutgoing ? nil : m.seq }
             .filter { $0 > markerCountedUpToSeq }
@@ -430,12 +532,29 @@ final class ChatViewModel: ObservableObject {
             return "печатает…"
         }
         if chat?.kind == .group {
-            return "\(members.count) участников"
+            return Self.membersText(members.count)
         }
         guard let peer else { return "" }
         if peer.online { return "в сети" }
         if peer.lastSeen > 0 { return Self.lastSeenText(peer.lastSeen) }
         return ""
+    }
+
+    /// "N participants", in Russian plural forms.
+    static func membersText(_ count: Int) -> String {
+        let mod100 = count % 100
+        let mod10 = count % 10
+        let noun: String
+        if mod100 / 10 == 1 {
+            noun = "участников"
+        } else if mod10 == 1 {
+            noun = "участник"
+        } else if (2...4).contains(mod10) {
+            noun = "участника"
+        } else {
+            noun = "участников"
+        }
+        return "\(count) \(noun)"
     }
 
     /// The "last seen" line built from a timestamp. A fresh timestamp plus a server
@@ -484,6 +603,7 @@ final class ChatViewModel: ObservableObject {
         let target = chatId ?? self.chatId
         if Self.movesFeedToEnd(kind: content.kind, target: target, chatId: self.chatId) {
             returnToBottom()
+            sendTick &+= 1
         }
         Task { [weak self] in
             do {
@@ -492,6 +612,17 @@ final class ChatViewModel: ObservableObject {
                 MsngrLog.outbox.error("failed to enqueue \(content.kind): \(error)")
                 self?.sendFailure = "Сообщение не отправлено: не удалось записать его на устройство"
             }
+        }
+    }
+
+    /// A message that ran out of tries goes back into the queue exactly as it
+    /// was written, attachments included. One that has no queue entry left
+    /// cannot be repeated, and the failure it shows says so by staying.
+    func resend(_ msg: Message) {
+        Task { [weak self] in
+            guard let self else { return }
+            let queued = await self.app.engine.retrySend(messageId: msg.id)
+            if !queued { self.sendFailure = "Это сообщение больше нельзя отправить" }
         }
     }
 
@@ -515,7 +646,7 @@ final class ChatViewModel: ObservableObject {
                          text: Self.previewText($0), kind: $0.kind.rawValue)
         }
         replyingTo = nil
-        saveDraft(nil)
+        saveDraft(nil, immediately: true)
         enqueue(c)
         Haptics.light()
     }
@@ -524,18 +655,6 @@ final class ChatViewModel: ObservableObject {
     /// ленту к концу. Правка, реакция и пересылка в другой чат — нет.
     nonisolated static func movesFeedToEnd(kind: String, target: String, chatId: String) -> Bool {
         target == chatId && !SyncEngine.serviceKinds.contains(kind)
-    }
-
-    /// Своя отправка возвращает ленту к концу чата.
-    ///
-    /// Окно ленты, замершее на прочитанной истории, держит ровно `capacity`
-    /// сообщений вверх от своей границы: в чате, где выше границы уже набралось
-    /// столько сообщений, новое исходящее в окно не попадает и на экране не
-    /// появляется вовсе. Поэтому граница окна снова начинает скользить за
-    /// новейшими, а лента получает счётчик отправок, по которому уезжает вниз.
-    private func returnToBottom() {
-        isViewingBottom = true
-        sendTick &+= 1
     }
 
     static func previewText(_ m: Message) -> String {
@@ -632,7 +751,7 @@ final class ChatViewModel: ObservableObject {
     func clearHistory() {
         Task { [chatId] in
             await app.engine.clearHistory(chatId: chatId)
-            windowFloor.set(nil)
+            windowFloor.reset()
             reachedStart = false
             unreadMarker.dismiss()
             observeChat()
@@ -684,7 +803,25 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    func saveDraft(_ text: String?) {
+    /// The draft follows the typing at a distance. It lives on the chat row, and the
+    /// chat list re-reads its rows on every write to that table, so a write per
+    /// keystroke would put the whole list through a fetch five times a word.
+    /// Leaving the screen and sending write it out at once: what the field holds then
+    /// is the answer, and nothing may be left waiting for a timer.
+    func saveDraft(_ text: String?, immediately: Bool = false) {
+        draftTask?.cancel()
+        guard !immediately else {
+            writeDraft(text)
+            return
+        }
+        draftTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled else { return }
+            self?.writeDraft(text)
+        }
+    }
+
+    private func writeDraft(_ text: String?) {
         Task {
             try? await app.db.write { [chatId] dbc in
                 try dbc.execute(sql: "UPDATE chat SET draft = ? WHERE id = ?", arguments: [text, chatId])
@@ -692,17 +829,37 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    private var draftTask: Task<Void, Never>?
+
     /// True while the newest messages are actually on screen, that is, the feed is
     /// at the bottom. Then the window slides along with new messages; once the
-    /// reader scrolls up, its floor stays put.
+    /// reader scrolls up, its floor stays put. Coming back down also gives the pages
+    /// paged in on the way up back, and the feed is refetched on the page-sized window
+    /// instead of waiting for the next write to do it.
     var isViewingBottom = true {
-        didSet { windowFloor.setAtBottom(isViewingBottom) }
+        didSet {
+            if windowFloor.setAtBottom(isViewingBottom) { observeChat() }
+        }
+    }
+
+    /// Back to the newest messages: the window leaves the history it was standing in
+    /// and comes back to a page at the end of the chat. Both the scroll-down button
+    /// and a send of our own go through here — a window standing in the history holds
+    /// its capacity upwards from its floor, so in a chat that has since piled up that
+    /// many messages the new outgoing one does not fall into the window at all.
+    func returnToBottom() {
+        windowFloor.reset()
+        reachedStart = false
+        isViewingBottom = true
+        observeChat()
     }
 
     func markVisibleRead() {
         // don't mark read while the scene is inactive (background, notification
         // shade): the screen is not visible
-        guard !app.obscured, isViewingBottom, !contentHidden,
+        // a window standing in the history has the rest of the conversation above its
+        // top, and none of that was seen
+        guard !app.obscured, isViewingBottom, atNewest, !contentHidden,
               let chat, chat.lastSeq > chat.myReadUpTo else { return }
         Task { await app.engine.markRead(chatId: chatId, upToSeq: chat.lastSeq) }
     }
@@ -797,30 +954,24 @@ final class ChatViewModel: ObservableObject {
         return isLoaded(msgId: msgId)
     }
 
-    /// Puts the window floor on the message and stretches the capacity to the end of
-    /// the conversation, so the window holds the message itself and everything newer.
+    /// Puts the window on the message: the floor lands a page below it and the capacity
+    /// holds it with history on either side. The window stops at that, however many
+    /// thousands of messages the chat has piled up since — the way back down is the
+    /// scroll-down button, which returns the window to the end of the chat.
     /// Returns false when there is nothing to aim at: the message is not on the
     /// device, or it has no seq.
     private func anchorWindow(to msgId: String) async -> Bool {
         guard let db = app.db else { return false }
-        let current = windowFloor.get()
-        let anchor = try? await db.read { [chatId] dbc -> (floor: Int, count: Int)? in
+        let anchor = try? await db.read { [chatId] dbc -> Int? in
             guard let seq = try Int.fetchOne(dbc, sql: """
                 SELECT seq FROM message
                 WHERE chatId = ? AND (msgId = ? OR id = ?) AND seq IS NOT NULL
                 """, arguments: [chatId, msgId, msgId]) else { return nil }
-            // a message newer than the floor is already inside; the window is only
-            // short on capacity
-            let floor = min(seq, current ?? seq)
-            // our own unsent messages have no seq yet and sit above everything numbered
-            let count = try Int.fetchOne(dbc, sql: """
-                SELECT COUNT(*) FROM message
-                WHERE chatId = ? AND (seq >= ? OR seq IS NULL)
-                """, arguments: [chatId, floor]) ?? 0
-            return (floor, count)
+            return try HistoryWindow.floorBelow(dbc, chatId: chatId, floor: seq,
+                                                limit: FeedWindow.anchorBelow) ?? seq
         }
-        guard let anchor = anchor ?? nil else { return false }
-        windowFloor.anchor(floor: anchor.floor, capacity: anchor.count)
+        guard let floor = anchor ?? nil else { return false }
+        windowFloor.anchor(floor: floor)
         observeChat()
         return true
     }

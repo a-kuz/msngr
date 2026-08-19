@@ -40,6 +40,9 @@ final class MessageContextOverlay: UIView {
     private var items: [Item]
 
     private let reactionBar = UIView()
+    /// A message with nothing to react to — one that never went out — is lifted
+    /// with its actions alone.
+    private let showsReactions: Bool
     private var emojiButtons: [UIButton] = []
     private let menuCard = UIView()
     private let menuStack = UIStackView()
@@ -62,6 +65,7 @@ final class MessageContextOverlay: UIView {
 
     static func present(over bubble: UIView, in window: UIWindow, isOutgoing: Bool,
                         myReaction: String?, items: [Item], selectableText: SelectableText? = nil,
+                        showsReactions: Bool = true,
                         onReact: @escaping (String) -> Void) {
         // rendered into an image, because snapshotView returns nil or nothing for bubbles
         // taller than the screen; only the top is rendered, more than a screen cannot be shown
@@ -81,6 +85,7 @@ final class MessageContextOverlay: UIView {
         let overlay = MessageContextOverlay(snapshot: snap, originFrame: frame, isOutgoing: isOutgoing,
                                             myReaction: myReaction, items: items,
                                             selectableText: selectableText,
+                                            showsReactions: showsReactions,
                                             pressScale: min(max(lift, 0.8), 1), onReact: onReact)
         overlay.frame = window.bounds
         window.addSubview(overlay)
@@ -89,12 +94,14 @@ final class MessageContextOverlay: UIView {
 
     private init(snapshot: UIView, originFrame: CGRect, isOutgoing: Bool,
                  myReaction: String?, items: [Item], selectableText: SelectableText?,
-                 pressScale: CGFloat, onReact: @escaping (String) -> Void) {
+                 showsReactions: Bool, pressScale: CGFloat,
+                 onReact: @escaping (String) -> Void) {
         self.snapshot = snapshot
         self.originFrame = originFrame
         self.isOutgoing = isOutgoing
         self.myReaction = myReaction
         self.items = items
+        self.showsReactions = showsReactions
         self.onReact = onReact
         super.init(frame: .zero)
 
@@ -120,7 +127,7 @@ final class MessageContextOverlay: UIView {
         addSubview(snapshot)
         if let selectableText { buildSelectableText(selectableText) }
 
-        buildReactionBar()
+        if showsReactions { buildReactionBar() }
         buildMenuCard(items: items)
     }
 
@@ -150,7 +157,7 @@ final class MessageContextOverlay: UIView {
     private func targetBubbleFrame() -> CGRect {
         let safe = safeAreaInsets
         let menuH = menuHeight(for: items)
-        let topNeeded = Self.barHeight + Self.gap
+        let topNeeded = showsReactions ? Self.barHeight + Self.gap : 0
         let bottomNeeded = Self.gap + menuH
         let minY = safe.top + 8 + topNeeded
         let availH = bounds.height - safe.bottom - 8 - bottomNeeded - minY
@@ -387,7 +394,7 @@ final class MessageContextOverlay: UIView {
             iv.clipsToBounds = true
             iv.layer.cornerRadius = Theme.bubbleCorner
         }
-        layoutReactionBar(bubble: target)
+        if showsReactions { layoutReactionBar(bubble: target) }
         layoutMenu(bubble: target)
 
         let barAnchor = CGPoint(x: isOutgoing ? 1 : 0, y: 1)
