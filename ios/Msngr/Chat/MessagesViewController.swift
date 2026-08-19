@@ -406,7 +406,10 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     /// Refreshes a position that already stands in the feed and whose content changed.
     /// A reload recreates the cell and instantly cuts off a running appearance animation
     /// (the pending→sent ack lands in the first milliseconds of the flight), so a visible
-    /// cell of the same height is reconfigured in place instead.
+    /// cell of the same height is reconfigured in place instead. A visible cell whose
+    /// height changed (a reaction arrived or left) resizes in place under a spring: the
+    /// cell survives, its subviews slide to the new plan, and the neighbours follow
+    /// through the batch update instead of jumping in a single frame.
     private func refreshItem(at index: Int, item: ChatFeedItem) {
         let indexPath = IndexPath(item: index, section: 0)
         switch item {
@@ -420,6 +423,16 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
                     configureMessageCell(cell, msg: msg, plan: plan)
                     return
                 }
+                // the batch update re-reads sizeForItemAt, which serves the new plan from
+                // the cache; contentOffset is untouched, so in the inverted feed the
+                // bubble's bottom edge stays put and the content above slides
+                UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: 0.86,
+                               initialSpringVelocity: 0,
+                               options: [.allowUserInteraction, .beginFromCurrentState]) {
+                    self.configureMessageCell(cell, msg: msg, plan: plan)
+                    self.collectionView.performBatchUpdates(nil)
+                }
+                return
             }
         case .unreadMarker(_, let count):
             if let cell = collectionView.cellForItem(at: indexPath) as? UnreadMarkerCell {
