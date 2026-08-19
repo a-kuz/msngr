@@ -366,7 +366,13 @@ public final class E2EEManager: @unchecked Sendable {
             oneTimePreKey: bundle.oneTimePrekey.flatMap { Data(base64urlEncoded: $0.key) }
         )
         let our = try store.identity()
-        let x3dh = try X3DH.initiate(our: our, their: pkBundle)
+        // A bundle that does not verify (an unsigned pre-binding account, a
+        // malformed key) makes this device unusable, not the send broken: the
+        // device is skipped, and a recipient with no usable device at all is
+        // reported as noUsableKeys by the caller.
+        let x3dh: X3DH.InitiatorResult
+        do { x3dh = try X3DH.initiate(our: our, their: pkBundle) }
+        catch { return nil }
         var session = try DoubleRatchetSession.initAlice(
             sharedSecret: x3dh.sharedSecret, theirRatchetPub: spk, ad: x3dh.associatedData)
         let msg = try session.encrypt(plaintext)
