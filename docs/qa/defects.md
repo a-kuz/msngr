@@ -107,6 +107,13 @@ of it, so everything after types before the first. Points at the composer's
 text binding rewriting the field's text and resetting the selection while the
 first keystroke is still being composed.
 
+### The in-app banner does not react to a tap
+Reported 2026-08-19 from the device. Tapping the in-app notification banner does
+nothing; it has to open the chat it announces. The tap-opens-chat path exists and
+was checked on the simulator (push-client/inapp-banner-tap-open-chat), so either
+the hit area or a gesture conflict kills it on the device — same family as the
+row hit areas below.
+
 ### List rows are tappable only on their letters and icons
 Reported 2026-08-19 from the device. In many lists the tap works only exactly on
 the text or the icon, not anywhere in the row — the hit area does not cover the
