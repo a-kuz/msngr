@@ -292,9 +292,13 @@ public final class APIClient: @unchecked Sendable {
         public let identitySignKey: String
     }
     public struct DevicesResponse: Decodable { public let devices: [DeviceDTO] }
+    /// How many times /api/devices was actually hit; the device cache tests
+    /// assert on it.
+    public private(set) var devicesRequestCount = 0
     /// Devices of several users in one request; consumes no prekeys.
     public func devices(userIds: [String]) async throws -> [DeviceDTO] {
         guard !userIds.isEmpty else { return [] }
+        devicesRequestCount += 1
         return try await get("api/devices?ids=\(userIds.joined(separator: ","))",
                              as: DevicesResponse.self).devices
     }

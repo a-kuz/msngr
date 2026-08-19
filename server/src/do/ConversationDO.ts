@@ -908,6 +908,20 @@ export class ConversationDO implements DurableObject {
         return json({ ok: true });
       }
 
+      case "/devices": {
+        // from UserSessionDO: a member's device set changed. Anyone who may
+        // address an envelope to them holds a device cache to drop, so the
+        // frame travels like the profile — an unaccepted request included.
+        const b = (await req.json()) as { userId: string };
+        const members = await this.loadMembers();
+        if (!members.has(b.userId)) return json({ ok: true });
+        await this.fanout(
+          { t: "devices", userId: b.userId },
+          { except: b.userId, skip: await this.blockedPeers(b.userId) }
+        );
+        return json({ ok: true });
+      }
+
       case "/presence": {
         // from UserSessionDO: a user's online status changed, so tell the members
         const b = (await req.json()) as { userId: string; online: boolean; lastSeen: number };

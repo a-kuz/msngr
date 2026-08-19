@@ -196,6 +196,7 @@ app.post("/api/provision/:id/claim", async (c) => {
       "UPDATE provision_sessions SET claimed_at = ?, envelope = NULL WHERE id = ? AND claimed_at IS NULL"
     ).bind(now, s.row.id),
   ]);
+  await broadcastDevices(c.env, userId);
   return json({ ok: true, userId, deviceId, token });
 });
 
@@ -226,10 +227,11 @@ app.get("/api/me", async (c) => {
 
 // Revoking a device also closes its sockets and forgets its APNs token.
 //
-// Its keys go with it. A sender reads the recipient's device list fresh on every
-// message, so dropping the identity row is what actually stops the traffic: the
-// peer's next send no longer builds a box for this device, and its prekeys stop
-// being handed out for sessions nobody will ever open.
+// Its keys go with it. Senders hold the device list in a cache invalidated by
+// the `devices` frame, so dropping the identity row and broadcasting the change
+// is what actually stops the traffic: the peer's next send no longer builds a
+// box for this device, and its prekeys stop being handed out for sessions
+// nobody will ever open.
 async function revokeDevice(env: Env, userId: string, deviceId: string) {
   await env.DB.batch([
     env.DB.prepare(
@@ -242,6 +244,17 @@ async function revokeDevice(env: Env, userId: string, deviceId: string) {
   await userStub(env, userId).fetch("https://do/revoke-device", {
     method: "POST",
     body: JSON.stringify({ deviceId }),
+  });
+  await broadcastDevices(env, userId);
+}
+
+/// Tells everyone this user shares a chat with, and their own other devices,
+/// that the device set changed. The frame is a hint to refetch: the list with
+/// its identity keys is served by GET /api/devices.
+async function broadcastDevices(env: Env, userId: string) {
+  await userStub(env, userId).fetch("https://do/devices-changed", {
+    method: "POST",
+    body: JSON.stringify({ userId }),
   });
 }
 
