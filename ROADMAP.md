@@ -173,11 +173,12 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ recording by holding, the waveform, sending (design-review 06, offline-run 3)
   - ✅ playback with progress along the wave (offline-run 3)
   - ✅ a compact 220×42 bubble (BubbleLayout units, screenshots)
-  - 🟡 the 0.3 s threshold and cancelling an accidental touch (not verified live)
-  - 🟡 slide-to-cancel and lock (not verified live)
-  - 🟡 seeking by tapping the wave (not verified live)
-  - ⬜ speed ×1/×1.5/×2 (the player code is there, the button is not)
-  - ⬜ playback continuing while moving between chats
+  - ✅ the 0.3 s threshold and cancelling an accidental touch (voice-run)
+  - ✅ slide-to-cancel and lock (voice-run)
+  - ✅ seeking by tapping the wave (voice-run)
+  - ✅ speed ×1/×1.5/×2, kept between messages (voice-run)
+  - ✅ playback continuing while moving between chats (voice-run)
+  - ✅ a take interrupted by the screen or the app going away is dropped (voice-run)
 - Files
   - 🟡 sending up to 100 MB with the name (not verified live)
   - ⬜ previewing a file in the app
