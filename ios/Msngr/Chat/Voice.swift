@@ -1,5 +1,6 @@
 import UIKit
 import AVFoundation
+import Combine
 import MsngrCore
 
 /// What a tap on the microphone does. Kept apart from the recording itself so that
@@ -28,6 +29,101 @@ enum MicGate {
         case .denied: return .denied
         default: return .undetermined
         }
+    }
+}
+
+/// What the finger on the microphone does with the take. Kept apart from the view
+/// because the rules only hold together: access is asked for asynchronously, so a take
+/// can become allowed after the finger has already left, and a take dropped by the
+/// slide must not be started again by the same finger still moving over the button.
+struct RecordingGesture {
+    enum Phase: Equatable { case idle, waiting, recording, locked, cancelled }
+    enum Action: Equatable {
+        case none
+        case ask      // ask for the microphone, then report the answer back
+        case start    // the finger is still down: the recorder may run
+        case lock
+        case cancel   // drop the take along with its file
+        case finish   // stop, and send it if it is long enough
+    }
+
+    /// Sliding this far left drops the take, this far up locks it (in points).
+    static let cancelDistance: CGFloat = 110
+    static let lockDistance: CGFloat = 70
+
+    private(set) var phase: Phase = .idle
+
+    var isLocked: Bool { phase == .locked }
+
+    mutating func touchDown() -> Action {
+        guard phase == .idle else { return .none }
+        phase = .waiting
+        return .ask
+    }
+
+    /// The answer to the microphone request. A take nobody is holding any more never
+    /// starts: an accidental touch leaves no file and no message behind it.
+    mutating func permitted(_ granted: Bool) -> Action {
+        guard phase == .waiting else { return .none }
+        guard granted else {
+            phase = .idle
+            return .none
+        }
+        phase = .recording
+        return .start
+    }
+
+    mutating func moved(_ translation: CGSize) -> Action {
+        switch phase {
+        case .waiting:
+            // the finger is already leaving: the take being asked for is dropped
+            if translation.width < -Self.cancelDistance { phase = .cancelled }
+            return .none
+        case .recording:
+            if translation.width < -Self.cancelDistance {
+                phase = .cancelled
+                return .cancel
+            }
+            if translation.height < -Self.lockDistance {
+                phase = .locked
+                return .lock
+            }
+            return .none
+        case .idle, .locked, .cancelled:
+            return .none
+        }
+    }
+
+    mutating func touchUp() -> Action {
+        switch phase {
+        case .recording:
+            phase = .idle
+            return .finish
+        case .waiting, .cancelled:
+            phase = .idle
+            return .none
+        case .idle, .locked:
+            return .none
+        }
+    }
+
+    /// The buttons a locked take gets instead of the finger.
+    mutating func send() -> Action {
+        phase = .idle
+        return .finish
+    }
+
+    mutating func discard() -> Action {
+        phase = .idle
+        return .cancel
+    }
+
+    /// The screen goes away, the app leaves the foreground, a call comes in: the take is
+    /// dropped whole instead of being sent as a stump of whatever was said before.
+    mutating func interrupted() -> Action {
+        let wasLive = phase == .recording || phase == .locked
+        phase = .idle
+        return wasLive ? .cancel : .none
     }
 }
 
@@ -81,17 +177,24 @@ final class VoiceRecorder: NSObject, ObservableObject {
         }
     }
 
-    /// Returns (file, duration, a waveform of 100 buckets in 0..31).
-    /// Only an accidental touch of the microphone (under 0.3s) is dropped and gives nil;
-    /// a short voice message like a quick "ok" (0.3 to 1s) is a message like any other.
+    /// A touch of the microphone shorter than this is an accident. A quick "ok" of half a
+    /// second is a message like any other, so the cut sits below it.
+    static let minimumTake: TimeInterval = 0.3
+
+    static func isAccidental(_ duration: TimeInterval) -> Bool { duration < minimumTake }
+
+    /// Returns (file, duration, a waveform of 100 buckets in 0..31); an accidental touch
+    /// gives nothing back and takes its file with it.
     func stop() -> (url: URL, duration: TimeInterval, waveform: [Int])? {
         timer?.invalidate()
         guard let r = recorder, let url = fileURL else { return nil }
         let dur = r.currentTime
         r.stop()
         recorder = nil
+        fileURL = nil
         isRecording = false
-        guard dur >= 0.3 else {
+        releaseSession()
+        guard !Self.isAccidental(dur) else {
             try? FileManager.default.removeItem(at: url)
             return nil
         }
@@ -104,6 +207,14 @@ final class VoiceRecorder: NSObject, ObservableObject {
         recorder = nil
         isRecording = false
         if let url = fileURL { try? FileManager.default.removeItem(at: url) }
+        fileURL = nil
+        releaseSession()
+    }
+
+    /// The recording session is given back at once: held on, it keeps the red bar up and
+    /// leaves other apps ducked long after the take is over.
+    private func releaseSession() {
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
     /// The file's real amplitudes reduced to 100 buckets in 0..31.
@@ -132,59 +243,93 @@ final class VoiceRecorder: NSObject, ObservableObject {
     }
 }
 
+/// What the bubbles draw: which message the player is on, whether it is running right
+/// now, how far it has got and at what speed. One value rather than four so that a
+/// subscriber sees a whole state instead of three stale fields and one fresh one.
+struct VoicePlayback: Equatable {
+    var msgId: String?
+    var isPlaying = false
+    var progress: Double = 0
+    var rate: Float = 1.0
+}
+
 /// Global voice player: one per app, keeps playing across chats, speeds x1/x1.5/x2.
 final class VoicePlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
     static let shared = VoicePlayer()
-    @Published var playingMsgId: String?
-    @Published var progress: Double = 0
-    @Published var rate: Float = 1.0
+    @Published private(set) var state = VoicePlayback()
 
     private var player: AVAudioPlayer?
     private var displayLink: CADisplayLink?
 
+    var playingMsgId: String? { state.msgId }
+    var rate: Float { state.rate }
+
+    /// A tap on the play button: the message that is already on pauses and resumes,
+    /// any other one takes the player over.
     func toggle(msgId: String, url: URL) {
-        if playingMsgId == msgId {
-            if player?.isPlaying == true {
-                player?.pause()
-            } else {
-                player?.play()
-            }
+        guard state.msgId == msgId, let p = player else {
+            play(msgId: msgId, url: url)
             return
         }
+        if p.isPlaying {
+            p.pause()
+            state.isPlaying = false
+        } else {
+            p.play()
+            p.rate = state.rate
+            state.isPlaying = true
+        }
+    }
+
+    /// Starts a message, optionally from a point along it.
+    func play(msgId: String, url: URL, from fraction: Double = 0) {
         stop()
-        try? AVAudioSession.sharedInstance().setCategory(.playback)
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
+        try? AVAudioSession.sharedInstance().setActive(true)
         guard let p = try? AVAudioPlayer(contentsOf: url) else { return }
         p.delegate = self
         p.enableRate = true
-        p.rate = rate
+        p.prepareToPlay()
+        p.currentTime = p.duration * max(0, min(1, fraction))
         p.play()
+        // the rate only sticks once the player is running: set before play() it is lost
+        // in prepareToPlay and every message comes out at x1
+        p.rate = state.rate
         player = p
-        playingMsgId = msgId
+        state.msgId = msgId
+        state.isPlaying = true
+        state.progress = p.duration > 0 ? p.currentTime / p.duration : 0
         displayLink = CADisplayLink(target: self, selector: #selector(tick))
         displayLink?.add(to: .main, forMode: .common)
     }
 
-    func seek(to fraction: Double) {
-        guard let p = player else { return }
-        p.currentTime = p.duration * fraction
+    /// Moving inside the message that is playing. Another message is not touched: its
+    /// own bubble starts it before asking for a position.
+    func seek(msgId: String, to fraction: Double) {
+        guard state.msgId == msgId, let p = player else { return }
+        p.currentTime = p.duration * max(0, min(1, fraction))
+        state.progress = p.duration > 0 ? p.currentTime / p.duration : 0
     }
 
+    /// The speed is the player's, not the message's: it carries on to the next one.
     func cycleRate() {
-        rate = rate == 1.0 ? 1.5 : rate == 1.5 ? 2.0 : 1.0
-        player?.rate = rate
+        state.rate = state.rate == 1.0 ? 1.5 : state.rate == 1.5 ? 2.0 : 1.0
+        player?.rate = state.rate
     }
 
     func stop() {
         player?.stop()
         player = nil
-        playingMsgId = nil
-        progress = 0
         displayLink?.invalidate()
+        displayLink = nil
+        state.msgId = nil
+        state.isPlaying = false
+        state.progress = 0
     }
 
     @objc private func tick() {
         guard let p = player, p.duration > 0 else { return }
-        progress = p.currentTime / p.duration
+        state.progress = p.currentTime / p.duration
     }
 
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
@@ -197,8 +342,15 @@ final class WaveformView: UIView {
     var amplitudes: [Int] = [] {
         didSet { setNeedsDisplay() }
     }
+    /// The player reports its position every frame and every bubble hears it, so a
+    /// position that has not moved redraws nothing.
     var progress: Double = 0 {
-        didSet { setNeedsDisplay() }
+        didSet {
+            guard progress != oldValue else { return }
+            // the position is spoken as a percentage, the way a slider's is
+            accessibilityValue = "\(Int((progress * 100).rounded()))"
+            setNeedsDisplay()
+        }
     }
     var playedColor = UIColor(Theme.accent)
     var unplayedColor = UIColor.systemGray3
@@ -207,6 +359,11 @@ final class WaveformView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .clear
+        isAccessibilityElement = true
+        accessibilityIdentifier = "voice.wave"
+        accessibilityTraits = .adjustable
+        accessibilityLabel = "Позиция"
+        accessibilityValue = "0"
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handleSeek(_:)))
         addGestureRecognizer(pan)
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleSeek(_:)))
@@ -218,6 +375,18 @@ final class WaveformView: UIView {
     @objc private func handleSeek(_ g: UIGestureRecognizer) {
         let x = g.location(in: self).x
         onSeek?(max(0, min(1, x / bounds.width)))
+    }
+
+    override func accessibilityIncrement() { onSeek?(min(1, progress + 0.1)) }
+
+    override func accessibilityDecrement() { onSeek?(max(0, progress - 0.1)) }
+
+    /// Only a movement along the wave seeks. A drag that goes up or down over a voice
+    /// bubble is the reader scrolling the feed, and the wave lets it through.
+    override func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+        guard let pan = g as? UIPanGestureRecognizer else { return true }
+        let v = pan.velocity(in: self)
+        return abs(v.x) > abs(v.y)
     }
 
     override func draw(_ rect: CGRect) {
@@ -247,29 +416,43 @@ final class VoiceMessageView: UIView {
     private let durationLabel = UILabel()
     private let fileIcon = UIImageView(image: UIImage(systemName: "doc.fill"))
     private let fileName = UILabel()
+    private let rateButton = UIButton(type: .system)
     private var msg: Message?
-    private var progressObservation: NSKeyValueObservation?
-    private var displayTimer: Timer?
+    private var playback = VoicePlayback()
+    private var playIcon = "play.circle.fill"
+    private var cancellables: Set<AnyCancellable> = []
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         playButton.setImage(UIImage(systemName: "play.circle.fill"), for: .normal)
         playButton.tintColor = UIColor(Theme.accent)
+        playButton.accessibilityIdentifier = "voice.play"
         playButton.addTarget(self, action: #selector(togglePlay), for: .touchUpInside)
         durationLabel.textColor = .secondaryLabel
         fileIcon.tintColor = UIColor(Theme.accent)
+        rateButton.accessibilityIdentifier = "voice.rate"
+        rateButton.addTarget(self, action: #selector(cycleRate), for: .touchUpInside)
+        rateButton.layer.cornerRadius = 8
+        rateButton.isHidden = true
         addSubview(playButton)
         addSubview(waveform)
         addSubview(durationLabel)
+        addSubview(rateButton)
         addSubview(fileIcon)
         addSubview(fileName)
-        waveform.onSeek = { fraction in
-            VoicePlayer.shared.seek(to: fraction)
+        waveform.onSeek = { [weak self] fraction in
+            self?.seek(to: fraction)
         }
 
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleFileTap))
         tap.delegate = self
         addGestureRecognizer(tap)
+
+        // the plate follows the player rather than polling it: the position of a
+        // message playing in another chat is right the moment this one is reused
+        VoicePlayer.shared.$state
+            .sink { [weak self] state in self?.apply(state) }
+            .store(in: &cancellables)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -288,6 +471,10 @@ final class VoiceMessageView: UIView {
         let tint = outgoing ? UIColor(Theme.outgoingText) : UIColor(Theme.accent)
         playButton.tintColor = tint
         fileIcon.tintColor = tint
+        rateButton.tintColor = tint
+        rateButton.titleLabel?.font = Theme.Text.voiceDuration.uiFont
+        rateButton.layer.borderColor = tint.withAlphaComponent(0.5).cgColor
+        rateButton.layer.borderWidth = 1
         fileName.textColor = outgoing ? UIColor(Theme.outgoingText) : .label
         durationLabel.textColor = outgoing ? UIColor(Theme.outgoingMeta) : .secondaryLabel
         waveform.playedColor = tint
@@ -296,6 +483,7 @@ final class VoiceMessageView: UIView {
         let isVoice = msg.kind == .voice
         playButton.isHidden = !isVoice
         waveform.isHidden = !isVoice
+        rateButton.isHidden = true
         fileIcon.isHidden = isVoice
         fileName.isHidden = isVoice
         if isVoice {
@@ -309,11 +497,8 @@ final class VoiceMessageView: UIView {
                 let dur = Int(raw.rounded())
                 durationLabel.text = String(format: "%d:%02d", dur / 60, dur % 60)
             }
-            syncPlayingState()
-            displayTimer?.invalidate()
-            displayTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-                self?.syncPlayingState()
-            }
+            accessibilityLabel = "Голосовое сообщение, \(durationLabel.text ?? "")"
+            apply(VoicePlayer.shared.state)
         } else {
             fileName.text = msg.media?.name ?? "Файл"
             let size = msg.media?.size ?? 0
@@ -321,37 +506,87 @@ final class VoiceMessageView: UIView {
         }
     }
 
-    private func syncPlayingState() {
-        guard let msg else { return }
-        let playing = VoicePlayer.shared.playingMsgId == msg.id
-        playButton.setImage(UIImage(systemName: playing ? "pause.circle.fill" : "play.circle.fill"), for: .normal)
-        waveform.progress = playing ? VoicePlayer.shared.progress : 0
+    /// The player moved: only the plate of the message it is on shows a position, a
+    /// pause icon and the speed; every other plate stands at the start.
+    private func apply(_ state: VoicePlayback) {
+        playback = state
+        guard let msg, msg.kind == .voice else { return }
+        let mine = state.msgId == msg.id
+        let running = mine && state.isPlaying
+        let icon = running ? "pause.circle.fill" : "play.circle.fill"
+        if icon != playIcon {
+            playIcon = icon
+            playButton.setImage(UIImage(systemName: icon), for: .normal)
+            playButton.accessibilityLabel = running ? "Пауза" : "Воспроизвести"
+        }
+        waveform.progress = mine ? state.progress : 0
+        rateButton.isHidden = !mine
+        let title = Self.rateTitle(state.rate)
+        if rateButton.title(for: .normal) != title {
+            rateButton.setTitle(title, for: .normal)
+            rateButton.accessibilityLabel = "Скорость \(title)"
+        }
+    }
+
+    /// «1×», «1,5×», «2×» — the comma is the decimal separator everywhere else on screen.
+    static func rateTitle(_ rate: Float) -> String {
+        rate == 1.5 ? "1,5×" : String(format: "%g×", rate)
+    }
+
+    @objc private func cycleRate() {
+        Haptics.light()
+        VoicePlayer.shared.cycleRate()
+    }
+
+    /// A tap on the wave of the message that is playing moves inside it; on any other
+    /// message it starts that one from the point touched.
+    private func seek(to fraction: Double) {
+        guard let msg, msg.kind == .voice else { return }
+        if playback.msgId == msg.id {
+            VoicePlayer.shared.seek(msgId: msg.id, to: fraction)
+            return
+        }
+        withPlayableFile { url in
+            VoicePlayer.shared.play(msgId: msg.id, url: url, from: fraction)
+        }
     }
 
     @objc private func togglePlay() {
-        guard let msg, let media = msg.media else { return }
+        guard let msg else { return }
         Haptics.light()
+        withPlayableFile { url in
+            VoicePlayer.shared.toggle(msgId: msg.id, url: url)
+        }
+    }
+
+    /// The decrypted file under a name AVAudioPlayer will take: it identifies the
+    /// container by the extension and refuses a bare media id.
+    private func withPlayableFile(_ body: @escaping (URL) -> Void) {
+        guard let media = msg?.media else { return }
         Task {
             guard let mm = AppState.shared.media,
                   let url = try? await mm.fetch(media) else { return }
-            // AVAudioPlayer insists on an extension, so it gets an .m4a copy
             let linked = url.deletingPathExtension().appendingPathExtension("m4a")
             if !FileManager.default.fileExists(atPath: linked.path) {
                 try? FileManager.default.copyItem(at: url, to: linked)
             }
-            await MainActor.run {
-                VoicePlayer.shared.toggle(msgId: msg.id, url: linked)
-            }
+            await MainActor.run { body(linked) }
         }
     }
 
     // one row: play button on the left, waveform on the right, the duration small beneath
-    // it; BubbleLayout puts the message time in the bottom right on the duration's line
+    // it; BubbleLayout puts the message time in the bottom right on the duration's line,
+    // and the speed sits in the gap between the two
     override func layoutSubviews() {
         super.layoutSubviews()
         playButton.frame = CGRect(x: 0, y: 1, width: 40, height: 40)
         waveform.frame = CGRect(x: 48, y: 3, width: bounds.width - 48, height: 22)
-        durationLabel.frame = CGRect(x: 48, y: 27, width: 100, height: 14)
+        // the voice duration is measured so the speed can sit right next to it; a file
+        // puts its size in the same label and has the row to itself
+        let durationWidth = msg?.kind == .voice
+            ? min(60, ceil(durationLabel.sizeThatFits(bounds.size).width)) : 100
+        durationLabel.frame = CGRect(x: 48, y: 27, width: durationWidth, height: 14)
+        rateButton.frame = CGRect(x: durationLabel.frame.maxX + 8, y: 24, width: 38, height: 18)
         fileIcon.frame = CGRect(x: 4, y: 5, width: 32, height: 32)
         fileName.frame = CGRect(x: 48, y: 3, width: bounds.width - 48, height: 22)
     }
