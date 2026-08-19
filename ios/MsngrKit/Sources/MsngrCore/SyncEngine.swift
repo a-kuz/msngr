@@ -93,6 +93,7 @@ public actor SyncEngine {
         }
         // the first snapshot never holds the UI up: the database already has something to show
         Task { try? await self.refreshSnapshot() }
+        Task { await self.publishIdentityIfNeeded() }
         Task { await self.replenishPrekeysIfNeeded() }
         Task { await self.refreshBlocked() }
         maintenanceTask?.cancel()
@@ -106,6 +107,26 @@ public actor SyncEngine {
                 await self?.sweepUnreadable()
                 try? await Task.sleep(nanoseconds: 30_000_000_000)
             }
+        }
+    }
+
+    private var identityPublished = false
+
+    /// Once per session: publish the identity this device encrypts under. A device
+    /// whose registration predates the signature carries none on the server, and a
+    /// peer accepts no bundle without it — the send would fail with nothing the
+    /// person could do about it.
+    private func publishIdentityIfNeeded() async {
+        guard !identityPublished else { return }
+        identityPublished = true
+        do {
+            let our = try e2ee.store.identity()
+            try await api.publishIdentity(
+                identityKey: our.dh.publicKey.rawRepresentation.base64urlEncodedString(),
+                identitySignKey: our.signing.publicKey.rawRepresentation.base64urlEncodedString(),
+                identityKeySig: try our.dhSignature.base64urlEncodedString())
+        } catch {
+            identityPublished = false // no network, so the next start() tries again
         }
     }
 

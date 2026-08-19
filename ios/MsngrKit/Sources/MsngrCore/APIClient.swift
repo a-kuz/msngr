@@ -333,6 +333,19 @@ public final class APIClient: @unchecked Sendable {
         try await get("api/users/\(userId)/prekeys", as: PrekeysResponse.self)
     }
 
+    /// Publishes the identity this device encrypts under, so a peer that fetches
+    /// the bundle gets the DH key together with the signature binding it.
+    public func publishIdentity(identityKey: String, identitySignKey: String,
+                                identityKeySig: String) async throws {
+        struct Body: Encodable {
+            let identityKey: String; let identitySignKey: String; let identityKeySig: String
+        }
+        _ = try await request("api/identity", method: "POST",
+                             jsonBody: Body(identityKey: identityKey,
+                                            identitySignKey: identitySignKey,
+                                            identityKeySig: identityKeySig))
+    }
+
     public func uploadPrekeys(_ keys: [RegisterRequest.OneTimePrekeyDTO]) async throws {
         struct Body: Encodable { let oneTimePrekeys: [RegisterRequest.OneTimePrekeyDTO] }
         _ = try await request("api/prekeys", method: "POST", jsonBody: Body(oneTimePrekeys: keys))

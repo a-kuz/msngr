@@ -1478,6 +1478,19 @@ const danaList2 = await api("/api/chats", { token: dana.token });
 check("chat comes back on the next message",
   danaList2.chats.some((c2) => c2.state.chatId === dchat2.chatId));
 
+// the deleter opens the conversation again without waiting for a message
+const delAgain = await api(`/api/chats/${dchat2.chatId}/delete`, { token: dana.token, body: {} });
+check("direct chat deleted a second time", delAgain.ok, JSON.stringify(delAgain));
+const reopen = await api("/api/chats", { token: dana.token,
+  body: { kind: "direct", memberIds: [erik.userId] } });
+check("reopening a deleted direct chat answers with the same chat",
+  reopen.ok && reopen.chatId === dchat2.chatId, JSON.stringify(reopen));
+const danaList3 = await api("/api/chats", { token: dana.token });
+check("reopening puts the chat back into the deleter's list",
+  danaList3.chats.some((c2) => c2.state.chatId === dchat2.chatId));
+check("the journal it comes back with is the old one",
+  danaList3.chats.find((c2) => c2.state.chatId === dchat2.chatId)?.state.lastSeq === 2);
+
 // in a group, deleting means leaving
 const dgrp = await api("/api/chats", { token: dana.token,
   body: { kind: "group", memberIds: [erik.userId], title: "Leave me" } });

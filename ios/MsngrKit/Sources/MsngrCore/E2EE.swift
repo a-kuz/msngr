@@ -29,6 +29,11 @@ public struct InnerMessage: Codable {
 public enum E2EEError: Error, Equatable {
     case identityChanged(userId: String) // TOFU: the peer's identity key changed
     case noDevices(userId: String)       // the recipient has no devices at all
+    /// The recipient has devices, but not one of them could be encrypted to: no
+    /// session, and no prekey bundle this client accepts. The send fails so the
+    /// outbox keeps the message and tries again, instead of a message that reads
+    /// as sent and reaches nobody.
+    case noUsableKeys(userId: String)
 }
 
 /// Result of opening an incoming envelope.
@@ -327,6 +332,15 @@ public final class E2EEManager: @unchecked Sendable {
             if needBundles.isEmpty { break }
             for uid in needBundles {
                 bundlesByUser[uid] = try await api.prekeys(userId: uid).bundles
+            }
+        }
+        // A recipient every device of which stayed without a box: the envelope
+        // would go out addressed to nobody and read as sent. It fails instead,
+        // and the outbox brings it back.
+        for uid in recipients where uid != ownUserId {
+            let devices = byUser[uid] ?? []
+            if !devices.contains(where: { boxes[addr(uid, $0.deviceId)] != nil }) {
+                throw E2EEError.noUsableKeys(userId: uid)
             }
         }
         var env = Envelope(mode: "pw")

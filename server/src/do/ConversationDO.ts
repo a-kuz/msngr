@@ -447,9 +447,9 @@ export class ConversationDO implements DurableObject {
     };
   }
 
-  private async broadcastChat(event: string) {
+  private async broadcastChat(event: string, only?: string[]) {
     const state = await this.chatState();
-    await this.fanout({ t: "chat", chatId: state.chatId, event, state });
+    await this.fanout({ t: "chat", chatId: state.chatId, event, state }, only ? { only } : undefined);
   }
 
   private async notifyUserDOsChatList(userIds: string[], removed = false) {
@@ -493,7 +493,18 @@ export class ConversationDO implements DurableObject {
         memberIds: string[]; createdBy: string;
       };
       const existing = await this.loadMeta();
-      if (existing) return json({ ok: true, chatId: existing.chatId, existed: true });
+      if (existing) {
+        // The chat is here, and whoever asks for it wants it in their list: a
+        // direct chat one side deleted keeps its membership, so opening it again
+        // has to put the row back into that side's own list. Without this the id
+        // comes back and the chat does not, and only a message from the peer
+        // brings it around.
+        if ((await this.loadMembers()).has(b.createdBy)) {
+          await this.notifyUserDOsChatList([b.createdBy]);
+          await this.broadcastChat("created", [b.createdBy]);
+        }
+        return json({ ok: true, chatId: existing.chatId, existed: true });
+      }
       const now = nowSec();
       this.meta = {
         chatId: b.chatId, kind: b.kind, title: b.title ?? null,

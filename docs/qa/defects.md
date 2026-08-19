@@ -6,6 +6,35 @@ with the commit that closed it.
 
 ## Open
 
+### Messages do not send
+Reported 2026-08-19, urgent. Two causes were found behind it, both confirmed.
+
+The shared stand's worker took a `Segmentation fault: 11` and answered 503 for
+about four minutes (`POST /api/register`, `POST /api/push-token` in
+`.claude/wrangler-8787.log`) before workerd came back on its own. Nothing on our
+side asked it to; what the crash was is not established.
+
+Under that, a permanent one: the identity binding merged in `eed62e8` added
+`identity_key_sig` with `DEFAULT ''`, and on the stand 2357 of 2360 rows in
+`identity_keys` carry that empty default. A client refuses a bundle without the
+signature (`newSessionBox` returns nil), so every device of the recipient stayed
+without a box and the envelope went out addressed to nobody — the sender saw a
+sent message that reached no one. Fixed on both ends: the send now fails with
+`noUsableKeys` when no device of a recipient could be encrypted to, so the outbox
+keeps the message; and `POST /api/identity` lets a device publish its own binding,
+which `SyncEngine` does once per start, so an account older than the signature
+heals itself.
+
+### A deleted direct chat cannot be brought back
+Reported 2026-08-19. Deleting a direct chat drops `chat:<id>` from the deleter's
+`UserSessionDO` while `ConversationDO` keeps the membership. Opening the
+conversation again went to `POST /api/chats`, `ConversationDO./create` saw the
+existing meta, answered `existed: true` and did nothing else: the id came back,
+the chat did not, and the client's tombstone guard would have dropped the chat
+state anyway. Only a message from the peer restored it. Fixed by re-listing the
+chat for the caller and re-sending its state on `/create`, and by lifting the
+tombstone on the device's own act of opening the chat. Smoke covers the reopen.
+
 ### A burst arrives at one message per second
 Reported 2026-08-19 from the device: 100 messages leave the sender at once and
 land on the recipient one per second. Nothing in the code paces sends — no rate
