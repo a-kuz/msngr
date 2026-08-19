@@ -1,5 +1,5 @@
 import type { Env, ClientFrame, ServerFrame, PublicUser } from "../types";
-import { json, err, nowSec } from "../util";
+import { json, err, nowSec, shouldArmAlarm } from "../util";
 import { sendPush, envelopeForDevice } from "../push/apns";
 import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "../version";
 import {
@@ -45,11 +45,39 @@ interface SocketAttachment {
   lastPing: number;
 }
 
+/// Push queue. A frame's delivery is acknowledged the moment the sockets have
+/// it; the APNs call runs from this queue afterwards, so its latency paces no
+/// chat and its failure fails no delivery. The records survive eviction: a
+/// push owed is a push sent, however late.
+const PUSH_PREFIX = "pq:";
+/// Pushes sent per alarm invocation; the queue re-arms for the rest.
+const PUSH_DRAIN = 10;
+
+function pushKey(id: number): string {
+  return PUSH_PREFIX + String(id).padStart(16, "0");
+}
+
+interface PushJob {
+  chatId: string;
+  msgId?: string;
+  seq?: number;
+  sentAt?: number;
+  from?: string;
+  fromDevice?: string;
+  ts?: number;
+  body?: unknown;
+}
+
 // One object per user: the sockets of all their devices, the chat list, presence, pushes.
 export class UserSessionDO implements DurableObject {
   private userId: string | null = null;
   /// Dev test hook (/dev-fault): how many frame deliveries to reject next.
   private devFailEvents = 0;
+  /// True while alarm() runs. setAlarm during a running alarm handler cancels
+  /// the handler mid-await (workerd), so while it runs, arming requests
+  /// collect here and the handler arms the nearest one as it leaves.
+  private alarmRunning = false;
+  private rearmAt: number | undefined;
 
   /// dev measurement (PERF_LOG); never installed otherwise
   private perf: PerfCounters | null = null;
@@ -110,6 +138,29 @@ export class UserSessionDO implements DurableObject {
       const att = ws.deserializeAttachment() as SocketAttachment | null;
       return (att?.lastPing ?? 0) > cutoff;
     });
+  }
+
+  /// Arms the alarm, keeping whichever deadline is nearer. The one alarm is
+  /// shared by the push queue and the presence check.
+  private async armAlarm(atMs: number) {
+    if (this.alarmRunning) {
+      this.rearmAt = this.rearmAt === undefined ? atMs : Math.min(this.rearmAt, atMs);
+      return;
+    }
+    const now = Date.now();
+    const at = Math.max(atMs, now + 1);
+    const pending = await this.state.storage.getAlarm();
+    if (!shouldArmAlarm(pending, at, now)) return;
+    await this.state.storage.setAlarm(at);
+  }
+
+  /// Schedules the freshness check the presence TTL asks for. The deadline is
+  /// stored because the alarm is shared: an alarm firing early for a push must
+  /// not read as the TTL running out.
+  private async armPresenceCheck() {
+    const at = Date.now() + PRESENCE_TTL_MS;
+    await this.state.storage.put("presenceCheckAt", at);
+    await this.armAlarm(at);
   }
 
   /// Lifts a mute whose deadline has passed and returns the chat's current flags.
@@ -184,7 +235,7 @@ export class UserSessionDO implements DurableObject {
         protocol: PROTOCOL_VERSION, minProtocol: MIN_CLIENT_PROTOCOL,
       });
 
-      await this.state.storage.setAlarm(Date.now() + PRESENCE_TTL_MS);
+      await this.armPresenceCheck();
       if (this.sockets().length === 1) {
         await this.broadcastPresence(true);
       }
@@ -198,6 +249,18 @@ export class UserSessionDO implements DurableObject {
           return err("dev_fault", 500);
         }
         const frame = (await req.json()) as ServerFrame;
+        // The delivery is idempotent: the chat's seq orders its msg frames and
+        // they arrive per chat in order, so anything at or below the mark has
+        // been applied already — a retry of a delivery that in fact succeeded
+        // is answered "already have it", and never costs a second push.
+        // Receipts and marks are monotonic and chat/presence frames are
+        // snapshots, so they need no mark.
+        let inboxKey: string | undefined;
+        if (frame.t === "msg" && typeof frame.seq === "number") {
+          inboxKey = "in:" + frame.chatId;
+          const applied = (await this.state.storage.get<number>(inboxKey)) ?? 0;
+          if (frame.seq <= applied) return json({ ok: true, dupe: true });
+        }
         for (const ws of this.sockets()) this.send(ws, frame);
         if (frame.t === "msg" && !frame.service) {
           // a chat this user deleted comes back on the next message written to
@@ -209,12 +272,14 @@ export class UserSessionDO implements DurableObject {
           const muted = muteActive(flags, nowSec());
           const userId = await this.getUserId();
           const isOwnEcho = userId !== null && frame.from === userId;
-          // The call is awaited here rather than deferred: waitUntil gives no
-          // timing guarantee. The sender is not waiting on it — his ack left
-          // ConversationDO before this delivery was queued.
+          // the push leaves through the object's own queue: this delivery is
+          // acknowledged now, and APNs' latency paces no chat
           if (!muted && !isOwnEcho) {
-            await this.pushToDevices(frame);
+            await this.enqueuePush(frame);
           }
+        }
+        if (inboxKey && frame.t === "msg") {
+          await this.state.storage.put(inboxKey, frame.seq);
         }
         return json({ ok: true });
       }
@@ -421,13 +486,38 @@ export class UserSessionDO implements DurableObject {
     return next;
   }
 
+  /// Queues a push for the alarm loop and wakes it.
+  private async enqueuePush(frame: PushJob) {
+    const id = (await this.state.storage.get<number>("pqNext")) ?? 1;
+    const job: PushJob = {
+      chatId: frame.chatId, msgId: frame.msgId, seq: frame.seq, sentAt: frame.sentAt,
+      from: frame.from, fromDevice: frame.fromDevice, ts: frame.ts, body: frame.body,
+    };
+    await this.state.storage.put({ [pushKey(id)]: job, pqNext: id + 1 });
+    await this.armAlarm(Date.now());
+  }
+
+  /// Sends the queued pushes oldest first, a bounded number per invocation,
+  /// and asks to be woken again for the rest.
+  private async drainPushes() {
+    const listed = await this.state.storage.list<PushJob>({
+      prefix: PUSH_PREFIX,
+      limit: PUSH_DRAIN + 1,
+    });
+    let sent = 0;
+    for (const [key, job] of listed) {
+      if (sent >= PUSH_DRAIN) break;
+      await this.pushToDevices(job);
+      await this.state.storage.delete(key);
+      sent++;
+    }
+    if (listed.size > sent) await this.armAlarm(Date.now());
+  }
+
   /// The push carries the message itself, addressed to the device it goes to:
   /// the extension decrypts it and writes it, so the chat holds what the banner
   /// showed even if the socket never comes up.
-  private async pushToDevices(frame: {
-    chatId: string; msgId?: string; seq?: number; sentAt?: number;
-    from?: string; fromDevice?: string; ts?: number; body?: unknown;
-  }) {
+  private async pushToDevices(frame: PushJob) {
     const tokens =
       (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
     const devices = Object.entries(tokens);
@@ -606,7 +696,7 @@ export class UserSessionDO implements DurableObject {
         const wasFresh = this.presenceFresh();
         ws.serializeAttachment({ ...att, lastPing: nowSec() } satisfies SocketAttachment);
         this.send(ws, { t: "pong" });
-        await this.state.storage.setAlarm(Date.now() + PRESENCE_TTL_MS);
+        await this.armPresenceCheck();
         if (!wasFresh) await this.broadcastPresence(true);
         return;
       }
@@ -618,7 +708,7 @@ export class UserSessionDO implements DurableObject {
 
       case "fg": {
         ws.serializeAttachment({ ...att, lastPing: nowSec() } satisfies SocketAttachment);
-        await this.state.storage.setAlarm(Date.now() + PRESENCE_TTL_MS);
+        await this.armPresenceCheck();
         await this.broadcastPresence(true);
         return;
       }
@@ -702,12 +792,35 @@ export class UserSessionDO implements DurableObject {
     }
   }
 
-  /// Silence past the TTL means offline, however open the socket still looks.
+  /// One alarm serves two queues: pushes owed, and the presence TTL — silence
+  /// past it means offline, however open the socket still looks. The stored
+  /// deadline tells the check apart from a push wake-up, so a push arriving
+  /// while the user is offline does not re-broadcast the offline.
   async alarm() {
-    if (!this.presenceFresh()) {
-      await this.broadcastPresence(false);
-    } else {
-      await this.state.storage.setAlarm(Date.now() + PRESENCE_TTL_MS);
+    this.alarmRunning = true;
+    this.rearmAt = undefined;
+    try {
+      await this.drainPushes();
+      const checkAt = await this.state.storage.get<number>("presenceCheckAt");
+      if (checkAt !== undefined) {
+        if (Date.now() >= checkAt) {
+          if (this.presenceFresh()) {
+            await this.armPresenceCheck();
+          } else {
+            await this.state.storage.delete("presenceCheckAt");
+            await this.broadcastPresence(false);
+          }
+        } else {
+          await this.armAlarm(checkAt);
+        }
+      }
+    } finally {
+      this.alarmRunning = false;
+      if (this.rearmAt !== undefined) {
+        const at = this.rearmAt;
+        this.rearmAt = undefined;
+        await this.armAlarm(at);
+      }
     }
   }
 

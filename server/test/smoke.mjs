@@ -1389,8 +1389,8 @@ for (let i = 0; i < 60; i++) {
   if (drained.ok && drained.pending === 0) break;
   await new Promise((r) => setTimeout(r, 250));
 }
-check("queue drains to empty cursor",
-  !!drained && drained.pending === 0 && drained.cursor === 0, JSON.stringify(drained));
+check("queue drains to empty",
+  !!drained && drained.pending === 0 && drained.recipients === 0, JSON.stringify(drained));
 check("drained queue reports no waiting job", drained?.oldestMs === null, JSON.stringify(drained));
 
 const strangerQ = await api(`/api/chats/${fgrp.chatId}/fanout`, { token: bob.token });
