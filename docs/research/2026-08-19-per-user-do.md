@@ -72,9 +72,16 @@ Presence is the loudest argument for this. Today every `fg`, `bg` and freshness
 change calls `broadcastPresence`, which lists every `chat:` the user has and RPCs
 `/presence` into each `ConversationDO` at once — waking a hundred chat objects,
 each reading blocks from D1 and queueing a fanout job, on every switch into and
-out of the app, dead chats included. Under subscriptions the same event is one
-write in the user's own object plus an RPC to the objects subscribed right now;
-a chat nobody is looking at never wakes.
+out of the app, dead chats included — and the round brings nothing back: what the
+chat list needs, the peers' statuses, is not in it.
+
+Coming online cannot avoid a fan — the chat list needs every peer's status — but
+the fan is over distinct people, not chats, and each call carries both directions:
+the RPC delivers "I am online" to the peer's object and its answer returns that
+peer's own presence, filtered by what that peer lets this viewer see. One pass
+fills the chat list and tells everyone at the same time; there is no separate
+poll. Going to the background is the cheap half: it only has to reach the objects
+of people subscribed right now — nobody needs an answer.
 
 One-time prekeys are not pre-distributed. The first message to a device the sender
 has no session with is one RPC from the sender's object to the recipient's, since
