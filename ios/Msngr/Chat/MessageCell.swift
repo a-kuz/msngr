@@ -32,6 +32,12 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private let replyIcon = UIImageView(image: UIImage(systemName: "arrowshape.turn.up.left.fill"))
     private var replyTriggered = false
 
+    // press feedback: the bubble dips under the finger long before the context menu
+    private var pressGesture: UILongPressGestureRecognizer!
+    private var pressStart: CGPoint = .zero
+    /// swipe-to-reply owns the bubble transform while the finger drags
+    private var panDrivesBubble = false
+
     // multi-select
     private let checkbox = SelectionCheckboxView()
     private var selectionMode = false
@@ -94,6 +100,15 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         longPress.minimumPressDuration = 0.35
         bubbleView.addGestureRecognizer(longPress)
 
+        // the dip is purely visual and runs alongside every other gesture; it does
+        // not cancel touches, so the reaction capsules still get their tap
+        let press = UILongPressGestureRecognizer(target: self, action: #selector(handlePress(_:)))
+        press.minimumPressDuration = 0.1
+        press.cancelsTouchesInView = false
+        press.delegate = self
+        bubbleView.addGestureRecognizer(press)
+        pressGesture = press
+
         // a single tap only acts on a hit inside a link; the double tap (reaction) wins,
         // and every other touch passes straight through
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
@@ -109,7 +124,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         replyBar.addGestureRecognizer(replyTap)
 
         // in selection mode only the row tap works, every other gesture is switched off
-        gestures = [pan, doubleTap, longPress, tap, replyTap]
+        gestures = [pan, doubleTap, longPress, tap, replyTap, press]
         selectionTap = UITapGestureRecognizer(target: self, action: #selector(handleSelectionTap))
         selectionTap.isEnabled = false
         contentView.addGestureRecognizer(selectionTap)
@@ -178,10 +193,11 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         reactionViews = []
         bubbleView.viewWithTag(Self.highlightTag)?.removeFromSuperview()
         contentView.transform = CGAffineTransform(scaleX: 1, y: -1)
-        // drop an unfinished swipe-to-reply
+        // drop an unfinished swipe-to-reply or press dip
         bubbleView.transform = .identity
         replyIcon.alpha = 0
         replyTriggered = false
+        panDrivesBubble = false
     }
 
     /// An incoming or restored bubble arrives with a short lift.
@@ -511,11 +527,45 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         }
     }
 
+    // MARK: - Press feedback
+
+    /// The bubble answers the touch at once: a slight dip under the finger, the way
+    /// Telegram does it, while the 0.35 s context menu timer keeps running.
+    @objc private func handlePress(_ g: UILongPressGestureRecognizer) {
+        switch g.state {
+        case .began:
+            pressStart = g.location(in: nil)
+            guard !panDrivesBubble else { return }
+            UIView.animate(withDuration: 0.22, delay: 0,
+                           options: [.allowUserInteraction, .beginFromCurrentState, .curveEaseOut]) {
+                self.bubbleView.transform = CGAffineTransform(scaleX: 0.96, y: 0.96)
+            }
+        case .changed:
+            // the finger started scrolling or swiping: the dip lets go so the feed
+            // does not drag a pressed bubble along
+            let p = g.location(in: nil)
+            if hypot(p.x - pressStart.x, p.y - pressStart.y) > 12 {
+                g.isEnabled = false
+                g.isEnabled = true
+            }
+        case .ended, .cancelled, .failed:
+            guard !panDrivesBubble else { return }
+            UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: 0.8,
+                           initialSpringVelocity: 0.4,
+                           options: [.allowUserInteraction, .beginFromCurrentState]) {
+                self.bubbleView.transform = .identity
+            }
+        default:
+            break
+        }
+    }
+
     // MARK: - Swipe-to-reply with resistance
 
     func gestureRecognizer(_ g: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
-        false
+        // the dip runs alongside everything, scroll included; the rest stay exclusive
+        g === pressGesture || other === pressGesture
     }
 
     /// Ширина левой кромки экрана, принадлежащей возврату по свайпу.
@@ -533,6 +583,12 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         let tx = g.translation(in: contentView).x
         switch g.state {
         case .changed:
+            if !panDrivesBubble {
+                panDrivesBubble = true
+                // the dip, if any, hands the transform over without a restore animation
+                pressGesture.isEnabled = false
+                pressGesture.isEnabled = true
+            }
             let capped = min(max(tx, 0), 90)
             let resisted = 60 * (1 - exp(-capped / 60)) // resistance
             bubbleView.transform = CGAffineTransform(translationX: resisted, y: 0)
@@ -546,6 +602,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         case .ended, .cancelled:
             if replyTriggered { onReply?() }
             replyTriggered = false
+            panDrivesBubble = false
             UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: 0.8,
                            initialSpringVelocity: 0) {
                 self.bubbleView.transform = .identity
@@ -884,6 +941,10 @@ extension MessageCell {
                                       myReaction: mine, items: items, selectableText: selectable,
                                       onReact: { [weak self] emoji in self?.onReact?(emoji) })
         textView.isHidden = textWasHidden
+        // the overlay's snapshot took over from the pressed bubble, so the real one
+        // returns to rest underneath the blur
+        pressGesture.isEnabled = false
+        pressGesture.isEnabled = true
     }
 }
 
