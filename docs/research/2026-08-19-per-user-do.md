@@ -73,6 +73,20 @@ has no session with is one RPC from the sender's object to the recipient's, sinc
 the address is derived from the user id; the client is not involved and is holding
 its first tick by then.
 
+## Two shapes inside a chat that have to change with it
+
+The marks are one record per chat, `userId -> upToSeq` for read, delivered and
+seen. That does not grow with the age of the chat, but every receipt reads and
+writes the whole record, so a group of a thousand rewrites a thousand pairs to
+move one person's mark. A key per member (`mark:<userId>`) makes a receipt one
+small write, and answers "who has read this message" by comparison, without a
+per-message list.
+
+The idempotency keys do grow with age and without limit: `cmid:<userId>/<clientMsgId>`
+is written for every message sent and never deleted, which doubles what a chat
+stores for a guarantee that matters for minutes. They need a window — a TTL, or a
+sweep behind the last seq every member has acknowledged.
+
 ## Delivery is outbox to inbox
 
 The sender's object writes the message and an outbox record in one transaction. A
