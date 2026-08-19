@@ -78,6 +78,15 @@ final class PrekeyEnvelopeTests: XCTestCase {
         return nil
     }
 
+    /// A canonical encoding of the session, safe to compare byte-for-byte:
+    /// the session holds a dictionary, and plain JSONEncoder output does not
+    /// promise a key order.
+    private func fields(of session: DoubleRatchetSession) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return try encoder.encode(session)
+    }
+
     /// The signing key is the peer's real one, the DH key is somebody else's.
     /// The pair is not signed as one, so the envelope opens nothing and the
     /// peer's trusted identity is not written on the strength of it.
@@ -128,7 +137,7 @@ final class PrekeyEnvelopeTests: XCTestCase {
 
         var current = try XCTUnwrap(try store.loadSession(peerUserId: peerUserId,
                                                           peerDeviceId: peerDeviceId))
-        XCTAssertEqual(try JSONEncoder().encode(current), try JSONEncoder().encode(established),
+        XCTAssertEqual(try fields(of: current), try fields(of: established),
                        "the replay must not have moved the session")
         XCTAssertNoThrow(try current.encrypt(Data("reply".utf8)),
                          "the session still has a sending chain")
