@@ -46,7 +46,7 @@ final class ChatViewModel: ObservableObject {
     @Published var myRole: String?
     /// The feed is inverted: [0] is the newest item.
     @Published var feed: [ChatFeedItem] = []
-    @Published var typingUsers: [String] = []
+    @Published private(set) var typingUsers: [String] = []
     @Published var replyingTo: Message?
     @Published var editing: Message?
     @Published var pinnedMessage: Message?
@@ -95,7 +95,10 @@ final class ChatViewModel: ObservableObject {
     private var cancellable: AnyCancellable?
     private var typingTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
-    private var typingClearTask: Task<Void, Never>?
+    private var typing = TypingState()
+    private var presenceTask: Task<Void, Never>?
+    private var presenceAsked = false
+    private var typingExpiryTask: Task<Void, Never>?
     private let app = AppState.shared
     var ownUserId: String { app.session?.userId ?? "" }
 
@@ -120,6 +123,9 @@ final class ChatViewModel: ObservableObject {
                     // what arrived in the background is already on screen, so send
                     // the read receipt now instead of waiting for the next db change
                     self.markVisibleRead()
+                    // presence transitions that happened while the app was away
+                    // never reached this device
+                    self.askPresence(force: true)
                 }
                 self.rebuildFeed()
             }
@@ -140,16 +146,36 @@ final class ChatViewModel: ObservableObject {
             for await ev in engine.typingStream.subscribe() {
                 guard let self, ev.chatId == self.chatId else { continue }
                 if ev.kind != nil {
-                    if !self.typingUsers.contains(ev.userId) { self.typingUsers.append(ev.userId) }
-                    self.typingClearTask?.cancel()
-                    self.typingClearTask = Task {
-                        try? await Task.sleep(nanoseconds: 5_000_000_000)
-                        self.typingUsers.removeAll()
-                    }
-                } else if self.typingUsers.contains(ev.userId) {
-                    self.typingUsers.removeAll { $0 == ev.userId }
+                    self.typing.began(ev.userId, at: Date())
+                } else if self.typing.users.contains(ev.userId) {
+                    self.typing.ended(ev.userId)
+                } else {
+                    // a stop for someone who was not typing: every incoming message
+                    // brings one
+                    continue
                 }
+                self.typingUsers = self.typing.users
+                self.scheduleTypingExpiry()
             }
+        }
+    }
+
+    /// One timer, set to whoever falls out first. It is rearmed after every frame,
+    /// so a cancelled one must not take anybody off the header on its way out: a
+    /// peer typing without pause sends a frame every three seconds, and each one
+    /// would then blink the subtitle back to the presence line.
+    private func scheduleTypingExpiry() {
+        typingExpiryTask?.cancel()
+        guard let deadline = typing.nextExpiry() else { return }
+        typingExpiryTask = Task { [weak self] in
+            let wait = deadline.timeIntervalSinceNow
+            if wait > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+            }
+            guard !Task.isCancelled, let self else { return }
+            self.typing.expire(at: Date())
+            self.typingUsers = self.typing.users
+            self.scheduleTypingExpiry()
         }
     }
 
@@ -223,6 +249,7 @@ final class ChatViewModel: ObservableObject {
         members = snapshot.users
         myRole = snapshot.myRole
         peer = snapshot.users.first { $0.id != ownId }
+        askPresence()
         updateUnreadMarker(chat: snapshot.chat, msgs: snapshot.msgs)
         lastMsgs = snapshot.msgs
         unreadableSeqs = snapshot.unreadableSeqs
@@ -249,8 +276,30 @@ final class ChatViewModel: ObservableObject {
         obscuredCancellable = nil
         typingTask?.cancel()
         typingTask = nil
+        typingExpiryTask?.cancel()
+        typingExpiryTask = nil
+        typing = TypingState()
+        typingUsers = []
         connectionTask?.cancel()
         connectionTask = nil
+        presenceTask?.cancel()
+        presenceTask = nil
+        presenceAsked = false
+    }
+
+    /// Where the peer is right now. Presence arrives as a transition, so a device
+    /// that was not connected when the peer came online holds a row that says
+    /// «был(а)» while the peer is reading. The chat asks once when it opens and
+    /// again when the app comes back to the screen.
+    private func askPresence(force: Bool = false) {
+        guard chat?.kind == .direct, let peerId = peer?.id else { return }
+        if presenceAsked && !force { return }
+        presenceAsked = true
+        presenceTask?.cancel()
+        presenceTask = Task { [weak self] in
+            guard let engine = self?.app.engine else { return }
+            await engine.refreshPresence(of: [peerId])
+        }
     }
 
     // MARK: - Unread banner
@@ -430,12 +479,29 @@ final class ChatViewModel: ObservableObject {
             return "печатает…"
         }
         if chat?.kind == .group {
-            return "\(members.count) участников"
+            return Self.membersText(members.count)
         }
         guard let peer else { return "" }
         if peer.online { return "в сети" }
         if peer.lastSeen > 0 { return Self.lastSeenText(peer.lastSeen) }
         return ""
+    }
+
+    /// "N participants", in Russian plural forms.
+    static func membersText(_ count: Int) -> String {
+        let mod100 = count % 100
+        let mod10 = count % 10
+        let noun: String
+        if mod100 / 10 == 1 {
+            noun = "участников"
+        } else if mod10 == 1 {
+            noun = "участник"
+        } else if (2...4).contains(mod10) {
+            noun = "участника"
+        } else {
+            noun = "участников"
+        }
+        return "\(count) \(noun)"
     }
 
     /// The "last seen" line built from a timestamp. A fresh timestamp plus a server
