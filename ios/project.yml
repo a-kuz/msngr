@@ -66,6 +66,9 @@ targets:
           - CFBundleURLSchemes: [msngr]
     settings:
       base:
+        # ai.enface.Msngr everywhere; a device build under a foreign team
+        # substitutes its own (make device)
+        PRODUCT_BUNDLE_IDENTIFIER: ${MSNGR_APP_ID}
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
@@ -149,7 +152,7 @@ targets:
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: ai.enface.Msngr.NotificationService
+        PRODUCT_BUNDLE_IDENTIFIER: ${MSNGR_APP_ID}.NotificationService
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
