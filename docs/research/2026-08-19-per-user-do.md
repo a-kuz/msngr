@@ -68,6 +68,14 @@ ours, unreachable from a client, and what a client is allowed to see is decided 
 the API, not by where the bytes sit. Trust in keys is a separate matter and stays
 on the device: the copy carries the signature over each identity, TOFU decides.
 
+Presence is the loudest argument for this. Today every `fg`, `bg` and freshness
+change calls `broadcastPresence`, which lists every `chat:` the user has and RPCs
+`/presence` into each `ConversationDO` at once — waking a hundred chat objects,
+each reading blocks from D1 and queueing a fanout job, on every switch into and
+out of the app, dead chats included. Under subscriptions the same event is one
+write in the user's own object plus an RPC to the objects subscribed right now;
+a chat nobody is looking at never wakes.
+
 One-time prekeys are not pre-distributed. The first message to a device the sender
 has no session with is one RPC from the sender's object to the recipient's, since
 the address is derived from the user id; the client is not involved and is holding
