@@ -156,6 +156,13 @@ enum DirectChat {
         let app = AppState.shared
         guard let chatId = try? await app.api.createChat(kind: "direct", memberIds: [userId],
                                                          title: nil) else { return nil }
+        // the chat may be one this device deleted: opening it is a decision to
+        // have it back, so the tombstone that would drop its state is lifted
+        if let db = await MainActor.run(body: { app.db }) {
+            try? await db.write { dbc in
+                try ChatCleanup.liftTombstone(dbc, chatId: chatId)
+            }
+        }
         try? await app.engine.refreshSnapshot()
         return chatId
     }

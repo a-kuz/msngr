@@ -85,6 +85,14 @@ public enum ChatCleanup {
                         arguments: [now])
     }
 
+    /// Lets a chat back into the list on this device's own act of opening it.
+    /// The tombstone is there to keep a title or a pin from resurrecting a chat
+    /// nobody wrote in; opening the conversation again is the opposite case, and
+    /// the mark has to go or the chat state that follows is dropped on arrival.
+    public static func liftTombstone(_ dbc: GRDB.Database, chatId: String) throws {
+        try dbc.execute(sql: "DELETE FROM chatTombstone WHERE chatId = ?", arguments: [chatId])
+    }
+
     /// Position a returning chat starts its cursors from, zero when this device
     /// never deleted it.
     public static func tombstoneSeq(_ dbc: GRDB.Database, chatId: String) throws -> Int {
