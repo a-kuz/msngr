@@ -49,12 +49,16 @@ a reconnect. The client compares one number after reconnecting, so a change miss
 while the socket was down is picked up by that comparison instead of by throwing
 every list away — which is what `SyncEngine` does today on every `connected`.
 
-Who holds the replica follows from the chats, not from anyone's contact list.
-Keys of another device are needed exactly when there is a chat with it, and
-`ConversationDO` already knows its members. Deriving the subscription from
-contacts would mean a person's object holding "these people added me", a
-disclosure the product does not make anywhere else and does not need: without a
-chat there is nothing to encrypt.
+Who holds the replica is the union of two lists in the object: the people this
+user shares a chat with, which `ConversationDO` already knows, and the people who
+put this user in their contacts. The second list is what carries a name, an
+avatar, a bio and presence to someone who added a person but has never written to
+them — the chats alone answer only for keys.
+
+That list lives in the object and is served by no endpoint, not even to its owner:
+storage inside a DO is ours, and the graph is something the server holds anyway
+(chats, members, blocks), but "who added me" must not become a product feature
+through an API we did not intend.
 
 The replica is a cache of signed material, never the authority. The set travels
 with the signature over each identity, trust stays on TOFU on the device, and a
