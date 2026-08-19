@@ -203,6 +203,7 @@ final class DeliveryReceiptTests: XCTestCase {
                        accepted: Bool = true) -> ChatStateDTO {
         ChatStateDTO(
             chatId: "c1", kind: "direct", title: nil, avatarId: nil, description: nil,
+            sendPolicy: nil, invitePolicy: nil,
             createdBy: "peer", createdAt: 1, members: [
                 .init(userId: "peer", role: "member", joinedAt: 1, accepted: true),
                 .init(userId: "me", role: "member", joinedAt: 1, accepted: accepted),

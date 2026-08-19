@@ -740,7 +740,7 @@ public actor SyncEngine {
                             isOwn: Bool, isService: Bool) throws {
         if isService {
             // in a chat that is fully read, myReadUpTo swallows the seq, so the
-            // derived unread of later messages does not count a service frame
+            // catch-up resumes past a frame that leaves no row behind
             try dbc.execute(
                 sql: """
                 UPDATE chat SET
@@ -751,16 +751,24 @@ public actor SyncEngine {
                 """,
                 arguments: [seq, seq, seq, isOwn, seq, seq, chatId])
         } else {
+            // The number counts messages, not seqs. A frame that shows nothing —
+            // an edit, a reaction, the sender key handed out after the roster
+            // changed — leaves it alone, so only this branch adds to it, and only
+            // for a frame that takes the chat further than it has ever been: a
+            // replayed batch carries seqs the chat already has and must not be
+            // counted twice.
             try dbc.execute(
                 sql: """
                 UPDATE chat SET
+                  unreadCount = CASE WHEN ? THEN 0
+                                     WHEN ? > lastSeq THEN unreadCount + 1
+                                     ELSE unreadCount END,
                   lastSeq = MAX(lastSeq, ?),
                   syncedSeq = CASE WHEN ? = syncedSeq + 1 THEN ? ELSE syncedSeq END,
-                  myReadUpTo = CASE WHEN ? THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END,
-                  unreadCount = MAX(0, MAX(lastSeq, ?) - CASE WHEN ? THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END)
+                  myReadUpTo = CASE WHEN ? THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END
                 WHERE id = ?
                 """,
-                arguments: [seq, seq, seq, isOwn, seq, seq, isOwn, seq, chatId])
+                arguments: [isOwn, seq, seq, seq, seq, isOwn, seq, chatId])
         }
     }
 
@@ -2139,6 +2147,10 @@ public actor SyncEngine {
               -- snapshot the server built before our /accept reached it
               isRequest = MIN(chat.isRequest, excluded.isRequest),
               iAccepted = MAX(chat.iAccepted, excluded.iAccepted),
+              -- what the chat holds beyond this device is counted in seqs: the
+              -- frames behind them have not been seen, and whatever they turn
+              -- out to be, the ones that arrive from here on are counted one by
+              -- one as they come
               unreadCount = MAX(0, MAX(chat.lastSeq, excluded.lastSeq) - MAX(chat.myReadUpTo, excluded.myReadUpTo))
             """,
             arguments: [s.chatId, s.kind, s.title, s.avatarId, s.description,
