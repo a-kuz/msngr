@@ -87,6 +87,16 @@ it, the rest is unreachable. The keyboard has to go down when the context menu
 opens — the composer keeps its draft — or the menu has to lay itself out above
 the keyboard's frame.
 
+### The lifted bubble doubles its shape in the context menu
+Reported 2026-08-19 from the device, with a screenshot. In the opened context
+menu the bubble is drawn twice: behind the lifted copy a second outline sticks
+out, offset up and left, with its own tail — the overlay snapshot and the bubble
+it was taken from disagree on frame or scale. The lift starts from the pressed
+state at 0.96 (`14c3a0a`), so the likely spot is the snapshot taken at the
+presentation layer's scale but laid out at the identity frame, or the original
+left visible under the overlay. Seen together with the keyboard defect above, in
+the same long-press.
+
 ### A pin frame stood in the fanout queue for 235 seconds
 Seen 2026-08-19 in the live run on `run-pin`, not reported from outside. The
 server delivered the pin's chat frame after 235 s in the queue, and the second
