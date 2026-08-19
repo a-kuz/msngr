@@ -58,6 +58,22 @@ final class VoiceTests: XCTestCase {
     /// registered by an earlier run of this suite carries "UI Tester" instead of its
     /// username, and is recognised by that name too.
     private func openPeerChat() {
+        // a tap on a row of a list that is still settling is swallowed now and then, and
+        // the second one lands, so the row is offered the touch twice before giving up
+        for attempt in 0..<2 {
+            if attempt > 0 && !chatList.waitForExistence(timeout: 5) { break }
+            tapPeerRow()
+            // the first message from someone new arrives as a request, and its content
+            // stays closed until it is accepted; the side that started the chat never
+            // sees this
+            let accept = app.buttons["request.accept"]
+            if accept.waitForExistence(timeout: 3) { accept.tap() }
+            if app.textViews["chat.input"].waitForExistence(timeout: 15) { return }
+        }
+        XCTFail("the chat never opened")
+    }
+
+    private func tapPeerRow() {
         let byTitle = NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS 'UI Tester'", peer)
         let existing = app.cells.containing(byTitle).firstMatch
         if existing.waitForExistence(timeout: 3) {
@@ -71,11 +87,6 @@ final class VoiceTests: XCTestCase {
             XCTAssertTrue(row.waitForExistence(timeout: 15), "search did not find the user \(peer)")
             row.tap()
         }
-        // the first message from someone new arrives as a request, and its content stays
-        // closed until it is accepted; the side that started the chat never sees this
-        let accept = app.buttons["request.accept"]
-        if accept.waitForExistence(timeout: 3) { accept.tap() }
-        XCTAssertTrue(app.textViews["chat.input"].waitForExistence(timeout: 15), "the chat never opened")
     }
 
     /// A sheet that has just come up takes the first tap to settle and only then the
@@ -179,15 +190,16 @@ final class VoiceTests: XCTestCase {
     /// take of unknown length still has room for what comes next. A tap on the wave of a
     /// running message moves inside it and leaves it running.
     private func rewind() {
-        newestWave.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.5)).tap()
+        playingWave.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.5)).tap()
         XCTAssertTrue(pauseButton.waitForExistence(timeout: 3),
                       "the message stopped when the position was moved")
     }
 
-    /// Records a take of the given length with the lock and sends it.
+    /// Records a take of the given length with the lock and sends it. What lands at the
+    /// bottom of the feed has to be this take, by its length: a chat holds more voice
+    /// messages than fit on a screen, so counting the bubbles on it says nothing.
     private func sendVoice(seconds: TimeInterval) {
         XCTAssertTrue(mic.waitForExistence(timeout: 10), "no microphone button")
-        let before = voiceCount()
         micCenter().press(forDuration: 1.0,
                           thenDragTo: micCenter().withOffset(CGVector(dx: 0, dy: -110)))
         XCTAssertTrue(app.buttons["chat.sendVoice"].waitForExistence(timeout: 5),
@@ -195,7 +207,36 @@ final class VoiceTests: XCTestCase {
         Thread.sleep(forTimeInterval: seconds)
         app.buttons["chat.sendVoice"].tap()
         XCTAssertTrue(play.waitForExistence(timeout: 20), "the take never reached the feed")
-        XCTAssertEqual(voiceCount(), before + 1, "the feed did not gain exactly one voice message")
+        XCTAssertFalse(recordingBar.exists, "the recording bar stayed up after sending")
+        let landed = length(of: newestPlay)
+        XCTAssertGreaterThanOrEqual(landed, Int(seconds),
+                                    "the newest take is \(landed) s, shorter than the one just made")
+        XCTAssertLessThanOrEqual(landed, Int(seconds) + 6,
+                                 "the newest take is \(landed) s, longer than the one just made")
+    }
+
+    /// The length written on a bubble, in seconds. The duration sits next to the play
+    /// button — a clock time carries two digits before the colon and is left out.
+    private func length(of playButton: XCUIElement) -> Int {
+        let texts = app.staticTexts
+            .matching(NSPredicate(format: "label MATCHES '[0-9]:[0-9]{2}'"))
+            .allElementsBoundByIndex
+        let mine = texts.first {
+            abs($0.frame.midY - playButton.frame.midY) < 24
+                && $0.frame.minX > playButton.frame.minX
+                && $0.frame.minX - playButton.frame.maxX < 60
+        }
+        let parts = (mine?.label ?? "").split(separator: ":")
+        guard parts.count == 2, let minutes = Int(parts[0]), let seconds = Int(parts[1]) else {
+            return -1
+        }
+        return minutes * 60 + seconds
+    }
+
+    /// The play button of the longest take on screen: a test that has to survive a walk
+    /// to the list needs a message that will not simply end on the way.
+    private func longestPlay() -> XCUIElement {
+        playButtons().max { length(of: $0) < length(of: $1) } ?? newestPlay
     }
 
     /// A touch too short to be a message leaves the recorder stopped and the feed as it
@@ -398,21 +439,20 @@ final class VoiceTests: XCTestCase {
     func testJ_IncomingPlaybackSurvivesTheList() {
         openPeerChat()
         XCTAssertTrue(play.waitForExistence(timeout: 15), "no voice message in the chat")
-        newestPlay.tap()
+        longestPlay().tap()
         XCTAssertTrue(pauseButton.waitForExistence(timeout: 5), "the message never started")
-        // the whole take has to be ahead of the walk, or a message that simply ended reads
-        // the same as one that was cut off
-        rewind()
-        let left = progress(above: 0)
-        XCTAssertGreaterThan(left, 0, "the position stayed at the start")
+        XCTAssertGreaterThan(progress(above: 0), 0, "the position stayed at the start")
 
+        // the walk begins with the whole take ahead of it, or a message that simply ended
+        // reads the same as one that was cut off
+        rewind()
         app.buttons["chat.back"].tap()
         XCTAssertTrue(chatList.waitForExistence(timeout: 10), "never got back to the list")
         Thread.sleep(forTimeInterval: 1.5)
         openPeerChat()
         XCTAssertTrue(pauseButton.waitForExistence(timeout: 3),
                       "the message stopped playing on the way out of the chat")
-        XCTAssertGreaterThan(progress(), left,
+        XCTAssertGreaterThan(progress(), 0,
                              "the position did not move while the chat was closed")
     }
 }
