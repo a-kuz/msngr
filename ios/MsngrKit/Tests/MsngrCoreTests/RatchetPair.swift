@@ -38,15 +38,17 @@ struct RatchetPair {
         _ = try peer.decrypt(try device.encrypt(Data("hello".utf8)))
         _ = try device.decrypt(try peer.encrypt(Data("hi".utf8)))
 
-        try store.saveSession(device, peerUserId: peerUserId, peerDeviceId: peerDeviceId,
-                              theirIdentityDH: "")
+        try store.saveSession(device, peerUserId: peerUserId, peerDeviceId: peerDeviceId)
     }
 
-    /// One message from the peer, as the envelope that travels.
-    mutating func envelope(text: String, kind: String = "text") throws -> JSONValue {
+    /// One message from the peer, as the envelope that travels. `chatId` is the
+    /// chat the peer sends in, and it has to be the chat the envelope is opened
+    /// under.
+    mutating func envelope(text: String, kind: String = "text",
+                           chatId: String = "c1") throws -> JSONValue {
         var payload = ContentPayload(kind: kind)
         payload.text = text
-        let inner = InnerMessage(content: payload)
+        let inner = InnerMessage(content: payload, chatId: chatId)
         let message = try peer.encrypt(try JSONEncoder().encode(inner))
         var env = Envelope(mode: "pw")
         env.msgs = ["\(ownUserId)/\(ownDeviceId)": PairwiseBox(

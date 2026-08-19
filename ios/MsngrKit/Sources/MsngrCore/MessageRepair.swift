@@ -17,17 +17,29 @@ public enum MessageRepair {
     /// open. Only a fresh copy from the sender can close them.
     public static let terminalReasons: Set<String> = [
         "bad_envelope", "bad_box", "bad_skm", "bad_pk", "unknown_mode",
-        "pk_decrypt_failed", "empty_inner", "no_ciphertext",
+        "pk_decrypt_failed", "empty_inner", "no_ciphertext", "unbound_identity",
+        stalePrekeyReason, wrongChatReason,
     ]
 
     /// The envelope is written in a format newer than this build reads.
     public static let envelopeAheadReason = "envelope_too_new"
 
-    /// Failures a fresh copy cannot fix: the sender would answer in the same
-    /// format this device already cannot read. The envelope is kept and
-    /// replayed instead, so a build that knows the format opens it, and no
-    /// repair attempt is spent asking for what would come back identical.
-    public static let unrepairableReasons: Set<String> = [envelopeAheadReason]
+    /// A prekey envelope whose handshake this device has already run. The
+    /// session it would have built is the one already in place.
+    public static let stalePrekeyReason = "stale_pk"
+
+    /// A message whose sender named a different chat inside the sealed box than
+    /// the one it was delivered in. It belongs to that other conversation.
+    public static let wrongChatReason = "wrong_chat"
+
+    /// Failures a fresh copy cannot fix. The sender would answer in the format
+    /// this device already cannot read, with nothing this device is missing (a
+    /// handshake already run), or with a message that belongs to another chat.
+    /// The envelope is kept and replayed instead, and no repair attempt is
+    /// spent on it.
+    public static let unrepairableReasons: Set<String> = [
+        envelopeAheadReason, stalePrekeyReason, wrongChatReason,
+    ]
 
     /// Failures that say the pairwise session itself is unusable: the request
     /// for a fresh copy would travel in that same session, so it is sent after
