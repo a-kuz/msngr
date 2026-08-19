@@ -7,11 +7,16 @@ public struct InnerMessage: Codable {
     public var type: String            // "content" | "skd"
     public var content: ContentPayload?
     public var skd: SenderKeyDistribution?
-    public var chatId: String?         // for skd: which chat the chain belongs to
+    /// The chat this message belongs to, named inside the sealed box: for
+    /// content, the chat it was sent in, and for a distribution, the chat the
+    /// chain belongs to. The envelope's own chat comes from the server, so a
+    /// receiver has this to check it against.
+    public var chatId: String?
 
-    public init(content: ContentPayload) {
+    public init(content: ContentPayload, chatId: String) {
         self.type = "content"
         self.content = content
+        self.chatId = chatId
     }
     public init(skd: SenderKeyDistribution, chatId: String) {
         self.type = "skd"
@@ -47,6 +52,14 @@ public final class E2EEManager: @unchecked Sendable {
     let gate: CryptoGate
     private let incoming: IncomingDecryptor
 
+    /// Device lists already read from the server, by userId. A send reads from
+    /// here instead of hitting /api/devices; an entry is dropped by the
+    /// `devices` frame and the whole cache on reconnect, since a frame sent
+    /// while the socket was down is gone. In-memory only: the extension never
+    /// encrypts, and a fresh process starts empty.
+    private var deviceCache: [String: [APIClient.DeviceDTO]] = [:]
+    private let deviceCacheLock = NSLock()
+
     public init(store: IdentityStore, api: APIClient, ownUserId: String, ownDeviceId: String,
                 gate: CryptoGate = CryptoGate(url: nil)) {
         self.store = store
@@ -63,8 +76,9 @@ public final class E2EEManager: @unchecked Sendable {
     // MARK: - Outgoing
 
     /// Direct chat: a pairwise Double Ratchet message per recipient device, and per own other device.
-    public func encryptDirect(content: ContentPayload, toUserId: String) async throws -> Envelope {
-        let inner = InnerMessage(content: content)
+    public func encryptDirect(content: ContentPayload, chatId: String,
+                              toUserId: String) async throws -> Envelope {
+        let inner = InnerMessage(content: content, chatId: chatId)
         return try await encryptPairwise(inner: inner, recipients: [toUserId])
     }
 
@@ -189,11 +203,50 @@ public final class E2EEManager: @unchecked Sendable {
         try store.deleteAllSenderKeyOut()
     }
 
-    /// Devices of every user in a single /devices call, grouped by userId. This asks for
-    /// no prekey bundles, so it spends no one-time prekeys.
+    /// The `devices` frame said this user's device set changed: the next send
+    /// re-reads their list from the server.
+    public func invalidateDeviceCache(userId: String) {
+        deviceCacheLock.lock()
+        defer { deviceCacheLock.unlock() }
+        deviceCache.removeValue(forKey: userId)
+    }
+
+    /// The socket was down, so any `devices` frame from that time is lost:
+    /// every list is re-read.
+    public func invalidateDeviceCache() {
+        deviceCacheLock.lock()
+        defer { deviceCacheLock.unlock() }
+        deviceCache.removeAll()
+    }
+
+    /// Test hook: what the cache holds for a user, nil when it holds nothing.
+    func cachedDevices(userId: String) -> [APIClient.DeviceDTO]? {
+        deviceCacheLock.lock()
+        defer { deviceCacheLock.unlock() }
+        return deviceCache[userId]
+    }
+
+    /// Devices of every user, grouped by userId: cached lists as they are, the
+    /// rest in a single /devices call. This asks for no prekey bundles, so it
+    /// spends no one-time prekeys.
     private func deviceMap(userIds: Set<String>) async throws -> [String: [APIClient.DeviceDTO]] {
-        let all = try await api.devices(userIds: [String](userIds))
-        return Dictionary(grouping: all, by: \.userId)
+        var result: [String: [APIClient.DeviceDTO]] = [:]
+        var missing: [String] = []
+        deviceCacheLock.lock()
+        for uid in userIds {
+            if let cached = deviceCache[uid] { result[uid] = cached } else { missing.append(uid) }
+        }
+        deviceCacheLock.unlock()
+        guard !missing.isEmpty else { return result }
+        let fetched = Dictionary(grouping: try await api.devices(userIds: missing), by: \.userId)
+        deviceCacheLock.lock()
+        for uid in missing {
+            let devices = fetched[uid] ?? []
+            deviceCache[uid] = devices
+            result[uid] = devices
+        }
+        deviceCacheLock.unlock()
+        return result
     }
 
     private func encryptPairwise(inner: InnerMessage, recipients: [String],
@@ -254,8 +307,7 @@ public final class E2EEManager: @unchecked Sendable {
                         if !isResetting,
                            var session = try store.loadSession(peerUserId: uid, peerDeviceId: device.deviceId) {
                             let msg = try session.encrypt(plaintext)
-                            try store.saveSession(session, peerUserId: uid, peerDeviceId: device.deviceId,
-                                                  theirIdentityDH: device.identityKey)
+                            try store.saveSession(session, peerUserId: uid, peerDeviceId: device.deviceId)
                             boxes[a] = PairwiseBox(type: "dr", c: try JSONEncoder().encode(msg).base64EncodedString())
                             continue
                         }
@@ -287,11 +339,12 @@ public final class E2EEManager: @unchecked Sendable {
                                bundle: APIClient.PrekeyBundleDTO) throws -> PairwiseBox? {
         guard let ikDH = Data(base64urlEncoded: bundle.identityKey),
               let ikSign = Data(base64urlEncoded: bundle.identitySignKey),
+              let ikSig = Data(base64urlEncoded: bundle.identityKeySig),
               let spk = Data(base64urlEncoded: bundle.signedPrekey.key),
               let spkSig = Data(base64urlEncoded: bundle.signedPrekey.sig) else { return nil }
 
         let pkBundle = PreKeyBundle(
-            identity: IdentityPublicKeys(dh: ikDH, signing: ikSign),
+            identity: IdentityPublicKeys(dh: ikDH, signing: ikSign, dhSignature: ikSig),
             signedPreKeyId: bundle.signedPrekey.id,
             signedPreKey: spk,
             signedPreKeySignature: spkSig,
@@ -303,12 +356,12 @@ public final class E2EEManager: @unchecked Sendable {
         var session = try DoubleRatchetSession.initAlice(
             sharedSecret: x3dh.sharedSecret, theirRatchetPub: spk, ad: x3dh.associatedData)
         let msg = try session.encrypt(plaintext)
-        try store.saveSession(session, peerUserId: userId, peerDeviceId: bundle.deviceId,
-                              theirIdentityDH: bundle.identityKey)
+        try store.saveSession(session, peerUserId: userId, peerDeviceId: bundle.deviceId)
 
         var box = PairwiseBox(type: "pk", c: try JSONEncoder().encode(msg).base64EncodedString())
         box.ik = our.dh.publicKey.rawRepresentation.base64urlEncodedString()
         box.isk = our.signing.publicKey.rawRepresentation.base64urlEncodedString()
+        box.iksig = try our.dhSignature.base64urlEncodedString()
         box.ek = x3dh.ephemeralPublic.base64urlEncodedString()
         box.spkId = bundle.signedPrekey.id
         box.otpId = bundle.oneTimePrekey?.id

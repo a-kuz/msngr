@@ -265,6 +265,9 @@ public actor SyncEngine {
         case .connected:
             connected = true
             connectionStream.send(true)
+            // a `devices` frame sent while the socket was down is gone, so
+            // every cached device list is suspect
+            e2ee.invalidateDeviceCache()
             await sendSyncCursors()
             outboxWakeup.continuation.yield()
             actionWakeup.continuation.yield()
@@ -437,6 +440,12 @@ public actor SyncEngine {
                 try? await db.write { dbc in
                     try SyncEngine.upsertUser(dbc, user)
                 }
+            }
+        case "devices":
+            // someone linked or revoked a device: the next envelope to them
+            // must be addressed to the new set, so their cached list goes
+            if let userId = f.userId {
+                e2ee.invalidateDeviceCache(userId: userId)
             }
         case "chat":
             // removed from the chat while the device was offline: such a frame
@@ -1749,12 +1758,14 @@ public actor SyncEngine {
         if let addressee = content.to {
             // an addressed frame (a repair request, a copy, a chain ack)
             // concerns two devices, so it goes pairwise even in a group
-            let env = try await e2ee.encryptDirect(content: content, toUserId: addressee)
+            let env = try await e2ee.encryptDirect(content: content, chatId: item.chatId,
+                                                   toUserId: addressee)
             try await ws.send(.send(chatId: item.chatId, clientMsgId: item.clientMsgId,
                                     sentAt: item.createdAt, body: env, service: service))
         } else if info.kind == "direct" {
             let peer = info.members.first { $0 != ownUserId } ?? ownUserId
-            let env = try await e2ee.encryptDirect(content: content, toUserId: peer)
+            let env = try await e2ee.encryptDirect(content: content, chatId: item.chatId,
+                                                   toUserId: peer)
             try await ws.send(.send(chatId: item.chatId, clientMsgId: item.clientMsgId,
                                     sentAt: item.createdAt, body: env, service: service))
         } else {

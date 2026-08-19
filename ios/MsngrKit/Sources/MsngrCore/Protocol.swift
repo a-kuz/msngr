@@ -91,6 +91,7 @@ public struct PairwiseBox: Codable {
     // pk only:
     public var ik: String?    // our identity DH pub, b64
     public var isk: String?   // our identity signing pub, b64
+    public var iksig: String? // isk's signature over ik, b64
     public var ek: String?    // ephemeral pub, b64
     public var spkId: UInt32? // which signed prekey was used
     public var otpId: UInt32? // which one-time prekey was used

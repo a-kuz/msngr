@@ -22,10 +22,10 @@ The source of truth is the code: `server/src/index.ts` (the router),
 - Token revocation: `devices.revoked_at`. It is checked in the authorization
   middleware, so a revoked token gives 401 both on `/api/*` and on the `/ws`
   upgrade. Revocation cuts that device's live sockets (close code 4401), erases
-  its APNs token and deletes its `identity_keys` and `one_time_prekeys`: a peer
-  re-reads the device list on every send, so that is what stops envelopes being
-  addressed to the revoked device. A token has no lifetime: it works until it is
-  revoked.
+  its APNs token, deletes its `identity_keys` and `one_time_prekeys` and
+  broadcasts a `devices` frame: peers drop their cached device list, so the next
+  send no longer addresses the revoked device. A token has no lifetime: it works
+  until it is revoked.
 - Every client-visible timestamp is in seconds (`nowSec()` on the server,
   `timeIntervalSince1970` on the client).
 
@@ -47,7 +47,8 @@ Responses: `{ok:true, ...}` or `{ok:false, error}` with a non-2xx HTTP status.
 
 ```
 POST /api/register    {username, displayName, device:{name}, identityKey, identitySignKey,
-                       signedPrekey:{id,key,sig}, oneTimePrekeys:[{id,key}], phoneHash?}
+                       identityKeySig, signedPrekey:{id,key,sig},
+                       oneTimePrekeys:[{id,key}], phoneHash?}
                       → {userId, deviceId, token}    (no auth; username [a-zA-Z0-9_]{3,32})
 GET  /api/me                      → {user, deviceId}
 GET  /api/sessions                → {sessions:[{deviceId,name,createdAt,lastSeen,hasPushToken,current}]}
@@ -60,7 +61,7 @@ GET  /api/provision/:id           (x-provision-token) → {status:"pending"|"app
 POST /api/provision/lookup        {code} → {provisionId, ephemeralKey, device, expiresIn}
 POST /api/provision/:id/approve   {envelope} — consent from a device already in the account
 POST /api/provision/:id/claim     (x-provision-token) {identityKey, identitySignKey,
-                                  signedPrekey, oneTimePrekeys, device:{name}}
+                                  identityKeySig, signedPrekey, oneTimePrekeys, device:{name}}
                                   → {userId, deviceId, token}
 POST /api/provision/:id/cancel    (x-provision-token)
 GET  /api/users?q=                search by username/displayName (LOWER LIKE, limit 20)
@@ -187,6 +188,8 @@ line; the rest are listed in `SyncEngine.rowlessKinds`.
 {t:"receipt", chatId, kind:"delivered"|"read", upToSeq, by}
 {t:"typing",  chatId, from, kind}
 {t:"presence",userId, online, lastSeen}
+{t:"profile", user}
+{t:"devices", userId}
 {t:"chat",    chatId, event:"created"|"members"|"settings"|"pinned"|"sync", state}
 {t:"deleted", chatId, msgIds, forAll, by}
 {t:"syncState", chatId, cursor, more}
@@ -198,6 +201,12 @@ line; the rest are listed in `SyncEngine.rowlessKinds`.
 `error` is a rejection of a client frame; `error` carries a machine-readable code
 (`blocked`, `not_member`, `not_allowed`, `send_failed`). For a `send` it arrives
 instead of `sent`, with the same `clientMsgId`.
+
+`devices` says the user's device set changed — a device was linked or revoked.
+It goes to the user's own other devices and to everyone they share a chat with.
+A sender caches device lists between sends; this frame (or a reconnect, which
+may have missed it) drops the cached entry, and the next envelope re-reads
+`GET /api/devices`.
 
 `state` in a `chat` frame is the chat's full snapshot: `members` (userId, role,
 joinedAt, accepted), `title`, `avatarId`, `description`, `sendPolicy`,
@@ -306,9 +315,15 @@ The server does not look inside. Two modes:
 
 ```
 {type:"pk"|"dr", c,        // base64 JSON RatchetMessage {header:{dhPub,pn,n}, ciphertext}
- ik?, isk?, ek?, spkId?, otpId?}   // pk only: our identity DH/Ed25519 pub,
-                                   // the ephemeral and the ids of the prekeys used
+ ik?, isk?, iksig?, ek?, spkId?, otpId?}   // pk only: our identity DH/Ed25519 pub,
+                                           // the Ed25519 signature over the DH pub,
+                                           // the ephemeral and the ids of the prekeys used
 ```
+
+A `pk` box is opened only when `ik`, `isk` and `iksig` are all there and the
+signature holds: the recipient trusts the identity by `isk` and runs X3DH on
+`ik`, so a box that does not sign the two together says nothing about who sent
+it (`docs/crypto-flows.md`).
 
 A sender key handout (`skd`) is not a separate envelope mode: it is an ordinary
 pairwise message carrying an `InnerMessage` with `type:"skd"` inside.
@@ -316,9 +331,15 @@ pairwise message carrying an `InnerMessage` with `type:"skd"` inside.
 Inside the pairwise ciphertext:
 
 ```
-{type:"content", content: ContentPayload}
+{type:"content", content: ContentPayload, chatId}
 {type:"skd", skd:{keyId, iteration, chainKey, signingPub}, chatId}
 ```
+
+`chatId` inside the ciphertext is the chat the sender wrote in. The chat the
+envelope arrives in comes from the server, so the recipient checks the two
+against each other and refuses a message put into another conversation
+(`wrong_chat`): it belongs to that other chat, not this one, and no repair is
+asked for it.
 
 `ContentPayload` (also the plaintext in `skm`):
 

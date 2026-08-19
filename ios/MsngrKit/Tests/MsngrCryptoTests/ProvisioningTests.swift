@@ -101,11 +101,11 @@ final class ProvisioningTests: XCTestCase {
         let restored = try IdentityKeyPair(
             dhRaw: Data(base64urlEncoded: opened.identityDH)!,
             signingRaw: Data(base64urlEncoded: opened.identitySigning)!)
-        XCTAssertEqual(restored.publicKeys, identity.publicKeys)
+        XCTAssertEqual(try restored.publicKeys, try identity.publicKeys)
 
         // and it signs prekeys the peer verifies against the account's key
         let spk = try SignedPreKey(id: 1, identity: restored)
-        let bundle = PreKeyBundle(identity: identity.publicKeys, signedPreKeyId: spk.id,
+        let bundle = PreKeyBundle(identity: try identity.publicKeys, signedPreKeyId: spk.id,
                                   signedPreKey: spk.key.publicKey.rawRepresentation,
                                   signedPreKeySignature: spk.signature,
                                   oneTimePreKeyId: nil, oneTimePreKey: nil)
@@ -119,7 +119,7 @@ final class ProvisioningTests: XCTestCase {
         let account = IdentityKeyPair()
         let spk = try SignedPreKey(id: 1, identity: account)
         let otp = OneTimePreKey(id: 1)
-        let bundle = PreKeyBundle(identity: account.publicKeys, signedPreKeyId: spk.id,
+        let bundle = PreKeyBundle(identity: try account.publicKeys, signedPreKeyId: spk.id,
                                   signedPreKey: spk.key.publicKey.rawRepresentation,
                                   signedPreKeySignature: spk.signature,
                                   oneTimePreKeyId: otp.id,
