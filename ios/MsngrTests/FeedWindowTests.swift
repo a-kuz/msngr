@@ -25,22 +25,68 @@ final class FeedWindowTests: XCTestCase {
     }
 
     /// Jumping to a message deeper than the window: the floor lands on it and the
-    /// capacity stretches so the newest message stays inside, otherwise there would
-    /// be no way back down from the landing point.
-    func testAnchorPutsTheFloorOnTheMessageAndKeepsTheNewestInside() {
+    /// window holds a bounded number of messages around it, however far the end of
+    /// the conversation is from there.
+    func testAnchorHoldsTheTargetWithinBounds() {
         let window = FeedWindow(capacity: 60)
-        window.set(1_900)
-        window.anchor(floor: 5, capacity: 1_996)
-        XCTAssertEqual(window.plan().floor, 5)
-        XCTAssertEqual(window.plan().capacity, 1_996)
+        window.set(19_900)
+        window.anchor(floor: 440)
+        XCTAssertEqual(window.plan().floor, 440)
+        XCTAssertEqual(window.plan().capacity, FeedWindow.anchorCapacity)
     }
 
-    /// Capacity only grows: a jump to a nearby message does not shrink a window that
-    /// paging had already built up.
-    func testAnchorNeverShrinksTheWindow() {
-        let window = FeedWindow(capacity: 600)
-        window.anchor(floor: 10, capacity: 20)
-        XCTAssertEqual(window.plan().capacity, 600)
+    /// A window paging had already grown comes back to the size of a jump: the pages
+    /// that were read on the way up are far from the target and cost a refetch each.
+    func testAnchorBoundsAWindowThatPagingHadGrown() {
+        let window = FeedWindow(capacity: 60)
+        window.grow(by: 6_000)
+        window.anchor(floor: 10)
+        XCTAssertEqual(window.plan().capacity, FeedWindow.anchorCapacity)
+    }
+
+    /// The feed reporting that it is at the bottom does not move an anchored window:
+    /// the bottom of a window standing in the history is not the newest message, and
+    /// recomputing the floor there would take the reader away from the target.
+    func testAnchoredWindowDoesNotFollowTheEndOfTheChat() {
+        let window = FeedWindow(capacity: 60)
+        window.anchor(floor: 500)
+        window.setAtBottom(true)
+        XCTAssertEqual(window.plan(), FeedWindow.Plan(floor: 500, recompute: false,
+                                                      capacity: FeedWindow.anchorCapacity))
+    }
+
+    /// A jump that landed near the end of the chat holds the newest message anyway,
+    /// and the window is free to follow it again.
+    func testReleasedAnchorLetsTheWindowSlideAgain() {
+        let window = FeedWindow(capacity: 60)
+        window.anchor(floor: 500)
+        window.releaseAnchor()
+        XCTAssertTrue(window.plan().recompute)
+    }
+
+    /// Coming back to the bottom gives the pages back: the window is a page again and
+    /// the caller is told to refetch on it.
+    func testReturningToTheBottomShrinksTheWindowToAPage() {
+        let window = FeedWindow(capacity: 60)
+        window.set(1_000)
+        window.setAtBottom(false)
+        window.grow(by: 840)
+        XCTAssertEqual(window.plan().capacity, 900)
+
+        XCTAssertTrue(window.setAtBottom(true))
+        XCTAssertEqual(window.plan().capacity, 60)
+        // already a page: nothing to shrink and nothing to refetch
+        XCTAssertFalse(window.setAtBottom(true))
+    }
+
+    /// The reader asked for the newest messages: the window leaves the history it
+    /// stood in, whatever it had grown to.
+    func testResetReturnsTheWindowToTheEndOfTheChat() {
+        let window = FeedWindow(capacity: 60)
+        window.anchor(floor: 500)
+        window.grow(by: 300)
+        window.reset()
+        XCTAssertEqual(window.plan(), FeedWindow.Plan(floor: nil, recompute: true, capacity: 60))
     }
 
     func testPagingUpRaisesTheCeiling() {
@@ -129,5 +175,42 @@ final class FeedWindowTests: XCTestCase {
         XCTAssertFalse(ChatViewModel.movesFeedToEnd(kind: "edit", target: "c", chatId: "c"))
         XCTAssertFalse(ChatViewModel.movesFeedToEnd(kind: "text", target: "other", chatId: "c"),
                        "пересылка в другой чат ленту не двигает")
+    }
+
+    /// A jump into the middle of a long chat: the window holds the target with history
+    /// under it and messages above it, and stops there instead of reaching the newest
+    /// message four and a half thousand rows away.
+    func testJumpHoldsItsTargetWithoutReachingTheNewest() throws {
+        let db = try AppDatabase.openInMemory()
+        try db.write { dbc in
+            try dbc.execute(sql: """
+                INSERT INTO chat (id, kind, title, createdBy, createdAt)
+                VALUES ('c', 'direct', 'c', 'peer', 1700000000)
+                """)
+            for seq in 1...5_000 {
+                try dbc.execute(sql: """
+                    INSERT INTO message (id, msgId, chatId, seq, fromUserId, sentAt, kind, text,
+                                         edited, deletedForAll, status, isOutgoing)
+                    VALUES (?,?,?,?,?,?,?,?,0,0,2,0)
+                    """, arguments: ["m\(seq)", "m\(seq)", "c", seq, "peer",
+                                     1_700_000_000 + Double(seq), "text", "m\(seq)"])
+            }
+        }
+        let window = FeedWindow(capacity: 60)
+        let floor = try db.read { dbc in
+            try HistoryWindow.floorBelow(dbc, chatId: "c", floor: 500,
+                                         limit: FeedWindow.anchorBelow)
+        }
+        window.anchor(floor: try XCTUnwrap(floor))
+        let plan = window.plan()
+        try db.read { dbc in
+            let msgs = try HistoryWindow.messages(dbc, chatId: "c", floor: plan.floor,
+                                                  limit: plan.capacity)
+            XCTAssertEqual(msgs.count, FeedWindow.anchorCapacity)
+            XCTAssertEqual(msgs.last?.seq, 440)
+            XCTAssertTrue(msgs.contains { $0.seq == 500 })
+            XCTAssertTrue(try HistoryWindow.hasNewer(dbc, chatId: "c", topSeq: msgs.first?.seq),
+                          "the window stops short of the end of the chat")
+        }
     }
 }

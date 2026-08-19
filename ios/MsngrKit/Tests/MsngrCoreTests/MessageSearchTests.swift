@@ -86,6 +86,28 @@ final class MessageSearchTests: XCTestCase {
         XCTAssertEqual(try hits(db, "receipt").hits.map(\.kind), [.photo])
     }
 
+    /// The index follows the text of a message and nothing else. An edit is found by
+    /// its new wording and not by the old one, while a status update — a delivery
+    /// receipt writes one per message it covers — leaves the row indexed as it was.
+    func testIndexFollowsTheTextAndNotTheStatus() throws {
+        let db = try AppDatabase.openInMemory()
+        try seedChat(db, id: "c1")
+        try seedMessage(db, id: "m1", chatId: "c1", text: "Irina arrives tomorrow", at: 10)
+
+        try db.write { dbc in
+            try dbc.execute(sql: "UPDATE message SET status = ? WHERE id = ?",
+                            arguments: [MessageStatus.delivered.rawValue, "m1"])
+        }
+        XCTAssertEqual(try hits(db, "Irina").hits.map(\.id), ["m1"])
+
+        try db.write { dbc in
+            try dbc.execute(sql: "UPDATE message SET text = ? WHERE id = ?",
+                            arguments: ["Irina arrives on Monday", "m1"])
+        }
+        XCTAssertEqual(try hits(db, "Monday").hits.map(\.id), ["m1"])
+        XCTAssertTrue(try hits(db, "tomorrow").hits.isEmpty)
+    }
+
     // MARK: - What it must not show
 
     /// A chat waiting to be accepted hides its content everywhere; search is not
