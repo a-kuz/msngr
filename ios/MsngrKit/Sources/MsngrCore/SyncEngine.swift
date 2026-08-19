@@ -265,6 +265,9 @@ public actor SyncEngine {
         case .connected:
             connected = true
             connectionStream.send(true)
+            // a `devices` frame sent while the socket was down is gone, so
+            // every cached device list is suspect
+            e2ee.invalidateDeviceCache()
             await sendSyncCursors()
             outboxWakeup.continuation.yield()
             actionWakeup.continuation.yield()
@@ -433,6 +436,12 @@ public actor SyncEngine {
                 try? await db.write { dbc in
                     try SyncEngine.upsertUser(dbc, user)
                 }
+            }
+        case "devices":
+            // someone linked or revoked a device: the next envelope to them
+            // must be addressed to the new set, so their cached list goes
+            if let userId = f.userId {
+                e2ee.invalidateDeviceCache(userId: userId)
             }
         case "chat":
             // removed from the chat while the device was offline: such a frame
