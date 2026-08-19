@@ -201,6 +201,14 @@ Recording runs while the microphone is held; the gesture begins on the first
 `onChanged`. The format is m4a, AAC, 24 kHz, mono, 48 kbit/s. Anything under
 0.3 s is dropped as an accidental touch and anything longer is a real message.
 
+The take belongs to the finger that started it, and `RecordingGesture` is where
+that is written down. Access is asked for before the recorder runs, so a touch
+that ends while the request is still in flight starts nothing at all; a take
+dropped by the slide is not started again by the same finger going on moving
+over the button; and a take that loses the screen, the foreground or the
+microphone to a call is dropped whole rather than sent as a stump of what was
+said before.
+
 While recording: the button pulses, a timer counts tenths, and a live waveform
 is drawn (a 0.05 s timer over `averagePower` from −60 to 0 dB, keeping the last
 60 values). Swiping left past 110 pt cancels; swiping up past 70 pt locks the
@@ -209,7 +217,15 @@ recording, after which a cancel button and a send button appear.
 The message carries a waveform of 100 buckets valued 0 to 31, computed from the
 finished file. The voice bubble is fixed at 220×42 with a 40×40 play button, a
 waveform 22 high and the duration beneath it. Tapping or panning the waveform
-seeks. The file bubble uses the same slot: up to 240 wide, 42 high.
+seeks, along the wave only: a drag that goes up or down over the bubble is the
+reader scrolling the feed. The file bubble uses the same slot: up to 240 wide,
+42 high.
+
+One player serves the whole app (`VoicePlayer`), so a message goes on playing
+while the reader walks into another chat and its bubble picks the position back
+up when they return. The plate of the message being played shows a pause icon
+and a speed button stepping ×1 → ×1,5 → ×2; the speed belongs to the player and
+carries on to the next message.
 
 ## The input field
 
