@@ -34,6 +34,15 @@ export type ClientFrame =
   | { t: "bg" }   // app went to background: presence goes offline at once
   | { t: "fg" };  // app came back: presence goes online
 
+/// A user card as everyone may see it: the columns GET /api/users/:id serves.
+export interface PublicUser {
+  id: string;
+  username: string;
+  display_name: string;
+  bio: string | null;
+  avatar_id: string | null;
+}
+
 // --- WS frames: server -> client ---
 export type ServerFrame =
   | { t: "hello"; serverTime: number; protocol: number; minProtocol: number }
@@ -42,6 +51,9 @@ export type ServerFrame =
   | { t: "receipt"; chatId: string; kind: "delivered" | "read"; upToSeq?: number; seqs?: number[]; by: string }
   | { t: "typing"; chatId: string; from: string; kind: string | null }
   | { t: "presence"; userId: string; online: boolean; lastSeen: number }
+  /// someone's card changed: name, bio, avatar or username. The profile is
+  /// public, so the frame carries the whole row rather than a hint to refetch
+  | { t: "profile"; user: PublicUser }
   /// state is absent only for event "removed": the addressee is no longer a
   /// member, so the roster is not handed to them
   | { t: "chat"; chatId: string; event: string; state?: ChatState }
@@ -64,12 +76,19 @@ export interface ChatMember {
   accepted: boolean;
 }
 
+/// Who may act in a group: everyone in it, or only its admins.
+export type ChatPolicy = "all" | "admins";
+
 export interface ChatState {
   chatId: string;
   kind: "direct" | "group";
   title: string | null;
   avatarId: string | null;
   description: string | null;
+  /// who may send content; service frames are never held back
+  sendPolicy: ChatPolicy;
+  /// who may add members and mint invite links
+  invitePolicy: ChatPolicy;
   createdBy: string;
   createdAt: number;
   members: ChatMember[];
@@ -89,6 +108,10 @@ export interface StoredMsg {
   ts: number;     // server clock
   body: unknown;  // E2E envelope; null if tombstoned
   service?: boolean;
+  /// How many content messages the chat held once this one was written; a
+  /// service frame carries the count it did not change. Unread is the distance
+  /// between this number at a member's mark and the chat's current one.
+  contentAt?: number;
   deleted?: boolean;
   deletedBy?: string;
   /// userId of a recipient who has blocked the sender: this member gets the message

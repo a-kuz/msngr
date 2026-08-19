@@ -15,6 +15,9 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     var onReply: ((Message) -> Void)?
     var onReact: ((Message, String) -> Void)?
     var onContextAction: ((Message, MessageContextAction) -> Void)?
+    /// The message the chat holds pinned, so the context menu of that one offers
+    /// to take the pin off instead of putting it on again.
+    var pinnedMsgId: String?
     var onTapMedia: ((Message, Int, UIView) -> Void)?
     /// Tap on the quote inside a reply bubble, which jumps to the original.
     var onTapReplyQuote: ((Message) -> Void)?
@@ -24,6 +27,9 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     var onScrollToStart: (() -> Void)?
     /// свайп от левой кромки: возврат к списку чатов
     var onSwipeBack: (() -> Void)?
+
+    /// Whose feed this is: a group event about this member is worded as "вас".
+    var ownUserId = ""
 
     private(set) var collectionView: UICollectionView!
     private var items: [ChatFeedItem] = []
@@ -460,6 +466,9 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         cell.onTapLink = { [weak self] url in self?.open(url) }
         cell.onTapReplyQuote = { [weak self] in self?.onTapReplyQuote?(msg) }
         cell.onToggleSelection = { [weak self] in self?.onToggleSelection?(msg) }
+        // asked when the menu opens, not when the cell is filled: pinning changes
+        // the chat, not the message, so no cell is reconfigured for it
+        cell.isPinned = { [weak self] in self?.pinnedMsgId == msg.msgId }
         cell.setSelection(mode: selectionMode, selected: selectedIds.contains(msg.id), animated: false)
     }
 
@@ -637,7 +646,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
 }
 
 enum MessageContextAction {
-    case reply, copy, forward, select, edit, pin, delete
+    case reply, copy, forward, select, edit, pin, unpin, delete, resend
 }
 
 extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
@@ -666,7 +675,7 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
         case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName):
             if msg.kind == .system {
                 let cell = cv.dequeueReusableCell(withReuseIdentifier: "system", for: indexPath) as! SystemCell
-                cell.configure(msg)
+                cell.configure(msg, ownUserId: ownUserId)
                 return cell
             }
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "msg", for: indexPath) as! MessageCell
@@ -704,7 +713,8 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
         case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName):
             if msg.kind == .system {
                 return CGSize(width: cv.bounds.width,
-                              height: FeedNote.height(SystemCell.text(for: msg), width: cv.bounds.width) + 12)
+                              height: FeedNote.height(SystemCell.text(for: msg, ownUserId: ownUserId),
+                                                      width: cv.bounds.width) + 12)
             }
             let plan = BubbleLayout.plan(for: msg, width: cv.bounds.width, tightGap: tightGap,
                                          showTail: showTail, showName: showName, authorName: authorName,
@@ -864,13 +874,16 @@ final class SystemCell: UICollectionViewCell {
     static let unreadableText = "Сообщение ещё не загружено"
     static let historyStartText = "История начинается здесь"
 
-    static func text(for msg: Message) -> String {
+    static func text(for msg: Message, ownUserId: String = "") -> String {
         let t = msg.text ?? ""
+        if let event = GroupEvent.decode(t) {
+            return event.sentence(isOwn: msg.isOutgoing, ownUserId: ownUserId)
+        }
         return t.hasPrefix("identity_changed:") ? "Код безопасности собеседника изменился" : t
     }
 
-    func configure(_ msg: Message) {
-        configure(text: Self.text(for: msg))
+    func configure(_ msg: Message, ownUserId: String = "") {
+        configure(text: Self.text(for: msg, ownUserId: ownUserId))
     }
 
     func configure(text: String) {

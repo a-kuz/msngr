@@ -105,6 +105,17 @@ public enum NotificationBurstStore {
                     """, arguments: [top, top, chatId])
             }
 
+            // The push is the message arriving at the device, so the author is
+            // owed his second tick now and not when the app is next opened. The
+            // extension posts it right after this transaction; the row is what
+            // survives being killed in between, and the app sends it on its
+            // next connection. An unaccepted request answers nothing — its
+            // recipient is invisible to whoever wrote.
+            for (chatId, chat) in chats where !chat.isRequest {
+                guard let top = items.filter({ $0.chatId == chatId }).map(\.seq).max() else { continue }
+                try DeliveryReceipts.record(dbc, chatId: chatId, upToSeq: top, now: now)
+            }
+
             for i in plan.steps.indices {
                 guard plan.steps[i].outcome == .show else { continue }
                 let item = plan.steps[i].item

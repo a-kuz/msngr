@@ -6,6 +6,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     var onReply: (() -> Void)?
     var onReact: ((String) -> Void)?
     var onContextAction: ((MessageContextAction) -> Void)?
+    /// Whether this message is the pinned one, asked at the moment the menu opens.
+    var isPinned: (() -> Bool)?
     var onTapMedia: ((Int, UIView) -> Void)?
     var onTapLink: ((URL) -> Void)?
     var onTapReplyQuote: (() -> Void)?
@@ -320,8 +322,10 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
                                     y: plan.statusFrame.midY - tickH / 2,
                                     width: tickW - 2, height: tickH)
             tickView.image = Self.tickImage(msg.status)
-            tickView.tintColor = plan.statusOnMedia ? .white
-                : (msg.status == .read ? UIColor(Theme.outgoingTickRead) : UIColor(Theme.outgoingMeta))
+            // read keeps its own colour over media too: the white the rest of the
+            // capsule uses would make a read photo look the same as a delivered one
+            tickView.tintColor = msg.status == .read ? UIColor(Theme.outgoingTickRead)
+                : (plan.statusOnMedia ? .white : UIColor(Theme.outgoingMeta))
         } else {
             tickView.isHidden = true
         }
@@ -515,23 +519,46 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
     static func tickImage(_ status: MessageStatus) -> UIImage? {
         switch status {
-        case .failed: return UIImage(systemName: "exclamationmark.circle.fill")
-        case .sending: return UIImage(systemName: "clock")
-        case .sent: return UIImage(systemName: "checkmark")
+        case .failed: return failedMark
+        case .sending: return clockMark
+        case .sent: return singleTick
         case .delivered, .read: return doubleTick
         }
     }
 
-    static let doubleTick: UIImage = {
-        let size = CGSize(width: 18, height: 13)
-        return UIGraphicsImageRenderer(size: size).image { ctx in
-            let cfg = UIImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
-            let check = UIImage(systemName: "checkmark", withConfiguration: cfg)!
-                .withTintColor(.white, renderingMode: .alwaysOriginal)
-            check.draw(in: CGRect(x: 0, y: 1.5, width: 11, height: 10))
-            check.draw(in: CGRect(x: 5, y: 1.5, width: 11, height: 10))
+    /// Canvas every status glyph is drawn into, so the mark keeps its size when the
+    /// status moves on: the single tick is one of the pair, not a stretched symbol
+    /// filling the whole frame the pair needs.
+    private static let markCanvas = CGSize(width: 18, height: 13)
+
+    private static func mark(_ draw: (UIImage) -> Void) -> UIImage {
+        UIGraphicsImageRenderer(size: markCanvas).image { _ in
+            draw(UIImage(systemName: "checkmark", withConfiguration: markConfig)!
+                .withTintColor(.white, renderingMode: .alwaysOriginal))
         }.withRenderingMode(.alwaysTemplate)
-    }()
+    }
+
+    private static let markConfig = UIImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
+
+    private static func glyph(_ name: String) -> UIImage {
+        let symbol = UIImage(systemName: name, withConfiguration: markConfig)!
+            .withTintColor(.white, renderingMode: .alwaysOriginal)
+        return UIGraphicsImageRenderer(size: markCanvas).image { _ in
+            symbol.draw(in: CGRect(x: 4, y: 1.5, width: 10, height: 10))
+        }.withRenderingMode(.alwaysTemplate)
+    }
+
+    static let singleTick: UIImage = mark { check in
+        check.draw(in: CGRect(x: 3.5, y: 1.5, width: 11, height: 10))
+    }
+
+    static let doubleTick: UIImage = mark { check in
+        check.draw(in: CGRect(x: 0, y: 1.5, width: 11, height: 10))
+        check.draw(in: CGRect(x: 5, y: 1.5, width: 11, height: 10))
+    }
+
+    static let clockMark: UIImage = glyph("clock")
+    static let failedMark: UIImage = glyph("exclamationmark.circle.fill")
 }
 
 // MARK: - Components
@@ -772,6 +799,24 @@ extension MessageCell {
         Haptics.medium()
 
         var items: [MessageContextOverlay.Item] = []
+        // a message that never went out has no server id: it cannot be replied
+        // to, forwarded or pinned, and the only two things to do with it are to
+        // send it again and to throw it away
+        if msg.status == .failed {
+            items.append(.init(title: "Отправить заново", icon: "arrow.clockwise") { [weak self] in
+                self?.onContextAction?(.resend)
+            })
+            if msg.kind == .text {
+                items.append(.init(title: "Копировать", icon: "doc.on.doc") { [weak self] in
+                    self?.onContextAction?(.copy)
+                })
+            }
+            items.append(.init(title: "Удалить", icon: "trash", destructive: true) { [weak self] in
+                self?.onContextAction?(.delete)
+            })
+            presentContextMenu(items, in: window, msg: msg, showsReactions: false)
+            return
+        }
         items.append(.init(title: "Ответить", icon: "arrowshape.turn.up.left") { [weak self] in
             self?.onContextAction?(.reply)
         })
@@ -787,9 +832,15 @@ extension MessageCell {
         items.append(.init(title: "Выбрать", icon: "checkmark.circle") { [weak self] in
             self?.onContextAction?(.select)
         })
-        items.append(.init(title: "Закрепить", icon: "pin") { [weak self] in
-            self?.onContextAction?(.pin)
-        })
+        if isPinned?() == true {
+            items.append(.init(title: "Открепить", icon: "pin.slash") { [weak self] in
+                self?.onContextAction?(.unpin)
+            })
+        } else {
+            items.append(.init(title: "Закрепить", icon: "pin") { [weak self] in
+                self?.onContextAction?(.pin)
+            })
+        }
         if msg.isOutgoing && msg.kind == .text {
             items.append(.init(title: "Изменить", icon: "pencil") { [weak self] in
                 self?.onContextAction?(.edit)
@@ -799,6 +850,11 @@ extension MessageCell {
             self?.onContextAction?(.delete)
         })
 
+        presentContextMenu(items, in: window, msg: msg)
+    }
+
+    private func presentContextMenu(_ items: [MessageContextOverlay.Item], in window: UIWindow,
+                                    msg: Message, showsReactions: Bool = true) {
         let mine = msg.reactions.first(where: { $0.value.contains(OwnUser.id) })?.key
         // текст приподнятого баббла выделяется протяжкой, поэтому он уходит
         // в меню живым, а снимок рендерится без него
@@ -813,6 +869,7 @@ extension MessageCell {
         textView.isHidden = selectable != nil || textWasHidden
         MessageContextOverlay.present(over: bubbleView, in: window, isOutgoing: msg.isOutgoing,
                                       myReaction: mine, items: items, selectableText: selectable,
+                                      showsReactions: showsReactions,
                                       onReact: { [weak self] emoji in self?.onReact?(emoji) })
         textView.isHidden = textWasHidden
     }

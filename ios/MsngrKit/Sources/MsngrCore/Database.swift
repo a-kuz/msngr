@@ -402,7 +402,27 @@ public enum AppDatabase {
             // table, so the cost of an answer grows with the size of the chat.
             try db.create(indexOn: "message", columns: ["clientMsgId"])
         }
-        m.registerMigration("v19-ftsOnTextChange") { db in
+        m.registerMigration("v19-chatPolicies") { db in
+            for column in ["sendPolicy", "invitePolicy"] {
+                try db.alter(table: "chat") { t in
+                    t.add(column: column, .text).notNull().defaults(to: ChatPermissions.openPolicy)
+                }
+            }
+        }
+        m.registerMigration("v20-chatMark") { db in
+            // How far each member of a chat has got, delivered and read. A tick
+            // in a group speaks for everyone — it turns double when the last
+            // member has the message — so the marks have to be kept apart
+            // instead of collapsing into one number per chat.
+            try db.create(table: "chatMark") { t in
+                t.column("chatId", .text).notNull()
+                t.column("userId", .text).notNull()
+                t.column("deliveredUpTo", .integer).notNull().defaults(to: 0)
+                t.column("readUpTo", .integer).notNull().defaults(to: 0)
+                t.primaryKey(["chatId", "userId"])
+            }
+        }
+        m.registerMigration("v21-ftsOnTextChange") { db in
             // The search index only has to move when the text moves. The triggers the
             // virtual table is created with fire on any update of a message row, and
             // most updates of a message change its status: a delivery receipt over

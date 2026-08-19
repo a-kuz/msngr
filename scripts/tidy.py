@@ -137,12 +137,13 @@ def stale_simulators(agents, working):
         if time.time() - home.stat().st_ctime < SETTLE:
             continue
         if note.endswith(", gone"):
-            # The registry named this agent and the agent has finished. Nothing
-            # else has to agree: an abandoned app keeps writing for as long as
-            # the simulator is up — one left a trace file ticking every second
-            # hours after its agent was gone — so waiting for quiet here would
-            # be waiting forever.
-            why = f"agent {note.split()[1].rstrip(',')} is gone"
+            # The registry still names this agent, and a named agent is only
+            # paused, never gone: `claude -p` exits between resumes, so an
+            # absent process proves nothing. Its simulators were once deleted
+            # in such a pause and the resumed agent came back to nothing. The
+            # devices are taken when the orchestrator strikes the name from
+            # .claude/agents.tsv, not before.
+            continue
         else:
             # Nobody claims this name at all, which is also what an agent that
             # never registered looks like. Its app would still be writing.
@@ -173,17 +174,29 @@ def idle_booted(agents, working):
     and the rest of the host gets its memory back.
     """
     out = []
+    try:
+        ps = subprocess.run(["ps", "-Ao", "command"], capture_output=True,
+                            text=True, errors="replace", timeout=30).stdout
+    except subprocess.SubprocessError:
+        ps = ""
     for dev in disk.devices():
         if dev.get("state") != "Booted" or dev["udid"] in disk.KEEP_DEVICES:
             continue
         note, loose = disk.claim(dev, agents, working)
         if loose:
             continue  # the litter rules own this one
+        if dev["udid"] in ps:
+            # a test run drives the simulator from outside — xcodebuild, simctl,
+            # idb — and none of that counts as the app writing; shutting the
+            # device down mid-run fails the run on the runner, not on the code
+            continue
         idle = app_quiet_for(dev["udid"])
         if idle < IDLE_BOOT:
             continue
+        # a simulator our app has never been installed on has no quiet time to name
+        quiet = "app never ran" if idle == float("inf") else f"app quiet for {int(idle / 60)}m"
         out.append({"what": f"simulator {dev['name']}", "bytes": 0,
-                    "why": f"{note}, app quiet for {int(idle / 60)}m",
+                    "why": f"{note}, {quiet}",
                     "verb": ("shut down", "would shut down"),
                     "do": lambda u=dev["udid"]: subprocess.run(
                         ["xcrun", "simctl", "shutdown", u], capture_output=True)})
@@ -268,19 +281,29 @@ def socket_hogs(limit=2000):
                              text=True, timeout=120).stdout
     except subprocess.SubprocessError:
         return []
-    count = {}
+    count, lines = {}, {}
     for line in out.splitlines()[1:]:
         parts = line.split()
         if len(parts) > 1 and parts[0] == "workerd":
-            count[int(parts[1])] = count.get(int(parts[1]), 0) + 1
+            pid = int(parts[1])
+            count[pid] = count.get(pid, 0) + 1
+            lines.setdefault(pid, []).append(line)
     plan = []
     for pid, sockets in sorted(count.items()):
         if sockets < limit:
             continue
+
+        def take(p=pid):
+            # the process is about to go, so keep what its sockets were: the
+            # peer address and the state say which path stopped closing them
+            (ROOT / ".claude" / f"socket-hog-{p}.txt").write_text(
+                "\n".join(lines[p]) + "\n")
+            kill([p])
+
         plan.append({"what": f"stand process {pid}", "bytes": 0,
                      "verb": ("killed", "would kill"),
                      "why": f"holding {sockets} sockets, the host has 16384 ports",
-                     "do": lambda p=pid: kill([p])})
+                     "do": take})
     return plan
 
 

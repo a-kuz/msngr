@@ -81,6 +81,20 @@ final class AppState: ObservableObject {
     /// the user on the registration screen after a restart, so the error goes to
     /// the caller instead of being swallowed.
     func saveSession(_ s: Session) throws {
+        try writeSession(s)
+        Task { await bootstrap(s) }
+    }
+
+    /// The account's handle changed. The core is already up and the account is
+    /// the same one, so only the copy on disk and the one the screens read are
+    /// rewritten; a bootstrap here would drop the socket over a name.
+    func updateSessionUsername(_ username: String) throws {
+        guard var s = session else { return }
+        s.username = username
+        try writeSession(s)
+    }
+
+    private func writeSession(_ s: Session) throws {
         // the location is prepared on the first use of storage, but the
         // directory can be removed from outside, and writing into a directory
         // that is not there fails
@@ -91,7 +105,6 @@ final class AppState: ObservableObject {
         try JSONEncoder().encode(s).write(
             to: sessionFileURL, options: [.completeFileProtectionUntilFirstUserAuthentication, .atomic])
         session = s
-        Task { await bootstrap(s) }
     }
 
     /// Data location shared with the NSE: the app group container, into which
@@ -155,6 +168,9 @@ final class AppState: ObservableObject {
         OwnUser.id = s.userId
         // the NSE reads these values from the shared defaults
         UserDefaults(suiteName: AppGroup.identifier)?.set(s.userId, forKey: "ownUserId")
+        // the extension answers the delivery receipt over HTTP and is launched
+        // by the system, so the address of the stand has to reach it from here
+        ServerEndpoint.setBase(Self.httpBase, in: AppGroup.defaults)
         do {
             db = try AppDatabase.open(at: storage.databaseURL)
             try StorageOwnership.stamp(db, userId: s.userId)
