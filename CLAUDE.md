@@ -46,15 +46,22 @@ entitlements of the app and the extension are built from `project.yml` too
 `swift test` in MsngrKit: `CoreIntegrationTests` skip themselves if nothing
 answers on :8787; the rest of the tests need no server.
 
-## The gate before delivery
+## The checks around delivery
 
-`make check` at the root: `xcodegen` → build → `swift test` → MsngrTests →
-the server smoke test → collecting fresh simulator crashes (a fresh crash
-fails the gate). The smoke test needs `wrangler dev` running.
+Delivery is closed by the check of the layer the change touched, and that one
+is waited for: `swift test` for MsngrKit, `node test/smoke.mjs` for the server,
+MsngrTests for the app — plus the live run of the scenario.
+
+The full gate — `make check` at the root: `xcodegen` → build → `swift test` →
+MsngrTests → the server smoke test → collecting fresh simulator crashes —
+runs in the background after the merge and does not hold the work (the owner's
+call, 2026-08-19: its reds had been the host, not the code, every time).
+Write its log to `.claude/gates/<branch>.log`; the dispatcher reads the tail on
+its tick, and a red there is a defect report to be fixed forward, not a reason
+to have waited. The smoke test needs `wrangler dev` running.
 
 The UI smoke is a separate target — `make uicheck DEV_UDID=<yours>` — run when
-the change touches the UI layer, on your own simulator. It is outside the gate
-because its reds have almost always been the host, not the code.
+the change touches the UI layer, on your own simulator.
 
 The Makefile builds on the owner's simulator by default, so an agent runs the
 gate with its own:
@@ -76,6 +83,16 @@ own user, and the fixtures they need are on the stand, not on the device.
 - `wrangler dev` on :8787 — shared and live. Do not restart it and do not wipe
   its state (`server/.wrangler/`) without being asked to: it holds the
   conversations and keys of the test users.
+- The cloudflared tunnel `msngr.a-kuz.online` → :8787 must always be up: device
+  builds default to it (`make device`). It runs under launchd with KeepAlive
+  (`scripts/launchd/ai.enface.msngr.tunnel.plist`, installed the same way as the
+  tidy job); its log is `~/.cloudflared/msngr.log`. Do not start a second
+  cloudflared by hand — launchd owns it.
+- A branch that lands a migration in `server/migrations/` needs it applied on
+  the shared stand after the merge:
+  `cd server && ./node_modules/.bin/wrangler d1 migrations apply msngr --local`.
+  The gate never catches this — its smoke runs on a throwaway stand — and the
+  stale schema answers 500 to the first request that touches the new table.
 - The dev APNs mock `node server/tools/apns-mock.mjs` listens on :9871 and
   delivers pushes to the simulator through `simctl push`. `node test/smoke.mjs`
   brings up its own receiver on the same port, so the mock has to be stopped

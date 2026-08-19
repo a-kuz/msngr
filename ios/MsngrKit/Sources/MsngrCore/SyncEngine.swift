@@ -93,6 +93,7 @@ public actor SyncEngine {
         }
         // the first snapshot never holds the UI up: the database already has something to show
         Task { try? await self.refreshSnapshot() }
+        Task { await self.publishIdentityIfNeeded() }
         Task { await self.replenishPrekeysIfNeeded() }
         Task { await self.refreshBlocked() }
         maintenanceTask?.cancel()
@@ -104,8 +105,33 @@ public actor SyncEngine {
                 // an envelope waiting for its key would otherwise wait for the
                 // next frame that opens in the same chat, which may never come
                 await self?.sweepUnreadable()
+                // a message with the clock retries for as long as it exists: the
+                // reconnect and the foreground wake the drain on their own, and
+                // this is the timer behind them — a drain stopped by an error
+                // that was not the network must not wait for either
+                await self?.wakeOutbox()
                 try? await Task.sleep(nanoseconds: 30_000_000_000)
             }
+        }
+    }
+
+    private var identityPublished = false
+
+    /// Once per session: publish the identity this device encrypts under. A device
+    /// whose registration predates the signature carries none on the server, and a
+    /// peer accepts no bundle without it — the send would fail with nothing the
+    /// person could do about it.
+    private func publishIdentityIfNeeded() async {
+        guard !identityPublished else { return }
+        identityPublished = true
+        do {
+            let our = try e2ee.store.identity()
+            try await api.publishIdentity(
+                identityKey: our.dh.publicKey.rawRepresentation.base64urlEncodedString(),
+                identitySignKey: our.signing.publicKey.rawRepresentation.base64urlEncodedString(),
+                identityKeySig: try our.dhSignature.base64urlEncodedString())
+        } catch {
+            identityPublished = false // no network, so the next start() tries again
         }
     }
 
@@ -1680,15 +1706,27 @@ public actor SyncEngine {
         guard connected, !draining else { return }
         draining = true
         defer { draining = false }
+        /// Items this pass could not encrypt to anyone (noUsableKeys): they stay
+        /// ready for the next pass, but must not head-of-line the rest of the
+        /// queue within this one.
+        var skipped: Set<String> = []
         while connected {
             guard let item = (try? await db.read { dbc in
-                try OutboxItem.fetchOne(
-                    dbc, sql: "SELECT * FROM outbox WHERE state = 'ready' ORDER BY createdAt LIMIT 1")
-            }) ?? nil else { break }
+                try OutboxItem.fetchAll(
+                    dbc, sql: "SELECT * FROM outbox WHERE state = 'ready' ORDER BY createdAt")
+            })?.first(where: { !skipped.contains($0.clientMsgId) }) else { break }
 
             do {
                 try await sendOutboxItem(item)
             } catch {
+                // no recipient device could be encrypted to (an unsigned or
+                // broken bundle): the message keeps its clock and the outbox
+                // keeps retrying — the recipient heals by publishing its
+                // identity — while everything behind it still sends
+                if let ee = error as? E2EEError, case .noUsableKeys = ee {
+                    skipped.insert(item.clientMsgId)
+                    continue
+                }
                 // TOFU: the recipient's identity key changed, so sending stops
                 // until the user accepts it and the message shows as failed
                 // (the chat banner offers that choice)

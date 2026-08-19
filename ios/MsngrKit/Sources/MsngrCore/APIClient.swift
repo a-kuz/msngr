@@ -11,10 +11,21 @@ public final class APIClient: @unchecked Sendable {
     public var token: String?
     private let session: URLSession
 
-    public init(baseURL: URL, token: String? = nil, session: URLSession = .shared) {
+    /// The session API calls run on. A request that hangs is worse than one that
+    /// fails: a stale connection (the far side of a tunnel restarted, a network
+    /// switch the socket never noticed) swallows requests silently, and the
+    /// default 60 s is a frozen screen. 15 s turns it into a failure the caller's
+    /// retry can act on.
+    private static let apiSession: URLSession = {
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 15
+        return URLSession(configuration: cfg)
+    }()
+
+    public init(baseURL: URL, token: String? = nil, session: URLSession? = nil) {
         self.baseURL = baseURL
         self.token = token
-        self.session = session
+        self.session = session ?? APIClient.apiSession
     }
 
     /// Builds a URL from a path that may carry a query string. appendingPathComponent
@@ -331,6 +342,19 @@ public final class APIClient: @unchecked Sendable {
     }
     public func prekeys(userId: String) async throws -> PrekeysResponse {
         try await get("api/users/\(userId)/prekeys", as: PrekeysResponse.self)
+    }
+
+    /// Publishes the identity this device encrypts under, so a peer that fetches
+    /// the bundle gets the DH key together with the signature binding it.
+    public func publishIdentity(identityKey: String, identitySignKey: String,
+                                identityKeySig: String) async throws {
+        struct Body: Encodable {
+            let identityKey: String; let identitySignKey: String; let identityKeySig: String
+        }
+        _ = try await request("api/identity", method: "POST",
+                             jsonBody: Body(identityKey: identityKey,
+                                            identitySignKey: identitySignKey,
+                                            identityKeySig: identityKeySig))
     }
 
     public func uploadPrekeys(_ keys: [RegisterRequest.OneTimePrekeyDTO]) async throws {

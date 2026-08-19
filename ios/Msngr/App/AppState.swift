@@ -178,7 +178,7 @@ final class AppState: ObservableObject {
         do {
             db = try AppDatabase.open(at: storage.databaseURL)
             try StorageOwnership.stamp(db, userId: s.userId)
-            api = APIClient(baseURL: Self.httpBase, token: s.token, session: AppNet.session)
+            api = AppNet.client(token: s.token)
             store = try IdentityStore(db: db, masterKeyProvider: SharedFileMasterKey(location: storage))
             // the extension steps the same ratchet from its own process; the
             // gate is what keeps the two of them out of one step

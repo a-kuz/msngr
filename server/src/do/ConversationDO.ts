@@ -5,33 +5,44 @@ import {
 } from "../perf";
 
 /// Fanout queue. A frame is never delivered on the sender's critical path: it
-/// is appended as a job and drained by the alarm loop, so /send answers as soon
-/// as the message owns a seq. Jobs are FIFO, which keeps frame order per chat.
+/// is appended as delivery records and pumped by per-recipient chains, so
+/// /send answers as soon as the message owns a seq.
 ///
-/// Every job carries its own delivery cursor over the target list and the
-/// cursor is written after each batch, so a drain cut short (eviction, crash,
-/// alarm retry) resumes from the last persisted position and redelivers at most
-/// one batch. Redelivery is safe: clients dedupe messages by msgId, read and
-/// delivered marks are monotonic, chat/presence frames are snapshots.
-const FANOUT_PREFIX = "fq:";
-/// Deliveries issued in parallel per storage write of the cursor.
-const FANOUT_BATCH = 32;
+/// The queue is an outbox, one record per recipient per frame, keyed
+/// `fr:<userId>/<jobId>`. A record lives until the recipient's session object
+/// acknowledges the delivery: a failure moves its retry deadline out on a
+/// growing pause and never gives the record up. Order is kept per recipient —
+/// each has one chain, delivering their records oldest first — and the chains
+/// are independent, so one recipient timing out delays nobody else, and a
+/// receipt never waits behind another member's messages. The alarm is a
+/// watchdog: a chain cut short (eviction, crash) is re-run from storage and
+/// redelivers whatever was in flight; the recipient's session dedupes a repeat
+/// by the chat's seq and answers "already have it".
+const FANOUT_PREFIX = "fr:";
 /// Subrequests one alarm invocation is allowed to spend before rescheduling
 /// itself; the platform ceiling is 1000 per invocation and the next alarm gets
 /// a fresh budget, so audience size is not capped by it.
 const FANOUT_BUDGET = 800;
-/// Delivery passes over a job, including the first one.
-const FANOUT_MAX_ATTEMPTS = 3;
-/// Backoff before the 2nd and 3rd pass over the recipients that failed.
-const FANOUT_RETRY_MS = [200, 1000];
-/// A recipient that stops answering must not hold the queue of its chat: the
-/// delivery is given up on and retried like any other failure.
+/// Pause before the next pass over a failed record, by the number of passes
+/// already failed; the last value repeats until the recipient answers. The
+/// ceiling is what a recovered recipient waits for their backlog at worst,
+/// and what a dead one costs per chat: one delivery call per pause.
+const FANOUT_RETRY_MS = [200, 1_000, 2_000, 5_000, 10_000];
+/// A recipient that stops answering fails its own delivery after this and is
+/// retried on the growing pause; the rest of the chat does not wait for it.
 const FANOUT_DELIVERY_TIMEOUT_MS = 10_000;
-/// A job that waits longer than this before its first delivery pass is reported.
-/// Retries and a long burst stay well under it, so a line in the log means the
-/// queue was standing still — the one failure a client on a live socket cannot
-/// see for itself.
+/// A record that waits longer than this before its first delivery pass is
+/// reported. Retries and a long burst stay well under it, so a line in the log
+/// means the queue was standing still — the one failure a client on a live
+/// socket cannot see for itself.
 const FANOUT_STALL_MS = 15_000;
+/// Records one drain step lists. Bounds the listing, not the queue: records
+/// past it wait for the ones in front of them to clear.
+const FANOUT_SCAN = 512;
+/// How far behind the watchdog alarm runs. Deliveries are pumped by the
+/// requests that queue them; the alarm only picks up what a dead isolate or a
+/// cut listing left behind, so records survive anything by at most this.
+const FANOUT_WATCHDOG_MS = 2_000;
 
 /// Journal records one /history page returns. Durable Objects read at most 128
 /// keys per batch, so a larger page would be served by several reads anyway.
@@ -52,23 +63,22 @@ interface Tombstone {
   blockedFor?: string;
 }
 
-interface FanoutJob {
+interface DeliveryRecord {
   frame: ServerFrame;
-  targets: string[];
-  /// when the job entered the queue (ms since epoch)
+  /// when the record entered the queue (ms since epoch)
   queuedAt: number;
-  /// how many targets of this pass are already delivered
-  pos: number;
-  /// 0 for the first pass
+  /// delivery passes already failed
   attempt: number;
-  /// targets of the current pass that failed
-  failed: string[];
-  /// backoff deadline before a retry pass (ms since epoch)
-  after?: number;
+  /// not delivered before this (ms since epoch)
+  nextAt: number;
 }
 
-function fanoutKey(id: number): string {
-  return FANOUT_PREFIX + String(id).padStart(16, "0");
+function deliveryKey(userId: string, id: number): string {
+  return FANOUT_PREFIX + userId + "/" + String(id).padStart(16, "0");
+}
+
+function deliveryUser(key: string): string {
+  return key.slice(FANOUT_PREFIX.length, key.lastIndexOf("/"));
 }
 
 /// Retrying typing makes no sense: it is superseded by the next typing frame
@@ -105,10 +115,19 @@ function policy(value: ChatPolicy | undefined): ChatPolicy {
 export class ConversationDO implements DurableObject {
   private meta: Meta | null = null;
   private members: Map<string, ChatMember> | null = null;
-  /// True while alarm() walks the fanout queue.
-  private draining = false;
-  /// A job was queued while the drain was running and has to be picked up by it.
-  private queuedWhileDraining = false;
+  /// Recipients whose delivery chain is running (in-memory; the persisted
+  /// records are the truth). Checked and set synchronously, so a recipient
+  /// never has two chains at once — which is what keeps their frames in order.
+  private pumping = new Set<string>();
+  /// Recipients whose queue grew while their chain was ending: the chain takes
+  /// one more look instead of leaving the record to the watchdog.
+  private kicked = new Set<string>();
+  /// True while alarm() runs. setAlarm during a running alarm handler cancels
+  /// the handler mid-await (workerd: "canceled with requestScheduledAlarm"),
+  /// which kills the chains it is awaiting — so while the handler runs, arming
+  /// requests collect here and the handler arms the nearest one as it leaves.
+  private alarmRunning = false;
+  private rearmDelay: number | undefined;
   /// Which side of a direct pair has blocked the other, as the set of blockers. The
   /// truth lives in the blocks table in D1; this is read lazily and dropped on
   /// /block-changed.
@@ -201,20 +220,41 @@ export class ConversationDO implements DurableObject {
   private async enqueueFanout(frame: ServerFrame, targets: string[]) {
     if (!targets.length) return;
     const id = (await this.state.storage.get<number>("fqNext")) ?? 1;
-    const job: FanoutJob = {
-      frame, targets, pos: 0, attempt: 0, failed: [], queuedAt: Date.now(),
-    };
-    await this.state.storage.put({ [fanoutKey(id)]: job, fqNext: id + 1 });
-    await this.scheduleFanout(0);
+    const now = Date.now();
+    const record: DeliveryRecord = { frame, queuedAt: now, attempt: 0, nextAt: now };
+    const entries: Record<string, DeliveryRecord | number> = { fqNext: id + 1 };
+    for (const u of targets) entries[deliveryKey(u, id)] = record;
+    // one storage write takes at most 128 pairs
+    const keys = Object.keys(entries);
+    for (let i = 0; i < keys.length; i += 128) {
+      const chunk: Record<string, DeliveryRecord | number> = {};
+      for (const k of keys.slice(i, i + 128)) chunk[k] = entries[k];
+      await this.state.storage.put(chunk);
+    }
+    // the watchdog alarm re-pumps from storage if the isolate dies mid-delivery
+    await this.scheduleFanout(FANOUT_WATCHDOG_MS);
+    this.kickPumps(targets);
   }
 
-  /// Arms the drain. A job queued while `alarm()` is draining is handed to that
-  /// loop instead of to a new alarm: an alarm written for a moment the running
-  /// handler has already reached is dropped by the runtime, and the queue would
-  /// then hold jobs nobody comes back for.
+  /// Starts a delivery chain per recipient, off the caller's critical path: the
+  /// enqueueing request answers while the chains run. A chain that ends on a
+  /// backoff arms the alarm for its deadline; a chain that dies with the
+  /// isolate is re-run from storage by the watchdog.
+  private kickPumps(users: string[]) {
+    for (const u of users) {
+      void this.pumpUser(u, { left: FANOUT_BUDGET })
+        .then((at) =>
+          at !== undefined ? this.scheduleFanout(at - Date.now()) : undefined
+        )
+        .catch((e) => console.error(`fanout: pump for ${u} died: ${e}`));
+    }
+  }
+
+  /// Arms the alarm, keeping whichever deadline is nearer.
   private async scheduleFanout(delayMs: number) {
-    if (delayMs === 0 && this.draining) {
-      this.queuedWhileDraining = true;
+    if (this.alarmRunning) {
+      this.rearmDelay =
+        this.rearmDelay === undefined ? delayMs : Math.min(this.rearmDelay, delayMs);
       return;
     }
     // strictly in the future, so the write is never mistaken for the alarm that
@@ -244,61 +284,81 @@ export class ConversationDO implements DurableObject {
     }
   }
 
-  /// Walks the job's targets from its cursor. Returns how many deliveries were
-  /// spent and, when the job stays queued for another pass, how long to wait.
-  private async runFanoutJob(
-    key: string,
-    job: FanoutJob,
-    budget: number
-  ): Promise<{ spent: number; retryMs?: number }> {
+  /// Delivers one recipient's records in the order the chat produced them,
+  /// until their queue is empty, a backoff pushes their head into the future,
+  /// or the budget runs out. Returns when to come back (ms since epoch), or
+  /// undefined when nothing of theirs is left waiting on this chain.
+  private async pumpUser(
+    user: string,
+    budget: { left: number }
+  ): Promise<number | undefined> {
+    if (this.pumping.has(user)) {
+      // a chain is already on it; make sure it looks again before it ends
+      this.kicked.add(user);
+      return undefined;
+    }
+    this.pumping.add(user);
     const chatId = this.meta?.chatId ?? "";
-    // dev: artificial network latency before delivering a job (DEV_WS_LATENCY_MS)
     const latency = Number(this.env.DEV_WS_LATENCY_MS ?? 0);
-    if (latency > 0 && job.pos === 0) await new Promise((r) => setTimeout(r, latency));
-
-    const body = JSON.stringify(job.frame);
-    let spent = 0;
-    while (job.pos < job.targets.length && spent < budget) {
-      const batch = job.targets.slice(job.pos, job.pos + FANOUT_BATCH);
-      // one failing recipient must not stop the batch or the ones behind it
-      const results = await Promise.allSettled(batch.map((u) => this.deliver(u, body)));
-      results.forEach((r, i) => {
-        if (r.status !== "rejected") return;
-        job.failed.push(batch[i]);
-        console.warn(
-          `fanout: ${job.frame.t} to ${batch[i]} in ${chatId} failed ` +
-            `(attempt ${job.attempt + 1}): ${r.reason}`
-        );
-      });
-      job.pos += batch.length;
-      spent += batch.length;
-      await this.state.storage.put(key, job);
-    }
-    // budget spent mid-job: the cursor is stored, the next alarm continues
-    if (job.pos < job.targets.length) return { spent };
-
-    if (job.failed.length) {
-      const attempt = job.attempt + 1;
-      if (fanoutRetryable(job.frame) && attempt < FANOUT_MAX_ATTEMPTS) {
-        const retryMs = FANOUT_RETRY_MS[Math.min(attempt - 1, FANOUT_RETRY_MS.length - 1)];
-        const retry: FanoutJob = {
-          frame: job.frame, targets: job.failed, pos: 0, attempt, failed: [],
-          queuedAt: job.queuedAt, after: Date.now() + retryMs,
-        };
-        await this.state.storage.put(key, retry);
-        return { spent, retryMs };
+    try {
+      for (;;) {
+        this.kicked.delete(user);
+        const listed = await this.state.storage.list<DeliveryRecord>({
+          prefix: FANOUT_PREFIX + user + "/",
+          limit: 32,
+        });
+        if (!listed.size) {
+          // a record queued during this chain arrived after the listing above:
+          // look once more instead of ending on a stale empty read
+          if (this.kicked.has(user)) continue;
+          return undefined;
+        }
+        for (const [key, rec] of listed) {
+          if (budget.left <= 0) return Date.now();
+          if (rec.nextAt > Date.now()) return rec.nextAt;
+          budget.left--;
+          // the queue standing still is invisible to a client whose socket is
+          // healthy, so the delay it caused is said out loud here
+          const waited = Date.now() - rec.queuedAt;
+          if (rec.attempt === 0 && waited > FANOUT_STALL_MS) {
+            console.error(
+              `fanout: ${rec.frame.t} in ${chatId} waited ${waited}ms before delivery`
+            );
+          }
+          // dev: artificial network latency per delivery (DEV_WS_LATENCY_MS)
+          if (latency > 0 && rec.attempt === 0) {
+            await new Promise((r) => setTimeout(r, latency));
+          }
+          try {
+            await this.deliver(user, JSON.stringify(rec.frame));
+            await this.state.storage.delete(key);
+          } catch (e) {
+            console.warn(
+              `fanout: ${rec.frame.t} to ${user} in ${chatId} failed ` +
+                `(attempt ${rec.attempt + 1}): ${e}`
+            );
+            if (!fanoutRetryable(rec.frame)) {
+              // superseded within seconds: drop it and keep the chain going
+              await this.state.storage.delete(key);
+              continue;
+            }
+            const attempt = rec.attempt + 1;
+            const retryMs =
+              FANOUT_RETRY_MS[Math.min(attempt - 1, FANOUT_RETRY_MS.length - 1)];
+            const nextAt = Date.now() + retryMs;
+            await this.state.storage.put(key, { ...rec, attempt, nextAt });
+            return nextAt;
+          }
+        }
       }
-      console.error(
-        `fanout: dropping ${job.frame.t} in ${chatId} for ${job.failed.join(", ")} ` +
-          `after ${attempt} attempt(s)`
-      );
+    } finally {
+      this.pumping.delete(user);
     }
-    await this.state.storage.delete(key);
-    return { spent };
   }
 
-  /// Drains the fanout queue. Kept head-of-line so that frames reach a
-  /// recipient in the order the chat produced them.
+  /// The recovery path. Deliveries are pumped by the requests that queue them;
+  /// the alarm walks whatever storage still holds — backoffs come due, records
+  /// whose chain died with the isolate — and re-arms for the nearest deadline.
   async alarm() {
     if (!this.perf) return this.drainAlarm();
     const before = snapshot(this.perf);
@@ -312,94 +372,80 @@ export class ConversationDO implements DurableObject {
   }
 
   private async drainAlarm() {
-    // marked before the first await: from the moment the runtime consumed the
-    // alarm, this drain is what the queue is waiting for
-    this.draining = true;
-    let budget = FANOUT_BUDGET;
-    // delay of the alarm this drain leaves behind, armed once draining is over
-    let next: number | undefined;
+    this.alarmRunning = true;
+    this.rearmDelay = undefined;
     try {
       await this.loadMeta();
-      for (;;) {
-        const listed = await this.state.storage.list<FanoutJob>({
-          prefix: FANOUT_PREFIX,
-          limit: 1,
-        });
-        const head = [...listed.entries()][0];
-        if (!head) {
-          // a job queued during this drain arrived after the listing above:
-          // walk the queue once more instead of ending on a stale empty read
-          if (this.queuedWhileDraining) {
-            this.queuedWhileDraining = false;
-            continue;
-          }
-          return;
-        }
-        if (budget <= 0) {
-          next = 0;
-          return;
-        }
-        const [key, job] = head;
-        // a job waiting out its backoff also holds back the ones behind it:
-        // recipients must see frames in the order the chat produced them
-        const wait = (job.after ?? 0) - Date.now();
-        if (wait > 0) {
-          next = wait;
-          return;
-        }
-        // the queue standing still is invisible to a client whose socket is
-        // healthy, so the delay it caused is said out loud here
-        const waited = Date.now() - job.queuedAt;
-        if (job.attempt === 0 && job.pos === 0 && waited > FANOUT_STALL_MS) {
-          console.error(
-            `fanout: ${job.frame.t} in ${this.meta?.chatId} waited ${waited}ms before delivery`
-          );
-        }
-        const { spent, retryMs } = await this.runFanoutJob(key, job, budget);
-        budget -= spent;
-        if (retryMs !== undefined) {
-          next = retryMs;
-          return;
-        }
+      const budget = { left: FANOUT_BUDGET };
+      const listed = await this.state.storage.list<DeliveryRecord>({
+        prefix: FANOUT_PREFIX,
+        limit: FANOUT_SCAN,
+      });
+      const users = new Set<string>();
+      for (const key of listed.keys()) users.add(deliveryUser(key));
+      const wakes = await Promise.all([...users].map((u) => this.pumpUser(u, budget)));
+      let next: number | undefined;
+      for (const at of wakes) {
+        if (at !== undefined) next = next === undefined ? at : Math.min(next, at);
+      }
+      // records can be left with no wake asked for: a chain that was already
+      // running took the guard, or the listing was cut by FANOUT_SCAN. The
+      // watchdog covers both.
+      const remaining = await this.state.storage.list({ prefix: FANOUT_PREFIX, limit: 1 });
+      if (remaining.size) {
+        const watchdog = Date.now() + FANOUT_WATCHDOG_MS;
+        next = next === undefined ? watchdog : Math.min(next, watchdog);
+      }
+      if (next !== undefined) {
+        this.rearmDelay = this.rearmDelay === undefined
+          ? next - Date.now()
+          : Math.min(this.rearmDelay, next - Date.now());
       }
     } finally {
-      this.draining = false;
-      if (this.queuedWhileDraining) {
-        this.queuedWhileDraining = false;
-        next ??= 0;
+      this.alarmRunning = false;
+      if (this.rearmDelay !== undefined) {
+        const delay = this.rearmDelay;
+        this.rearmDelay = undefined;
+        await this.scheduleFanout(delay);
       }
-      if (next !== undefined) await this.scheduleFanout(next);
     }
   }
 
-  /// Queue depth (counted up to a page), the head job's cursor, how long that
-  /// job has been waiting and whether a drain is actually coming for it.
+  /// Queue depth in delivery records (counted up to a page), how many
+  /// recipients they wait on, how long the oldest has been waiting and whether
+  /// a drain is actually coming for it.
   ///
   /// `armed` is false for a moment between the runtime taking the alarm and
   /// the handler starting, so a queue that stands still is recognised by
   /// `oldestMs` growing instead: nothing being sent to a chat whose sockets are
   /// all healthy is the one failure a member cannot tell from an idle chat.
   private async fanoutState() {
-    const listed = await this.state.storage.list<FanoutJob>({
+    const listed = await this.state.storage.list<DeliveryRecord>({
       prefix: FANOUT_PREFIX,
       limit: 128,
     });
-    const head = [...listed.values()][0];
     const now = Date.now();
+    const users = new Set<string>();
+    let oldestMs: number | null = null;
+    let attempt = 0;
+    for (const [key, rec] of listed) {
+      users.add(deliveryUser(key));
+      oldestMs = Math.max(oldestMs ?? 0, now - rec.queuedAt);
+      attempt = Math.max(attempt, rec.attempt);
+    }
     const pending = await this.state.storage.getAlarm();
-    const armed = this.draining || (pending !== null && pending > now);
-    const oldestMs = head ? now - head.queuedAt : null;
+    const armed =
+      this.pumping.size > 0 || this.alarmRunning || (pending !== null && pending > now);
     if (!armed && oldestMs !== null && oldestMs > FANOUT_STALL_MS) {
       console.error(
-        `fanout: ${listed.size} job(s) in ${this.meta?.chatId} waiting ${oldestMs}ms ` +
+        `fanout: ${listed.size} record(s) in ${this.meta?.chatId} waiting ${oldestMs}ms ` +
           `with no drain armed`
       );
     }
     return {
       pending: listed.size,
-      cursor: head ? head.pos : 0,
-      targets: head ? head.targets.length : 0,
-      attempt: head ? head.attempt : 0,
+      recipients: users.size,
+      attempt,
       oldestMs,
       armed,
     };
@@ -447,9 +493,9 @@ export class ConversationDO implements DurableObject {
     };
   }
 
-  private async broadcastChat(event: string) {
+  private async broadcastChat(event: string, only?: string[]) {
     const state = await this.chatState();
-    await this.fanout({ t: "chat", chatId: state.chatId, event, state });
+    await this.fanout({ t: "chat", chatId: state.chatId, event, state }, only ? { only } : undefined);
   }
 
   private async notifyUserDOsChatList(userIds: string[], removed = false) {
@@ -493,7 +539,18 @@ export class ConversationDO implements DurableObject {
         memberIds: string[]; createdBy: string;
       };
       const existing = await this.loadMeta();
-      if (existing) return json({ ok: true, chatId: existing.chatId, existed: true });
+      if (existing) {
+        // The chat is here, and whoever asks for it wants it in their list: a
+        // direct chat one side deleted keeps its membership, so opening it again
+        // has to put the row back into that side's own list. Without this the id
+        // comes back and the chat does not, and only a message from the peer
+        // brings it around.
+        if ((await this.loadMembers()).has(b.createdBy)) {
+          await this.notifyUserDOsChatList([b.createdBy]);
+          await this.broadcastChat("created", [b.createdBy]);
+        }
+        return json({ ok: true, chatId: existing.chatId, existed: true });
+      }
       const now = nowSec();
       this.meta = {
         chatId: b.chatId, kind: b.kind, title: b.title ?? null,

@@ -9,7 +9,7 @@ packages:
     path: MsngrKit
   Pulse:
     url: https://github.com/kean/Pulse
-    from: 4.0.0
+    from: 5.0.0
 schemes:
   Msngr:
     build:
@@ -41,6 +41,8 @@ targets:
         product: Pulse
       - package: Pulse
         product: PulseUI
+      - package: Pulse
+        product: PulseProxy
       - target: NotificationService
         embed: true
     info:

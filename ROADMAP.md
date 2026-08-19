@@ -235,6 +235,10 @@ A ✅ goes in only together with a link to the evidence.
 
 - Optimistic send
   - ✅ the message appears before the network, with the clock status (offline-run 1–3)
+  - 🟡 a queued message sends at the slightest opportunity and never gives up:
+    the drain wakes on a reconnect, on the foreground, on a network change and
+    on a 30 s timer (the owner's bar is WhatsApp's — clocks resolve themselves;
+    the timer landed in 671b5e5, the full scenario is not watched live yet)
   - ✅ statuses: sent → delivered → read (media-run, case 32)
   - ✅ read only while the recipient is in front of the message: not from the
     chat list, not from the background, not with the feed scrolled up, and at

@@ -137,6 +137,71 @@ final class CoreIntegrationTests: XCTestCase {
         await bob.engine.stop()
     }
 
+    /// A recipient whose identity bundle carries no signature (an account
+    /// registered before the identity binding and never healed) must not take
+    /// the sender down with it: the message to them waits in the outbox with
+    /// the clock, and a message to a healthy recipient sends past it instead
+    /// of queueing behind it forever.
+    func testUnsignedRecipientDoesNotBlockTheOutbox() async throws {
+        guard await Self.serverUp() else { throw XCTSkip("wrangler dev is not running") }
+        let suffix = String(UUID().uuidString.prefix(6)).lowercased().replacingOccurrences(of: "-", with: "x")
+        let alice = try await Self.makeClient(username: "ua_\(suffix)")
+        let carol = try await Self.makeClient(username: "uc_\(suffix)")
+
+        // Bob is registered the way the pre-binding accounts read to a sender:
+        // real keys, an identity signature that does not verify.
+        let bobDb = try AppDatabase.openInMemory()
+        let bobStore = try IdentityStore(db: bobDb, masterKeyProvider: StaticMasterKey())
+        let bobIdentity = try bobStore.identity()
+        let bobPrekeys = try bobStore.generatePrekeys(count: 5)
+        let bobApi = APIClient(baseURL: Self.base)
+        let bobReg = try await bobApi.register(.init(
+            username: "ub_\(suffix)", displayName: "ub", deviceName: "test",
+            identityKey: bobIdentity.dh.publicKey.rawRepresentation.base64urlEncodedString(),
+            identitySignKey: bobIdentity.signing.publicKey.rawRepresentation.base64urlEncodedString(),
+            identityKeySig: Data(repeating: 0, count: 64).base64urlEncodedString(),
+            signedPrekey: .init(id: bobPrekeys.signedPrekey.id,
+                                key: bobPrekeys.signedPrekey.key.publicKey.rawRepresentation.base64urlEncodedString(),
+                                sig: bobPrekeys.signedPrekey.signature.base64urlEncodedString()),
+            oneTimePrekeys: bobPrekeys.oneTime.map {
+                .init(id: $0.id, key: $0.key.publicKey.rawRepresentation.base64urlEncodedString())
+            },
+            phoneHash: nil))
+
+        let bobChat = try await alice.api.createChat(kind: "direct", memberIds: [bobReg.userId], title: nil)
+        let carolChat = try await alice.api.createChat(kind: "direct", memberIds: [carol.userId], title: nil)
+        try await alice.engine.refreshSnapshot()
+
+        var toBob = ContentPayload(kind: "text")
+        toBob.text = "to the unsigned account"
+        try await alice.engine.enqueue(content: toBob, chatId: bobChat)
+        var toCarol = ContentPayload(kind: "text")
+        toCarol.text = "to the healthy account"
+        try await alice.engine.enqueue(content: toCarol, chatId: carolChat)
+
+        // the healthy send goes through even while the unsigned one waits
+        let carolGotIt = try await waitUntil {
+            try await carol.db.read { dbc in
+                (try String.fetchOne(dbc, sql: "SELECT text FROM message WHERE chatId = ?",
+                                     arguments: [carolChat])) == "to the healthy account"
+            }
+        }
+        XCTAssertTrue(carolGotIt, "the healthy recipient must not queue behind the unsigned one")
+
+        // the message to Bob keeps the clock: still in the outbox, not failed
+        let bobStatus = try await alice.db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT status FROM message WHERE chatId = ?", arguments: [bobChat])
+        }
+        XCTAssertEqual(bobStatus, 0, "the unsigned send must wait, not fail")
+        let outboxState = try await alice.db.read { dbc in
+            try String.fetchOne(dbc, sql: "SELECT state FROM outbox WHERE chatId = ?", arguments: [bobChat])
+        }
+        XCTAssertEqual(outboxState, "ready", "the message must stay in the outbox for a retry")
+
+        await alice.engine.stop()
+        await carol.engine.stop()
+    }
+
     /// The recipient's app is not running: no socket, and the message arrives
     /// as the notification extension takes it — written from the push and
     /// answered over HTTP. This is the extension's path through the core, with
