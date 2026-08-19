@@ -6,6 +6,36 @@ with the commit that closed it.
 
 ## Open
 
+### A burst arrives at one message per second
+Reported 2026-08-19 from the device: 100 messages leave the sender at once and
+land on the recipient one per second. Nothing in the code paces sends — no rate
+limit on the server, no sleep in the outbox — so the second is spent somewhere
+per incoming message: the ratchet step under `CryptoGate`, the per-message
+transaction, or the fanout queue waking once per delivery. Measure first
+(`MSNGR_PERF=1` writes a span per stage), then fix. Statuses are the owner's
+bar here too: the tail of a burst must not trail behind by a minute and a half.
+
+### Delivery ticks stop after the first messages of a burst
+Reported 2026-08-19 from the device (iPhone 15 Pro Max against the shared
+stand). The recipient has all 100 messages of a burst on screen, while the
+sender shows the double tick on the first two only — the other 98 keep the
+single «sent» tick. So the delivered receipt covers the head of a burst and
+never arrives for the tail, or the tail's marks never reach the sender.
+Screenshots in the report; both sides were online the whole time.
+
+The bar the owner set for this: statuses are the hardest and most important
+thing in the product and have to be flawless — WhatsApp-grade, where every
+tick updates the instant the state changes. That is the acceptance test, not
+«the receipt eventually arrives».
+
+### Typing in the chat input misbehaves under load
+Reported 2026-08-19. Hard to catch: when the app stutters, letters appear with
+a delay, the input's resize lags behind, and sometimes the caret ends up not
+at the end but behind the just-typed text. Smells like the state round-trip
+writing text back into the field under lag (an echo write racing fast typing
+resets the caret) plus per-keystroke work on the main thread. Needs a
+reproduction under artificial main-thread load first.
+
 ### Impersonation by display name, and a freed username taken instantly
 Raised 2026-08-19 while answering whether a stranger can register someone
 else's username (they cannot: `[a-zA-Z0-9_]{3,32}`, UNIQUE COLLATE NOCASE,

@@ -300,9 +300,18 @@ check("gone from the old handle",
   (await api(`/api/users?q=${oldHandle}`, { token: alice.token })).users.length === 0);
 const reuse = await api("/api/register", { body: {
   username: oldHandle, displayName: "Someone Else", ...fakeKeys("r") } });
-check("the old handle is free", reuse.ok, JSON.stringify(reuse));
-check("the freed handle is taken only once",
-  (await api("/api/username", { token: bob.token, body: { username: oldHandle } }))
+check("a freshly freed handle is quarantined, not free",
+  !reuse.ok && reuse.error === "username_taken", JSON.stringify(reuse));
+check("a stranger can't rename into a quarantined handle either",
+  (await api("/api/username", { token: carol.token, body: { username: oldHandle } }))
+    .error === "username_taken");
+check("the owner can take their own freed handle straight back",
+  (await api("/api/username", { token: bob.token, body: { username: oldHandle } })).ok);
+check("the freed handle is bob's again",
+  (await api(`/api/users?q=${oldHandle}`, { token: alice.token })).users.length === 1);
+check("newHandle, freed in turn, is quarantined for a stranger's register",
+  (await api("/api/register", { body: {
+    username: newHandle, displayName: "Someone Else Too", ...fakeKeys("s") } }))
     .error === "username_taken");
 
 // 8. Offline → sync: Bob disconnects, Alice sends, Bob comes back with a cursor
