@@ -757,8 +757,11 @@ final class ChatViewModel: ObservableObject {
         enqueue(c, chatId: targetChatId)
     }
 
+    /// Pins a message, or takes the pin off with nil. The chat row is written on
+    /// the spot and the server is told through the action queue, so the bar is
+    /// there before the answer comes back.
     func pin(_ msg: Message?) {
-        Task { try? await app.api.pinMessage(chatId, msgId: msg?.msgId) }
+        Task { [chatId] in await app.engine.pinMessage(chatId: chatId, msgId: msg?.msgId) }
     }
 
     func acceptRequest() {
