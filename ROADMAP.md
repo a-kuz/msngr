@@ -405,7 +405,18 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   - 🟡 unblocking from the blocked list (not verified live)
   - ✅ after unblocking delivery resumes and what was hidden stays hidden
     (smoke `block: delivery resumes after unblock`)
-  - ⬜ visibility settings for last seen and read receipts
+  - ⬜ who sees «был(а) в сети» and «в сети»: everyone, my contacts, or nobody,
+    with exceptions for named people; hiding it takes the peer's away too
+  - ⬜ read receipts and «печатает…» turned off, in both directions
+  - ⬜ who sees my avatar, bio and name, with the same three answers and the same
+    exceptions
+  - ⬜ who can find me: by username always, by the number's hash only if I allow it
+  - ⬜ who can add me to a group; everyone else can only send an invite
+  - ⬜ who can call me, once calls exist
+  - ⬜ a default disappearing timer for new chats
+  - ⬜ every one of these is enforced by the server, not only hidden in the
+    interface: a hidden last seen is not in the state it sends, a receipt that is
+    off never leaves the device
   - ⬜ reporting a chat or a message: what leaves the device is only what the
     reporter chose to attach, and blocking is offered in the same step
   - ✅ a request's content is hidden until it is accepted: the feed, the chat list,
@@ -576,6 +587,9 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - 🟡 clearing the media cache with its size shown (not verified live)
 - ⬜ notification settings: previews on the banner, the default sound, and the
   per-chat and per-person exceptions listed under Notifications → Sounds
+- ⬜ a privacy screen gathering what E2EE, trust, privacy lists: last seen,
+  receipts and typing, the profile's visibility, who finds me and who adds me,
+  the default disappearing timer
 - ⬜ language choice and localization
 - ⬜ exporting and deleting the account
 
