@@ -99,6 +99,20 @@ came back, 111 queued pushes caught up in ~13 s with no repeated banner.
 with the cause: nothing awaits a push inside a delivery any more, so an aborted
 delivery no longer leaves fetches running.
 
+### The caret jumps in front of the first typed character
+Reported 2026-08-19 from the device, screen recording
+(`ScreenRecording_08-19-2026 20-16-45_1.MP4` in the owner's Downloads). Typing
+"123" produces "231": the first character lands, then the caret moves in front
+of it, so everything after types before the first. Points at the composer's
+text binding rewriting the field's text and resetting the selection while the
+first keystroke is still being composed.
+
+### List rows are tappable only on their letters and icons
+Reported 2026-08-19 from the device. In many lists the tap works only exactly on
+the text or the icon, not anywhere in the row — the hit area does not cover the
+whole cell. Sweep the lists (settings, folders, chat info, search results) and
+give every row a full-width content shape.
+
 ### The context menu opens under the keyboard
 Reported 2026-08-19 from the device, with a screenshot. Long-pressing a bubble
 while the keyboard is up shows the reaction bar and the lifted bubble correctly,
