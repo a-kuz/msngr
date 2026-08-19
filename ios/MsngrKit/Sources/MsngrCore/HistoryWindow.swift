@@ -55,6 +55,18 @@ public enum HistoryWindow {
             """, arguments: [chatId, floor]) ?? false
     }
 
+    /// True when the chat stores a message newer than the top of the window, that
+    /// is, when the capacity cut the window short of the end of the conversation.
+    /// A window whose top message carries no seq is at the end by construction:
+    /// unnumbered messages of our own sort above everything the server numbered.
+    public static func hasNewer(_ dbc: GRDB.Database, chatId: String, topSeq: Int?) throws -> Bool {
+        guard let topSeq else { return false }
+        return try Bool.fetchOne(dbc, sql: """
+            SELECT EXISTS(SELECT 1 FROM message
+            WHERE chatId = ? AND COALESCE(seq, \(unsentOrder)) > ?)
+            """, arguments: [chatId, topSeq]) ?? false
+    }
+
     /// Value a message without a seq (own, not yet acknowledged) sorts by: above
     /// everything the server has numbered, so it belongs to the newest page.
     static let unsentOrder = 999_999_999

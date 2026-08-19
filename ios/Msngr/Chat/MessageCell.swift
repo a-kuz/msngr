@@ -6,6 +6,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     var onReply: (() -> Void)?
     var onReact: ((String) -> Void)?
     var onContextAction: ((MessageContextAction) -> Void)?
+    /// Whether this message is the pinned one, asked at the moment the menu opens.
+    var isPinned: (() -> Bool)?
     var onTapMedia: ((Int, UIView) -> Void)?
     var onTapLink: ((URL) -> Void)?
     var onTapReplyQuote: (() -> Void)?
@@ -898,6 +900,24 @@ extension MessageCell {
         Haptics.medium()
 
         var items: [MessageContextOverlay.Item] = []
+        // a message that never went out has no server id: it cannot be replied
+        // to, forwarded or pinned, and the only two things to do with it are to
+        // send it again and to throw it away
+        if msg.status == .failed {
+            items.append(.init(title: "Отправить заново", icon: "arrow.clockwise") { [weak self] in
+                self?.onContextAction?(.resend)
+            })
+            if msg.kind == .text {
+                items.append(.init(title: "Копировать", icon: "doc.on.doc") { [weak self] in
+                    self?.onContextAction?(.copy)
+                })
+            }
+            items.append(.init(title: "Удалить", icon: "trash", destructive: true) { [weak self] in
+                self?.onContextAction?(.delete)
+            })
+            presentContextMenu(items, in: window, msg: msg, showsReactions: false)
+            return
+        }
         items.append(.init(title: "Ответить", icon: "arrowshape.turn.up.left") { [weak self] in
             self?.onContextAction?(.reply)
         })
@@ -913,9 +933,15 @@ extension MessageCell {
         items.append(.init(title: "Выбрать", icon: "checkmark.circle") { [weak self] in
             self?.onContextAction?(.select)
         })
-        items.append(.init(title: "Закрепить", icon: "pin") { [weak self] in
-            self?.onContextAction?(.pin)
-        })
+        if isPinned?() == true {
+            items.append(.init(title: "Открепить", icon: "pin.slash") { [weak self] in
+                self?.onContextAction?(.unpin)
+            })
+        } else {
+            items.append(.init(title: "Закрепить", icon: "pin") { [weak self] in
+                self?.onContextAction?(.pin)
+            })
+        }
         if msg.isOutgoing && msg.kind == .text {
             items.append(.init(title: "Изменить", icon: "pencil") { [weak self] in
                 self?.onContextAction?(.edit)
@@ -925,6 +951,11 @@ extension MessageCell {
             self?.onContextAction?(.delete)
         })
 
+        presentContextMenu(items, in: window, msg: msg)
+    }
+
+    private func presentContextMenu(_ items: [MessageContextOverlay.Item], in window: UIWindow,
+                                    msg: Message, showsReactions: Bool = true) {
         let mine = msg.reactions.first(where: { $0.value.contains(OwnUser.id) })?.key
         // текст приподнятого баббла выделяется протяжкой, поэтому он уходит
         // в меню живым, а снимок рендерится без него
@@ -939,6 +970,7 @@ extension MessageCell {
         textView.isHidden = selectable != nil || textWasHidden
         MessageContextOverlay.present(over: bubbleView, in: window, isOutgoing: msg.isOutgoing,
                                       myReaction: mine, items: items, selectableText: selectable,
+                                      showsReactions: showsReactions,
                                       onReact: { [weak self] emoji in self?.onReact?(emoji) })
         textView.isHidden = textWasHidden
         // the overlay's snapshot took over from the pressed bubble, so the real one

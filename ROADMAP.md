@@ -124,14 +124,18 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ the «непрочитанное/непрочитанных сообщение/сообщения/сообщений» declension (units + a run)
   - 🟡 the banner's disappearance animation (not captured frame by frame)
 - The header and the bars
-  - ✅ a pinned message as a bar on top (design-review 03b)
+  - ✅ a pinned message as a bar on top, its tap flashing the message, «Открепить»
+    over the pinned one (design-review 03b; header-run)
   - ✅ an empty chat: «Напишите первое сообщение» and the encryption note (palettes/chat-empty-hint)
-  - 🟡 the subtitle: «подключение…», «печатает…», «в сети», «был(а)…» (not verified live)
-  - 🟡 tapping the pinned message scrolls to it (not verified live)
+  - ✅ the subtitle: «подключение…», «печатает…», «в сети», «был(а)…», «N участников»
+    (header-run, two devices)
+  - 🟡 tapping the pinned message scrolls to it (in the window: header-run; older
+    than the window waits for run-feedwindow)
 - Input
   - ✅ a growing field, the attachment menu «Фото или видео» / «Файл» (design-review 04, 05a)
   - ✅ a draft survives leaving the chat and a kill (offline-run 5)
-  - 🟡 the reply strip and the edit mode above the field (not verified live)
+  - ✅ the reply strip and the edit mode above the field, cancel returning the
+    draft (header-run)
   - ⬜ pasting an image from the clipboard
   - ⬜ mentions and autocomplete
 
@@ -169,11 +173,12 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ recording by holding, the waveform, sending (design-review 06, offline-run 3)
   - ✅ playback with progress along the wave (offline-run 3)
   - ✅ a compact 220×42 bubble (BubbleLayout units, screenshots)
-  - 🟡 the 0.3 s threshold and cancelling an accidental touch (not verified live)
-  - 🟡 slide-to-cancel and lock (not verified live)
-  - 🟡 seeking by tapping the wave (not verified live)
-  - ⬜ speed ×1/×1.5/×2 (the player code is there, the button is not)
-  - ⬜ playback continuing while moving between chats
+  - ✅ the 0.3 s threshold and cancelling an accidental touch (voice-run)
+  - ✅ slide-to-cancel and lock (voice-run)
+  - ✅ seeking by tapping the wave (voice-run)
+  - ✅ speed ×1/×1.5/×2, kept between messages (voice-run)
+  - ✅ playback continuing while moving between chats (voice-run)
+  - ✅ a take interrupted by the screen or the app going away is dropped (voice-run)
 - Files
   - 🟡 sending up to 100 MB with the name (not verified live)
   - ⬜ previewing a file in the app
@@ -191,8 +196,21 @@ A ✅ goes in only together with a link to the evidence.
 - Optimistic send
   - ✅ the message appears before the network, with the clock status (offline-run 1–3)
   - ✅ statuses: sent → delivered → read (media-run, case 32)
+  - ✅ read only while the recipient is in front of the message: not from the
+    chat list, not from the background, not with the feed scrolled up, and at
+    once when it arrives with the reader at the end (receipts-run)
+  - ✅ the tick of a group waits for the member furthest behind, in a group of
+    three (receipts-run)
+  - ✅ a mark the server never heard is queued again from the chat state, so a
+    receipt lost into a dying socket still arrives (receipts-run, `DeliveryReceiptTests`)
+  - 🟡 the receipt from the notification extension, with the app not running:
+    `POST /api/chats/:id/recv` and the queue behind it (integration test
+    `testDeliveredReceiptWithoutASocket`, smoke `rest recv …`; the extension
+    itself needs a device, `simctl push` does not launch it)
   - ✅ idempotency by clientMsgId (smoke `idempotent resend same seq`)
   - ✅ the ack right after the seq is assigned, before the fanout and the push (smoke `ack precedes push`, `ack while apns still hanging`)
+  - ✅ «не отправлено» when the server refuses the send, and «Отправить заново»
+    repeating the message from the payload it was written with (receipts-run)
   - 🟡 the «не отправлено» status once the attempts are spent (not verified live)
 - Fanout
   - ✅ an alarm queue in ConversationDO: the cursor in storage, batches, retry until exhausted (smoke `fanout is queued, not inline`, `queue replays the whole burst`, `queue drains to empty cursor`)
@@ -202,7 +220,8 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ text, photo, voice offline → delivery after a reconnect (offline-run 1–3)
   - ✅ killing the app with something unsent: the message is still there and goes out (offline-run 4)
   - ✅ a reaction offline (offline-run 6)
-  - 🟡 the service action queue: read marks, delete-for-all, accept (units, not verified live)
+  - ✅ the service action queue: read marks and accept (receipts-run)
+  - 🟡 the service action queue: delete-for-all (units, not verified live)
   - 🟡 media: the source in a permanent folder, uploaded by the worker (partly covered by offline-run 2–3)
 - The connection
   - ✅ reconnect with backoff and a ceiling of 12 s (ReconnectBackoffTests units)
@@ -542,6 +561,9 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 
 - 🟡 registration, the chat list, the chat, sending text (not verified live)
 - 🟡 reactions and deleting a message (not verified live)
+- 🟡 the read mark under the same conditions as on iOS — the window has focus,
+    the feed is at its end, the content is not held back (in the code, not
+    verified live: the check needs the host screen)
 - ⬜ sending and viewing media
 - ⬜ voice messages
 - ⬜ notifications

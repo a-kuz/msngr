@@ -84,7 +84,7 @@ struct ChatInfoView: View {
                     } else {
                         Text(model.headerTitle).font(.title2.bold())
                     }
-                    Text(isGroup ? "\(model.members.count) участников"
+                    Text(isGroup ? ChatViewModel.membersText(model.members.count)
                          : "@\(model.peer?.username ?? "")")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)

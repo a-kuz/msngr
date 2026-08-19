@@ -108,7 +108,7 @@ struct RegisterView: View {
             let identity = try store.identity()
             let prekeys = try store.generatePrekeys(count: 100)
 
-            let api = APIClient(baseURL: AppState.httpBase)
+            let api = APIClient(baseURL: AppState.httpBase, session: AppNet.session)
             let name = trimmedName
             let reg = try await api.register(.init(
                 username: username, displayName: name, deviceName: UIDevice.current.name,

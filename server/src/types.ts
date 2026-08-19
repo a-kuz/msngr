@@ -108,6 +108,10 @@ export interface StoredMsg {
   ts: number;     // server clock
   body: unknown;  // E2E envelope; null if tombstoned
   service?: boolean;
+  /// How many content messages the chat held once this one was written; a
+  /// service frame carries the count it did not change. Unread is the distance
+  /// between this number at a member's mark and the chat's current one.
+  contentAt?: number;
   deleted?: boolean;
   deletedBy?: string;
   /// userId of a recipient who has blocked the sender: this member gets the message

@@ -15,6 +15,9 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     var onReply: ((Message) -> Void)?
     var onReact: ((Message, String) -> Void)?
     var onContextAction: ((Message, MessageContextAction) -> Void)?
+    /// The message the chat holds pinned, so the context menu of that one offers
+    /// to take the pin off instead of putting it on again.
+    var pinnedMsgId: String?
     var onTapMedia: ((Message, Int, UIView) -> Void)?
     /// Tap on the quote inside a reply bubble, which jumps to the original.
     var onTapReplyQuote: ((Message) -> Void)?
@@ -39,6 +42,8 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     /// feed, so the first recomputation stays quiet.
     private var atBottom = true
     private var recomputingAtBottom = false
+    /// The next feed comes from a window that was moved: it is shown from the bottom.
+    private var showBottomOnUpdate = false
     /// Счётчик своих отправок, уже отработанный лентой.
     private var seenSendTick = 0
     /// Возврат свайпом: кромка своя, потому что системный жест на этом экране
@@ -257,9 +262,27 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         }
     }
 
+    /// The window was moved back to the end of the chat: the feed arriving next is a
+    /// different stretch of the conversation, and it is shown from its newest message
+    /// rather than diffed against the one the reader was standing in.
+    func showBottomOnNextUpdate() {
+        showBottomOnUpdate = true
+    }
+
     private func applyDiff(_ newItems: [ChatFeedItem]) {
         let old = items
         guard isViewLoaded else { items = newItems; return }
+        if showBottomOnUpdate, !newItems.isEmpty {
+            showBottomOnUpdate = false
+            items = newItems
+            collectionView.layer.removeAllAnimations()
+            collectionView.reloadData()
+            collectionView.layoutIfNeeded()
+            collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.contentInset.top),
+                                            animated: false)
+            updateAtBottom(layoutFirst: true)
+            return
+        }
         // the feed went empty (history cleared): a diff would delete every position
         // at once in the middle of a running insert animation, and the reading
         // anchor would point at nothing
@@ -455,6 +478,9 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         cell.onTapLink = { [weak self] url in self?.open(url) }
         cell.onTapReplyQuote = { [weak self] in self?.onTapReplyQuote?(msg) }
         cell.onToggleSelection = { [weak self] in self?.onToggleSelection?(msg) }
+        // asked when the menu opens, not when the cell is filled: pinning changes
+        // the chat, not the message, so no cell is reconfigured for it
+        cell.isPinned = { [weak self] in self?.pinnedMsgId == msg.msgId }
         cell.setSelection(mode: selectionMode, selected: selectedIds.contains(msg.id), animated: false)
     }
 
@@ -632,7 +658,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
 }
 
 enum MessageContextAction {
-    case reply, copy, forward, select, edit, pin, delete
+    case reply, copy, forward, select, edit, pin, unpin, delete, resend
 }
 
 extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
