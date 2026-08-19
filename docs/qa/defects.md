@@ -6,6 +6,28 @@ with the commit that closed it.
 
 ## Open
 
+### Sends to pre-binding accounts hang, and block everything behind them
+Reported 2026-08-19 from the device, after a rebuild: «не отправляются
+сообщения». The stand and the tunnel were healthy (probe-send.mjs green through
+both), and a fresh-to-fresh send through the real core passed in half a second —
+the device's own sends were the ones stuck. The device was writing to the
+owner's older accounts (`aakuz`, `akuz2`), registered before the identity
+binding: 2354 of 2514 rows in `identity_keys` on the stand carry no
+`identity_key_sig`. A bundle whose signature does not verify made
+`X3DH.initiate` throw out of the whole send, the outbox counted attempts toward
+a hard failure, and — worse — the first such message head-of-lined the outbox:
+nothing behind it sent to anyone, which read as "messages do not send" at all.
+The visible loop of `GET /prekeys` every ~30 s was the outbox retrying.
+
+Fixed: a device whose bundle does not verify is skipped (a recipient with no
+usable device is `noUsableKeys`), and `drainOutbox` sets such an item aside for
+the pass instead of failing it or letting it block the queue — the message
+keeps its clock and sends the moment the recipient's account heals (it
+publishes its identity on the first start of a current build).
+`testUnsignedRecipientDoesNotBlockTheOutbox` reproduces both halves. The old
+accounts on the owner's other devices and simulators still need one launch of a
+current build each to become reachable.
+
 ### Messages do not send
 Reported 2026-08-19, urgent. Two causes were found behind it, both confirmed.
 
