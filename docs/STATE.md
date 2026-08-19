@@ -6,8 +6,12 @@ work in it looks like clutter.
 
 Delete an entry when its branch is merged and gone.
 
-No agent is running: the owner asked for none to be started until they say so, so
-both branches below are parked with their work committed and nothing in flight.
+One slot is open by the owner's word and taken: `delivery` works on
+**run-delivery** — the first step of the backend rework, the fanout queue
+measured and then made outbox-to-inbox (task in its worktree, design in
+`docs/research/2026-08-19-per-user-do.md`). The branches below are parked with
+their work committed; run-ticks additionally lends its measuring pair to
+run-delivery.
 
 ## Branches with work in them
 
