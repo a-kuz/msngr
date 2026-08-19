@@ -6,12 +6,9 @@ work in it looks like clutter.
 
 Delete an entry when its branch is merged and gone.
 
-One slot is open by the owner's word and taken: `delivery` works on
-**run-delivery** — the first step of the backend rework, the fanout queue
-measured and then made outbox-to-inbox (task in its worktree, design in
-`docs/research/2026-08-19-per-user-do.md`). The branches below are parked with
-their work committed; run-ticks additionally lends its measuring pair to
-run-delivery.
+One slot is open by the owner's word and taken: `longpress` works on
+**run-longpress** — the context menu under the keyboard and the doubled bubble
+outline, one interaction from the owner's device (task in its worktree).
 
 ## Branches with work in them
 
@@ -19,21 +16,25 @@ run-delivery.
 reads its own message row through an observation instead of the feed window, a pin
 is applied locally at once and told to the server through the action queue, and a
 chat state frame that fails to apply now says so. The last commit is a probe:
-whether a pin fans out to both members' sockets. What its live run turned up and
-has not answered: a pin frame that spent 235 s in the fanout queue while the
-second device stayed on its previous seq. Never verified live, no report yet.
-
-**run-ticks** — one commit: `BurstTicksTests` between two live clients and
-`server/test/tick-burst.mjs` on the server alone, both measuring the owner's
-scenario of a hundred messages by the ticks each message earns rather than by the
-burst as a whole. Written against `docs/qa/defects.md` «A burst arrives at one
-message per second»; neither has been run to a verdict.
+whether a pin fans out to both members' sockets. What its live run turned up —
+a pin frame that spent 235 s in the fanout queue — is answered by run-delivery's
+merge: the fanout is now a per-recipient outbox with unlimited retries. The pin
+behaviour itself is never verified live, no report yet; its agent waits on the
+session limit and resumes with «продолжай».
 
 ## In main since this morning
 
-`run-crypto-identity` (identity binding, replay rule, sender key messages signed
-whole) and `run-identityui` (username quarantine on migration 0005, the folders
-screen in Russian with its own Edit/Done). Both merged with a green gate.
+`run-delivery` — the fanout as an outbox (a delivery record per recipient that
+lives until acknowledged, independent chains, retries with no attempt cap), the
+push moved out of the delivery path into its own persisted queue, and the live
+run in `docs/qa/runs/2026-08-19-delivery-run.md`: a 100-burst lands in 255 ms,
+ticks follow within ~100 ms, and chats keep working with APNs fully down.
+run-ticks' measuring pair (`BurstTicksTests`, `server/test/tick-burst.mjs`) came
+along; both branches are deleted.
+
+Also `run-crypto-identity` (identity binding, replay rule, sender key messages
+signed whole) and `run-identityui` (username quarantine on migration 0005, the
+folders screen in Russian with its own Edit/Done). All merged with a green gate.
 
 The gate itself changed: `scripts/collect-crashes.sh` now fails on our own
 crashes and only reports a launch failure of the XCTest harness, which had been
