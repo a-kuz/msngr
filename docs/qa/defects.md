@@ -107,6 +107,12 @@ of it, so everything after types before the first. Points at the composer's
 text binding rewriting the field's text and resetting the selection while the
 first keystroke is still being composed.
 
+### The chat list title vanishes in the dark theme
+Reported 2026-08-19 from the device, with a screenshot. In the dark theme the
+area above the folder tabs is blank — the list's large title is drawn in a colour
+that disappears on the dark background. Sweep the dark palette for other
+foregrounds that lost contrast with it rather than fixing the one label.
+
 ### The in-app banner does not react to a tap
 Reported 2026-08-19 from the device. Tapping the in-app notification banner does
 nothing; it has to open the chat it announces. The tap-opens-chat path exists and
