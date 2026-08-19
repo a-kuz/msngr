@@ -54,6 +54,10 @@ export type ServerFrame =
   /// someone's card changed: name, bio, avatar or username. The profile is
   /// public, so the frame carries the whole row rather than a hint to refetch
   | { t: "profile"; user: PublicUser }
+  /// a user's device set changed: a device was linked or revoked. A sender
+  /// drops its cached device list and re-reads /api/devices before the next
+  /// envelope, so it carries only the userId
+  | { t: "devices"; userId: string }
   /// state is absent only for event "removed": the addressee is no longer a
   /// member, so the roster is not handed to them
   | { t: "chat"; chatId: string; event: string; state?: ChatState }

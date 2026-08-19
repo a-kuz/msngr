@@ -341,6 +341,30 @@ export class UserSessionDO implements DurableObject {
         return json({ ok: true });
       }
 
+      case "/devices-changed": {
+        // a device was linked or revoked: whoever encrypts to this user must
+        // drop its cached device list. Out to this user's own other devices
+        // and through every chat they are in, the same road as the profile.
+        const b = (await req.json()) as { userId: string };
+        this.broadcast({ t: "devices", userId: b.userId });
+        const ids = await this.chatIds();
+        const results = await Promise.allSettled(
+          ids.map(async (chatId) => {
+            const res = await this.convStub(chatId).fetch("https://do/devices", {
+              method: "POST",
+              body: JSON.stringify({ userId: b.userId }),
+            });
+            if (!res.ok) throw new Error(`status ${res.status}`);
+          })
+        );
+        results.forEach((r, i) => {
+          if (r.status === "rejected") {
+            console.warn(`devices of ${b.userId} in ${ids[i]} failed: ${r.reason}`);
+          }
+        });
+        return json({ ok: true });
+      }
+
       default:
         return err("unknown_path", 404);
     }
