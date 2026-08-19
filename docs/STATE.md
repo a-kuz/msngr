@@ -6,21 +6,11 @@ work in it looks like clutter.
 
 Delete an entry when its branch is merged and gone.
 
-One slot is open by the owner's word and taken: `longpress` works on
-**run-longpress** — the context menu under the keyboard and the doubled bubble
-outline, one interaction from the owner's device (task in its worktree).
-
-## Branches with work in them
-
-**run-pin** — four commits of its own plus two merges of main. The pinned bar
-reads its own message row through an observation instead of the feed window, a pin
-is applied locally at once and told to the server through the action queue, and a
-chat state frame that fails to apply now says so. The last commit is a probe:
-whether a pin fans out to both members' sockets. What its live run turned up —
-a pin frame that spent 235 s in the fanout queue — is answered by run-delivery's
-merge: the fanout is now a per-recipient outbox with unlimited retries. The pin
-behaviour itself is never verified live, no report yet; its agent waits on the
-session limit and resumes with «продолжай».
+One slot is open by the owner's word and taken: `pin` resumed on **run-pin** —
+the pinned bar at any depth, main merged in (the 235 s fanout stall its probe
+found is answered by the delivery rework), what is left is the live run and the
+report. run-longpress is merged (`48dadad`) and its background gate is running
+in `.claude/gates/run-longpress.log`.
 
 ## In main since this morning
 
