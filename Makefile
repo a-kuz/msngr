@@ -22,6 +22,9 @@ check: gen build unit layout server-smoke crashes
 uicheck: gen build uitest
 	@echo "== make uicheck: all green =="
 
+MSNGR_DEVICE_SERVER ?=
+export MSNGR_DEVICE_SERVER
+
 gen:
 	cd ios && xcodegen
 
