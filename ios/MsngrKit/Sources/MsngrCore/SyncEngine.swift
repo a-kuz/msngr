@@ -105,6 +105,11 @@ public actor SyncEngine {
                 // an envelope waiting for its key would otherwise wait for the
                 // next frame that opens in the same chat, which may never come
                 await self?.sweepUnreadable()
+                // a message with the clock retries for as long as it exists: the
+                // reconnect and the foreground wake the drain on their own, and
+                // this is the timer behind them — a drain stopped by an error
+                // that was not the network must not wait for either
+                await self?.wakeOutbox()
                 try? await Task.sleep(nanoseconds: 30_000_000_000)
             }
         }
