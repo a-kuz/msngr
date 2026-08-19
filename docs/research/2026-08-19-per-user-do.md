@@ -83,6 +83,17 @@ fills the chat list and tells everyone at the same time; there is no separate
 poll. Going to the background is the cheap half: it only has to reach the objects
 of people subscribed right now — nobody needs an answer.
 
+Flapping — online, offline, online faster than a fan drains — is handled by what
+the queue stores: the recipient, never the state. The drain reads the current
+status at the moment it sends, and a repeated flap adds no second record for the
+same peer, so however fast the state flips, each peer gets at most one RPC in
+flight carrying whatever is true when it leaves. The answers coming back are
+guarded by an epoch: the object counts its own state changes, the drain remembers
+the epoch it sent under, and a late answer from an old wave is dropped instead of
+overwriting fresher data. On top of that, the offline announcement waits a few
+seconds before it goes out — iOS backgrounds and foregrounds constantly, and a
+cancelled `bg` should cost nothing — while online always goes out at once.
+
 `~/ws/back-core` has this working, and three of its pieces are worth carrying
 over as designed. `OnlineStatusService.online()` queues distinct dialog peers and
 drains them through persisted tasks, and each `onlineEvent` RPC is symmetric: it
