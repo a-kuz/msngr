@@ -31,14 +31,16 @@ app.get("/api/version", (c) =>
 app.post("/api/register", async (c) => {
   const b = await c.req.json<{
     username: string; displayName: string; device?: { name?: string };
-    identityKey: string; identitySignKey: string;
+    identityKey: string; identitySignKey: string; identityKeySig: string;
     signedPrekey: { id: number; key: string; sig: string };
     oneTimePrekeys: Array<{ id: number; key: string }>;
     phoneHash?: string;
   }>();
   if (!isValidUsername(b.username)) return err("bad_username");
   if (!isValidDisplayName(b.displayName)) return err("bad_name");
-  if (!b.identityKey || !b.signedPrekey?.key) return err("bad_keys");
+  if (!b.identityKey || !b.identitySignKey || !b.identityKeySig || !b.signedPrekey?.key) {
+    return err("bad_keys");
+  }
 
   const now = Date.now();
   const userId = ulid(now);
@@ -55,8 +57,9 @@ app.post("/api/register", async (c) => {
         "INSERT INTO devices (id, user_id, name, token_hash, created_at) VALUES (?,?,?,?,?)"
       ).bind(deviceId, userId, b.device?.name ?? null, tokenHash, now),
       c.env.DB.prepare(
-        "INSERT INTO identity_keys (device_id, user_id, identity_key, identity_sign_key, signed_prekey_id, signed_prekey, signed_prekey_sig) VALUES (?,?,?,?,?,?,?)"
-      ).bind(deviceId, userId, b.identityKey, b.identitySignKey, b.signedPrekey.id, b.signedPrekey.key, b.signedPrekey.sig),
+        "INSERT INTO identity_keys (device_id, user_id, identity_key, identity_sign_key, identity_key_sig, signed_prekey_id, signed_prekey, signed_prekey_sig) VALUES (?,?,?,?,?,?,?,?)"
+      ).bind(deviceId, userId, b.identityKey, b.identitySignKey, b.identityKeySig,
+             b.signedPrekey.id, b.signedPrekey.key, b.signedPrekey.sig),
       ...b.oneTimePrekeys.slice(0, 200).map((k) =>
         c.env.DB.prepare(
           "INSERT INTO one_time_prekeys (device_id, key_id, key) VALUES (?,?,?)"
@@ -157,12 +160,14 @@ app.post("/api/provision/:id/claim", async (c) => {
   if (s.row.claimed_at) return err("provision_claimed", 409);
   if (!s.row.approved_by || !s.row.envelope) return err("provision_not_approved", 409);
   const b = await c.req.json<{
-    identityKey: string; identitySignKey: string;
+    identityKey: string; identitySignKey: string; identityKeySig: string;
     signedPrekey: { id: number; key: string; sig: string };
     oneTimePrekeys: Array<{ id: number; key: string }>;
     device?: { name?: string };
   }>();
-  if (!b.identityKey || !b.signedPrekey?.key) return err("bad_keys");
+  if (!b.identityKey || !b.identitySignKey || !b.identityKeySig || !b.signedPrekey?.key) {
+    return err("bad_keys");
+  }
 
   const userId = s.row.approved_by;
   // The identity belongs to the account, not to the device: a device that does
@@ -184,8 +189,8 @@ app.post("/api/provision/:id/claim", async (c) => {
       "INSERT INTO devices (id, user_id, name, token_hash, created_at) VALUES (?,?,?,?,?)"
     ).bind(deviceId, userId, b.device?.name ?? s.row.device_name, await sha256hex(token), now),
     c.env.DB.prepare(
-      "INSERT INTO identity_keys (device_id, user_id, identity_key, identity_sign_key, signed_prekey_id, signed_prekey, signed_prekey_sig) VALUES (?,?,?,?,?,?,?)"
-    ).bind(deviceId, userId, b.identityKey, b.identitySignKey,
+      "INSERT INTO identity_keys (device_id, user_id, identity_key, identity_sign_key, identity_key_sig, signed_prekey_id, signed_prekey, signed_prekey_sig) VALUES (?,?,?,?,?,?,?,?)"
+    ).bind(deviceId, userId, b.identityKey, b.identitySignKey, b.identityKeySig,
            b.signedPrekey.id, b.signedPrekey.key, b.signedPrekey.sig),
     ...(b.oneTimePrekeys ?? []).slice(0, 200).map((k) =>
       c.env.DB.prepare(
@@ -394,10 +399,11 @@ app.get("/api/devices", async (c) => {
   if (!ids.length) return json({ ok: true, devices: [] });
   const placeholders = ids.map(() => "?").join(",");
   const rows = await c.env.DB.prepare(
-    `SELECT user_id, device_id, identity_key, identity_sign_key
+    `SELECT user_id, device_id, identity_key, identity_sign_key, identity_key_sig
      FROM identity_keys WHERE user_id IN (${placeholders})`
   ).bind(...ids).all<{
-    user_id: string; device_id: string; identity_key: string; identity_sign_key: string;
+    user_id: string; device_id: string; identity_key: string;
+    identity_sign_key: string; identity_key_sig: string;
   }>();
   return json({
     ok: true,
@@ -406,6 +412,7 @@ app.get("/api/devices", async (c) => {
       deviceId: r.device_id,
       identityKey: r.identity_key,
       identitySignKey: r.identity_sign_key,
+      identityKeySig: r.identity_key_sig,
     })),
   });
 });
@@ -423,11 +430,11 @@ app.get("/api/prekeys/count", async (c) => {
 app.get("/api/users/:id/prekeys", async (c) => {
   const targetId = c.req.param("id");
   const devices = await c.env.DB.prepare(
-    `SELECT ik.device_id, ik.identity_key, ik.identity_sign_key,
+    `SELECT ik.device_id, ik.identity_key, ik.identity_sign_key, ik.identity_key_sig,
             ik.signed_prekey_id, ik.signed_prekey, ik.signed_prekey_sig
      FROM identity_keys ik WHERE ik.user_id = ?`
   ).bind(targetId).all<{
-    device_id: string; identity_key: string; identity_sign_key: string;
+    device_id: string; identity_key: string; identity_sign_key: string; identity_key_sig: string;
     signed_prekey_id: number; signed_prekey: string; signed_prekey_sig: string;
   }>();
 
@@ -445,6 +452,7 @@ app.get("/api/users/:id/prekeys", async (c) => {
       deviceId: d.device_id,
       identityKey: d.identity_key,
       identitySignKey: d.identity_sign_key,
+      identityKeySig: d.identity_key_sig,
       signedPrekey: { id: d.signed_prekey_id, key: d.signed_prekey, sig: d.signed_prekey_sig },
       oneTimePrekey: otp ? { id: otp.key_id, key: otp.key } : null,
     });

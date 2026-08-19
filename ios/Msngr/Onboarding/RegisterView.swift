@@ -114,6 +114,7 @@ struct RegisterView: View {
                 username: username, displayName: name, deviceName: UIDevice.current.name,
                 identityKey: identity.dh.publicKey.rawRepresentation.base64urlEncodedString(),
                 identitySignKey: identity.signing.publicKey.rawRepresentation.base64urlEncodedString(),
+                identityKeySig: try identity.dhSignature.base64urlEncodedString(),
                 signedPrekey: .init(id: prekeys.signedPrekey.id,
                                     key: prekeys.signedPrekey.key.publicKey.rawRepresentation.base64urlEncodedString(),
                                     sig: prekeys.signedPrekey.signature.base64urlEncodedString()),

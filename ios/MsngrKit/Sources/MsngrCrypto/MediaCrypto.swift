@@ -31,6 +31,10 @@ public enum MediaCrypto {
 
 /// Safety numbers: 60 digits built from both sides' identity key fingerprints
 /// (5200 SHA-512 iterations, as in Signal), for verifying identity out of band.
+///
+/// Both halves of an identity go into the fingerprint. The X25519 key is the one
+/// messages are encrypted under, so a code that covered only the Ed25519 key
+/// would read the same whether or not the encryption key was the peer's.
 public enum SafetyNumbers {
     private static func fingerprint(identity: Data, userId: String) -> String {
         var digest = Data([0, 0]) + identity + Data(userId.utf8)
@@ -48,10 +52,11 @@ public enum SafetyNumbers {
         return out
     }
 
-    public static func generate(ourIdentitySigning: Data, ourUserId: String,
-                                theirIdentitySigning: Data, theirUserId: String) -> String {
-        let a = fingerprint(identity: ourIdentitySigning, userId: ourUserId)
-        let b = fingerprint(identity: theirIdentitySigning, userId: theirUserId)
+    public static func generate(ourIdentitySigning: Data, ourIdentityDH: Data, ourUserId: String,
+                                theirIdentitySigning: Data, theirIdentityDH: Data,
+                                theirUserId: String) -> String {
+        let a = fingerprint(identity: ourIdentitySigning + ourIdentityDH, userId: ourUserId)
+        let b = fingerprint(identity: theirIdentitySigning + theirIdentityDH, userId: theirUserId)
         return [a, b].sorted().joined()
     }
 }

@@ -73,7 +73,7 @@ final class CryptoGateTests: XCTestCase {
                     // other process falls into. Here it is made plain.
                     Thread.sleep(forTimeInterval: 0.002)
                     try sending.store.saveSession(session, peerUserId: "peer",
-                                                  peerDeviceId: "peerdev", theirIdentityDH: "")
+                                                  peerDeviceId: "peerdev")
                     lock.lock()
                     headers.append("\(message.header.dhPub.base64EncodedString())/\(message.header.n)")
                     lock.unlock()
