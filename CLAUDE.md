@@ -49,16 +49,27 @@ answers on :8787; the rest of the tests need no server.
 ## The gate before delivery
 
 `make check` at the root: `xcodegen` → build → `swift test` → MsngrTests →
-MsngrUITests → the server smoke test → collecting fresh simulator crashes (a
-fresh crash fails the gate). The UI tests and the smoke test need `wrangler dev`
-running.
+the server smoke test → collecting fresh simulator crashes (a fresh crash
+fails the gate). The smoke test needs `wrangler dev` running.
+
+The UI smoke is a separate target — `make uicheck DEV_UDID=<yours>` — run when
+the change touches the UI layer, on your own simulator. It is outside the gate
+because its reds have almost always been the host, not the code.
 
 The Makefile builds on the owner's simulator by default, so an agent runs the
 gate with its own:
 
 ```bash
-make check DEV_UDID=74B78AFC-E8D7-4317-B16F-E51A65504B2D   # gate-runner
+make check DEV_UDID=14C70E21-A23A-4492-8E6A-113AE0BC6B6D   # gate-runner
 ```
+
+Uninstall the app from the simulator before `make uicheck`
+(`xcrun simctl uninstall <udid> ai.enface.Msngr`). The device keeps the
+migrations of whichever build ran on it last, and a branch that does not know the
+newest of them leaves the file closed and shows «Приложение устарело» in place of
+the chat list: every UI test then fails on a screen with no chats, as a wandering
+assertion rather than anything that names the cause. The UI tests register their
+own user, and the fixtures they need are on the stand, not on the device.
 
 ## The stand
 
@@ -110,7 +121,7 @@ picture, and use `--tap X Y` to tap and re-shoot in one step.
 - Do not touch the owner's simulators: `44CE2242-EBB9-48EA-A605-5988A00E4C31`
   (iPhone 17 dev) and `0E0CF155-B4B7-4794-A963-AD7C76EFDCEA` (iPhone 17 Pro Max).
   They are handed out only on an explicit exclusive reservation.
-- `74B78AFC-E8D7-4317-B16F-E51A65504B2D` (gate-runner) — for running the gate.
+- `14C70E21-A23A-4492-8E6A-113AE0BC6B6D` (gate-runner) — for running the gate.
 - For your own scenarios, create your own simulator
   (`xcrun simctl create <name> "iPhone 17"` → `boot` → `install` → register a
   fresh user) and delete it after yourself (`shutdown` + `delete`).

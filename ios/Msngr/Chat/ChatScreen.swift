@@ -16,6 +16,9 @@ struct ChatScreen: View {
     /// A match was actually opened, so leaving search has somewhere to go back from.
     @State private var searchMoved = false
     @State private var text = ""
+    /// What stood in the field before the edit mode took it over. Leaving the mode,
+    /// by the cross or by sending the edit, puts it back.
+    @State private var textBeforeEdit: String?
     @State private var showScrollDown = false
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showFilePicker = false
@@ -117,6 +120,8 @@ struct ChatScreen: View {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button { dismiss() } label: {
                         Image(systemName: "chevron.backward")
+                            // the size of the other bar button: the chevron leads
+                            // the header by position, not by being twice as big
                             .font(Theme.glyph(17, max: 19).weight(.medium))
                             .foregroundStyle(.primary)
                             .frame(width: 44, height: 44)
@@ -173,8 +178,15 @@ struct ChatScreen: View {
             ChatInfoView(model: model)
         }
         .onChange(of: model.editing?.id) { _, _ in
-            // switching which message is edited (edit A → edit B included) puts its text in the field
-            if let e = model.editing { text = e.text ?? "" }
+            if let e = model.editing {
+                // entering the mode, and switching which message is edited (A → B),
+                // puts its text in the field; the draft that stood there waits
+                if textBeforeEdit == nil { textBeforeEdit = text }
+                text = e.text ?? ""
+            } else {
+                text = textBeforeEdit ?? ""
+                textBeforeEdit = nil
+            }
         }
         .photosPicker(isPresented: $photoPickerPresented, selection: $photoItems,
                       maxSelectionCount: 10, matching: .any(of: [.images, .videos]))
@@ -335,7 +347,11 @@ struct ChatScreen: View {
             HStack(spacing: 8) {
                 AvatarView(name: model.headerTitle,
                            avatarId: model.chat?.kind == .group ? model.chat?.avatarId : model.peer?.avatarId,
-                           online: model.peer?.online ?? false)
+                           // a group has no presence of its own, and with no
+                           // connection presence is stale: the subtitle already
+                           // says so, the dot must not claim otherwise
+                           online: model.chat?.kind == .direct && model.connected
+                                   && (model.peer?.online ?? false))
                     // the back chevron leads the header, so the avatar stays under it
                     .frame(width: 34, height: 34)
                 VStack(alignment: .leading, spacing: 0) {
@@ -366,13 +382,18 @@ struct ChatScreen: View {
             .background(.regularMaterial, in: Capsule())
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("chat.header")
     }
 
     /// Shortens a header string with an ellipsis to the width the principal view has
-    /// (the screen minus the back button, the avatar and the padding).
+    /// (the screen minus the bar buttons, the avatar and the padding).
     private static func fitted(_ s: String, font: UIFont) -> String {
-        // the principal view is centred, so the wider back button costs it twice
-        let maxWidth = UIScreen.main.bounds.width - 208
+        // the bar keeps 16pt outside a 44pt button and the principal view is
+        // centred, so that side costs it twice; 20pt more keeps the title clear
+        // of the button's glass, and the avatar with its gap comes off the rest
+        let side: CGFloat = 16 + 44 + 20
+        let avatar: CGFloat = 34 + 8
+        let maxWidth = UIScreen.main.bounds.width - side * 2 - avatar
         guard s.size(withAttributes: [.font: font]).width > maxWidth else { return s }
         var t = s
         while !t.isEmpty, (t + "…").size(withAttributes: [.font: font]).width > maxWidth {
@@ -877,8 +898,10 @@ struct MessagesView: UIViewControllerRepresentable {
             case .copy: MessageClipboard.copy(msg)
             case .edit: withAnimation(Theme.springFast) { model.editing = msg }
             case .pin: model.pin(msg)
+            case .unpin: model.pin(nil)
             case .forward: NotificationCenter.default.post(name: .forwardRequested, object: msg)
             case .select: withAnimation(Theme.springFast) { model.beginSelection(with: msg) }
+            case .resend: model.resend(msg)
             // удаление начинается с выбора: сообщение видно, к нему можно
             // добавить ещё, подтверждение стоит внизу
             case .delete:
@@ -889,6 +912,7 @@ struct MessagesView: UIViewControllerRepresentable {
         }
         // замыкание с dismiss живёт не дольше тела body — переустанавливаем
         vc.onSwipeBack = onSwipeBack
+        vc.pinnedMsgId = model.chat?.pinnedMsgId
         vc.ownUserId = model.ownUserId
         vc.noteSendTick(sendTick)
         vc.apply(items)

@@ -89,6 +89,12 @@ interface Meta {
   createdAt: number;
   pinnedMsgId: string | null;
   lastSeq: number;
+  /// How many messages of the chat are content. A seq is spent on every frame,
+  /// including the ones a client never shows — an edit, a reaction, a sender key
+  /// handed out after the roster changed — so the badge is counted in these and
+  /// not in seqs. Each message stores the count as of itself, which is what a
+  /// member's mark is measured against.
+  contentCount: number;
 }
 
 /// A policy an older chat has no value for is the permissive one.
@@ -131,6 +137,22 @@ export class ConversationDO implements DurableObject {
       for (const [, m] of listed) this.members.set(m.userId, m);
     }
     return this.members;
+  }
+
+  /// Content messages written after the one a mark stands on.
+  ///
+  /// Both ends of the subtraction are counts of content, so the frames a client
+  /// never shows fall out of it: whatever seqs an edit, a reaction or a sender
+  /// key spent between the mark and the end of the chat, the number is what the
+  /// reader will actually be handed. A mark at zero has the whole chat ahead
+  /// of it.
+  private async unreadFrom(mark: number): Promise<number> {
+    const meta = await this.loadMeta();
+    if (!meta) return 0;
+    const total = meta.contentCount ?? 0;
+    if (mark <= 0) return total;
+    const at = (await this.state.storage.get<StoredMsg>(seqKey(mark)))?.contentAt;
+    return Math.max(0, total - (at ?? total));
   }
 
   private userStub(userId: string) {
@@ -477,7 +499,7 @@ export class ConversationDO implements DurableObject {
         chatId: b.chatId, kind: b.kind, title: b.title ?? null,
         avatarId: null, description: null,
         sendPolicy: "all", invitePolicy: "all", createdBy: b.createdBy,
-        createdAt: now, pinnedMsgId: null, lastSeq: 0,
+        createdAt: now, pinnedMsgId: null, lastSeq: 0, contentCount: 0,
       };
       await this.state.storage.put("meta", this.meta);
       this.members = new Map();
@@ -566,7 +588,8 @@ export class ConversationDO implements DurableObject {
       }
 
       case "/unread-count": {
-        // a compact count for the badge: lastSeq minus the user's counted mark
+        // a compact count for the badge: how many content messages the chat has
+        // had since the one the member's mark stands on
         const userId = url.searchParams.get("userId") ?? "";
         // an unaccepted request stays out of the badge: the number alone would tell the
         // recipient how much has been written to him
@@ -577,7 +600,7 @@ export class ConversationDO implements DurableObject {
         const seen =
           (await this.state.storage.get<Record<string, number>>("seenMarks")) ?? {};
         const from = Math.max(marks[userId] ?? 0, seen[userId] ?? 0);
-        return json({ ok: true, unread: Math.max(0, meta.lastSeq - from) });
+        return json({ ok: true, unread: await this.unreadFrom(from) });
       }
 
       case "/send": {
@@ -607,13 +630,19 @@ export class ConversationDO implements DurableObject {
         if (dupe) return json({ ok: true, ...dupe, dupe: true });
 
         const seq = meta.lastSeq + 1;
+        // the counter moves only on what a client will show, and every message
+        // keeps where it stood: one number written here answers every later
+        // question about how much of the chat a member has not seen
+        const contentAt = (meta.contentCount ?? 0) + (b.service ? 0 : 1);
         const msg: StoredMsg = {
           msgId: ulid(), seq, from: b.from, fromDevice: b.fromDevice,
           clientMsgId: b.clientMsgId, sentAt: b.sentAt, ts: nowSec(), body: b.body,
+          contentAt,
           ...(b.service ? { service: true } : {}),
           ...(blockedFor ? { blockedFor } : {}),
         };
         meta.lastSeq = seq;
+        meta.contentCount = contentAt;
         this.meta = meta;
         await this.state.storage.put({
           meta,
@@ -637,19 +666,14 @@ export class ConversationDO implements DurableObject {
           for (const u of blocked) marks[u] = Math.max(marks[u] ?? 0, seq);
           await this.state.storage.put("readMarks", marks);
         }
-        // The counting mark unread is measured against. It moves by the same rules
-        // as the client cursor (`advanceChat`): an author does not count their own
-        // sent message as unread, and a service frame in an already-read chat is
-        // absorbed. Kept apart from `readMarks` because read receipts are sent for
+        // The counting mark unread is measured against: an author does not count
+        // their own message, and neither does someone the message was withheld
+        // from. Kept apart from `readMarks` because read receipts are sent for
         // those alone: sending a message is not a claim that others were read.
+        // A service frame needs no mark of its own — it never moved the count.
         const seen = (await this.state.storage.get<Record<string, number>>("seenMarks")) ?? {};
         for (const u of blocked) seen[u] = Math.max(seen[u] ?? 0, seq);
         seen[b.from] = Math.max(seen[b.from] ?? 0, seq);
-        if (msg.service) {
-          for (const uid of members.keys()) {
-            if ((seen[uid] ?? 0) >= seq - 1) seen[uid] = seq;
-          }
-        }
         await this.state.storage.put("seenMarks", seen);
         // ack answers the sender as soon as the message owns a seq; delivery
         // (and the APNs call behind it) runs in the alarm queue afterwards.
