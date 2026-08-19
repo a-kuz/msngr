@@ -255,6 +255,10 @@ extension Theme {
         static let tabBadge = TextRole(size: 12, weight: .semibold, relativeTo: .caption1, maxSize: 18)
         static let folderTab = TextRole(size: 15, relativeTo: .subheadline, maxSize: 24)
         static let folderTabActive = TextRole(size: 15, weight: .semibold, relativeTo: .subheadline, maxSize: 24)
+        /// The @handle next to a display name in people search: the one thing
+        /// that tells apart two accounts sharing the same display name, so it
+        /// reads close to the name itself rather than as a caption.
+        static let personHandle = TextRole(size: 15, weight: .medium, relativeTo: .subheadline, maxSize: 30)
 
         // Composer
         static let input = TextRole(size: 17, relativeTo: .body, maxSize: 40)
