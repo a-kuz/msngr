@@ -6,17 +6,6 @@ with the commit that closed it.
 
 ## Open
 
-### Unread counts must work offline, and the read must reach the server later
-Reported 2026-08-19. On a plane: the chat list shows 5 unread, opening the
-chat drops it to 0 — all with no network — and the moment the network is back
-the read mark goes to the server. The code is built for this (`markRead`
-writes `myReadUpTo` and zeroes `unreadCount` locally in one transaction and
-queues the server send as a `pendingAction` drained on reconnect), but the
-scenario was never run live. Needs an offline run on two simulators: unread
-accumulates, the stand goes down, the reader opens the chat, the stand comes
-back — the sender must end at «прочитано», with no unread resurrection on the
-reader after sync. Queued for the next free slot.
-
 ### Interaction smoothness below Telegram
 Reported 2026-08-18. Overall animation quality and frame pacing feel worse
 than Telegram across the app. Umbrella item; closes on the owner's judgement,
@@ -24,6 +13,13 @@ not on a single fix. Measured so far (bubbleanim run, merged 14c3a0a): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### Unread counts must work offline, and the read must reach the server later
+Reported 2026-08-19. Closed by the live run in
+`runs/2026-08-19-offlineread-run.md`, no code change: 5 unread accumulated on
+the chat list, the stand was killed, opening the chat dropped the counter to 0
+with no network, and after the stand returned the sender's messages went to
+read ticks with no unread resurrection on the reader after sync.
 
 ### Unread count inflated in group chats
 Reported 2026-08-19. Reproduced by a red server-smoke check before any product
