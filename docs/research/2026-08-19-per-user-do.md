@@ -83,6 +83,22 @@ fills the chat list and tells everyone at the same time; there is no separate
 poll. Going to the background is the cheap half: it only has to reach the objects
 of people subscribed right now — nobody needs an answer.
 
+`~/ws/back-core` has this working, and three of its pieces are worth carrying
+over as designed. `OnlineStatusService.online()` queues distinct dialog peers and
+drains them through persisted tasks, and each `onlineEvent` RPC is symmetric: it
+delivers "I am online" and returns the peer's own status already filtered by that
+peer's privacy (`toShowMyStatus`), with `onlineHidden` and a fixed epoch instead
+of an honest timestamp when hiding. `blink()` marks delivered on coming online:
+every chat whose last incoming message still says "undelivered" gets a `dlvrd`
+from the user's own object the moment a device appears — which is exactly our
+"ticks stop after the head of a burst" defect solved at the right end. And a
+profile change goes out on two lists kept in the object itself: `incomingContacts`
+(who added me) in batches of 50 through the task manager, plus the chats, where
+the chat object rewrites its copy of the profile and pushes the updated chat-list
+row to the other side. Its one soft spot to not repeat: the status queue lives in
+memory and is dropped on init, so a restarted object forgets who it owed an
+announcement.
+
 One-time prekeys are not pre-distributed. The first message to a device the sender
 has no session with is one RPC from the sender's object to the recipient's, since
 the address is derived from the user id; the client is not involved and is holding
