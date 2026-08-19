@@ -208,7 +208,7 @@ console.log(`  second ticks: ${lag.length}/${COUNT}, lag after arrival ` +
   `min=${l.min} p50=${l.p50} p90=${l.p90} max=${l.max} mean=${l.mean}`);
 console.log(`  pushes APNs took: ${pushes.length}`);
 const q = await api(`/api/chats/${chat.chatId}/fanout`, { token: a.token });
-console.log(`  fanout queue: pending=${q.pending} cursor=${q.cursor} oldestMs=${q.oldestMs} armed=${q.armed}`);
+console.log(`  fanout queue: pending=${q.pending} recipients=${q.recipients} oldestMs=${q.oldestMs} armed=${q.armed}`);
 
 const problems = [];
 if (landed.length !== COUNT) problems.push(`${COUNT - landed.length} messages never arrived`);

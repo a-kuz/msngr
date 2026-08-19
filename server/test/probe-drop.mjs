@@ -56,7 +56,8 @@ for (let i = 0; i < 40; i++) {
   const q = await api(`/api/chats/${chat.chatId}/fanout`, { token: a.token });
   const got = frames.find((f) => f.t === "msg");
   console.log(`t=${Date.now() - t0}ms queue: pending=${q.pending} attempt=${q.attempt} ` +
-    `oldestMs=${q.oldestMs} armed=${q.armed} | recipient got msg: ${got ? "YES at " + (got._at - t0) + "ms" : "no"}`);
+    `recipients=${q.recipients} oldestMs=${q.oldestMs} armed=${q.armed} | ` +
+    `recipient got msg: ${got ? "YES at " + (got._at - t0) + "ms" : "no"}`);
   if (got || (q.pending === 0 && i > 4)) break;
 }
 const got = frames.find((f) => f.t === "msg");
