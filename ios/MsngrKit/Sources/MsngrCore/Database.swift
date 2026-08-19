@@ -409,6 +409,19 @@ public enum AppDatabase {
                 }
             }
         }
+        m.registerMigration("v20-chatMark") { db in
+            // How far each member of a chat has got, delivered and read. A tick
+            // in a group speaks for everyone — it turns double when the last
+            // member has the message — so the marks have to be kept apart
+            // instead of collapsing into one number per chat.
+            try db.create(table: "chatMark") { t in
+                t.column("chatId", .text).notNull()
+                t.column("userId", .text).notNull()
+                t.column("deliveredUpTo", .integer).notNull().defaults(to: 0)
+                t.column("readUpTo", .integer).notNull().defaults(to: 0)
+                t.primaryKey(["chatId", "userId"])
+            }
+        }
         return m
     }
 }
