@@ -84,7 +84,9 @@ POST /api/chats/:id/delete        delete the chat for yourself: a group is left,
                                   chat is only taken out of your own list (the journal and
                                   the membership stay, the peer learns nothing); your own
                                   read mark moves to the end of the journal in the process
-POST /api/chats/:id/settings      {title?, avatarId?, description?}
+POST /api/chats/:id/settings      {title?, avatarId?, description?,
+                                  sendPolicy?, invitePolicy?} — a policy is "all" or
+                                  "admins" and is a group's alone
 POST /api/chats/:id/admins        {userId, admin:bool}
 POST /api/chats/:id/pin-message   {msgId|null}
 POST /api/chats/:id/flags         {pinned?, muted?, mutedUntil?, archived?} — local to
@@ -108,8 +110,16 @@ POST /api/dev/fault               {failEvents} — dev hook: the caller's own se
 
 Rights: only an admin can remove members and change group settings; an admin can
 add anyone, a non-admin only themselves; joining by an invite link is allowed to
-a non-member (`viaInvite`); any member of the chat can create an invite. Blocks
-are covered in the section below.
+a non-member (`viaInvite`). Blocks are covered in the section below.
+
+A group carries two policies, each `"all"` or `"admins"`, and both travel in the
+chat state. `sendPolicy: "admins"` refuses a non-admin's content send with
+`not_allowed`; frames marked `service: true` are never held back, so key
+handouts, receipts, repairs, edits and reactions keep working for everyone,
+otherwise the member could not read the chat. `invitePolicy: "admins"` refuses a
+non-admin both `POST /api/chats/:id/members` for anyone but themselves and
+`POST /api/chats/:id/invite`, with the same code. A chat with no stored value for
+a policy reads as `"all"`.
 
 ## Signing in on a new device
 
@@ -162,9 +172,11 @@ history.
 ```
 
 `service: true` marks a service frame (a sender key handout, a reaction, an edit,
-a TTL switch). It takes a `seq` and is kept in the journal, but it does not grow
-unread and raises no push. The client marks `edit`, `reaction` and `disappearing`
-this way (`SyncEngine.serviceKinds`), along with every skd envelope.
+a TTL switch, a group event). It takes a `seq` and is kept in the journal, but it
+does not grow unread and raises no push. The client marks `edit`, `reaction`,
+`disappearing` and `groupEvent` this way (`SyncEngine.serviceKinds`), along with
+every skd envelope. Of those only `groupEvent` leaves a row in the feed, a system
+line; the rest are listed in `SyncEngine.rowlessKinds`.
 
 ## WS: server → client
 
@@ -184,12 +196,12 @@ this way (`SyncEngine.serviceKinds`), along with every skd envelope.
 ```
 
 `error` is a rejection of a client frame; `error` carries a machine-readable code
-(`blocked`, `not_member`, `send_failed`). For a `send` it arrives instead of
-`sent`, with the same `clientMsgId`.
+(`blocked`, `not_member`, `not_allowed`, `send_failed`). For a `send` it arrives
+instead of `sent`, with the same `clientMsgId`.
 
 `state` in a `chat` frame is the chat's full snapshot: `members` (userId, role,
-joinedAt, accepted), `title`, `avatarId`, `description`, `pinnedMsgId`,
-`lastSeq`, `readMarks`, `deliveredMarks`. The frame does not carry member
+joinedAt, accepted), `title`, `avatarId`, `description`, `sendPolicy`,
+`invitePolicy`, `pinnedMsgId`, `lastSeq`, `readMarks`, `deliveredMarks`. The frame does not carry member
 profiles: the client pulls the ones it is missing through `GET /api/users/:id`.
 
 ## Delivery order
@@ -316,13 +328,18 @@ Inside the pairwise ciphertext:
 ```
 
 - `kind`: `text` | `photo` | `video` | `file` | `voice` | `album` | `contact` |
-  `edit` | `reaction` | `disappearing` | `repairRequest` | `repair` | `skdAck`;
+  `edit` | `reaction` | `disappearing` | `groupEvent` | `repairRequest` |
+  `repair` | `skdAck`;
 - `media` / `album` — `MediaInfo`: `type, mediaId, key, hash, size, mime, name?,
   w?, h?, dur?, waveform?, blurhash?, thumbMediaId?, thumbKey?, thumbHash?`;
 - `replyTo` — `{msgId, authorId, text, kind}`, `fwd` — `{fromUserId, fromName}`;
 - `edit` and `reaction` address a `targetMsgId`, `emoji: null` removes the
   reaction;
 - `disappearing` carries `ttlSeconds` — the chat's new TTL;
+- `groupEvent` carries the event in `text`, as `group:` followed by JSON
+  (`GroupEvent`): the verb, the display name of whoever acted, and the name and
+  id of the member it concerns. The names travel with the event so a line about
+  someone who has already left still reads;
 - `to` — an addressed frame: the envelope is encrypted pairwise to a single
   member, even in a group. The whole repair protocol travels this way.
 

@@ -33,6 +33,9 @@ public struct Chat: Codable, Identifiable, Equatable, FetchableRecord, Persistab
     public var title: String?
     public var avatarId: String?
     public var chatDescription: String?
+    /// group rights, as the server states them: "all" or "admins"
+    public var sendPolicy: String = ChatPermissions.openPolicy
+    public var invitePolicy: String = ChatPermissions.openPolicy
     public var createdBy: String
     public var createdAt: Double
     public var pinnedMsgId: String?

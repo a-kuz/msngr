@@ -402,7 +402,14 @@ public enum AppDatabase {
             // table, so the cost of an answer grows with the size of the chat.
             try db.create(indexOn: "message", columns: ["clientMsgId"])
         }
-        m.registerMigration("v19-chatMark") { db in
+        m.registerMigration("v19-chatPolicies") { db in
+            for column in ["sendPolicy", "invitePolicy"] {
+                try db.alter(table: "chat") { t in
+                    t.add(column: column, .text).notNull().defaults(to: ChatPermissions.openPolicy)
+                }
+            }
+        }
+        m.registerMigration("v20-chatMark") { db in
             // How far each member of a chat has got, delivered and read. A tick
             // in a group speaks for everyone — it turns double when the last
             // member has the message — so the marks have to be kept apart

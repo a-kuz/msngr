@@ -49,24 +49,27 @@ answers on :8787; the rest of the tests need no server.
 ## The gate before delivery
 
 `make check` at the root: `xcodegen` → build → `swift test` → MsngrTests →
-MsngrUITests → the server smoke test → collecting fresh simulator crashes (a
-fresh crash fails the gate). The UI tests and the smoke test need `wrangler dev`
-running.
+the server smoke test → collecting fresh simulator crashes (a fresh crash
+fails the gate). The smoke test needs `wrangler dev` running.
+
+The UI smoke is a separate target — `make uicheck DEV_UDID=<yours>` — run when
+the change touches the UI layer, on your own simulator. It is outside the gate
+because its reds have almost always been the host, not the code.
 
 The Makefile builds on the owner's simulator by default, so an agent runs the
 gate with its own:
 
 ```bash
-xcrun simctl uninstall 74B78AFC-E8D7-4317-B16F-E51A65504B2D ai.enface.Msngr
-make check DEV_UDID=74B78AFC-E8D7-4317-B16F-E51A65504B2D   # gate-runner
+make check DEV_UDID=14C70E21-A23A-4492-8E6A-113AE0BC6B6D   # gate-runner
 ```
 
-The uninstall first because the gate runner is shared and its database keeps the
-migrations of whichever build ran last. A branch that does not know the newest of
-them leaves the file closed and shows «Приложение устарело» in place of the chat
-list, and then every UI test fails on a screen with no chats — as a wandering
-assertion, not as anything that names the cause. The UI tests register their own
-user, and the fixtures they need are on the stand, not on the device.
+Uninstall the app from the simulator before `make uicheck`
+(`xcrun simctl uninstall <udid> ai.enface.Msngr`). The device keeps the
+migrations of whichever build ran on it last, and a branch that does not know the
+newest of them leaves the file closed and shows «Приложение устарело» in place of
+the chat list: every UI test then fails on a screen with no chats, as a wandering
+assertion rather than anything that names the cause. The UI tests register their
+own user, and the fixtures they need are on the stand, not on the device.
 
 ## The stand
 
@@ -118,7 +121,7 @@ picture, and use `--tap X Y` to tap and re-shoot in one step.
 - Do not touch the owner's simulators: `44CE2242-EBB9-48EA-A605-5988A00E4C31`
   (iPhone 17 dev) and `0E0CF155-B4B7-4794-A963-AD7C76EFDCEA` (iPhone 17 Pro Max).
   They are handed out only on an explicit exclusive reservation.
-- `74B78AFC-E8D7-4317-B16F-E51A65504B2D` (gate-runner) — for running the gate.
+- `14C70E21-A23A-4492-8E6A-113AE0BC6B6D` (gate-runner) — for running the gate.
 - For your own scenarios, create your own simulator
   (`xcrun simctl create <name> "iPhone 17"` → `boot` → `install` → register a
   fresh user) and delete it after yourself (`shutdown` + `delete`).
@@ -264,6 +267,19 @@ version, `migrations` in `wrangler.jsonc`. The details are in `docs/PROCESS.md`.
 
 - Micro-scope: one behaviour per change, commits incremental. A live run of the
   affected scenario on the simulator, then `make check`.
+- A red check on a product number or behaviour is a defect report until proven
+  otherwise. It is never answered from the test's side — moving a cursor,
+  widening an expectation, adding a sleep — before the product is shown right,
+  in writing. Noticing that a number "counts one too many" and absorbing it
+  into the fixture buries a live defect: that exact move hid the inflated
+  group unread until the owner reported it from the outside. A symptom found
+  in passing goes into `docs/qa/defects.md` and into the report, even when the
+  test is already green.
+- A defect reported by the owner is never answered with "that was out of
+  scope" or "nobody logged it". Scope divides the work, not the
+  responsibility: the end goal of every run is the quality of the product as a
+  whole, and the only right first response to a report is to investigate it —
+  who should have caught it is settled after, in process, not in the reply.
 - Commits and PRs without `Co-Authored-By`.
 - Everything in the repository is in English: comments, commit messages,
   documentation, run reports. Comments describe only the current behaviour;
