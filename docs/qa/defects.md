@@ -44,6 +44,12 @@ transaction, or the fanout queue waking once per delivery. Measure first
 (`MSNGR_PERF=1` writes a span per stage), then fix. Statuses are the owner's
 bar here too: the tail of a burst must not trail behind by a minute and a half.
 
+Measured and fixed on run-delivery (`runs/2026-08-19-delivery-run.md`): the
+second per message was the APNs call awaited inside `UserSessionDO./event`,
+serialized by the chat's head-of-line queue — the arrival gap tracked the push
+latency one for one (157 ms at a 150 ms mock, 1 008 ms at 1 s). With the push
+moved to its own queue a burst of 100 lands in 255 ms, gap p50 0 ms.
+
 ### Delivery ticks stop after the first messages of a burst
 Reported 2026-08-19 from the device (iPhone 15 Pro Max against the shared
 stand). The recipient has all 100 messages of a burst on screen, while the
@@ -57,6 +63,13 @@ thing in the product and have to be flawless — WhatsApp-grade, where every
 tick updates the instant the state changes. That is the acceptance test, not
 «the receipt eventually arrives».
 
+Same root as the burst pace, fixed on run-delivery: the delivered receipts to
+the author queued behind the recipient's still-undelivered messages (tick lag
+p50 8.1 s on a 100-burst). With one independent delivery chain per recipient a
+tick follows its message by p50 31 ms on the wire and within 106 ms between two
+live clients (`BurstTicksTests`); the live run shows the whole burst
+double-ticked (`runs/2026-08-19-delivery-run.md`).
+
 ### A dead APNs endpoint stops chats
 Reported 2026-08-19 from the shared stand: with nothing listening on the APNs
 port, new messages stopped arriving entirely — the owner hit it right after
@@ -69,6 +82,13 @@ itself wedged along the way. The owner's bar, recorded as acceptance: chats must
 work with APNs fully down — the socket delivery and the push must not share a
 fate. run-delivery is the fix in flight; its live run has to include this exact
 scenario.
+
+Done on run-delivery and run live (`runs/2026-08-19-delivery-run.md`): /event
+acknowledges at the socket and the push goes through a persisted queue that
+retries owed pushes on a growing pause. With nothing on the APNs port, 10
+messages landed between two simulators instantly with every tick; when the mock
+came back, 111 queued pushes caught up in ~13 s with no repeated banner.
+`probe-apns-down.mjs` keeps the scenario runnable.
 
 ### A pin frame stood in the fanout queue for 235 seconds
 Seen 2026-08-19 in the live run on `run-pin`, not reported from outside. The
