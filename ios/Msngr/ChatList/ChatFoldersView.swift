@@ -45,25 +45,25 @@ struct ChatFoldersView: View {
                     }
                 } footer: {
                     if model.folders.isEmpty {
-                        Text("Папка собирает чаты по правилу — люди, группы, непрочитанные — и держит те, что вы добавите руками.")
+                        Text("A folder collects chats by a rule — people, groups, unread — and keeps whatever you add by hand.")
                     } else {
-                        Text("Порядок папок — порядок вкладок. Удаление папки убирает только её: чаты остаются на месте. Папки хранятся на этом устройстве.")
+                        Text("Folder order is tab order. Deleting a folder removes only it — the chats stay put. Folders live on this device.")
                     }
                 }
 
                 Section {
                     Button { editing = EditorTarget(folder: nil) } label: {
-                        Label("Новая папка", systemImage: "plus")
+                        Label("New Folder", systemImage: "plus")
                     }
                     .accessibilityIdentifier("folders.new")
                 }
             }
-            .navigationTitle("Папки")
+            .navigationTitle("Folders")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { EditButton() }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Готово") { dismiss() }
+                    Button("Done") { dismiss() }
                 }
             }
             .sheet(item: $editing) { target in
@@ -74,12 +74,14 @@ struct ChatFoldersView: View {
 
     private func subtitle(_ folder: ChatFolder) -> String {
         var parts: [String] = []
-        if folder.rules.direct { parts.append("Люди") }
-        if folder.rules.groups { parts.append("Группы") }
-        if folder.rules.unread { parts.append("Непрочитанные") }
-        if !folder.rules.peerIds.isEmpty { parts.append("Контакты: \(folder.rules.peerIds.count)") }
+        if folder.rules.direct { parts.append(String(localized: "People")) }
+        if folder.rules.groups { parts.append(String(localized: "Groups")) }
+        if folder.rules.unread { parts.append(String(localized: "Unread")) }
+        if !folder.rules.peerIds.isEmpty {
+            parts.append(String(localized: "Contacts: \(folder.rules.peerIds.count)"))
+        }
         let count = model.chatIds(in: folder).count
-        parts.append(count == 1 ? "1 чат" : "\(count) чатов")
+        parts.append(count == 1 ? String(localized: "1 chat") : String(localized: "\(count) chats"))
         return parts.joined(separator: " · ")
     }
 }
@@ -106,21 +108,21 @@ struct ChatFolderEditorView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("Название", text: $title)
+                    TextField("Name", text: $title)
                         .accessibilityIdentifier("folder.title")
                 }
 
-                Section("Что попадает само") {
-                    Toggle("Люди", isOn: $direct)
+                Section("What's included automatically") {
+                    Toggle("People", isOn: $direct)
                         .accessibilityIdentifier("folder.rule.direct")
-                    Toggle("Группы", isOn: $groups)
+                    Toggle("Groups", isOn: $groups)
                         .accessibilityIdentifier("folder.rule.groups")
-                    Toggle("Непрочитанные", isOn: $unread)
+                    Toggle("Unread", isOn: $unread)
                         .accessibilityIdentifier("folder.rule.unread")
                 }
 
                 if !contacts.isEmpty {
-                    Section("Чаты с контактами") {
+                    Section("Chats with contacts") {
                         ForEach(contacts, id: \.id) { peer in
                             pickerRow(title: peer.displayName, selected: peerIds.contains(peer.id)) {
                                 if peerIds.contains(peer.id) { peerIds.remove(peer.id) }
@@ -130,7 +132,7 @@ struct ChatFolderEditorView: View {
                     }
                 }
 
-                Section("Чаты") {
+                Section("Chats") {
                     ForEach(model.items) { item in
                         pickerRow(title: item.title, selected: chatIds.contains(item.id)) {
                             toggleChat(item.id)
@@ -138,14 +140,14 @@ struct ChatFolderEditorView: View {
                     }
                 }
             }
-            .navigationTitle(folder == nil ? "Новая папка" : "Папка")
+            .navigationTitle(folder == nil ? "New Folder" : "Folder")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Отмена") { dismiss() }
+                    Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Сохранить") { save() }
+                    Button("Save") { save() }
                         .fontWeight(.semibold)
                         .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
                         .accessibilityIdentifier("folder.save")

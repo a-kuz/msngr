@@ -1,0 +1,60 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "1 chat" : {
+      "extractionState" : "manual"
+    },
+    "%lld chats" : {
+      "extractionState" : "manual"
+    },
+    "Cancel" : {
+      "extractionState" : "manual"
+    },
+    "Chats" : {
+      "extractionState" : "manual"
+    },
+    "Chats with contacts" : {
+      "extractionState" : "manual"
+    },
+    "Contacts: %lld" : {
+      "extractionState" : "manual"
+    },
+    "Done" : {
+      "extractionState" : "manual"
+    },
+    "Folder" : {
+      "extractionState" : "manual"
+    },
+    "Folder order is tab order. Deleting a folder removes only it — the chats stay put. Folders live on this device." : {
+      "extractionState" : "manual"
+    },
+    "Folders" : {
+      "extractionState" : "manual"
+    },
+    "Groups" : {
+      "extractionState" : "manual"
+    },
+    "Name" : {
+      "extractionState" : "manual"
+    },
+    "New Folder" : {
+      "extractionState" : "manual"
+    },
+    "People" : {
+      "extractionState" : "manual"
+    },
+    "Save" : {
+      "extractionState" : "manual"
+    },
+    "A folder collects chats by a rule — people, groups, unread — and keeps whatever you add by hand." : {
+      "extractionState" : "manual"
+    },
+    "Unread" : {
+      "extractionState" : "manual"
+    },
+    "What's included automatically" : {
+      "extractionState" : "manual"
+    }
+  },
+  "version" : "1.0"
+}
