@@ -341,6 +341,14 @@ enum Theme {
     static var outgoingMeta: Color { palette.outgoingMeta }
     static var outgoingTickRead: Color { palette.outgoingTickRead }
 
+    /// A large decorative glyph on an empty screen. A single opacity cannot
+    /// serve both appearances: the accent at 55% sits well on a light ground and
+    /// turns to mud on the dark one, where the screen is nearly black and the
+    /// glyph has nothing left to stand on.
+    static var decorativeGlyph: Color {
+        Color(light: palette.accent.opacity(0.55), dark: palette.accent.opacity(0.92))
+    }
+
     // A filled action button, the one thing a screen is for.
     static var controlFill: Color { palette.accent }
     static var controlLabel: Color { palette.accentLabel }
