@@ -212,6 +212,9 @@ app.post("/api/provision/:id/claim", async (c) => {
     c.env.DB.prepare(
       "UPDATE provision_sessions SET claimed_at = ?, envelope = NULL WHERE id = ? AND claimed_at IS NULL"
     ).bind(now, s.row.id),
+    c.env.DB.prepare(
+      "UPDATE users SET devices_version = devices_version + 1 WHERE id = ?"
+    ).bind(userId),
   ]);
   await broadcastDevices(c.env, userId);
   return json({ ok: true, userId, deviceId, token });
@@ -257,6 +260,8 @@ async function revokeDevice(env: Env, userId: string, deviceId: string) {
     env.DB.prepare("DELETE FROM identity_keys WHERE device_id = ? AND user_id = ?")
       .bind(deviceId, userId),
     env.DB.prepare("DELETE FROM one_time_prekeys WHERE device_id = ?").bind(deviceId),
+    env.DB.prepare("UPDATE users SET devices_version = devices_version + 1 WHERE id = ?")
+      .bind(userId),
   ]);
   await userStub(env, userId).fetch("https://do/revoke-device", {
     method: "POST",
@@ -266,12 +271,16 @@ async function revokeDevice(env: Env, userId: string, deviceId: string) {
 }
 
 /// Tells everyone this user shares a chat with, and their own other devices,
-/// that the device set changed. The frame is a hint to refetch: the list with
-/// its identity keys is served by GET /api/devices.
+/// that the device set changed. The frame carries the new devices_version:
+/// a receiver whose cache already holds it keeps the cache, anyone behind
+/// re-reads GET /api/devices.
 async function broadcastDevices(env: Env, userId: string) {
+  const row = await env.DB.prepare(
+    "SELECT devices_version FROM users WHERE id = ?"
+  ).bind(userId).first<{ devices_version: number }>();
   await userStub(env, userId).fetch("https://do/devices-changed", {
     method: "POST",
-    body: JSON.stringify({ userId }),
+    body: JSON.stringify({ userId, version: row?.devices_version ?? 0 }),
   });
 }
 
@@ -408,24 +417,35 @@ async function presenceVisible(env: Env, viewerId: string, targetId: string): Pr
 // unlike /prekeys, which hands out a one-time prekey.
 app.get("/api/devices", async (c) => {
   const ids = [...new Set((c.req.query("ids") ?? "").split(",").filter(Boolean))].slice(0, 100);
-  if (!ids.length) return json({ ok: true, devices: [] });
+  if (!ids.length) return json({ ok: true, devices: [], versions: {} });
   const placeholders = ids.map(() => "?").join(",");
-  const rows = await c.env.DB.prepare(
-    `SELECT user_id, device_id, identity_key, identity_sign_key, identity_key_sig
-     FROM identity_keys WHERE user_id IN (${placeholders})`
-  ).bind(...ids).all<{
-    user_id: string; device_id: string; identity_key: string;
-    identity_sign_key: string; identity_key_sig: string;
-  }>();
+  // one batch, so the lists and the versions stamped on them are one snapshot
+  const [versionRows, rows] = await c.env.DB.batch([
+    c.env.DB.prepare(
+      `SELECT id, devices_version FROM users WHERE id IN (${placeholders})`
+    ).bind(...ids),
+    c.env.DB.prepare(
+      `SELECT user_id, device_id, identity_key, identity_sign_key, identity_key_sig
+       FROM identity_keys WHERE user_id IN (${placeholders})`
+    ).bind(...ids),
+  ]);
+  const versions: Record<string, number> = {};
+  for (const r of versionRows.results as Array<{ id: string; devices_version: number }>) {
+    versions[r.id] = r.devices_version;
+  }
   return json({
     ok: true,
-    devices: rows.results.map((r) => ({
+    devices: (rows.results as Array<{
+      user_id: string; device_id: string; identity_key: string;
+      identity_sign_key: string; identity_key_sig: string;
+    }>).map((r) => ({
       userId: r.user_id,
       deviceId: r.device_id,
       identityKey: r.identity_key,
       identitySignKey: r.identity_sign_key,
       identityKeySig: r.identity_key_sig,
     })),
+    versions,
   });
 });
 

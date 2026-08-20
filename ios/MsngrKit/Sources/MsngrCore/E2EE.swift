@@ -57,12 +57,25 @@ public final class E2EEManager: @unchecked Sendable {
     let gate: CryptoGate
     private let incoming: IncomingDecryptor
 
+    /// One user's device list as read from the server, stamped with the
+    /// devices_version the server read it under.
+    struct CachedDevices {
+        var devices: [APIClient.DeviceDTO]
+        /// users.devices_version at the moment of the read; nil for a user the
+        /// server reported no version for (it does not know them)
+        var version: Int?
+        /// A reconnect marks every entry unverified: a `devices` frame from the
+        /// gap may be lost. A send treats an unverified entry as absent; the
+        /// entry is trusted again when the server confirms its version — the
+        /// `deviceVersions` answer to the sync, a `devices` frame, or a fresh
+        /// /api/devices read.
+        var verified: Bool
+    }
+
     /// Device lists already read from the server, by userId. A send reads from
-    /// here instead of hitting /api/devices; an entry is dropped by the
-    /// `devices` frame and the whole cache on reconnect, since a frame sent
-    /// while the socket was down is gone. In-memory only: the extension never
-    /// encrypts, and a fresh process starts empty.
-    private var deviceCache: [String: [APIClient.DeviceDTO]] = [:]
+    /// here instead of hitting /api/devices. In-memory only: the extension
+    /// never encrypts, and a fresh process starts empty.
+    private var deviceCache: [String: CachedDevices] = [:]
     private let deviceCacheLock = NSLock()
 
     public init(store: IdentityStore, api: APIClient, ownUserId: String, ownDeviceId: String,
@@ -208,46 +221,97 @@ public final class E2EEManager: @unchecked Sendable {
         try store.deleteAllSenderKeyOut()
     }
 
-    /// The `devices` frame said this user's device set changed: the next send
-    /// re-reads their list from the server.
-    public func invalidateDeviceCache(userId: String) {
+    /// The `devices` frame said this user's device set changed, and names the
+    /// version it changed to. A cache already at that version (a fresh read
+    /// raced the frame) is confirmed instead of dropped; anything older goes,
+    /// and the next send re-reads the list.
+    public func invalidateDeviceCache(userId: String, version: Int? = nil) {
         deviceCacheLock.lock()
         defer { deviceCacheLock.unlock() }
+        if let version, let cached = deviceCache[userId]?.version, cached >= version {
+            deviceCache[userId]?.verified = true
+            return
+        }
         deviceCache.removeValue(forKey: userId)
     }
 
     /// The socket was down, so any `devices` frame from that time is lost:
-    /// every list is re-read.
-    public func invalidateDeviceCache() {
+    /// no entry is trusted until the server confirms its version. A send that
+    /// comes first treats the entry as absent and re-reads the list.
+    public func markDeviceCacheSuspect() {
         deviceCacheLock.lock()
         defer { deviceCacheLock.unlock() }
-        deviceCache.removeAll()
+        for uid in deviceCache.keys { deviceCache[uid]?.verified = false }
+    }
+
+    /// The versions the sync frame reports to the server: every cached entry
+    /// that has one, verified or not — a change can land mid-catch-up too.
+    public func deviceCacheVersions() -> [String: Int] {
+        deviceCacheLock.lock()
+        defer { deviceCacheLock.unlock() }
+        return deviceCache.compactMapValues(\.version)
+    }
+
+    /// The server's answer to the sync: entries whose version it confirms are
+    /// trusted again, the rest — behind, or unknown to the server — go, and
+    /// the next send to them re-reads the list.
+    public func reconcileDeviceVersions(_ versions: [String: Int]) {
+        deviceCacheLock.lock()
+        defer { deviceCacheLock.unlock() }
+        for (uid, entry) in deviceCache {
+            if let confirmed = versions[uid], let held = entry.version, held >= confirmed {
+                deviceCache[uid]?.verified = true
+            } else {
+                deviceCache.removeValue(forKey: uid)
+            }
+        }
     }
 
     /// Test hook: what the cache holds for a user, nil when it holds nothing.
     func cachedDevices(userId: String) -> [APIClient.DeviceDTO]? {
         deviceCacheLock.lock()
         defer { deviceCacheLock.unlock() }
-        return deviceCache[userId]
+        return deviceCache[userId]?.devices
     }
 
-    /// Devices of every user, grouped by userId: cached lists as they are, the
-    /// rest in a single /devices call. This asks for no prekey bundles, so it
-    /// spends no one-time prekeys.
+    /// Test hook: the entry's bookkeeping alongside the list.
+    func cachedDeviceState(userId: String) -> (version: Int?, verified: Bool)? {
+        deviceCacheLock.lock()
+        defer { deviceCacheLock.unlock() }
+        guard let entry = deviceCache[userId] else { return nil }
+        return (entry.version, entry.verified)
+    }
+
+    /// Test hook: puts an entry in as if it had been read from the server.
+    func seedDeviceCache(userId: String, devices: [APIClient.DeviceDTO], version: Int?) {
+        deviceCacheLock.lock()
+        defer { deviceCacheLock.unlock() }
+        deviceCache[userId] = CachedDevices(devices: devices, version: version, verified: true)
+    }
+
+    /// Devices of every user, grouped by userId: verified cached lists as they
+    /// are, the rest in a single /devices call. This asks for no prekey
+    /// bundles, so it spends no one-time prekeys.
     private func deviceMap(userIds: Set<String>) async throws -> [String: [APIClient.DeviceDTO]] {
         var result: [String: [APIClient.DeviceDTO]] = [:]
         var missing: [String] = []
         deviceCacheLock.lock()
         for uid in userIds {
-            if let cached = deviceCache[uid] { result[uid] = cached } else { missing.append(uid) }
+            if let cached = deviceCache[uid], cached.verified {
+                result[uid] = cached.devices
+            } else {
+                missing.append(uid)
+            }
         }
         deviceCacheLock.unlock()
         guard !missing.isEmpty else { return result }
-        let fetched = Dictionary(grouping: try await api.devices(userIds: missing), by: \.userId)
+        let response = try await api.devices(userIds: missing)
+        let fetched = Dictionary(grouping: response.devices, by: \.userId)
         deviceCacheLock.lock()
         for uid in missing {
             let devices = fetched[uid] ?? []
-            deviceCache[uid] = devices
+            deviceCache[uid] = CachedDevices(devices: devices,
+                                             version: response.versions[uid], verified: true)
             result[uid] = devices
         }
         deviceCacheLock.unlock()

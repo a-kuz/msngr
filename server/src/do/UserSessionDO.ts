@@ -423,14 +423,14 @@ export class UserSessionDO implements DurableObject {
         // a device was linked or revoked: whoever encrypts to this user must
         // drop its cached device list. Out to this user's own other devices
         // and through every chat they are in, the same road as the profile.
-        const b = (await req.json()) as { userId: string };
-        this.broadcast({ t: "devices", userId: b.userId });
+        const b = (await req.json()) as { userId: string; version: number };
+        this.broadcast({ t: "devices", userId: b.userId, version: b.version });
         const ids = await this.chatIds();
         const results = await Promise.allSettled(
           ids.map(async (chatId) => {
             const res = await this.convStub(chatId).fetch("https://do/devices", {
               method: "POST",
-              body: JSON.stringify({ userId: b.userId }),
+              body: JSON.stringify({ userId: b.userId, version: b.version }),
             });
             if (!res.ok) throw new Error(`status ${res.status}`);
           })
@@ -813,6 +813,21 @@ export class UserSessionDO implements DurableObject {
       case "sync":
       case "catchup": {
         const cursors: Record<string, number> = { ...frame.cursors };
+        if (frame.t === "sync" && frame.deviceVersions) {
+          // the client's device cache survived the socket, its versions did
+          // not: answer with the current ones before the catch-up, so the
+          // entries still current are trusted again as early as possible
+          const ids = Object.keys(frame.deviceVersions).slice(0, 200);
+          if (ids.length) {
+            const placeholders = ids.map(() => "?").join(",");
+            const rows = await this.env.DB.prepare(
+              `SELECT id, devices_version FROM users WHERE id IN (${placeholders})`
+            ).bind(...ids).all<{ id: string; devices_version: number }>();
+            const versions: Record<string, number> = {};
+            for (const r of rows.results) versions[r.id] = r.devices_version;
+            this.send(ws, { t: "deviceVersions", versions });
+          }
+        }
         if (frame.t === "sync") {
           // chats the client does not know yet, created or joined while it was offline:
           // send the state and replay the history from zero
