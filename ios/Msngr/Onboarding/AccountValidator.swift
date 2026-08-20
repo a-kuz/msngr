@@ -29,11 +29,12 @@ enum AccountValidator {
     static func nameHint(_ name: String) -> String? {
         let trimmed = trimmedName(name)
         if trimmed.isEmpty { return nil }
-        return trimmed.count > nameMaxLength ? "Имя — не длиннее \(nameMaxLength) символов" : nil
+        return trimmed.count > nameMaxLength
+            ? String(localized: "Name — at most \(nameMaxLength) characters") : nil
     }
 
     static func usernameHint(_ username: String) -> String? {
         if username.isEmpty || isValidUsername(username) { return nil }
-        return "Юзернейм — от \(usernameMinLength) до \(usernameMaxLength) символов: латиница, цифры и _"
+        return String(localized: "Username — \(usernameMinLength) to \(usernameMaxLength) characters: latin letters, digits and _")
     }
 }
