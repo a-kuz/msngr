@@ -75,7 +75,7 @@ struct ChatInfoView: View {
                 VStack(spacing: 10) {
                     groupAvatar
                     if isGroup && canEditSettings {
-                        TextField("Название группы", text: $editTitle)
+                        TextField("Group name", text: $editTitle)
                             .font(.title3.bold())
                             .multilineTextAlignment(.center)
                             .textFieldStyle(.roundedBorder)
@@ -89,7 +89,7 @@ struct ChatInfoView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     if isGroup && canEditSettings && titleChanged {
-                        Button("Сохранить название", action: saveTitle)
+                        Button("Save name", action: saveTitle)
                             .buttonStyle(.borderedProminent)
                             .disabled(savingSettings)
                             .accessibilityIdentifier("chatInfo.saveTitle")
@@ -105,7 +105,7 @@ struct ChatInfoView: View {
                 NavigationLink {
                     ChatGalleryView(chatId: model.chatId)
                 } label: {
-                    Label("Вложения", systemImage: "photo.on.rectangle.angled")
+                    Label("Attachments", systemImage: "photo.on.rectangle.angled")
                 }
                 .accessibilityIdentifier("chatInfo.gallery")
             }
@@ -121,7 +121,7 @@ struct ChatInfoView: View {
                         }
                     })) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Label("Без звука", systemImage: "bell.slash")
+                        Label("Mute", systemImage: "bell.slash")
                         if let muteUntilLabel {
                             Text(muteUntilLabel).font(.footnote).foregroundStyle(.secondary)
                         }
@@ -130,12 +130,12 @@ struct ChatInfoView: View {
                 .accessibilityIdentifier("chatInfo.mute")
 
                 Picker(selection: $ttl) {
-                    Text("Выкл").tag(0)
-                    Text("24 часа").tag(86400)
-                    Text("7 дней").tag(604800)
-                    Text("90 дней").tag(7_776_000)
+                    Text("Off").tag(0)
+                    Text("24 hours").tag(86400)
+                    Text("7 days").tag(604800)
+                    Text("90 days").tag(7_776_000)
                 } label: {
-                    Label("Автоудаление", systemImage: "timer")
+                    Label("Auto-delete", systemImage: "timer")
                 }
                 .onChange(of: ttl) { _, newTTL in
                     guard newTTL != model.chat?.ttlSeconds else { return }
@@ -146,11 +146,11 @@ struct ChatInfoView: View {
             }
 
             if !isGroup, let peer = model.peer {
-                Section("Безопасность") {
+                Section("Security") {
                     Button {
                         computeSafetyNumber(peer)
                     } label: {
-                        Label("Код безопасности", systemImage: "checkmark.shield")
+                        Label("Safety number", systemImage: "checkmark.shield")
                     }
                     if let sn = safetyNumber {
                         Text(sn.chunked(5).joined(separator: "  "))
@@ -160,7 +160,7 @@ struct ChatInfoView: View {
                     Button(role: peer.isBlocked ? .none : .destructive) {
                         showBlockConfirm = true
                     } label: {
-                        Label(peer.isBlocked ? "Разблокировать" : "Заблокировать",
+                        Label(peer.isBlocked ? "Unblock" : "Block",
                               systemImage: peer.isBlocked ? "hand.raised.slash" : "hand.raised")
                     }
                     .accessibilityIdentifier("chatInfo.block")
@@ -169,7 +169,7 @@ struct ChatInfoView: View {
 
             if isGroup {
                 if canEditSettings { rightsSection }
-                Section("Участники") {
+                Section("Members") {
                     ForEach(model.members) { member in
                         memberRow(member)
                     }
@@ -177,7 +177,7 @@ struct ChatInfoView: View {
                         Button {
                             showAddMembers = true
                         } label: {
-                            Label("Добавить участника", systemImage: "person.badge.plus")
+                            Label("Add member", systemImage: "person.badge.plus")
                         }
                         .accessibilityIdentifier("chatInfo.addMember")
                         Button {
@@ -188,7 +188,7 @@ struct ChatInfoView: View {
                                 }
                             }
                         } label: {
-                            Label(inviteLink == nil ? "Ссылка-приглашение" : "Скопировано!",
+                            Label(inviteLink == nil ? "Invite link" : "Copied!",
                                   systemImage: "link")
                         }
                         .accessibilityIdentifier("chatInfo.invite")
@@ -200,7 +200,7 @@ struct ChatInfoView: View {
             seedSection
             #endif
         }
-        .navigationTitle(isGroup ? "Группа" : "Профиль")
+        .navigationTitle(isGroup ? "Group" : "Profile")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             ttl = model.chat?.ttlSeconds ?? 0
@@ -221,37 +221,37 @@ struct ChatInfoView: View {
                 model.announce(.added, member: user.display_name, memberId: user.id)
             }
         }
-        .confirmationDialog("Без звука", isPresented: $showMuteOptions, titleVisibility: .visible) {
+        .confirmationDialog("Mute", isPresented: $showMuteOptions, titleVisibility: .visible) {
             ForEach(MuteOption.allCases, id: \.self) { option in
                 Button(option.title) { applyMute(option) }
             }
-            Button("Отмена", role: .cancel) {}
+            Button("Cancel", role: .cancel) {}
         }
         .confirmationDialog(blockConfirmTitle, isPresented: $showBlockConfirm, titleVisibility: .visible) {
             let blocked = model.peer?.isBlocked ?? false
-            Button(blocked ? "Разблокировать" : "Заблокировать",
+            Button(blocked ? "Unblock" : "Block",
                    role: blocked ? .none : .destructive) {
                 toggleBlock()
             }
-            Button("Отмена", role: .cancel) {}
+            Button("Cancel", role: .cancel) {}
         } message: {
             Text(model.peer?.isBlocked ?? false
-                 ? "Собеседник снова сможет писать вам."
-                 : "Собеседник не сможет писать вам, а его сообщения не будут доставляться.")
+                 ? "They will be able to message you again."
+                 : "They will not be able to message you, and their messages will not be delivered.")
         }
         .confirmationDialog(deleteConfirmTitle, isPresented: $showLeaveConfirm, titleVisibility: .visible) {
-            Button(isGroup ? "Покинуть" : "Удалить", role: .destructive) { deleteChat() }
-            Button("Отмена", role: .cancel) {}
+            Button(isGroup ? "Leave" : "Delete", role: .destructive) { deleteChat() }
+            Button("Cancel", role: .cancel) {}
         } message: {
             Text(deleteConfirmMessage)
         }
-        .confirmationDialog("Очистить историю?", isPresented: $showClearConfirm, titleVisibility: .visible) {
-            Button("Очистить", role: .destructive) { model.clearHistory() }
-            Button("Отмена", role: .cancel) {}
+        .confirmationDialog("Clear history?", isPresented: $showClearConfirm, titleVisibility: .visible) {
+            Button("Clear", role: .destructive) { model.clearHistory() }
+            Button("Cancel", role: .cancel) {}
         } message: {
             Text(isGroup
-                 ? "Сообщения этого чата удалятся с этого устройства. У остальных участников они останутся."
-                 : "Сообщения этого чата удалятся с этого устройства. У собеседника они останутся.")
+                 ? "This chat's messages will be deleted from this device. The other members keep them."
+                 : "This chat's messages will be deleted from this device. The other person keeps them.")
         }
         .onChange(of: avatarItem) { _, item in
             guard let item else { return }
@@ -270,18 +270,18 @@ struct ChatInfoView: View {
     @ViewBuilder
     private var descriptionSection: some View {
         if canEditSettings {
-            Section("Описание") {
-                TextField("О чём эта группа", text: $editDescription, axis: .vertical)
+            Section("Description") {
+                TextField("What this group is about", text: $editDescription, axis: .vertical)
                     .lineLimit(1...5)
                     .accessibilityIdentifier("chatInfo.description")
                 if descriptionChanged {
-                    Button("Сохранить описание", action: saveDescription)
+                    Button("Save description", action: saveDescription)
                         .disabled(savingSettings)
                         .accessibilityIdentifier("chatInfo.saveDescription")
                 }
             }
         } else if let text = model.chat?.chatDescription, !text.isEmpty {
-            Section("Описание") {
+            Section("Description") {
                 Text(text).accessibilityIdentifier("chatInfo.description")
             }
         }
@@ -291,20 +291,20 @@ struct ChatInfoView: View {
     /// see: a member cannot change them and reads the outcome instead — the
     /// note in place of the input field, the missing invite button.
     private var rightsSection: some View {
-        Section("Права участников") {
+        Section("Member rights") {
             Picker(selection: sendPolicyBinding) {
-                Text("Все участники").tag(ChatPermissions.openPolicy)
-                Text("Только администраторы").tag(ChatPermissions.adminPolicy)
+                Text("All members").tag(ChatPermissions.openPolicy)
+                Text("Admins only").tag(ChatPermissions.adminPolicy)
             } label: {
-                Label("Кто может писать", systemImage: "square.and.pencil")
+                Label("Who can write", systemImage: "square.and.pencil")
             }
             .accessibilityIdentifier("chatInfo.sendPolicy")
 
             Picker(selection: invitePolicyBinding) {
-                Text("Все участники").tag(ChatPermissions.openPolicy)
-                Text("Только администраторы").tag(ChatPermissions.adminPolicy)
+                Text("All members").tag(ChatPermissions.openPolicy)
+                Text("Admins only").tag(ChatPermissions.adminPolicy)
             } label: {
-                Label("Кто может приглашать", systemImage: "person.badge.plus")
+                Label("Who can invite", systemImage: "person.badge.plus")
             }
             .accessibilityIdentifier("chatInfo.invitePolicy")
         }
@@ -366,7 +366,7 @@ struct ChatInfoView: View {
             }
             Spacer()
             if role == ChatPermissions.adminRole {
-                Text("админ").font(.caption).foregroundStyle(.secondary)
+                Text("admin").font(.caption).foregroundStyle(.secondary)
             }
         }
         .swipeActions {
@@ -380,7 +380,7 @@ struct ChatInfoView: View {
                         } catch {}
                     }
                 } label: {
-                    Label("Удалить", systemImage: "person.badge.minus")
+                    Label("Remove", systemImage: "person.badge.minus")
                 }
             }
             if member.id != model.ownUserId,
@@ -395,7 +395,7 @@ struct ChatInfoView: View {
                         } catch {}
                     }
                 } label: {
-                    Label(isAdmin ? "Снять админа" : "Сделать админом",
+                    Label(isAdmin ? "Revoke admin" : "Make admin",
                           systemImage: isAdmin ? "person.badge.minus" : "star")
                 }
                 .tint(.orange)
@@ -412,14 +412,14 @@ struct ChatInfoView: View {
             Button(role: .destructive) {
                 showClearConfirm = true
             } label: {
-                Label("Очистить историю", systemImage: "eraser")
+                Label("Clear history", systemImage: "eraser")
             }
             .accessibilityIdentifier("chatInfo.clearHistory")
             if !isGroup || ChatPermissions.canLeave(kind: kind, role: myRole) {
                 Button(role: .destructive) {
                     showLeaveConfirm = true
                 } label: {
-                    Label(isGroup ? "Покинуть группу" : "Удалить чат",
+                    Label(isGroup ? "Leave group" : "Delete chat",
                           systemImage: isGroup ? "rectangle.portrait.and.arrow.right" : "trash")
                 }
                 .accessibilityIdentifier(isGroup ? "chatInfo.leave" : "chatInfo.deleteChat")
@@ -428,13 +428,13 @@ struct ChatInfoView: View {
     }
 
     private var deleteConfirmTitle: String {
-        isGroup ? "Покинуть группу?" : "Удалить чат?"
+        isGroup ? String(localized: "Leave group?") : String(localized: "Delete chat?")
     }
 
     private var deleteConfirmMessage: String {
         isGroup
-            ? "Вы выйдете из группы, её сообщения удалятся с этого устройства."
-            : "Чат и его сообщения удалятся с этого устройства. У собеседника переписка останется. Если он напишет снова, чат появится заново."
+            ? String(localized: "You will leave the group, and its messages will be deleted from this device.")
+            : String(localized: "The chat and its messages will be deleted from this device. The other person keeps the conversation. If they write again, the chat comes back.")
     }
 
     private var titleChanged: Bool {
@@ -448,8 +448,10 @@ struct ChatInfoView: View {
     }
 
     private var blockConfirmTitle: String {
-        (model.peer?.isBlocked ?? false ? "Разблокировать " : "Заблокировать ")
-            + (model.peer?.displayName ?? "")
+        let name = model.peer?.displayName ?? ""
+        return model.peer?.isBlocked ?? false
+            ? String(localized: "Unblock \(name)")
+            : String(localized: "Block \(name)")
     }
 
     /// The group hears about a change only once the server has taken it: an
@@ -574,7 +576,7 @@ struct AddMembersView: View {
             .onChange(of: query) { _, q in
                 Task { results = q.count >= 2 ? ((try? await app.api.searchUsers(q)) ?? []) : [] }
             }
-            .navigationTitle("Добавить")
+            .navigationTitle("Add")
             .navigationBarTitleDisplayMode(.inline)
         }
     }
@@ -585,21 +587,21 @@ struct AddMembersView: View {
 /// server), so a large chat exercises the API the same way a person would.
 extension ChatInfoView {
     var seedSection: some View {
-        Section("Тестовые данные") {
+        Section("Test data") {
             ForEach([100, 1_000, 20_000], id: \.self) { count in
-                Button("Отправить \(count) сообщений") { seed(count) }
+                Button("Send \(count) messages") { seed(count) }
                     .disabled(seeding)
             }
             ForEach([1, 10], id: \.self) { rounds in
-                Button("Отправить вложения ×\(rounds)") { seedAttachments(rounds) }
+                Button("Send attachments ×\(rounds)") { seedAttachments(rounds) }
                     .disabled(seeding)
             }
-            Button("Отправить альбомы 2/3/5/10") { seedAlbums([2, 3, 5, 10]) }
+            Button("Send albums 2/3/5/10") { seedAlbums([2, 3, 5, 10]) }
                 .disabled(seeding)
             if seeding {
                 HStack {
                     ProgressView()
-                    Text("Отправлено \(seedSent)")
+                    Text("Sent \(seedSent)")
                         .foregroundStyle(.secondary)
                 }
             }
