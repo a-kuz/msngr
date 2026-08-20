@@ -6,7 +6,8 @@ import SwiftUI
 /// still reach the app.
 @MainActor
 enum InAppBannerPresenter {
-    private static var window: UIWindow?
+    /// The window the banner lives in while it is on screen.
+    private(set) static var window: UIWindow?
     private static var hideTask: Task<Void, Never>?
 
     static func show(title: String, subtitle: String? = nil, body: String,
@@ -24,14 +25,29 @@ enum InAppBannerPresenter {
             },
             onSwipeUp: { dismiss(animated: true) }))
         host.view.backgroundColor = .clear
+        // The window is the band the banner lives in and nothing more: the
+        // hosting view takes every touch inside its own bounds, so a window over
+        // the whole screen would leave the app untouchable. The band starts at
+        // the top edge and covers the safe area as well as the banner, because
+        // the layout puts the banner below the notch — a window that was only as
+        // tall as the measured content ended with the banner drawn past its own
+        // bounds, visible (a window does not clip) and taking no touches.
+        // the content lays itself out from the window's own top edge; the window
+        // is then placed below the notch. Left to its safe area, the banner was
+        // pushed down inside a window only as tall as the content itself, and the
+        // part below the window's edge stayed visible (a window does not clip)
+        // while taking no touches at all
+        host.safeAreaRegions = []
         let width = scene.screen.bounds.width
-        let topInset = scene.windows.first?.safeAreaInsets.top ?? 59
         let height = host.sizeThatFits(in: CGSize(width: width, height: 300)).height
         let w = UIWindow(windowScene: scene)
         w.windowLevel = UIWindow.Level(rawValue: UIWindow.Level.statusBar.rawValue + 1)
         w.rootViewController = host
-        w.frame = CGRect(x: 0, y: topInset, width: width, height: height)
+        w.frame = CGRect(x: 0, y: 0, width: width, height: height)
         w.isHidden = false
+        // the inset is read from the window itself: what the scene's other
+        // windows report is not always this one's
+        w.frame = CGRect(x: 0, y: w.safeAreaInsets.top, width: width, height: height)
         window = w
         hideTask = Task {
             try? await Task.sleep(nanoseconds: 3_500_000_000)
@@ -129,7 +145,11 @@ struct InAppBannerView: View {
                         }
                     })
             .accessibilityIdentifier("inapp.banner")
+            Spacer(minLength: 0)
         }
+        // the window is the whole screen, so the banner states that it lives at
+        // the top of it rather than in the middle
+        .frame(maxHeight: .infinity, alignment: .top)
         .onAppear {
             withAnimation(.spring(duration: 0.35)) { appeared = true }
         }
