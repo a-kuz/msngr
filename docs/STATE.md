@@ -6,10 +6,23 @@ work in it looks like clutter.
 
 Delete an entry when its branch is merged and gone.
 
-One slot is open by the owner's word and taken: `media` on **run-media** — media
-has to appear in the feed the instant it is sent, blurred in its frame first and
-the preview once it is ready. `.claude/agents.tsv` holds only live work, so
+One slot is open by the owner's word and taken: `devices` on **run-devices** —
+the set of a user's devices gets a version, so a reconnect stops throwing the
+whole device cache away. `.claude/agents.tsv` holds only live work, so
 `scripts/agents.py` is the picture of the site.
+
+## Merged on 2026-08-21
+
+run-media (`0ebee18`): a photo, an album or a video is in the feed before its
+preparation finishes — the row is written first and filled in as the work
+completes, and the outbox only picks the message up once the file is on disk.
+Nothing on that path rolls back; preparation retries in the background. The run
+found and fixed a defect of its own — a sender's own bubble stayed on the blur
+forever, because `MessageCell`'s reconfigure-in-place path repositioned an image
+view without reloading it — and the numbers are in
+`docs/qa/runs/2026-08-21-media-appears-on-send-run.md`: the bubble is up by
+about 2 s for a five-photo album and for a video, with the tiles resolving
+independently a second and a half later.
 
 ## Merged on 2026-08-20
 
