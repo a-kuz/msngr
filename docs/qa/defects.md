@@ -138,19 +138,36 @@ instead. `ComposerCaretTests` fails on the old rule (caret 0, order «231», a
 restored draft's caret at its start) and passes on the new one; MsngrTests green
 whole. Not re-run on the owner's device yet.
 
-### The dark theme is missing something
+### The chat list bar comes back from a chat washed out
 Reported 2026-08-19 from the device, with a screenshot: «темная тема чего-то не
-хватает». Checked live on a simulator in the dark appearance, 2026-08-20
-(`runs/2026-08-20-dark-theme/`): the large title «Чаты» is white and legible, so
-the reading that it vanishes was wrong. What the dark appearance does lose is
-the empty-screen glyph — the accent at 55 % over a near-black ground turned to
-mud (`list-before.png`) — fixed through a `Theme.decorativeGlyph` role that
-carries a different opacity per appearance (`list-after.png`).
+хватает» — the area above the folder tabs blank. Reproduced live on a simulator,
+2026-08-20 (`runs/2026-08-20-nav-bar/`), and it has nothing to do with the
+palette: open any chat, come back, and the list's navigation bar keeps the
+pushed state — no large title at all, and both toolbar glyphs (the gear, the new
+chat pencil) washed out to a smudge. Scrolling the list one gesture repairs it
+(`repaired-by-scroll.png`). The same in the light appearance
+(`after-pop-light.png`), so the dark theme only made it easier to see.
 
-Open beyond that, and a taste call for the owner: the chat list itself is pure
-system black in the dark appearance, while in the light one the palette tints
-every screen (cream for graphite). The dark theme therefore carries none of the
-palette's identity. The other screens still need the same look-over.
+Not the cause: the display mode. The list leaves it automatic while the chat
+states `.inline`, but writing `.large` on the list explicitly changes nothing.
+Nothing in the app touches the bar's alpha, so what is left standing is the
+transition itself — the chat screen's toolbar (a custom leading button with
+`navigationBarBackButtonHidden`, a principal item, visibility switched while
+searching) against the list's `.searchable`, on iOS 26.
+
+The dark appearance also lost the empty-screen glyph, the accent at 55 % over a
+near-black ground turning to mud; fixed through a `Theme.decorativeGlyph` role
+with an opacity per appearance (`runs/2026-08-20-dark-theme/`). And a taste call
+for the owner: the chat list is pure system black in the dark appearance while
+the light one is tinted by the palette, so the dark theme carries none of the
+palette's identity.
+
+### A row of the chat list answers only on its text
+Reported 2026-08-19 as part of «много где не тапабельна область строки списка»,
+and reproduced live on 2026-08-20: in the request rows of the chat list a tap at
+(175, 305) — inside the row, to the right of the name — did nothing, while
+(100, 291) on the name itself opened the chat. So the hit area is the label, not
+the row.
 
 ### The in-app banner does not react to a tap
 Reported 2026-08-19 from the device. Tapping the in-app notification banner does
@@ -158,6 +175,19 @@ nothing; it has to open the chat it announces. The tap-opens-chat path exists an
 was checked on the simulator (push-client/inapp-banner-tap-open-chat), so either
 the hit area or a gesture conflict kills it on the device — same family as the
 row hit areas below.
+
+A harness for it exists since 2026-08-20: `LivePeerDriverTests` in MsngrKit
+registers a peer, keeps it in `MSNGR_PEER_HOME` so the next run is the same
+person writing again, and sends a real encrypted message to the username in
+`MSNGR_PEER_TO` — which is what the app needs to raise a banner at all. Using
+it, one message from a fresh peer landed while the app stood on another chat's
+screen and no banner showed in 60 frames sampled over 30 s; the message itself
+arrived (its row is in the list). That is not yet proof — the run cannot tell
+whether the app got that particular frame — so the next step is to read the
+app's own view of it, and only then look at the window geometry of the banner
+(its `UIHostingController` takes a top safe-area inset inside a window that is
+only as tall as the measured content, which would push the visible banner below
+the window's own bounds, where touches do not reach it).
 
 ### List rows are tappable only on their letters and icons
 Reported 2026-08-19 from the device. In many lists the tap works only exactly on
