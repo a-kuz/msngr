@@ -466,16 +466,9 @@ struct GrowingTextView: UIViewRepresentable {
         // after send, a restored draft. Writing on every render echoes a stale
         // binding under load: just-typed letters vanish and the caret lands
         // behind the text, because a programmatic write resets it. The guard is
-        // the coordinator's record of what the view last reported, and the write
-        // keeps the caret where it was, clamped to the new length.
+        // the coordinator's record of what the view last reported.
         if text != context.coordinator.viewText {
-            let caret = tv.selectedRange
-            tv.text = text
-            context.coordinator.viewText = text
-            tv.selectedRange = NSRange(location: min(caret.location, (text as NSString).length),
-                                       length: 0)
-            Self.fitScrolling(tv)
-            tv.invalidateIntrinsicContentSize()
+            applyText(text, to: tv, coordinator: context.coordinator)
         }
         let font = Theme.Text.input.uiFont
         if tv.font != font { tv.font = font }
@@ -485,6 +478,21 @@ struct GrowingTextView: UIViewRepresentable {
             placeholder.frame = CGRect(x: 14, y: 8, width: tv.bounds.width - 20,
                                        height: ceil(font.lineHeight))
         }
+    }
+
+    /// Brings the field to a value it does not hold yet. The caret keeps its
+    /// distance from the end of the text rather than its absolute position: when
+    /// the binding runs ahead of the view — the first character of a field the
+    /// view still reports as empty — an absolute position put the caret in front
+    /// of that character, and everything typed after it went in before it.
+    func applyText(_ text: String, to tv: UITextView, coordinator: Coordinator) {
+        let held = (tv.text ?? "") as NSString
+        let tail = max(0, held.length - tv.selectedRange.location)
+        tv.text = text
+        coordinator.viewText = text
+        tv.selectedRange = NSRange(location: max(0, (text as NSString).length - tail), length: 0)
+        Self.fitScrolling(tv)
+        tv.invalidateIntrinsicContentSize()
     }
 
     /// The height SwiftUI gives the field. Computed synchronously on request —
