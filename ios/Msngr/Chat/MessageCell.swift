@@ -951,7 +951,7 @@ extension MessageCell {
             presentContextMenu(items, in: window, msg: msg, showsReactions: false)
             return
         }
-        items.append(.init(title: "Ответить", icon: "arrowshape.turn.up.left") { [weak self] in
+        items.append(.init(title: "Ответить", icon: "arrowshape.turn.up.left", id: "chat.menu.reply") { [weak self] in
             self?.onContextAction?(.reply)
         })
         // a photo or album goes to the clipboard as an image, text as a string

@@ -34,9 +34,14 @@ final class SmokeTests: XCTestCase {
         // list is empty the empty state covers it and the title is absent from
         // the accessibility tree. Registration generates keys, which takes
         // seconds on the simulator.
-        XCTAssertTrue(app.otherElements["chatlist.root"].waitForExistence(timeout: 30)
-                        || app.staticTexts["Чаты"].exists,
+        XCTAssertTrue(chatList.waitForExistence(timeout: 30),
                       "the chat list never opened")
+    }
+
+    /// The identifier sits on a SwiftUI container whose element type depends on
+    /// what the list is showing, so the lookup goes by identifier alone.
+    private var chatList: XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "chatlist.root").firstMatch
     }
 
     /// Opens the chat with akuz, from the list or through new chat search.
@@ -86,7 +91,7 @@ final class SmokeTests: XCTestCase {
         let draft = "draft-\(Int(Date().timeIntervalSince1970))"
         input.typeText(draft)
         app.navigationBars.buttons.firstMatch.tap() // back
-        XCTAssertTrue(app.staticTexts["Чаты"].waitForExistence(timeout: 5))
+        XCTAssertTrue(chatList.waitForExistence(timeout: 5))
         openChatWithAkuz()
         let value = app.textViews["chat.input"].value as? String ?? ""
         XCTAssertTrue(value.contains(draft), "the draft was lost: '\(value)'")
@@ -105,19 +110,18 @@ final class SmokeTests: XCTestCase {
         let bubble = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", marker)).firstMatch
         XCTAssertTrue(bubble.waitForExistence(timeout: 8))
         bubble.press(forDuration: 0.8)
-        XCTAssertTrue(app.staticTexts["Ответить"].waitForExistence(timeout: 4),
+        XCTAssertTrue(app.staticTexts["chat.menu.reply"].waitForExistence(timeout: 4),
                       "no context menu for a long message")
         // dismiss by tapping the background in the top left corner
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.08)).tap()
-        XCTAssertFalse(app.staticTexts["Ответить"].waitForExistence(timeout: 2),
+        XCTAssertFalse(app.staticTexts["chat.menu.reply"].waitForExistence(timeout: 2),
                        "the menu stayed up after a tap outside it")
     }
 
     func testE_AttachMenuOpensFromPaperclip() {
         openChatWithAkuz()
         app.buttons["chat.attach"].tap()
-        XCTAssertTrue(app.buttons["Фото или видео"].waitForExistence(timeout: 4)
-                      || app.staticTexts["Фото или видео"].waitForExistence(timeout: 1),
+        XCTAssertTrue(app.buttons["chat.attach.photo"].waitForExistence(timeout: 4),
                       "the attachment menu never opened")
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).tap()
     }
@@ -133,7 +137,7 @@ final class SmokeTests: XCTestCase {
                       "the back button is not in the accessibility tree")
         XCTAssertTrue(back.isHittable, "the back button takes no touch where it is drawn")
         back.tap()
-        XCTAssertTrue(app.staticTexts["Чаты"].waitForExistence(timeout: 5),
+        XCTAssertTrue(chatList.waitForExistence(timeout: 5),
                       "the tap on the back button did not leave the chat")
     }
 
