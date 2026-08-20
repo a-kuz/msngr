@@ -40,11 +40,14 @@ in place — never re-created:
    compressed and stashed (`localPath` set), updates `media`/`album` one more
    time and only now writes the `outbox` row and wakes the worker.
 
-`abandonMedia(clientMsgId:)` — if preparation fails (disk write, video export),
-deletes the not-yet-queued row and surfaces the same alert `stash()` shows
-today. Today a failure here means no row was ever created; now the row is
-created optimistically and withdrawn on failure — same end state, the row
-merely flashes briefly instead of never appearing.
+There is no rollback and no fourth "abandon" phase. Once a row has appeared it
+never disappears and never shows an alert over a preparation failure: like
+Telegram, a picked attachment always gets there eventually. A prep step that
+fails (a disk write, a video export) is retried in the background with
+backoff, silently, for as long as it takes — the same rule the outbox already
+follows once a message is queued (`drainOutbox`'s attempt counter is a
+network-facing exception, not a model for this). See "Failure semantics"
+below.
 
 `MessageCell.configureMedia` already keeps its image views in place across an
 in-place reconfigure of the same message id (existing comment: "the same
@@ -92,19 +95,33 @@ low hundreds of milliseconds — far under the multi-second
 
 ## Failure semantics
 
-- Any prep failure (stash, export) → `abandonMedia` + the existing
-  `sendFailure` alert text. No new retry state: a message that never reached
-  `outbox` has nothing a retry could re-upload, same as today.
-- An album where one item fails prep: abandon the whole album (delete the
-  row, alert), matching today's behavior where `sendPhotos` aborts entirely on
-  the first failed `stash`. No partial-album send.
+Owner correction, 2026-08-20: nothing ever disappears from the chat, and
+nothing ever alerts over a preparation failure — the product fixes its own
+problems in the background, the same principle CLAUDE.md already states for
+delivery in general. This replaces the earlier `abandonMedia`/rollback design.
+
+- Every step that can fail — `loadTransferable`, decode, compression, `stash`,
+  video export — is wrapped in an indefinite retry with capped exponential
+  backoff (1s, 2s, 4s, … capped at 30s), logged, never surfaced to the user.
+  The wrapped call never returns a failure to its caller: it returns once it
+  succeeds, however long that takes.
+- An album's tiles retry independently; a tile stuck retrying does not block
+  its siblings from resolving to their real preview, but `finalizeMedia` (and
+  so the actual send) waits for every tile, since the wire protocol carries
+  one `album: [MediaInfo]` per message.
+- Scope boundary: this covers failures within one app session. If the process
+  is killed mid-retry, the retry loop (in-memory) does not survive relaunch —
+  the row stays visible but stuck mid-preparation with nothing driving it
+  forward. Making that survive a kill would mean persisting the original
+  picked bytes to disk before the first attempt, which is a materially larger
+  change than this task; flagging it rather than silently building it.
 
 ## Verification
 
-- `swift test` in MsngrKit: new coverage for `beginMedia` → `updateMediaPreview`
-  → `finalizeMedia` (row appears before `outbox`, `outbox` only appears after
-  finalize, `abandonMedia` removes an unqueued row) and for the "not ready"
-  guard (an outbox row is never created ahead of `localPath`).
+- `swift test` in MsngrKit: coverage for `beginMedia` → `updateMediaPreview` →
+  `finalizeMedia` (row appears before `outbox`, `outbox` only appears after
+  finalize, album slots update independently) and for the "not ready" guard
+  (an outbox row is never created ahead of `localPath`).
 - Live run on the simulator per every composer path (single photo, album,
   video, paste) — bubbles appear immediately, blurred, then resolve to the
   real preview; sends complete, checkmarks land.

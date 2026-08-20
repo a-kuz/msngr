@@ -1706,6 +1706,11 @@ public actor SyncEngine {
     // disk — `finalizeMedia`. Writing `outbox` any earlier would hand the send
     // worker a `MediaInfo` with no `localPath` yet, which it cannot upload and
     // would otherwise send bare, with an empty mediaId/key/hash.
+    //
+    // There is no rollback: a row that has appeared never disappears. A prep
+    // step that fails (a disk write, a video export) is retried by the caller
+    // until it succeeds, in the background, with no alert — the same rule the
+    // outbox itself follows once a message is queued.
 
     /// Phase 1: the row appears in the feed before the attachment is ready. No
     /// `outbox` entry — nothing is sent until `finalizeMedia` runs. `kind` and
@@ -1759,15 +1764,6 @@ public actor SyncEngine {
             try OutboxItem(clientMsgId: clientMsgId, chatId: chatId, createdAt: now, payload: payload).save(dbc)
         }
         outboxWakeup.continuation.yield()
-    }
-
-    /// Preparation failed (a disk write, a video export): withdraw the
-    /// placeholder. It never reached `outbox`, so there is nothing to retry —
-    /// same end state as today's silent "never enqueued".
-    public func abandonMedia(clientMsgId: String) async throws {
-        try await db.write { dbc in
-            try dbc.execute(sql: "DELETE FROM message WHERE clientMsgId = ?", arguments: [clientMsgId])
-        }
     }
 
     private static func writeMedia(_ dbc: GRDB.Database, clientMsgId: String,

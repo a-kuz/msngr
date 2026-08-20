@@ -122,19 +122,4 @@ final class MediaStagingTests: XCTestCase {
         }
         XCTAssertEqual(queued, 0)
     }
-
-    func testAbandonMediaWithdrawsAnUnqueuedRow() async throws {
-        let db = try AppDatabase.openInMemory()
-        let engine = try makeEngine(db: db)
-        try await makeChat(db)
-        try await engine.beginMedia(clientMsgId: "cm1", chatId: "c1", kind: .photo, text: nil,
-                                    media: blankMedia(), album: nil)
-
-        try await engine.abandonMedia(clientMsgId: "cm1")
-
-        let left = try await db.read { dbc in
-            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE clientMsgId = 'cm1'")
-        }
-        XCTAssertEqual(left, 0)
-    }
 }
