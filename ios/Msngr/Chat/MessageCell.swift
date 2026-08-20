@@ -30,6 +30,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private var mediaSignatures: [String] = []
     private var reactionViews: [ReactionCapsuleView] = []
     private let voiceView = VoiceMessageView()
+    private let avatarView = FeedAvatarView()
     private var msg: Message?
     private var plan: BubbleLayoutPlan?
     private var configuredMsgId: String?
@@ -86,6 +87,11 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         tickView.contentMode = .scaleAspectFit
         bubbleView.addSubview(tickView)
         bubbleView.addSubview(voiceView)
+
+        // the avatar lives outside the bubble: press dips and swipe-to-reply move
+        // the bubble alone, the face stays put the way it does in Telegram
+        avatarView.isHidden = true
+        contentView.addSubview(avatarView)
 
         replyIcon.tintColor = .secondaryLabel
         replyIcon.alpha = 0
@@ -155,6 +161,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         let shift = (selectionMode && !plan.isOutgoing) ? Self.selectionShift : 0
         let apply = {
             self.bubbleView.frame = plan.bubbleFrame.offsetBy(dx: shift, dy: 0)
+            // the avatar clears room for the checkbox together with its bubble
+            if let af = plan.avatarFrame { self.avatarView.frame = af.offsetBy(dx: shift, dy: 0) }
             self.checkbox.center = CGPoint(x: 20, y: plan.bubbleFrame.midY)
             self.checkbox.alpha = self.selectionMode ? 1 : 0
         }
@@ -244,9 +252,17 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         }
     }
 
-    func configure(msg: Message, plan: BubbleLayoutPlan) {
+    func configure(msg: Message, plan: BubbleLayoutPlan, avatar: FeedAvatar? = nil) {
         self.msg = msg
         self.plan = plan
+
+        if let af = plan.avatarFrame, let avatar {
+            avatarView.isHidden = false
+            avatarView.frame = af
+            avatarView.set(avatar)
+        } else {
+            avatarView.isHidden = true
+        }
 
         // Fonts are applied here rather than in init: a cell sitting in the
         // reuse pool gets no trait callback when the text size changes.
@@ -818,6 +834,59 @@ enum NameColor {
     ]
     static func color(for userId: String) -> UIColor {
         palette[StableHash.index(userId, modulo: palette.count)]
+    }
+}
+
+/// Sender avatar beside an incoming group bubble: the photo from the avatar
+/// cache, or initials over the same gradient the chat list draws for this name.
+final class FeedAvatarView: UIView {
+    private let gradient = CAGradientLayer()
+    private let initialsLabel = UILabel()
+    private let imageView = UIImageView()
+    /// What the view currently shows: a repeated set for the same sender and
+    /// picture is a no-op, so a reused cell does not restart the load.
+    private var shownKey: String?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        clipsToBounds = true
+        layer.addSublayer(gradient)
+        initialsLabel.textColor = .white
+        initialsLabel.textAlignment = .center
+        addSubview(initialsLabel)
+        imageView.contentMode = .scaleAspectFill
+        addSubview(imageView)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        layer.cornerRadius = bounds.width / 2
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        gradient.frame = bounds
+        CATransaction.commit()
+        initialsLabel.frame = bounds
+        initialsLabel.font = .systemFont(ofSize: bounds.width * 0.4, weight: .semibold)
+        imageView.frame = bounds
+    }
+
+    func set(_ avatar: FeedAvatar) {
+        let key = "\(avatar.userId)|\(avatar.avatarId ?? "")"
+        guard key != shownKey else { return }
+        shownKey = key
+        initialsLabel.text = AvatarStyle.initials(avatar.name)
+        gradient.colors = AvatarStyle.gradient(for: avatar.name).map { UIColor($0).cgColor }
+        imageView.image = nil
+        guard let avatarId = avatar.avatarId, !avatarId.isEmpty else { return }
+        Task { [weak self] in
+            let image = await AvatarImageLoader.shared.image(avatarId)
+            // the cell may have moved on to another sender while the file loaded
+            guard let self, self.shownKey == key else { return }
+            self.imageView.image = image
+        }
     }
 }
 

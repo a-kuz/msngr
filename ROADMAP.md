@@ -118,8 +118,13 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ the scroll-down button with a badge: it appears only once the newest
     message has left the screen; the same signal drives the read receipt
     (viewing-bottom-run, cases 1–4; ViewingBottomTests units)
-  - ⬜ sticky date separators
-  - ⬜ sender avatars in the feed
+  - ✅ sticky date separators: the current day's capsule floats under the header
+    while the reader scrolls, yields to the real separator cell at a day
+    boundary and fades once the scrolling stops (2026-08-21-feedextras run;
+    FeedExtrasTests units)
+  - ✅ sender avatars in the feed: in groups an incoming run reserves the
+    avatar column and the run's last message carries the picture; direct chats
+    stay clean (2026-08-21-feedextras run; FeedExtrasTests units)
 - The unread banner
   - ✅ appearing on entry with unread messages, scrolling to the banner (unread-run, rule 1)
   - ✅ the counter growing on an incoming message, the anchor staying put (rule 2)
