@@ -367,6 +367,14 @@ asked for it.
 - `media` / `album` — `MediaInfo`: `type, mediaId, key, hash, size, mime, name?,
   w?, h?, dur?, waveform?, blurhash?, thumbMediaId?, thumbKey?, thumbHash?`;
 - `replyTo` — `{msgId, authorId, text, kind}`, `fwd` — `{fromUserId, fromName}`;
+- a forward is an ordinary content frame in the target chat: the sender copies
+  the content and the `replyTo` preview of the original into a new payload and
+  sets `fwd` to the original author (forwarding a forward keeps the `fwd` it
+  already has, so the chain always names whoever wrote the message). The
+  preview travels because the quoted message may not exist in the target chat;
+  a tap on it there finds nothing and does nothing. Reactions do not travel:
+  they belong to the conversation they were made in — the same choice Telegram
+  makes — and the forwarded copy starts clean;
 - `edit` and `reaction` address a `targetMsgId`, `emoji: null` removes the
   reaction;
 - `disappearing` carries `ttlSeconds` — the chat's new TTL;
