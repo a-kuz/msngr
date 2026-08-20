@@ -318,7 +318,11 @@ public actor SyncEngine {
                 "server refused protocol v\(MsngrProtocol.version, privacy: .public): this build is out of date")
             protocolOutdatedStream.send(())
         case .frame(let data):
-            guard let frame = try? JSONDecoder().decode(WSIncoming.self, from: data) else { return }
+            guard let frame = try? JSONDecoder().decode(WSIncoming.self, from: data) else {
+                MsngrLog.session.error(
+                    "dropped undecodable frame: \(String(data: data.prefix(512), encoding: .utf8) ?? "<binary>", privacy: .public)")
+                return
+            }
             // frames are queued rather than applied here: the socket hands them
             // over faster than the database takes them one at a time, and a
             // queue is what lets a run of messages share a transaction
@@ -499,8 +503,13 @@ public actor SyncEngine {
                 let previousMembers: [String] = (try? await db.read { dbc in
                     try String.fetchAll(dbc, sql: "SELECT userId FROM member WHERE chatId = ?", arguments: [state.chatId])
                 }) ?? []
-                try? await db.write { [ownUserId] dbc in
-                    try SyncEngine.upsertChatState(dbc, state, ownUserId: ownUserId, flags: nil)
+                do {
+                    try await db.write { [ownUserId] dbc in
+                        try SyncEngine.upsertChatState(dbc, state, ownUserId: ownUserId, flags: nil)
+                    }
+                } catch {
+                    MsngrLog.session.error(
+                        "chat state \(f.event ?? "?", privacy: .public) for \(state.chatId, privacy: .public) not applied: \(String(describing: error), privacy: .public)")
                 }
                 // a mark the server never heard is queued again by the state above
                 actionWakeup.continuation.yield()
@@ -1746,6 +1755,8 @@ public actor SyncEngine {
                 }
                 // count the attempt; on a network error stop here, the
                 // reconnect wakes the drain again
+                MsngrLog.outbox.error(
+                    "send failed chat=\(item.chatId, privacy: .public) attempt=\(item.attempts + 1, privacy: .public): \(String(describing: error), privacy: .public)")
                 try? await db.write { dbc in
                     try dbc.execute(sql: "UPDATE outbox SET attempts = attempts + 1 WHERE clientMsgId = ?",
                                     arguments: [item.clientMsgId])
@@ -1922,6 +1933,7 @@ public actor SyncEngine {
     struct ReadActionPayload: Codable { var upToSeq: Int }
     struct DeleteActionPayload: Codable { var msgIds: [String]; var forAll: Bool }
     struct BlockActionPayload: Codable { var userId: String; var blocked: Bool }
+    struct PinActionPayload: Codable { var msgId: String? }
 
     /// Read actions collapse per chat: one row per chatId, the larger upToSeq wins.
     static func upsertReadAction(_ dbc: GRDB.Database, chatId: String, upToSeq: Int) throws {
@@ -1973,6 +1985,9 @@ public actor SyncEngine {
                 case "block":
                     let p = try JSONDecoder().decode(BlockActionPayload.self, from: Data(a.payload.utf8))
                     try await api.setBlocked(p.userId, blocked: p.blocked)
+                case "pin":
+                    let p = try JSONDecoder().decode(PinActionPayload.self, from: Data(a.payload.utf8))
+                    try await api.pinMessage(a.chatId ?? "", msgId: p.msgId)
                 default:
                     break // an unknown type is dropped below
                 }
@@ -2034,6 +2049,28 @@ public actor SyncEngine {
             try dbc.execute(sql: "UPDATE chat SET myReadUpTo = MAX(myReadUpTo, ?), unreadCount = 0 WHERE id = ?",
                             arguments: [upToSeq, chatId])
             try SyncEngine.upsertReadAction(dbc, chatId: chatId, upToSeq: upToSeq)
+        }
+        actionWakeup.continuation.yield()
+    }
+
+    /// Pinning a message, and unpinning with `msgId` nil: the chat row takes it
+    /// at once and the server hears through the action queue, so the bar appears
+    /// on this device without waiting for the frame that comes back, and the pin
+    /// survives being offline. While the request is pending, `upsertChatState`
+    /// leaves the local value alone: a snapshot taken before it landed would
+    /// otherwise put the previous pin back.
+    public func pinMessage(chatId: String, msgId: String?) async {
+        try? await db.write { dbc in
+            try dbc.execute(sql: "UPDATE chat SET pinnedMsgId = ? WHERE id = ?",
+                            arguments: [msgId, chatId])
+            let payload = String(data: try JSONEncoder().encode(PinActionPayload(msgId: msgId)),
+                                 encoding: .utf8)!
+            try dbc.execute(
+                sql: """
+                INSERT INTO pendingAction (id, type, chatId, payload, createdAt) VALUES (?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, attempts = 0
+                """,
+                arguments: ["pin:\(chatId)", "pin", chatId, payload, Date().timeIntervalSince1970])
         }
         actionWakeup.continuation.yield()
     }
@@ -2187,7 +2224,12 @@ public actor SyncEngine {
               title = excluded.title, avatarId = excluded.avatarId,
               chatDescription = excluded.chatDescription,
               sendPolicy = excluded.sendPolicy, invitePolicy = excluded.invitePolicy,
-              pinnedMsgId = excluded.pinnedMsgId,
+              -- a pin this device made and the server has not confirmed yet is
+              -- kept: a snapshot built before the request landed carries the
+              -- previous pin, and applying it would take the bar away again
+              pinnedMsgId = CASE
+                WHEN EXISTS(SELECT 1 FROM pendingAction WHERE type = 'pin' AND chatId = chat.id)
+                THEN chat.pinnedMsgId ELSE excluded.pinnedMsgId END,
               lastSeq = MAX(chat.lastSeq, excluded.lastSeq),
               myReadUpTo = MAX(chat.myReadUpTo, excluded.myReadUpTo),
               peerReadUpTo = MAX(chat.peerReadUpTo, excluded.peerReadUpTo),

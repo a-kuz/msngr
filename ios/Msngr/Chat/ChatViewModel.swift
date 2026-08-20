@@ -72,6 +72,9 @@ final class ChatViewModel: ObservableObject {
     private var markerCountedUpToSeq = 0
     private var lastMsgs: [Message] = []
     private var obscuredCancellable: AnyCancellable?
+    private var pinCancellable: AnyCancellable?
+    /// The pinnedMsgId the pin observation is installed for.
+    private var observedPinId: String?
 
     /// Seq of messages inside the window this device could not read.
     private var unreadableSeqs: [Int] = []
@@ -216,10 +219,10 @@ final class ChatViewModel: ObservableObject {
         }
         if cancellable == nil {
             observeChat()
-        } else {
-            if contentHidden != wasHidden { rebuildFeed() }
-            updatePinnedMessage()
+        } else if contentHidden != wasHidden {
+            rebuildFeed()
         }
+        observePinnedMessage()
         markVisibleRead()
     }
 
@@ -315,25 +318,42 @@ final class ChatViewModel: ObservableObject {
                            unreadableSeqs: snapshot.unreadableSeqs,
                            atHistoryStart: snapshot.atHistoryStart)
         }
-        updatePinnedMessage()
         keyChangePending = snapshot.keyChangePending
         markVisibleRead()
     }
 
-    /// The pinned bar is drawn from the window, so it follows both the chat row and
-    /// the messages in it.
-    private func updatePinnedMessage() {
+    /// The pinned message row on its own, looked up by the chat row's pinnedMsgId.
+    /// The feed window plays no part here: a pin thousands of messages deep is one
+    /// read on the msgId unique index, and an edit or a deletion of that row
+    /// re-emits through the observation.
+    private func observePinnedMessage() {
         guard let pinId = chat?.pinnedMsgId, !contentHidden else {
+            observedPinId = nil
+            pinCancellable = nil
             pinnedMessage = nil
             return
         }
-        pinnedMessage = lastMsgs.first { $0.msgId == pinId }
+        guard pinId != observedPinId, let db = app.db else { return }
+        observedPinId = pinId
+        let chatId = self.chatId
+        pinCancellable = ValueObservation
+            .tracking { dbc in
+                try Message.fetchOne(dbc, sql: """
+                    SELECT * FROM message WHERE chatId = ? AND (msgId = ? OR id = ?)
+                    """, arguments: [chatId, pinId, pinId])
+            }
+            .publisher(in: db, scheduling: .async(onQueue: .main))
+            .sink(receiveCompletion: { _ in }, receiveValue: { [weak self] msg in
+                self?.pinnedMessage = msg
+            })
     }
 
     func stop() {
         cancellable = nil
         chatCancellable = nil
         obscuredCancellable = nil
+        pinCancellable = nil
+        observedPinId = nil
         typingTask?.cancel()
         typingTask = nil
         typingExpiryTask?.cancel()
@@ -737,8 +757,11 @@ final class ChatViewModel: ObservableObject {
         enqueue(c, chatId: targetChatId)
     }
 
+    /// Pins a message, or takes the pin off with nil. The chat row is written on
+    /// the spot and the server is told through the action queue, so the bar is
+    /// there before the answer comes back.
     func pin(_ msg: Message?) {
-        Task { try? await app.api.pinMessage(chatId, msgId: msg?.msgId) }
+        Task { [chatId] in await app.engine.pinMessage(chatId: chatId, msgId: msg?.msgId) }
     }
 
     func acceptRequest() {

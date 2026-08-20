@@ -935,11 +935,13 @@ extension MessageCell {
         items.append(.init(title: "Выбрать", icon: "checkmark.circle") { [weak self] in
             self?.onContextAction?(.select)
         })
+        // a pin is held by the server msgId, so a message the server has not
+        // acknowledged yet has nothing to pin to
         if isPinned?() == true {
             items.append(.init(title: "Открепить", icon: "pin.slash") { [weak self] in
                 self?.onContextAction?(.unpin)
             })
-        } else {
+        } else if msg.msgId != nil {
             items.append(.init(title: "Закрепить", icon: "pin") { [weak self] in
                 self?.onContextAction?(.pin)
             })
