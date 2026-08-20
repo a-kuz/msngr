@@ -25,6 +25,13 @@ letters (`324c4d2`), the chat search that fired a request per keystroke
 out — its cause was the custom back button. Sends to accounts registered before
 the identity binding no longer hang the whole outbox (`123a23d`), and the in-app
 banner is laid out inside its own window band with tests holding that shape.
+A run no longer starts at registration (`e005621`): `alfa`, `bravo` and
+`charlie` live on the stand with the three direct chats between them and three
+groups, all with history, and `scripts/fixture.py install <name> <udid>` hands
+one of them to a simulator as a file copy with every permission already granted,
+notifications included. `CLAUDE.md` holds the rules that come with it — one
+simulator per home, `pull` before the next hand-out.
+
 The socket now watches itself by the clock (`21f73fb`): `WSFreshness` holds the
 rule — 8 s for a handshake, 4 s for a pong, 12 s of quiet — and `WSClient` asks
 it once a second from the upgrade, so a stalled stream is caught by a tick
