@@ -422,6 +422,17 @@
         }
       }
     },
+    "Edit history": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "История изменений"
+          }
+        }
+      }
+    },
     "End-to-end encrypted. The keys are created on this device.": {
       "localizations": {
         "ru": {
