@@ -6,12 +6,21 @@ work in it looks like clutter.
 
 Delete an entry when its branch is merged and gone.
 
-One slot is open by the owner's word and taken: `devices` on **run-devices** —
-the set of a user's devices gets a version, so a reconnect stops throwing the
-whole device cache away. `.claude/agents.tsv` holds only live work, so
-`scripts/agents.py` is the picture of the site.
+One slot is open by the owner's word and taken: `feedextras` on
+**run-feedextras** — sticky date separators and sender avatars in the feed. The
+dispatcher itself runs the localization pass on main between ticks, screen by
+screen. `.claude/agents.tsv` holds only live work, so `scripts/agents.py` is the
+picture of the site.
 
 ## Merged on 2026-08-21
+
+run-devices (`34fbf01`): the set of a user's devices carries
+`users.devices_version`, the `devices` frame names it, the sync answer confirms
+it, and a reconnect marks cache entries suspect instead of dropping them — 9
+device reads over 8 reconnects became 1, delivery 9/9
+(`docs/qa/runs/2026-08-21-devices-version-run.md`). The migration is applied on
+the shared stand. In passing it fixed `SyncEngine.start()` after `stop()`
+leaving the outbox dead (one-shot wakeup streams), which only tests reach.
 
 run-media (`0ebee18`): a photo, an album or a video is in the feed before its
 preparation finishes — the row is written first and filled in as the work
