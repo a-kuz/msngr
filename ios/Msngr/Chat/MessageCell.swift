@@ -6,6 +6,9 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     var onReply: (() -> Void)?
     var onReact: ((String) -> Void)?
     var onContextAction: ((MessageContextAction) -> Void)?
+    /// Tap on a reaction capsule. Separate from onReact: in a group it opens
+    /// the list of who reacted instead of toggling.
+    var onCapsuleTap: ((String) -> Void)?
     /// Whether this message is the pinned one, asked at the moment the menu opens.
     var isPinned: (() -> Bool)?
     var onTapMedia: ((Int, UIView) -> Void)?
@@ -395,7 +398,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             } else {
                 capsule.frame = r.frame
             }
-            capsule.onTap = { [weak self] in self?.onReact?(r.emoji) }
+            capsule.onTap = { [weak self] in self?.onCapsuleTap?(r.emoji) }
             reactionViews.append(capsule)
         }
         for (_, gone) in previous {
@@ -1049,6 +1052,12 @@ extension MessageCell {
         if msg.isOutgoing && msg.kind == .text {
             items.append(.init(title: "Изменить", icon: "pencil") { [weak self] in
                 self?.onContextAction?(.edit)
+            })
+        }
+        if msg.edited {
+            items.append(.init(title: String(localized: "Edit history"),
+                               icon: "clock.arrow.circlepath", id: "chat.menu.editHistory") { [weak self] in
+                self?.onContextAction?(.editHistory)
             })
         }
         items.append(.init(title: "Удалить", icon: "trash", destructive: true) { [weak self] in
