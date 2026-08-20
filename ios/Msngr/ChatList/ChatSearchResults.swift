@@ -15,7 +15,7 @@ struct ChatSearchResults: View {
     var body: some View {
         List {
             if !list.searchResults.isEmpty {
-                Section("Чаты") {
+                Section("Chats") {
                     ForEach(list.searchResults) { item in
                         ChatRow(chatId: item.chat.id) {
                             ChatRowView(item: item, ownUserId: ownUserId)
@@ -35,7 +35,7 @@ struct ChatSearchResults: View {
     @ViewBuilder
     private var messagesSection: some View {
         if !search.hits.isEmpty {
-            Section("Сообщения") {
+            Section("Messages") {
                 ForEach(search.hits) { hit in
                     Button { onOpenMessage(hit) } label: {
                         MessageHitRow(hit: hit, chat: list.item(for: hit.chatId))
@@ -48,10 +48,10 @@ struct ChatSearchResults: View {
             .accessibilityIdentifier("search.messages")
         } else if search.searchingMessages {
             // the chats are already on screen; this says what else is still coming
-            Section("Сообщения") {
+            Section("Messages") {
                 HStack(spacing: 8) {
                     ProgressView()
-                    Text("Ищем в переписке…").foregroundStyle(.secondary)
+                    Text("Searching messages…").foregroundStyle(.secondary)
                 }
                 .accessibilityIdentifier("search.messages.progress")
             }
@@ -63,7 +63,7 @@ struct ChatSearchResults: View {
     @ViewBuilder
     private var peopleSection: some View {
         if !search.people.isEmpty {
-            Section("Люди") {
+            Section("People") {
                 ForEach(search.people, id: \.id) { user in
                     Button { onOpenPerson(user) } label: {
                         HStack(spacing: 10) {
@@ -103,9 +103,9 @@ struct ChatSearchResults: View {
                 .font(.system(size: 34))
                 .foregroundStyle(.tertiary)
                 .accessibilityHidden(true)
-            Text("Ничего не нашлось")
+            Text("Nothing found")
                 .font(.title3.weight(.semibold))
-            Text("Поищем по названию чата, тексту сообщения\nили юзернейму")
+            Text("Search by chat name, message text\nor username")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -165,7 +165,7 @@ struct MessageHitRow: View {
 
     private var avatarSide: CGFloat { typeSize.scaled(44, relativeTo: .subheadline, max: 62) }
 
-    private var title: String { chat?.title ?? "Чат" }
+    private var title: String { chat?.title ?? String(localized: "Chat") }
 
     private var avatarId: String? {
         guard let chat else { return nil }

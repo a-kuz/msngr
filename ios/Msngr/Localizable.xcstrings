@@ -111,6 +111,17 @@
         }
       }
     },
+    "Accept": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Принять"
+          }
+        }
+      }
+    },
     "Active devices": {
       "extractionState": "manual",
       "localizations": {
@@ -210,6 +221,39 @@
         }
       }
     },
+    "Album": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Альбом"
+          }
+        }
+      }
+    },
+    "All": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Все"
+          }
+        }
+      }
+    },
+    "All folders": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Все папки"
+          }
+        }
+      }
+    },
     "All members": {
       "extractionState": "manual",
       "localizations": {
@@ -238,6 +282,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Оформление"
+          }
+        }
+      }
+    },
+    "Archive": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Архив"
+          }
+        }
+      }
+    },
+    "Archive is empty": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В архиве пусто"
           }
         }
       }
@@ -318,6 +384,17 @@
         }
       }
     },
+    "Chat": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Чат"
+          }
+        }
+      }
+    },
     "Chats": {
       "extractionState": "manual",
       "localizations": {
@@ -329,6 +406,17 @@
         }
       }
     },
+    "Chats matching the folder's rule\nand ones you add yourself will land here": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сюда попадут чаты по правилу папки\nи те, что вы добавите сами"
+          }
+        }
+      }
+    },
     "Chats with contacts": {
       "extractionState": "manual",
       "localizations": {
@@ -336,6 +424,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Чаты с контактами"
+          }
+        }
+      }
+    },
+    "Chats you archive will be here": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Чаты, убранные в архив, будут здесь"
           }
         }
       }
@@ -576,6 +675,17 @@
         }
       }
     },
+    "Delete chat “%@”?": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить чат «%@»?"
+          }
+        }
+      }
+    },
     "Description": {
       "extractionState": "manual",
       "localizations": {
@@ -631,6 +741,17 @@
         }
       }
     },
+    "Draft: ": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Черновик: "
+          }
+        }
+      }
+    },
     "Edit": {
       "extractionState": "manual",
       "localizations": {
@@ -638,6 +759,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Изменить"
+          }
+        }
+      }
+    },
+    "Edit folder": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Настроить папку"
           }
         }
       }
@@ -659,6 +791,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ошибка: %@"
+          }
+        }
+      }
+    },
+    "File": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Файл"
+          }
+        }
+      }
+    },
+    "Find someone by username\nor from your address book": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Найдите собеседника по юзернейму\nили из адресной книги"
           }
         }
       }
@@ -901,6 +1055,39 @@
         }
       }
     },
+    "Message deleted": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сообщение удалено"
+          }
+        }
+      }
+    },
+    "Message requests": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Заявки на переписку"
+          }
+        }
+      }
+    },
+    "Messages": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сообщения"
+          }
+        }
+      }
+    },
     "Messages and keys on this device will be deleted.": {
       "extractionState": "manual",
       "localizations": {
@@ -998,12 +1185,34 @@
         }
       }
     },
+    "No chats": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нет чатов"
+          }
+        }
+      }
+    },
     "No connection to the server": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
             "value": "Нет связи с сервером"
+          }
+        }
+      }
+    },
+    "Nothing found": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ничего не нашлось"
           }
         }
       }
@@ -1084,6 +1293,28 @@
         }
       }
     },
+    "Photo": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Фото"
+          }
+        }
+      }
+    },
+    "Pin": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Закрепить"
+          }
+        }
+      }
+    },
     "Profile": {
       "extractionState": "manual",
       "localizations": {
@@ -1102,6 +1333,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Удалить"
+          }
+        }
+      }
+    },
+    "Remove from folder": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Из папки"
           }
         }
       }
@@ -1205,6 +1447,39 @@
         }
       }
     },
+    "Search": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Поиск"
+          }
+        }
+      }
+    },
+    "Search by chat name, message text\nor username": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Поищем по названию чата, тексту сообщения\nили юзернейму"
+          }
+        }
+      }
+    },
+    "Searching messages…": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ищем в переписке…"
+          }
+        }
+      }
+    },
     "Security": {
       "extractionState": "manual",
       "localizations": {
@@ -1292,6 +1567,17 @@
         }
       }
     },
+    "Start a conversation": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Начать переписку"
+          }
+        }
+      }
+    },
     "Test data": {
       "extractionState": "manual",
       "localizations": {
@@ -1331,6 +1617,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "В баннере видны имя отправителя и текст."
+          }
+        }
+      }
+    },
+    "The chat and its messages will be deleted from this device. The other person keeps the conversation.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Чат и его сообщения удалятся с этого устройства. У собеседника переписка останется."
           }
         }
       }
@@ -1384,6 +1681,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Устройство получит доступ к аккаунту и сможет читать и отправлять новые сообщения. Старая переписка на него не переносится."
+          }
+        }
+      }
+    },
+    "The folder “%@” is empty": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В папке «%@» пусто"
           }
         }
       }
@@ -1507,6 +1815,28 @@
         }
       }
     },
+    "typing…": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "печатает…"
+          }
+        }
+      }
+    },
+    "Unarchive": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Из архива"
+          }
+        }
+      }
+    },
     "Unblock": {
       "extractionState": "manual",
       "localizations": {
@@ -1525,6 +1855,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Неизвестное устройство"
+          }
+        }
+      }
+    },
+    "Unmute": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вкл. звук"
+          }
+        }
+      }
+    },
+    "Unpin": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открепить"
           }
         }
       }
@@ -1577,6 +1929,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Юзернейм — от %1$lld до %2$lld символов: латиница, цифры и _"
+          }
+        }
+      }
+    },
+    "Video": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Видео"
+          }
+        }
+      }
+    },
+    "Voice message": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Голосовое сообщение"
           }
         }
       }

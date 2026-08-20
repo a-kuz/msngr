@@ -13,7 +13,7 @@ struct ChatListItem: Identifiable, Equatable {
 
     var title: String {
         if chat.kind == .direct { return peer?.displayName ?? "…" }
-        return chat.title ?? "Группа"
+        return chat.title ?? String(localized: "Group")
     }
 }
 
@@ -139,7 +139,7 @@ final class ChatListModel: ObservableObject {
 
     private func typingLabel(_ chatId: String, _ peer: User?) -> String? {
         guard let t = typing[chatId], t.until > Date() else { return nil }
-        return "печатает…"
+        return String(localized: "typing…")
     }
 
     private func refreshTyping() {

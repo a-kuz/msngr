@@ -25,15 +25,15 @@ struct ChatFolderBar: View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 2) {
-                    tab(id: nil, title: "Все", badge: unread[""] ?? 0)
+                    tab(id: nil, title: String(localized: "All"), badge: unread[""] ?? 0)
                     ForEach(folders) { folder in
                         tab(id: folder.id, title: folder.title, badge: unread[folder.id] ?? 0)
                             .contextMenu {
                                 Button { onEdit(folder) } label: {
-                                    Label("Настроить папку", systemImage: "slider.horizontal.3")
+                                    Label("Edit folder", systemImage: "slider.horizontal.3")
                                 }
                                 Button { onManage() } label: {
-                                    Label("Все папки", systemImage: "folder")
+                                    Label("All folders", systemImage: "folder")
                                 }
                             }
                     }
@@ -96,7 +96,7 @@ struct ChatFolderBar: View {
                 Image(systemName: "plus")
                     .font(Theme.glyph(13, max: 20).weight(.semibold))
                 if folders.isEmpty {
-                    Text("Папка").textRole(Theme.Text.folderTab)
+                    Text("Folder").textRole(Theme.Text.folderTab)
                 }
             }
             .foregroundStyle(Theme.accent)
