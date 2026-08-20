@@ -212,7 +212,23 @@ was checked on the simulator (push-client/inapp-banner-tap-open-chat), so either
 the hit area or a gesture conflict kills it on the device — same family as the
 row hit areas below.
 
-A harness for it exists since 2026-08-20: `LivePeerDriverTests` in MsngrKit
+Worked on 2026-08-20 without a reproduction on the simulator, where the banner
+answers taps under the old geometry as well. What the old geometry did leave
+open, and what is closed now: the window was placed at a top inset read from
+`scene.windows.first` — not necessarily this window — and was only as tall as
+the measured content, while the content then laid itself out below its own safe
+area. Any disagreement between that inset and the real one put the banner partly
+below the window's edge, where it stays visible (a window does not clip) and
+takes no touches. The banner now lays out from the window's own top edge
+(`safeAreaRegions = []`) and the window is placed at the inset it reports
+itself, so the content and the band are the same height.
+`InAppBannerWindowTests` holds it: what takes the touch is inside the window, the
+band stays in the top half, and the content fills exactly the band it was
+measured for. A full-screen window with a hit-test passthrough was tried first
+and reverted — SwiftUI's hosting view claims every touch inside its bounds, so
+that window made the whole app untouchable, which the same tests caught.
+
+A harness for the live side exists since 2026-08-20: `LivePeerDriverTests` in MsngrKit
 registers a peer, keeps it in `MSNGR_PEER_HOME` so the next run is the same
 person writing again, and sends a real encrypted message to the username in
 `MSNGR_PEER_TO` — which is what the app needs to raise a banner at all. Using
