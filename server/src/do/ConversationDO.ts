@@ -54,6 +54,21 @@ const HISTORY_PAGE = 128;
 /// actually deleted.
 const TOMB_PREFIX = "tomb:";
 
+/// A member's marks live one small key each (`mark:<kind>:<userId>`), so a
+/// receipt writes that member's pair instead of rewriting every member's
+/// numbers in one record: `read` is what read receipts were sent for, `dlvr`
+/// is delivery, `seen` is the counting mark unread is measured against.
+const MARK_PREFIX = "mark:";
+
+/// An idempotency record has done its work once the sender stopped retrying
+/// its clientMsgId, which happens when the ack or the echo reaches them. Swept
+/// when the sender's delivered mark has passed the record's seq and the record
+/// has aged out — the age guards a second device of the same account that was
+/// still offline with the retry while the first one acknowledged.
+const CMID_PREFIX = "cmid:";
+const CMID_MIN_AGE_SEC = 72 * 3600;
+const CMID_SWEEP_EVERY_SEC = 3600;
+
 interface Tombstone {
   msgId: string;
   /// who removed it
@@ -105,6 +120,8 @@ interface Meta {
   /// not in seqs. Each message stores the count as of itself, which is what a
   /// member's mark is measured against.
   contentCount: number;
+  /// When idempotency records were last swept (seconds since epoch).
+  cmidSweptAt?: number;
 }
 
 /// A policy an older chat has no value for is the permissive one.
@@ -147,6 +164,74 @@ export class ConversationDO implements DurableObject {
   private async loadMeta(): Promise<Meta | null> {
     if (!this.meta) this.meta = (await this.state.storage.get<Meta>("meta")) ?? null;
     return this.meta;
+  }
+
+  /// The three whole-map mark records a chat may have been created with are
+  /// split into per-member keys once; set after the check so it runs one time
+  /// per object life.
+  private marksMigrated = false;
+
+  private markKey(kind: "read" | "dlvr" | "seen", userId: string): string {
+    return `${MARK_PREFIX}${kind}:${userId}`;
+  }
+
+  /// One member's mark; zero when it was never set.
+  private async markOf(kind: "read" | "dlvr" | "seen", userId: string): Promise<number> {
+    await this.migrateMarks();
+    return (await this.state.storage.get<number>(this.markKey(kind, userId))) ?? 0;
+  }
+
+  /// Every member's marks of one kind, for the frames that carry the whole map.
+  private async markMap(kind: "read" | "dlvr" | "seen"): Promise<Record<string, number>> {
+    await this.migrateMarks();
+    const prefix = `${MARK_PREFIX}${kind}:`;
+    const out: Record<string, number> = {};
+    for (const [k, v] of await this.state.storage.list<number>({ prefix }))
+      out[k.slice(prefix.length)] = v;
+    return out;
+  }
+
+  private async migrateMarks(): Promise<void> {
+    if (this.marksMigrated) return;
+    this.marksMigrated = true;
+    const legacy: Array<["read" | "dlvr" | "seen", string]> = [
+      ["read", "readMarks"], ["dlvr", "deliveredMarks"], ["seen", "seenMarks"],
+    ];
+    for (const [kind, record] of legacy) {
+      const map = await this.state.storage.get<Record<string, number>>(record);
+      if (!map) continue;
+      const entries = Object.entries(map);
+      // storage writes take at most 128 keys per batch
+      for (let i = 0; i < entries.length; i += 100) {
+        const batch: Record<string, number> = {};
+        for (const [userId, seq] of entries.slice(i, i + 100))
+          batch[this.markKey(kind, userId)] = seq;
+        await this.state.storage.put(batch);
+      }
+      await this.state.storage.delete(record);
+    }
+  }
+
+  /// Drops idempotency records nothing will ask for again. Runs from /send at
+  /// most once per CMID_SWEEP_EVERY_SEC, capped per pass so a backlog is eaten
+  /// over several sends rather than in one long stall.
+  private async sweepCmids(meta: Meta, now: number): Promise<void> {
+    const every = Number(this.env.CMID_SWEEP_EVERY ?? CMID_SWEEP_EVERY_SEC);
+    const minAge = Number(this.env.CMID_MIN_AGE ?? CMID_MIN_AGE_SEC);
+    if (now - (meta.cmidSweptAt ?? 0) < every) return;
+    meta.cmidSweptAt = now;
+    await this.state.storage.put("meta", meta);
+    const dlvr = await this.markMap("dlvr");
+    const doomed: string[] = [];
+    const listed = await this.state.storage.list<{ msgId: string; seq: number; ts: number }>(
+      { prefix: CMID_PREFIX });
+    for (const [key, rec] of listed) {
+      const from = key.slice(CMID_PREFIX.length).split("/", 1)[0];
+      if (rec.seq <= (dlvr[from] ?? 0) && now - rec.ts >= minAge) doomed.push(key);
+      if (doomed.length >= 512) break;
+    }
+    for (let i = 0; i < doomed.length; i += 128)
+      await this.state.storage.delete(doomed.slice(i, i + 128));
   }
 
   private async loadMembers(): Promise<Map<string, ChatMember>> {
@@ -471,10 +556,8 @@ export class ConversationDO implements DurableObject {
   private async chatState(): Promise<ChatState> {
     const meta = (await this.loadMeta())!;
     const members = await this.loadMembers();
-    const readMarks =
-      (await this.state.storage.get<Record<string, number>>("readMarks")) ?? {};
-    const deliveredMarks =
-      (await this.state.storage.get<Record<string, number>>("deliveredMarks")) ?? {};
+    const readMarks = await this.markMap("read");
+    const deliveredMarks = await this.markMap("dlvr");
     return {
       chatId: meta.chatId,
       kind: meta.kind,
@@ -637,10 +720,8 @@ export class ConversationDO implements DurableObject {
           if (t.blockedFor === viewer) continue;
           deleted.push({ msgId: t.msgId, by: t.by });
         }
-        const readMarks =
-          (await this.state.storage.get<Record<string, number>>("readMarks")) ?? {};
-        const deliveredMarks =
-          (await this.state.storage.get<Record<string, number>>("deliveredMarks")) ?? {};
+        const readMarks = await this.markMap("read");
+        const deliveredMarks = await this.markMap("dlvr");
         return json({ ok: true, deleted, readMarks, deliveredMarks, state: await this.chatState() });
       }
 
@@ -652,11 +733,8 @@ export class ConversationDO implements DurableObject {
         // recipient how much has been written to him
         const members = await this.loadMembers();
         if (!members.get(userId)?.accepted) return json({ ok: true, unread: 0 });
-        const marks =
-          (await this.state.storage.get<Record<string, number>>("readMarks")) ?? {};
-        const seen =
-          (await this.state.storage.get<Record<string, number>>("seenMarks")) ?? {};
-        const from = Math.max(marks[userId] ?? 0, seen[userId] ?? 0);
+        const from = Math.max(await this.markOf("read", userId),
+                              await this.markOf("seen", userId));
         return json({ ok: true, unread: await this.unreadFrom(from) });
       }
 
@@ -716,22 +794,21 @@ export class ConversationDO implements DurableObject {
         // Under a block the send still succeeds and the sender sees "sent", but nothing
         // reaches the other side, over the socket or by push. The blocker's read mark
         // moves at once, or his unread would grow on messages he will never see.
+        // The seen mark is the counting one unread is measured against: an
+        // author does not count their own message, and neither does someone the
+        // message was withheld from. Kept apart from the read marks because
+        // read receipts are sent for those alone: sending a message is not a
+        // claim that others were read. seq is the new head of the journal, so
+        // it is ahead of any mark by construction.
+        await this.migrateMarks();
         const blocked = await this.blockedPeers(b.from);
-        if (blocked.length) {
-          const marks =
-            (await this.state.storage.get<Record<string, number>>("readMarks")) ?? {};
-          for (const u of blocked) marks[u] = Math.max(marks[u] ?? 0, seq);
-          await this.state.storage.put("readMarks", marks);
+        const markBatch: Record<string, number> = { [this.markKey("seen", b.from)]: seq };
+        for (const u of blocked) {
+          markBatch[this.markKey("read", u)] = seq;
+          markBatch[this.markKey("seen", u)] = seq;
         }
-        // The counting mark unread is measured against: an author does not count
-        // their own message, and neither does someone the message was withheld
-        // from. Kept apart from `readMarks` because read receipts are sent for
-        // those alone: sending a message is not a claim that others were read.
-        // A service frame needs no mark of its own — it never moved the count.
-        const seen = (await this.state.storage.get<Record<string, number>>("seenMarks")) ?? {};
-        for (const u of blocked) seen[u] = Math.max(seen[u] ?? 0, seq);
-        seen[b.from] = Math.max(seen[b.from] ?? 0, seq);
-        await this.state.storage.put("seenMarks", seen);
+        await this.state.storage.put(markBatch);
+        await this.sweepCmids(meta, msg.ts);
         // ack answers the sender as soon as the message owns a seq; delivery
         // (and the APNs call behind it) runs in the alarm queue afterwards.
         // Author's own devices are targets too: the echo goes through his UserDO.
@@ -747,12 +824,10 @@ export class ConversationDO implements DurableObject {
         if (!members.get(b.userId)?.accepted) return json({ ok: true });
         // under a block the mark is not even stored: it would show up in the chat frame
         if (await this.blockedEitherWay(b.userId)) return json({ ok: true });
-        const marks =
-          (await this.state.storage.get<Record<string, number>>("deliveredMarks")) ?? {};
-        const upTo = Math.max(marks[b.userId] ?? 0, ...b.seqs);
-        if (upTo > (marks[b.userId] ?? 0)) {
-          marks[b.userId] = upTo;
-          await this.state.storage.put("deliveredMarks", marks);
+        const current = await this.markOf("dlvr", b.userId);
+        const upTo = Math.max(current, ...b.seqs);
+        if (upTo > current) {
+          await this.state.storage.put(this.markKey("dlvr", b.userId), upTo);
           await this.fanout(
             { t: "receipt", chatId: meta.chatId, kind: "delivered", upToSeq: upTo, by: b.userId },
             { except: b.userId }
@@ -780,13 +855,13 @@ export class ConversationDO implements DurableObject {
         // read receipts wait for the message request to be accepted
         if (!members.get(b.userId)?.accepted) return json({ ok: true });
         if (await this.blockedEitherWay(b.userId)) return json({ ok: true });
-        const marks =
-          (await this.state.storage.get<Record<string, number>>("readMarks")) ?? {};
-        if (b.upToSeq > (marks[b.userId] ?? 0)) {
-          marks[b.userId] = b.upToSeq;
-          const seen = (await this.state.storage.get<Record<string, number>>("seenMarks")) ?? {};
-          seen[b.userId] = Math.max(seen[b.userId] ?? 0, b.upToSeq);
-          await this.state.storage.put({ readMarks: marks, seenMarks: seen });
+        const current = await this.markOf("read", b.userId);
+        if (b.upToSeq > current) {
+          const seen = await this.markOf("seen", b.userId);
+          await this.state.storage.put({
+            [this.markKey("read", b.userId)]: b.upToSeq,
+            [this.markKey("seen", b.userId)]: Math.max(seen, b.upToSeq),
+          });
           await this.fanout(
             { t: "receipt", chatId: meta.chatId, kind: "read", upToSeq: b.upToSeq, by: b.userId },
             { except: b.userId }

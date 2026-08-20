@@ -34,7 +34,8 @@ trap cleanup EXIT
 cd "$ROOT/server"
 npx wrangler d1 migrations apply DB --local --persist-to "$STATE" >/dev/null
 npx wrangler dev --port "$PORT" --persist-to "$STATE" \
-  --var "APNS_HOST:http://localhost:$PUSH" > "$STATE/stand.log" 2>&1 &
+  --var "APNS_HOST:http://localhost:$PUSH" \
+  --var "CMID_MIN_AGE:0" --var "CMID_SWEEP_EVERY:0" > "$STATE/stand.log" 2>&1 &
 STAND_PID=$!
 
 for _ in $(seq 1 60); do
