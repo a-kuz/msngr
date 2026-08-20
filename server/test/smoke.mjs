@@ -1552,6 +1552,46 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
   cgi.ws.close();
 }
 
+// The idempotency window: a cmid record is swept once the sender's own
+// delivered mark passes it, and only then. The stand runs with CMID_MIN_AGE=0
+// and CMID_SWEEP_EVERY=0, so a sweep runs on every send; production ages the
+// records for three days first.
+{
+  const ivan = await api("/api/register", { body: {
+    username: "ivan_" + suffix, displayName: "Ivan", ...fakeKeys("y") } });
+  const jane = await api("/api/register", { body: {
+    username: "jane_" + suffix, displayName: "Jane", ...fakeKeys("z") } });
+  const schat = await api("/api/chats", { token: ivan.token,
+    body: { kind: "direct", memberIds: [jane.userId] } });
+  const civ = new Client("ivan", ivan.token);
+  await civ.connect();
+  civ.send({ t: "send", chatId: schat.chatId, clientMsgId: "cm-w1", sentAt: Date.now(),
+    body: { v: 1, mode: "pw", msgs: {} } });
+  const w1 = await civ.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-w1");
+
+  // not acked by the sender yet: the record survives any number of sweeps
+  civ.send({ t: "send", chatId: schat.chatId, clientMsgId: "cm-w2", sentAt: Date.now(),
+    body: { v: 1, mode: "pw", msgs: {} } });
+  await civ.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-w2");
+  civ.send({ t: "send", chatId: schat.chatId, clientMsgId: "cm-w1", sentAt: Date.now(), body: {} });
+  const w1again = await civ.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-w1" && f !== w1);
+  check("cmid survives sweeps until the sender acks", w1again.seq === w1.seq
+    && w1again.msgId === w1.msgId, JSON.stringify(w1again));
+
+  // acked: the next send sweeps it, and a late resend lands as a fresh message
+  civ.send({ t: "recv", chatId: schat.chatId, seqs: [w1.seq] });
+  await new Promise((r) => setTimeout(r, 200));
+  civ.send({ t: "send", chatId: schat.chatId, clientMsgId: "cm-w3", sentAt: Date.now(),
+    body: { v: 1, mode: "pw", msgs: {} } });
+  await civ.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-w3");
+  civ.send({ t: "send", chatId: schat.chatId, clientMsgId: "cm-w1", sentAt: Date.now(), body: {} });
+  const w1fresh = await civ.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-w1"
+    && f.msgId !== w1.msgId);
+  check("cmid swept behind the sender's ack", !!w1fresh && w1fresh.seq > w1.seq,
+    JSON.stringify(w1fresh));
+  civ.ws.close();
+}
+
 cmal.ws.close(); ctre.ws.close();
 ca.ws.close(); cb2.ws.close(); cb3.ws.close(); cb4.ws.close(); ca2.ws.close(); ce.ws.close();
 cf.ws.close(); cg.ws.close();

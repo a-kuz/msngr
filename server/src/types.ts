@@ -12,6 +12,10 @@ export interface Env {
   DEV_WS_LATENCY_MS?: string;
   /// Dev only: log what each object invocation costs (see src/perf.ts).
   PERF_LOG?: string;
+  /// Override the idempotency-record sweep for tests: minimum age in seconds
+  /// and the pause between passes.
+  CMID_MIN_AGE?: string;
+  CMID_SWEEP_EVERY?: string;
   APNS_KEY_P8?: string;
   APNS_KEY_ID?: string;
   APNS_TEAM_ID?: string;
