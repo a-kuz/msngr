@@ -70,7 +70,7 @@ enum CommunicationNotification {
             recipients: recipients,
             outgoingMessageType: .outgoingMessageText,
             content: built.body,
-            speakableGroupName: isGroup ? INSpeakableString(spokenPhrase: built.subtitle ?? "Группа") : nil,
+            speakableGroupName: isGroup ? INSpeakableString(spokenPhrase: built.subtitle ?? String(localized: "Group")) : nil,
             conversationIdentifier: built.threadIdentifier,
             serviceName: nil,
             sender: senderPerson,

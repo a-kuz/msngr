@@ -332,7 +332,7 @@ final class AppState: ObservableObject {
         var err: NSError?
         guard ctx.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &err) else { return }
         ctx.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics,
-                           localizedReason: "Разблокировать Msngr") { [weak self] ok, _ in
+                           localizedReason: String(localized: "Unlock Msngr")) { [weak self] ok, _ in
             if ok { Task { @MainActor in self?.unlock() } }
         }
     }

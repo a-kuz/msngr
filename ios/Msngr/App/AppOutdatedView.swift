@@ -18,7 +18,7 @@ struct AppOutdatedView: View {
                     .font(.system(size: 56))
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
-                Text("Приложение устарело")
+                Text("App out of date")
                     .font(.title2.bold())
                 Text(detail)
                     .font(.subheadline)
@@ -34,9 +34,9 @@ struct AppOutdatedView: View {
     private var detail: String {
         switch reason {
         case .protocolRefused:
-            return "Эта версия больше не работает. Установите обновление, чтобы продолжить переписку."
+            return String(localized: "This version no longer works. Install the update to keep messaging.")
         case .storageAhead:
-            return "Данные на этом устройстве открывает только более новая версия. Установите обновление, чтобы вернуться к переписке."
+            return String(localized: "The data on this device opens only with a newer version. Install the update to get back to your messages.")
         }
     }
 
@@ -49,7 +49,7 @@ struct AppOutdatedView: View {
         } label: {
             Group {
                 if busy { ProgressView().tint(.white) }
-                else { Text("Начать заново").bold() }
+                else { Text("Start over").bold() }
             }
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity)
@@ -60,14 +60,14 @@ struct AppOutdatedView: View {
         .accessibilityIdentifier("app.outdated.startOver")
         .padding(.horizontal, 32)
         .padding(.top, 8)
-        .confirmationDialog("Начать заново?", isPresented: $confirmingStartOver, titleVisibility: .visible) {
-            Button("Начать заново", role: .destructive) {
+        .confirmationDialog("Start over?", isPresented: $confirmingStartOver, titleVisibility: .visible) {
+            Button("Start over", role: .destructive) {
                 busy = true
                 Task { await app.startOverOnCleanStorage() }
             }
-            Button("Отмена", role: .cancel) {}
+            Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Переписка и ключи, которые хранились на этом устройстве, будут удалены.")
+            Text("The messages and keys stored on this device will be deleted.")
         }
     }
 }

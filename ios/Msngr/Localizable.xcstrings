@@ -275,6 +275,17 @@
         }
       }
     },
+    "App out of date": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Приложение устарело"
+          }
+        }
+      }
+    },
     "Appearance": {
       "extractionState": "manual",
       "localizations": {
@@ -784,6 +795,17 @@
         }
       }
     },
+    "Enter the passcode": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Введите код-пароль"
+          }
+        }
+      }
+    },
     "Error: %@": {
       "extractionState": "manual",
       "localizations": {
@@ -846,6 +868,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Папки"
+          }
+        }
+      }
+    },
+    "Graphite": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Графит"
           }
         }
       }
@@ -1535,6 +1568,17 @@
         }
       }
     },
+    "Session ended": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сессия завершена"
+          }
+        }
+      }
+    },
     "Setting up this device…": {
       "localizations": {
         "ru": {
@@ -1574,6 +1618,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Начать переписку"
+          }
+        }
+      }
+    },
+    "Start over": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Начать заново"
+          }
+        }
+      }
+    },
+    "Start over?": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Начать заново?"
           }
         }
       }
@@ -1674,6 +1740,17 @@
         }
       }
     },
+    "The data on this device opens only with a newer version. Install the update to get back to your messages.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Данные на этом устройстве открывает только более новая версия. Установите обновление, чтобы вернуться к переписке."
+          }
+        }
+      }
+    },
     "The device gets access to the account and can read and send new messages. Old history does not move to it.": {
       "extractionState": "manual",
       "localizations": {
@@ -1702,6 +1779,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "История переписки на это устройство не переносится: старые сообщения останутся только там, где вы их читали."
+          }
+        }
+      }
+    },
+    "The messages and keys stored on this device will be deleted.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Переписка и ключи, которые хранились на этом устройстве, будут удалены."
           }
         }
       }
@@ -1783,6 +1871,17 @@
         }
       }
     },
+    "This device's access to the account has been revoked. The messages and keys stored here are being deleted.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Доступ этого устройства к аккаунту отозван. Переписка и ключи, которые хранились здесь, удаляются."
+          }
+        }
+      }
+    },
     "This device's access to the account is revoked; messages and keys are deleted.": {
       "extractionState": "manual",
       "localizations": {
@@ -1801,6 +1900,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "По этому имени вас находят в поиске. Старое имя освободится сразу."
+          }
+        }
+      }
+    },
+    "This version no longer works. Install the update to keep messaging.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Эта версия больше не работает. Установите обновление, чтобы продолжить переписку."
           }
         }
       }
@@ -1855,6 +1965,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Неизвестное устройство"
+          }
+        }
+      }
+    },
+    "Unlock Msngr": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разблокировать Msngr"
           }
         }
       }
