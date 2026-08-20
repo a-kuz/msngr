@@ -1286,14 +1286,14 @@ public actor SyncEngine {
         switch content.kind {
         case "edit":
             if let target = content.targetMsgId {
-                try dbc.execute(
-                    sql: "UPDATE message SET text = ?, edited = 1 WHERE chatId = ? AND (msgId = ? OR id = ?)",
-                    arguments: [content.text, chatId, target, target])
+                let found = try SyncEngine.applyEdit(dbc, chatId: chatId, targetMsgId: target,
+                                                     newText: content.text, sentAt: sentAt)
                 // nothing matched: the original is not stored yet
-                if dbc.changesCount == 0 {
+                if !found {
                     try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetMsgId: target,
                                                       kind: "edit", fromUserId: from,
-                                                      payload: SyncEngine.payloadJSON(content), seq: seq)
+                                                      payload: SyncEngine.payloadJSON(content), seq: seq,
+                                                      sentAt: sentAt)
                 }
             }
         case "reaction":
@@ -1359,13 +1359,13 @@ public actor SyncEngine {
             switch content.kind {
             case "edit":
                 if let target = content.targetMsgId {
-                    try dbc.execute(
-                        sql: "UPDATE message SET text = ?, edited = 1 WHERE chatId = ? AND (msgId = ? OR id = ?)",
-                        arguments: [content.text, chatId, target, target])
-                    if dbc.changesCount == 0 {
+                    let found = try SyncEngine.applyEdit(dbc, chatId: chatId, targetMsgId: target,
+                                                         newText: content.text, sentAt: sentAt)
+                    if !found {
                         try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetMsgId: target,
                                                           kind: "edit", fromUserId: from,
-                                                          payload: SyncEngine.payloadJSON(content), seq: seq)
+                                                          payload: SyncEngine.payloadJSON(content), seq: seq,
+                                                          sentAt: sentAt)
                     }
                 }
             case "reaction":
@@ -1699,8 +1699,8 @@ public actor SyncEngine {
             }
             // an edit takes effect here before it is sent
             if content.kind == "edit", let target = content.targetMsgId {
-                try dbc.execute(sql: "UPDATE message SET text = ?, edited = 1 WHERE chatId = ? AND (msgId = ? OR id = ?)",
-                                arguments: [content.text, chatId, target, target])
+                try SyncEngine.applyEdit(dbc, chatId: chatId, targetMsgId: target,
+                                         newText: content.text, sentAt: now)
             }
             if content.kind == "reaction", let target = content.targetMsgId {
                 try SyncEngine.applyReaction(dbc, chatId: chatId, targetMsgId: target,
@@ -2396,6 +2396,33 @@ public actor SyncEngine {
         }
     }
 
+    /// Applies an edit to its target: the text it replaces goes into
+    /// editHistory with the time it was authored, so the message keeps every
+    /// version it has shown. A replay of the same edit changes nothing — the
+    /// guard on an unchanged text keeps catch-up and gap fills from writing a
+    /// duplicate history entry.
+    ///
+    /// Returns false when the target message is not stored and the edit went
+    /// nowhere.
+    @discardableResult
+    static func applyEdit(_ dbc: GRDB.Database, chatId: String, targetMsgId: String,
+                          newText: String?, sentAt: Double) throws -> Bool {
+        guard let row = try Row.fetchOne(
+            dbc, sql: "SELECT id, text, sentAt, editedAt, editHistory FROM message WHERE chatId = ? AND (msgId = ? OR id = ?)",
+            arguments: [chatId, targetMsgId, targetMsgId]) else { return false }
+        let current: String? = row["text"]
+        guard current != newText else { return true }
+        var history = (row["editHistory"] as String?)
+            .flatMap { try? JSONDecoder().decode([EditVersion].self, from: Data($0.utf8)) } ?? []
+        history.append(EditVersion(text: current ?? "",
+                                   ts: (row["editedAt"] as Double?) ?? (row["sentAt"] as Double? ?? 0)))
+        let json = String(data: try JSONEncoder().encode(history), encoding: .utf8)!
+        try dbc.execute(
+            sql: "UPDATE message SET text = ?, edited = 1, editedAt = ?, editHistory = ? WHERE id = ?",
+            arguments: [newText, sentAt, json, row["id"] as String])
+        return true
+    }
+
     /// Returns false when the target message is not stored and the reaction
     /// went nowhere.
     @discardableResult
@@ -2429,20 +2456,21 @@ public actor SyncEngine {
     /// Holds an edit, reaction or delete whose target message is not stored
     /// yet. A repeat from the same author replaces the row, so the last one wins.
     static func bufferPendingApply(_ dbc: GRDB.Database, chatId: String, targetMsgId: String,
-                                   kind: String, fromUserId: String, payload: String, seq: Int?) throws {
+                                   kind: String, fromUserId: String, payload: String, seq: Int?,
+                                   sentAt: Double? = nil) throws {
         try dbc.execute(
             sql: """
-            INSERT OR REPLACE INTO pendingApply (chatId, targetMsgId, kind, fromUserId, payload, seq)
-            VALUES (?,?,?,?,?,?)
+            INSERT OR REPLACE INTO pendingApply (chatId, targetMsgId, kind, fromUserId, payload, seq, sentAt)
+            VALUES (?,?,?,?,?,?,?)
             """,
-            arguments: [chatId, targetMsgId, kind, fromUserId, payload, seq])
+            arguments: [chatId, targetMsgId, kind, fromUserId, payload, seq, sentAt])
     }
 
     /// Applies the held edits, reactions and deletes to a message that has just
     /// been inserted.
     static func applyBuffered(_ dbc: GRDB.Database, chatId: String, msgId: String) throws {
         let rows = try Row.fetchAll(
-            dbc, sql: "SELECT kind, fromUserId, payload FROM pendingApply WHERE chatId = ? AND targetMsgId = ? ORDER BY seq",
+            dbc, sql: "SELECT kind, fromUserId, payload, sentAt FROM pendingApply WHERE chatId = ? AND targetMsgId = ? ORDER BY seq",
             arguments: [chatId, msgId])
         guard !rows.isEmpty else { return }
         let dec = JSONDecoder()
@@ -2451,9 +2479,8 @@ public actor SyncEngine {
             switch row["kind"] as String {
             case "edit":
                 if let content {
-                    try dbc.execute(
-                        sql: "UPDATE message SET text = ?, edited = 1 WHERE chatId = ? AND msgId = ?",
-                        arguments: [content.text, chatId, msgId])
+                    try applyEdit(dbc, chatId: chatId, targetMsgId: msgId, newText: content.text,
+                                  sentAt: (row["sentAt"] as Double?) ?? Date().timeIntervalSince1970)
                 }
             case "reaction":
                 if let content {
