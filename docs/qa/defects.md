@@ -148,12 +148,15 @@ chat pencil) washed out to a smudge. Scrolling the list one gesture repairs it
 (`repaired-by-scroll.png`). The same in the light appearance
 (`after-pop-light.png`), so the dark theme only made it easier to see.
 
-Not the cause: the display mode. The list leaves it automatic while the chat
-states `.inline`, but writing `.large` on the list explicitly changes nothing.
-Nothing in the app touches the bar's alpha, so what is left standing is the
-transition itself — the chat screen's toolbar (a custom leading button with
-`navigationBarBackButtonHidden`, a principal item, visibility switched while
-searching) against the list's `.searchable`, on iOS 26.
+Cause and fix, found by elimination on 2026-08-20. Not the display mode (writing
+`.large` on the list explicitly changes nothing) and not the toolbar visibility
+the chat switches while searching (nailing it to `.visible` changes nothing
+either). It was the back button: the chat replaced the system one with a leading
+item of its own under `navigationBarBackButtonHidden(true)`, and after such a pop
+the list's bar stayed as the pushed screen left it. With the system back button
+the title and both glyphs are in place the moment the pop settles
+(`after-fix.png`), through two cycles. The identifier the custom button existed
+for is gone, so the UI tests aim at the navigation bar's first button instead.
 
 The dark appearance also lost the empty-screen glyph, the accent at 55 % over a
 near-black ground turning to mud; fixed through a `Theme.decorativeGlyph` role
