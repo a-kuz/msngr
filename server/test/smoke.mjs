@@ -1247,13 +1247,17 @@ const badgeAfter = (await waitPush(pushFor("alice-sim-udid", e2.msgId)))?.body.a
 check("own messages do not grow the author's badge", badgeAfter === 1,
   `badge=${badgeAfter}`);
 
-// 21. Ack before push: the sender's confirmation does not wait for APNs
+// 21. The sender's confirmation does not wait for APNs: with the mock's answer
+// held for 1500 ms, the ack still lands next to the push's arrival instead of
+// after the hold. The push queue runs independently of the ack path, so the
+// two arrivals have no strict order — only the absence of the hold-sized lag
+// is the product's promise.
 hold = { token: "eve-sim-udid", ms: 1500 };
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-h1", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const h1 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-h1");
 const hp1 = await waitPush(pushFor("eve-sim-udid", h1.msgId));
-check("ack precedes push", !!h1 && !!hp1 && h1.at <= hp1.at,
+check("ack does not wait for apns", !!h1 && !!hp1 && h1.at - hp1.at < 1000,
   `ack ${h1?.at} push ${hp1?.at}`);
 
 // the previous message's push is still hanging, the next ack arrives right away anyway
