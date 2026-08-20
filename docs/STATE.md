@@ -6,13 +6,25 @@ work in it looks like clutter.
 
 Delete an entry when its branch is merged and gone.
 
-One slot is open by the owner's word and taken: `pin` resumed on **run-pin** —
-the pinned bar at any depth, main merged in (the 235 s fanout stall its probe
-found is answered by the delivery rework), what is left is the live run and the
-report. run-longpress is merged (`48dadad`) and its background gate is running
-in `.claude/gates/run-longpress.log`.
+One slot is open by the owner's word and taken: `pin` on **run-pin** — the
+pinned bar at any depth, main merged in (the 235 s fanout stall its probe found
+is answered by the delivery rework), and the live run on two clients is where it
+stands. `.claude/agents.tsv` holds only live work, so `scripts/agents.py` is the
+picture of the site.
 
-## In main since this morning
+## Merged on 2026-08-20
+
+run-longpress (`48dadad`, the context menu clears the keyboard and one bubble is
+lifted), and a run of the owner's device defects straight on main: the composer
+caret that put «123» in as «231» (`33f30f8`), the empty-screen glyph that turned
+to mud in the dark appearance (`5f95956`), list rows that answered only on their
+letters (`324c4d2`), the chat search that fired a request per keystroke
+(`3cdfbb9`), and the chat list's navigation bar coming back from a chat washed
+out — its cause was the custom back button. Sends to accounts registered before
+the identity binding no longer hang the whole outbox (`123a23d`). Every fix has
+its story in `docs/qa/defects.md`; the gate ran green after each.
+
+## In main since 2026-08-19
 
 `run-delivery` — the fanout as an outbox (a delivery record per recipient that
 lives until acknowledged, independent chains, retries with no attempt cap), the
