@@ -635,6 +635,26 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    /// Puts a media placeholder into the feed before the attachment is ready:
+    /// the row is visible and takes the same "move the feed to the bottom"
+    /// path as `enqueue`, but nothing is sent until the caller fills it in
+    /// with `updateMediaPreview`/`updateAlbumItemPreview` and moves it into
+    /// the outbox with `finalizeMedia`.
+    func beginMedia(clientMsgId: String, kind: MessageKind, text: String?,
+                    media: MediaInfo?, album: [MediaInfo]?) async {
+        if Self.movesFeedToEnd(kind: kind.rawValue, target: chatId, chatId: chatId) {
+            returnToBottom()
+            sendTick &+= 1
+        }
+        do {
+            try await app.engine.beginMedia(clientMsgId: clientMsgId, chatId: chatId, kind: kind,
+                                            text: text, media: media, album: album)
+        } catch {
+            MsngrLog.outbox.error("failed to begin media \(kind.rawValue): \(error)")
+            sendFailure = "Сообщение не отправлено: не удалось записать его на устройство"
+        }
+    }
+
     /// A message that ran out of tries goes back into the queue exactly as it
     /// was written, attachments included. One that has no queue entry left
     /// cannot be repeated, and the failure it shows says so by staying.
