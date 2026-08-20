@@ -6,6 +6,26 @@ with the commit that closed it.
 
 ## Open
 
+### A search result in "Новый чат" does not open a chat
+Found 2026-08-20 while running the pin-depth scenario (`run-pin` branch),
+unrelated to that change. Tapping a row under "Глобальный поиск" in
+`NewChatView` — confirmed against the row's own accessibility frame, not a
+guessed coordinate, and confirmed live via `curl .../api/chats` before and
+after the tap — does nothing: no `POST /api/chats` reaches the server, no
+local `chat` row appears, the screen stays as it was. Reproduced independently
+on two simulators, against freshly registered accounts with signed identity
+keys (rules out the "unsigned bundle" defect below: `openDirect` never gets
+far enough to touch E2EE — `DirectChat.open` calls `app.api.createChat` before
+anything crypto-related, and that call never leaves the device). CPU on the
+app process stays at 0% after the tap, ruling out a busy loop; a `terminate`
+still kills the process cleanly, so it is not fully hung, only unresponsive to
+this one interaction. The button in `NewChatView.row` wraps
+`Task { await openDirect(id) }` — worth checking whether that Task is ever
+started at all. Workaround used to unblock the pin scenario: create the chat
+with a direct `POST /api/chats` call (the same one `DirectChat.open` makes)
+and let each client's own snapshot/WS pick it up; both apps opened and used
+the resulting chat normally once it existed.
+
 ### Sends to pre-binding accounts hang, and block everything behind them
 Reported 2026-08-19 from the device, after a rebuild: «не отправляются
 сообщения». The stand and the tunnel were healthy (probe-send.mjs green through
