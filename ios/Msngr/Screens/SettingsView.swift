@@ -47,7 +47,7 @@ struct SettingsView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             // A text field cannot wrap, so its size is capped:
                             // .headline would truncate the name at large sizes.
-                            TextField("Имя", text: $displayName)
+                            TextField("Name", text: $displayName)
                                 .textRole(Theme.Text.rowTitle)
                                 .accessibilityIdentifier("settings.displayName")
                             Text("@\(app.session?.username ?? "")")
@@ -55,13 +55,13 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    TextField("О себе", text: $bio, axis: .vertical)
+                    TextField("Bio", text: $bio, axis: .vertical)
                         .lineLimit(1...3)
                     NavigationLink {
                         UsernameView()
                     } label: {
                         HStack {
-                            Text("Юзернейм")
+                            Text("Username")
                             Spacer()
                             Text("@\(app.session?.username ?? "")")
                                 .foregroundStyle(.secondary)
@@ -72,11 +72,11 @@ struct SettingsView: View {
                     if let hint = nameError {
                         Text(hint).foregroundStyle(.red)
                     } else {
-                        Text("Имя видят собеседники в списке чатов и в шапке переписки.")
+                        Text("Your name is what people see in the chat list and the conversation header.")
                     }
                 }
 
-                Section("Оформление") {
+                Section("Appearance") {
                     HStack(spacing: 12) {
                         ForEach(Palette.allCases) { palette in
                             PaletteCard(palette: palette, selected: theme.palette == palette) {
@@ -88,23 +88,23 @@ struct SettingsView: View {
                     .padding(.vertical, 4)
                 }
 
-                Section("Уведомления") {
+                Section("Notifications") {
                     Toggle(isOn: $showsMessageText) {
-                        Label("Показывать текст сообщений", systemImage: "text.bubble")
+                        Label("Show message text", systemImage: "text.bubble")
                     }
                     .onChange(of: showsMessageText) { _, on in
                         NotificationPreferences.setShowsMessageText(on, in: AppGroup.defaults)
                     }
                     Text(showsMessageText
-                         ? "В баннере видны имя отправителя и текст."
-                         : "В баннере остаются имя и аватар отправителя, текст скрыт.")
+                         ? "The banner shows the sender's name and the text."
+                         : "The banner keeps the sender's name and avatar; the text is hidden.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
 
-                Section("Безопасность") {
+                Section("Security") {
                     Toggle(isOn: $pinEnabled) {
-                        Label("Код-пароль", systemImage: "lock")
+                        Label("Passcode", systemImage: "lock")
                     }
                     .onChange(of: pinEnabled) { _, on in
                         if on { showPinSetup = true } else { PinStore.removePin() }
@@ -120,21 +120,21 @@ struct SettingsView: View {
                     NavigationLink {
                         BlockedListView()
                     } label: {
-                        Label("Заблокированные", systemImage: "hand.raised")
+                        Label("Blocked users", systemImage: "hand.raised")
                     }
                     NavigationLink {
                         SessionsView()
                     } label: {
-                        Label("Активные устройства", systemImage: "laptopcomputer.and.iphone")
+                        Label("Active devices", systemImage: "laptopcomputer.and.iphone")
                     }
                 }
 
-                Section("Данные") {
+                Section("Data") {
                     Button {
                         app.media?.clearCache()
                     } label: {
                         HStack {
-                            Label("Очистить кэш медиа", systemImage: "trash")
+                            Label("Clear media cache", systemImage: "trash")
                             Spacer()
                             Text(Self.sizeLabel(app.media?.totalCacheSize() ?? 0))
                                 .foregroundStyle(.secondary)
@@ -146,18 +146,18 @@ struct SettingsView: View {
                     Button(role: .destructive) {
                         showLogoutConfirm = true
                     } label: {
-                        Label("Выйти", systemImage: "rectangle.portrait.and.arrow.right")
+                        Label("Log out", systemImage: "rectangle.portrait.and.arrow.right")
                     }
                     .accessibilityIdentifier("settings.logout")
                 } footer: {
-                    Text("Доступ этого устройства к аккаунту отзывается, переписка и ключи удаляются.")
+                    Text("This device's access to the account is revoked; messages and keys are deleted.")
                 }
             }
-            .navigationTitle("Настройки")
+            .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Готово") { Task { await saveProfile() } }
+                    Button("Done") { Task { await saveProfile() } }
                         .accessibilityIdentifier("settings.done")
                 }
             }
@@ -167,15 +167,15 @@ struct SettingsView: View {
                 guard let item else { return }
                 Task { await uploadAvatar(item) }
             }
-            .confirmationDialog("Выйти из аккаунта?", isPresented: $showLogoutConfirm,
+            .confirmationDialog("Log out of the account?", isPresented: $showLogoutConfirm,
                                 titleVisibility: .visible) {
-                Button("Выйти", role: .destructive) {
+                Button("Log out", role: .destructive) {
                     dismiss()
                     Task { await app.logout() }
                 }
-                Button("Отмена", role: .cancel) {}
+                Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Переписка и ключи с этого устройства будут удалены. Восстановить их нельзя.")
+                Text("Messages and keys on this device will be deleted. They cannot be recovered.")
             }
             .sheet(isPresented: $showPinSetup) {
                 PinSetupView { pin in
@@ -201,7 +201,7 @@ struct SettingsView: View {
     /// An emptied field keeps the screen open with the reason under it.
     private func saveProfile() async {
         guard AccountValidator.isValidName(displayName) else {
-            nameError = AccountValidator.nameHint(displayName) ?? "Имя не может быть пустым"
+            nameError = AccountValidator.nameHint(displayName) ?? String(localized: "Name cannot be empty")
             return
         }
         let name = AccountValidator.trimmedName(displayName)
@@ -232,14 +232,14 @@ struct SettingsView: View {
         await loadMe()
     }
 
-    /// Cache size in Russian: ByteCountFormatter writes "Zero KB" under the system locale.
+    /// Cache size by hand: ByteCountFormatter writes "Zero KB" under the system locale.
     static func sizeLabel(_ bytes: Int64) -> String {
         let kb = Double(bytes) / 1024
         switch kb {
-        case ..<1: return "0 КБ"
-        case ..<1024: return String(format: "%.0f КБ", kb)
-        case ..<(1024 * 1024): return String(format: "%.1f МБ", kb / 1024)
-        default: return String(format: "%.2f ГБ", kb / 1024 / 1024)
+        case ..<1: return String(localized: "0 KB")
+        case ..<1024: return String(localized: "\(Int(kb.rounded())) KB")
+        case ..<(1024 * 1024): return String(localized: "\(kb / 1024, specifier: "%.1f") MB")
+        default: return String(localized: "\(kb / 1024 / 1024, specifier: "%.2f") GB")
         }
     }
 }
@@ -314,7 +314,7 @@ struct PinSetupView: View {
     var body: some View {
         VStack(spacing: 28) {
             Spacer()
-            Text(stage == 0 ? "Придумайте код-пароль" : "Повторите код-пароль")
+            Text(stage == 0 ? "Choose a passcode" : "Repeat the passcode")
                 .font(.headline)
             HStack(spacing: 18) {
                 ForEach(0..<4, id: \.self) { i in
@@ -348,7 +348,7 @@ struct PinSetupView: View {
                     break
                 }
             }
-            Button("Отмена", action: onCancel)
+            Button("Cancel", action: onCancel)
             Spacer()
         }
     }
@@ -365,7 +365,7 @@ struct BlockedListView: View {
                     .frame(width: 36, height: 36)
                 Text(user.displayName)
                 Spacer()
-                Button("Разблокировать") {
+                Button("Unblock") {
                     Task {
                         try? await app.engine.setBlocked(userId: user.id, blocked: false)
                         blocked.removeAll { $0.id == user.id }
@@ -374,7 +374,7 @@ struct BlockedListView: View {
                 .font(.footnote)
             }
         }
-        .navigationTitle("Заблокированные")
+        .navigationTitle("Blocked users")
         .task {
             guard let ids = try? await app.api.blockedUsers() else { return }
             blocked = (try? await app.db.read { dbc in

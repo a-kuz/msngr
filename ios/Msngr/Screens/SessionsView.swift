@@ -21,38 +21,38 @@ struct SessionsView: View {
                             Button(role: .destructive) {
                                 pendingRevoke = s
                             } label: {
-                                Label("Отозвать", systemImage: "xmark.circle")
+                                Label("Revoke", systemImage: "xmark.circle")
                             }
                         }
                 }
             } footer: {
                 if loaded {
                     Text(sessions.count == 1
-                         ? "Здесь появятся другие устройства, на которых вы войдёте в аккаунт."
-                         : "Отзыв отключает устройство от аккаунта: сокет закрывается, пуши перестают приходить.")
+                         ? "Other devices you log in on will appear here."
+                         : "Revoking disconnects a device from the account: its connection closes and pushes stop.")
                 }
             }
             Section {
                 NavigationLink {
                     AddDeviceView()
                 } label: {
-                    Label("Добавить устройство", systemImage: "plus.circle")
+                    Label("Add device", systemImage: "plus.circle")
                 }
                 .accessibilityIdentifier("sessions.add")
             } footer: {
-                Text("Пароля нет: попасть в аккаунт с нового устройства можно только отсюда. Пока хотя бы одно устройство на руках, доступ не потерян.")
+                Text("There is no password: a new device can only join the account from here. As long as one device is at hand, access is not lost.")
             }
         }
         .overlay {
             if !loaded {
                 ProgressView()
             } else if loadFailed && sessions.isEmpty {
-                ContentUnavailableView("Список недоступен", systemImage: "wifi.slash",
-                                       description: Text("Проверьте соединение и потяните, чтобы обновить."))
+                ContentUnavailableView("List unavailable", systemImage: "wifi.slash",
+                                       description: Text("Check the connection and pull to refresh."))
             }
         }
         .refreshable { await load() }
-        .navigationTitle("Устройства")
+        .navigationTitle("Devices")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .confirmationDialog(dialogTitle(pendingRevoke),
@@ -60,14 +60,14 @@ struct SessionsView: View {
                                                  set: { if !$0 { pendingRevoke = nil } }),
                             titleVisibility: .visible) {
             if let s = pendingRevoke {
-                Button(s.current ? "Выйти" : "Отозвать", role: .destructive) {
+                Button(s.current ? "Log out" : "Revoke", role: .destructive) {
                     Task { await revoke(s) }
                 }
             }
-            Button("Отмена", role: .cancel) { pendingRevoke = nil }
+            Button("Cancel", role: .cancel) { pendingRevoke = nil }
         } message: {
             if let s = pendingRevoke, s.current {
-                Text("Переписка и ключи с этого устройства будут удалены.")
+                Text("Messages and keys on this device will be deleted.")
             }
         }
     }
@@ -79,7 +79,7 @@ struct SessionsView: View {
                 .foregroundStyle(Theme.accent)
                 .frame(width: TypeScale.scaled(28, max: 40))
             VStack(alignment: .leading, spacing: 3) {
-                Text(s.name ?? "Неизвестное устройство")
+                Text(s.name ?? String(localized: "Unknown device"))
                     .font(.body)
                 Text(Self.addedLabel(s.createdAtSeconds))
                     .font(.footnote)
@@ -89,7 +89,7 @@ struct SessionsView: View {
             if busyDeviceId == s.deviceId {
                 ProgressView()
             } else if s.current {
-                Text("Это устройство")
+                Text("This device")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -98,7 +98,9 @@ struct SessionsView: View {
 
     private func dialogTitle(_ s: APIClient.SessionDTO?) -> String {
         guard let s else { return "" }
-        return s.current ? "Выйти на этом устройстве?" : "Отозвать «\(s.name ?? "устройство")»?"
+        return s.current
+            ? String(localized: "Log out on this device?")
+            : String(localized: "Revoke “\(s.name ?? String(localized: "device"))”?")
     }
 
     private func load() async {
@@ -134,15 +136,14 @@ struct SessionsView: View {
 
     /// The "added on <date>" line; a session added today shows the time instead.
     static func addedLabel(_ ts: Double) -> String {
-        guard ts > 0 else { return "Добавлено недавно" }
+        guard ts > 0 else { return String(localized: "Added recently") }
         let date = Date(timeIntervalSince1970: ts)
         let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "ru_RU")
         if Calendar.current.isDateInToday(date) {
-            fmt.dateFormat = "'сегодня в' HH:mm"
-        } else {
-            fmt.dateFormat = "d MMMM yyyy"
+            fmt.dateFormat = "HH:mm"
+            return String(localized: "Added today at \(fmt.string(from: date))")
         }
-        return "Добавлено " + fmt.string(from: date)
+        fmt.setLocalizedDateFormatFromTemplate("dMMMMyyyy")
+        return String(localized: "Added \(fmt.string(from: date))")
     }
 }

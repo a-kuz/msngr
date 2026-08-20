@@ -28,17 +28,17 @@ struct AddDeviceView: View {
         .padding(.horizontal, 32)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(.top, 32)
-        .navigationTitle("Добавить устройство")
+        .navigationTitle("Add device")
         .navigationBarTitleDisplayMode(.inline)
     }
 
     private var entry: some View {
         VStack(spacing: 20) {
-            Text("На новом устройстве откройте «Войти по коду» и введите показанный там код сюда.")
+            Text("On the new device open “Log in by code” and enter the code it shows here.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            TextField("Код", text: $code)
+            TextField("Code", text: $code)
                 .textInputAutocapitalization(.characters)
                 .autocorrectionDisabled()
                 .multilineTextAlignment(.center)
@@ -51,7 +51,7 @@ struct AddDeviceView: View {
             Button {
                 Task { await lookup() }
             } label: {
-                if busy { ProgressView() } else { Text("Далее") }
+                if busy { ProgressView() } else { Text("Next") }
             }
             .buttonStyle(.primaryAction)
             .disabled(busy || !codeValid)
@@ -65,8 +65,8 @@ struct AddDeviceView: View {
                 .font(.system(size: 56))
                 .foregroundStyle(Theme.accent)
                 .accessibilityHidden(true)
-            Text(found.device.name ?? "Новое устройство").font(.title3.bold())
-            Text("Устройство получит доступ к аккаунту и сможет читать и отправлять новые сообщения. Старая переписка на него не переносится.")
+            Text(found.device.name ?? String(localized: "New device")).font(.title3.bold())
+            Text("The device gets access to the account and can read and send new messages. Old history does not move to it.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -76,12 +76,12 @@ struct AddDeviceView: View {
             Button {
                 Task { await approve(found) }
             } label: {
-                if busy { ProgressView() } else { Text("Подтвердить") }
+                if busy { ProgressView() } else { Text("Confirm") }
             }
             .buttonStyle(.primaryAction)
             .disabled(busy)
             .accessibilityIdentifier("adddevice.approve")
-            Button("Отмена") { self.found = nil; self.error = nil }
+            Button("Cancel") { self.found = nil; self.error = nil }
                 .font(.footnote)
         }
     }
@@ -92,12 +92,12 @@ struct AddDeviceView: View {
                 .font(.system(size: 56))
                 .foregroundStyle(Theme.accent)
                 .accessibilityHidden(true)
-            Text("Устройство добавлено").font(.title3.bold())
-            Text("Оно появится в списке устройств. Отозвать доступ можно там же.")
+            Text("Device added").font(.title3.bold())
+            Text("It will appear in the device list. Access can be revoked there too.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button("Готово") { dismiss() }
+            Button("Done") { dismiss() }
         }
     }
 
@@ -113,7 +113,7 @@ struct AddDeviceView: View {
         } catch let e as APIError {
             error = message(for: e.code)
         } catch {
-            self.error = "Нет связи с сервером"
+            self.error = String(localized: "No connection to the server")
         }
     }
 
@@ -132,16 +132,16 @@ struct AddDeviceView: View {
             error = message(for: e.code)
             if e.code != "http_0" { self.found = nil }
         } catch {
-            self.error = "Нет связи с сервером"
+            self.error = String(localized: "No connection to the server")
         }
     }
 
     private func message(for code: String) -> String {
         switch code {
-        case "provision_not_found": return "Код не найден. Проверьте, что он введён полностью."
-        case "provision_expired": return "Код истёк. Попросите показать новый."
-        case "provision_claimed": return "Этот код уже использован."
-        default: return "Ошибка: \(code)"
+        case "provision_not_found": return String(localized: "Code not found. Check that it is entered in full.")
+        case "provision_expired": return String(localized: "The code has expired. Ask for a new one.")
+        case "provision_claimed": return String(localized: "This code has already been used.")
+        default: return String(localized: "Error: \(code)")
         }
     }
 }

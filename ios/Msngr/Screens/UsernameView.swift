@@ -15,7 +15,7 @@ struct UsernameView: View {
     var body: some View {
         Form {
             Section {
-                TextField("Юзернейм", text: $username)
+                TextField("Username", text: $username)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .accessibilityIdentifier("username.field")
@@ -25,7 +25,7 @@ struct UsernameView: View {
                 } else if let hint = AccountValidator.usernameHint(username) {
                     Text(hint)
                 } else {
-                    Text("По этому имени вас находят в поиске. Старое имя освободится сразу.")
+                    Text("This is the name people find you by in search. The old name frees up at once.")
                 }
             }
 
@@ -33,7 +33,7 @@ struct UsernameView: View {
                 Button {
                     Task { await save() }
                 } label: {
-                    if busy { ProgressView() } else { Text("Сохранить") }
+                    if busy { ProgressView() } else { Text("Save") }
                 }
                 .buttonStyle(.primaryAction)
                 .disabled(busy || !canSave)
@@ -42,7 +42,7 @@ struct UsernameView: View {
                 .listRowBackground(Color.clear)
             }
         }
-        .navigationTitle("Юзернейм")
+        .navigationTitle("Username")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { if username.isEmpty { username = app.session?.username ?? "" } }
         .onChange(of: username) { _, _ in error = nil }
@@ -68,9 +68,11 @@ struct UsernameView: View {
             }
             dismiss()
         } catch let e as APIError {
-            error = e.code == "username_taken" ? "Юзернейм занят" : "Не удалось сменить юзернейм"
+            error = e.code == "username_taken"
+                ? String(localized: "Username is taken")
+                : String(localized: "Could not change the username")
         } catch {
-            self.error = "Нет связи с сервером"
+            self.error = String(localized: "No connection to the server")
         }
     }
 }

@@ -1,6 +1,39 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "%.1f MB": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%.1f МБ"
+          }
+        }
+      }
+    },
+    "%.2f GB": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%.2f ГБ"
+          }
+        }
+      }
+    },
+    "%lld KB": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld КБ"
+          }
+        }
+      }
+    },
     "%lld chats": {
       "extractionState": "manual",
       "localizations": {
@@ -8,6 +41,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "%lld чатов"
+          }
+        }
+      }
+    },
+    "0 KB": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "0 КБ"
           }
         }
       }
@@ -34,12 +78,100 @@
         }
       }
     },
+    "Active devices": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Активные устройства"
+          }
+        }
+      }
+    },
+    "Add device": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавить устройство"
+          }
+        }
+      }
+    },
+    "Added %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавлено %@"
+          }
+        }
+      }
+    },
+    "Added recently": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавлено недавно"
+          }
+        }
+      }
+    },
+    "Added today at %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавлено сегодня в %@"
+          }
+        }
+      }
+    },
     "Already have an account — log in by code": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
             "value": "Уже есть аккаунт — войти по коду"
+          }
+        }
+      }
+    },
+    "Appearance": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Оформление"
+          }
+        }
+      }
+    },
+    "Bio": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "О себе"
+          }
+        }
+      }
+    },
+    "Blocked users": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Заблокированные"
           }
         }
       }
@@ -76,6 +208,72 @@
         }
       }
     },
+    "Check the connection and pull to refresh.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверьте соединение и потяните, чтобы обновить."
+          }
+        }
+      }
+    },
+    "Choose a passcode": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Придумайте код-пароль"
+          }
+        }
+      }
+    },
+    "Clear media cache": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Очистить кэш медиа"
+          }
+        }
+      }
+    },
+    "Code": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Код"
+          }
+        }
+      }
+    },
+    "Code not found. Check that it is entered in full.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Код не найден. Проверьте, что он введён полностью."
+          }
+        }
+      }
+    },
+    "Confirm": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Подтвердить"
+          }
+        }
+      }
+    },
     "Contacts: %lld": {
       "extractionState": "manual",
       "localizations": {
@@ -83,6 +281,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Контакты: %lld"
+          }
+        }
+      }
+    },
+    "Could not change the username": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось сменить юзернейм"
           }
         }
       }
@@ -147,6 +356,50 @@
         }
       }
     },
+    "Data": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Данные"
+          }
+        }
+      }
+    },
+    "device": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "устройство"
+          }
+        }
+      }
+    },
+    "Device added": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Устройство добавлено"
+          }
+        }
+      }
+    },
+    "Devices": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Устройства"
+          }
+        }
+      }
+    },
     "Done": {
       "extractionState": "manual",
       "localizations": {
@@ -175,6 +428,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Сквозное шифрование. Ключи создаются на этом устройстве."
+          }
+        }
+      }
+    },
+    "Error: %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ошибка: %@"
           }
         }
       }
@@ -233,6 +497,28 @@
         }
       }
     },
+    "It will appear in the device list. Access can be revoked there too.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Оно появится в списке устройств. Отозвать доступ можно там же."
+          }
+        }
+      }
+    },
+    "List unavailable": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Список недоступен"
+          }
+        }
+      }
+    },
     "Log in": {
       "localizations": {
         "ru": {
@@ -263,6 +549,61 @@
         }
       }
     },
+    "Log out": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выйти"
+          }
+        }
+      }
+    },
+    "Log out of the account?": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выйти из аккаунта?"
+          }
+        }
+      }
+    },
+    "Log out on this device?": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выйти на этом устройстве?"
+          }
+        }
+      }
+    },
+    "Messages and keys on this device will be deleted.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Переписка и ключи с этого устройства будут удалены."
+          }
+        }
+      }
+    },
+    "Messages and keys on this device will be deleted. They cannot be recovered.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Переписка и ключи с этого устройства будут удалены. Восстановить их нельзя."
+          }
+        }
+      }
+    },
     "Name": {
       "localizations": {
         "ru": {
@@ -273,12 +614,34 @@
         }
       }
     },
+    "Name cannot be empty": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Имя не может быть пустым"
+          }
+        }
+      }
+    },
     "Name — at most %lld characters": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
             "value": "Имя — не длиннее %lld символов"
+          }
+        }
+      }
+    },
+    "New device": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Новое устройство"
           }
         }
       }
@@ -294,6 +657,17 @@
         }
       }
     },
+    "Next": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Далее"
+          }
+        }
+      }
+    },
     "No connection to the server": {
       "localizations": {
         "ru": {
@@ -304,12 +678,56 @@
         }
       }
     },
+    "Notifications": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Уведомления"
+          }
+        }
+      }
+    },
     "On a device already logged in, open:\nSettings → Devices → Add device\nand enter this code there.": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
             "value": "Откройте на устройстве, где уже вошли:\nНастройки → Устройства → Добавить устройство\nи введите этот код."
+          }
+        }
+      }
+    },
+    "On the new device open “Log in by code” and enter the code it shows here.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "На новом устройстве откройте «Войти по коду» и введите показанный там код сюда."
+          }
+        }
+      }
+    },
+    "Other devices you log in on will appear here.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Здесь появятся другие устройства, на которых вы войдёте в аккаунт."
+          }
+        }
+      }
+    },
+    "Passcode": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Код-пароль"
           }
         }
       }
@@ -325,6 +743,50 @@
         }
       }
     },
+    "Repeat the passcode": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Повторите код-пароль"
+          }
+        }
+      }
+    },
+    "Revoke": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отозвать"
+          }
+        }
+      }
+    },
+    "Revoke “%@”?": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отозвать «%@»?"
+          }
+        }
+      }
+    },
+    "Revoking disconnects a device from the account: its connection closes and pushes stop.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отзыв отключает устройство от аккаунта: сокет закрывается, пуши перестают приходить."
+          }
+        }
+      }
+    },
     "Save": {
       "extractionState": "manual",
       "localizations": {
@@ -332,6 +794,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Сохранить"
+          }
+        }
+      }
+    },
+    "Security": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Безопасность"
           }
         }
       }
@@ -346,12 +819,67 @@
         }
       }
     },
+    "Settings": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Настройки"
+          }
+        }
+      }
+    },
+    "Show message text": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показывать текст сообщений"
+          }
+        }
+      }
+    },
     "The account keys did not match. Start over.": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
             "value": "Ключи аккаунта не совпали. Начните заново."
+          }
+        }
+      }
+    },
+    "The banner keeps the sender's name and avatar; the text is hidden.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В баннере остаются имя и аватар отправителя, текст скрыт."
+          }
+        }
+      }
+    },
+    "The banner shows the sender's name and the text.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В баннере видны имя отправителя и текст."
+          }
+        }
+      }
+    },
+    "The code has expired. Ask for a new one.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Код истёк. Попросите показать новый."
           }
         }
       }
@@ -376,12 +904,78 @@
         }
       }
     },
+    "The device gets access to the account and can read and send new messages. Old history does not move to it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Устройство получит доступ к аккаунту и сможет читать и отправлять новые сообщения. Старая переписка на него не переносится."
+          }
+        }
+      }
+    },
     "The history does not move to this device: older messages stay only where you read them.": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
             "value": "История переписки на это устройство не переносится: старые сообщения останутся только там, где вы их читали."
+          }
+        }
+      }
+    },
+    "There is no password: a new device can only join the account from here. As long as one device is at hand, access is not lost.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пароля нет: попасть в аккаунт с нового устройства можно только отсюда. Пока хотя бы одно устройство на руках, доступ не потерян."
+          }
+        }
+      }
+    },
+    "This code has already been used.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Этот код уже использован."
+          }
+        }
+      }
+    },
+    "This device": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Это устройство"
+          }
+        }
+      }
+    },
+    "This device's access to the account is revoked; messages and keys are deleted.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Доступ этого устройства к аккаунту отзывается, переписка и ключи удаляются."
+          }
+        }
+      }
+    },
+    "This is the name people find you by in search. The old name frees up at once.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "По этому имени вас находят в поиске. Старое имя освободится сразу."
           }
         }
       }
@@ -396,6 +990,28 @@
         }
       }
     },
+    "Unblock": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разблокировать"
+          }
+        }
+      }
+    },
+    "Unknown device": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Неизвестное устройство"
+          }
+        }
+      }
+    },
     "Unread": {
       "extractionState": "manual",
       "localizations": {
@@ -403,6 +1019,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Непрочитанные"
+          }
+        }
+      }
+    },
+    "Username": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Юзернейм"
           }
         }
       }
