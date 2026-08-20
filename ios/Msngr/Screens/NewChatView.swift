@@ -17,6 +17,14 @@ struct NewChatView: View {
     @State private var groupMode = false
     @State private var groupTitle = ""
     @State private var selected: Set<String> = []
+    /// The search in flight. A keystroke cancels it: without that every letter
+    /// left its own request running, the answers came back in whatever order
+    /// and an older one could overwrite the results of the newest query.
+    @State private var searchTask: Task<Void, Never>?
+    /// The query the results on screen answer. «Нет результатов» is said about
+    /// this one only — while a newer query is still on its way the screen has
+    /// nothing to report yet.
+    @State private var answered = ""
 
     struct ContactMatch: Identifiable {
         let id: String       // userId
@@ -57,7 +65,9 @@ struct NewChatView: View {
             }
             .overlay {
                 if !groupMode && results.isEmpty && contacts.isEmpty {
-                    if query.count >= 2 {
+                    if query.count >= 2, answered != query {
+                        ProgressView()
+                    } else if query.count >= 2 {
                         ContentUnavailableView.search(text: query)
                     } else {
                         ContentUnavailableView {
@@ -82,9 +92,21 @@ struct NewChatView: View {
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .onChange(of: query) { _, q in
-                Task {
-                    guard q.count >= 2 else { results = []; return }
-                    results = (try? await app.api.searchUsers(q)) ?? []
+                searchTask?.cancel()
+                guard q.count >= 2 else {
+                    results = []
+                    answered = q
+                    return
+                }
+                searchTask = Task {
+                    // typing is faster than a round trip: the request goes out
+                    // once the letters stop, not once per letter
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                    guard !Task.isCancelled else { return }
+                    let found = (try? await app.api.searchUsers(q)) ?? []
+                    guard !Task.isCancelled else { return }
+                    results = found
+                    answered = q
                 }
             }
             .navigationTitle(groupMode ? "Новая группа" : "Новый чат")

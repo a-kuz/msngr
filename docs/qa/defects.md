@@ -178,6 +178,23 @@ the far right of a row — opens the chat. The rows of settings, folders and cha
 info go through List buttons and NavigationLinks, which already answer across
 the row; the search results already stated the shape.
 
+### A tap on a found user in «Новый чат» hangs the screen
+Reported 2026-08-20 by the pin run, reproducing on both of its clients against
+its own stand, alongside a count of repeated `GET /api/users` in that stand's
+log. Not reproduced here on 2026-08-20: on the shared stand, with five chats in
+the list, both paths — the chat list's global search and the «Новый чат» sheet —
+opened the chat in about two seconds, and the screen answered taps throughout
+(`runs/2026-08-20-nav-bar/` holds the frames of the row-tap check). So the hang
+needs the state pin has: the number of chats it holds, or a stand under its own
+load.
+
+What was found and fixed along the way is what makes such a state likely: the
+sheet's search fired a request per keystroke, cancelling nothing, so nine
+letters meant nine searches whose answers could arrive out of order and an older
+one could overwrite the newest results. The search now waits out the typing and
+cancels the request in flight, and while a newer query is unanswered the screen
+no longer claims «Нет результатов» about it.
+
 ### The block button on a request has no contrast in the dark appearance
 Seen in passing on 2026-08-20 while reproducing the row hit areas: on the
 request screen «Заблокировать» is a `.bordered` button with a destructive role,
