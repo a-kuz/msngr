@@ -20,6 +20,7 @@ let package = Package(
                 .product(name: "GRDB", package: "GRDB.swift"),
             ]
         ),
+        .executableTarget(name: "msngrfixture", dependencies: ["MsngrCore"]),
         .testTarget(name: "MsngrCryptoTests", dependencies: ["MsngrCrypto"]),
         .testTarget(name: "MsngrCoreTests", dependencies: ["MsngrCore"]),
     ]

@@ -107,9 +107,41 @@ own user, and the fixtures they need are on the stand, not on the device.
 - "Offline" in the scenarios means a killed `wrangler dev`, not a disabled
   network.
 
+## Service accounts
+
+Three accounts live on the shared stand — `alfa`, `bravo`, `charlie` — with the
+three direct chats between them and three groups (`Design`, `Standup`,
+`Random`), each holding history. A scenario starts inside the product instead of
+starting at registration:
+
+```bash
+scripts/fixture.py install alfa <udid> --launch   # that simulator is now alfa
+scripts/fixture.py grant <udid>                   # permissions only
+scripts/fixture.py pull alfa <udid>               # take the moved-on state back
+scripts/fixture.py show
+```
+
+A home is what the app keeps in its container (`msngr.sqlite`, `.masterkey`,
+`session.json`) under `.claude/fixtures/<name>/`, so installing one is a file
+copy. `install` also pre-grants everything the first run asks for: the privacy
+services `simctl` knows, and the notification authorisation it does not — that
+one is a section written into BulletinBoard's store, adopted by killing
+`usernotificationsd` and applied by rebooting the device, which is why the
+command takes about a minute and why no permission alert appears afterwards.
+
+The keys of a device belong to one device. A home handed to two simulators at
+once has each of them stepping the ratchet on its own, and the one that writes
+second sends a message the other cannot open — so one simulator at a time, and
+`pull` before the next hand-out. `scripts/fixture.py seed` builds the trio
+(`--reset` starts a new one); the seeding itself is `msngrfixture` in MsngrKit,
+which registers through the real core, so the history is genuinely end-to-end
+encrypted and readable on every side.
+
 ## Simulators
 
 A simulator is an exclusive resource: at any moment it belongs to one agent.
+The host takes four at once; the fifth is what makes the run stutter (the
+owner's word, 2026-08-20).
 
 A simulator reads speed in one direction only. It does not emulate a phone: the
 same arm64 code runs natively on the host, over the host's memory and its NVMe,
