@@ -133,8 +133,8 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ an empty chat: «Напишите первое сообщение» and the encryption note (palettes/chat-empty-hint)
   - ✅ the subtitle: «подключение…», «печатает…», «в сети», «был(а)…», «N участников»
     (header-run, two devices)
-  - 🟡 tapping the pinned message scrolls to it (in the window: header-run; older
-    than the window waits for run-feedwindow)
+  - ✅ tapping the pinned message scrolls to it, including a message a thousand
+    behind the newest (pin-depth-run)
   - ⬜ several pinned messages at once: the bar counts them, tapping walks
     through them, and a list opens all of them
   - ⬜ a jump to a date: the calendar over the history and the feed landing on
@@ -176,6 +176,10 @@ A ✅ goes in only together with a link to the evidence.
   - ⬜ @all in a group, and who is allowed to use it
 - Photo
   - ✅ sending, downscale to 1280 + JPEG 0.8, a preview in the feed (media-run, case 21)
+  - ✅ the bubble is in the feed the moment of the confirm tap — placeholder in
+    its frame first, tiles resolving as preparation finishes, the outbox waiting
+    for the file, no rollback on any path (media-appears-on-send run: ~2 s to
+    the bubble for a 5-photo album and for a video)
   - ✅ a blurhash placeholder until the download finishes: a cold cache on the
     receiver shows blurred tiles and the sharp ones arrive 0.4 s later than in
     the same run with a warm cache (media-close-out; BlurHashTests units)
@@ -269,7 +273,9 @@ A ✅ goes in only together with a link to the evidence.
   - 🟡 media: the source in a permanent folder, uploaded by the worker (partly covered by offline-run 2–3)
 - The connection
   - ✅ reconnect with backoff and a ceiling of 12 s (ReconnectBackoffTests units)
-  - 🟡 an immediate reconnect when the network returns and from the foreground (in the run before the fix it waited 1–2 min, after the fix it was not re-checked)
+  - ✅ an immediate reconnect when the network returns and from the foreground
+    (devices-version run: 8 proxy kills, both apps re-upgraded and delivered
+    9/9 right after each return)
   - 🟡 detecting a dead socket by a pong timeout (not verified live)
   - ✅ catch-up in portions by the client's cursor: one portion per frame, and
     between portions the object answers live traffic (smoke `catch-up goes in portions`,
@@ -335,7 +341,8 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ items: reply, copy, select text, forward, select, pin, edit, delete (qa/runs/2026-08-15-multiselect, 01)
   - ✅ the «у меня» / «у всех» choice as a confirmation when deleting (qa/runs/2026-08-15-multiselect, 03–04)
   - ✅ forwarding from the menu opens the chat picker (qa/runs/2026-08-15-multiselect, 09–10)
-  - 🟡 pinning a message from the menu (not verified live)
+  - ✅ pinning a message from the menu, applied to both members within a second
+    (pin-depth-run)
 - Multi-select
   - ✅ entering through the «Выбрать» item, leaving by the cross (qa/runs/2026-08-15-multiselect, 02)
   - ✅ checkboxes next to the bubbles, the selected counter and the action bar (qa/runs/2026-08-15-multiselect, 02)
