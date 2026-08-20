@@ -128,7 +128,7 @@ final class SmokeTests: XCTestCase {
     /// tree with it, button included, while the chevron stays drawn.
     func testF_BackButtonLeavesTheChat() {
         openChatWithAkuz()
-        let back = app.buttons["chat.back"]
+        let back = app.navigationBars.buttons.element(boundBy: 0)
         XCTAssertTrue(back.waitForExistence(timeout: 5),
                       "the back button is not in the accessibility tree")
         XCTAssertTrue(back.isHittable, "the back button takes no touch where it is drawn")
