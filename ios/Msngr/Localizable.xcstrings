@@ -67,6 +67,39 @@
         }
       }
     },
+    "24 hours": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "24 часа"
+          }
+        }
+      }
+    },
+    "7 days": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "7 дней"
+          }
+        }
+      }
+    },
+    "90 days": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "90 дней"
+          }
+        }
+      }
+    },
     "A folder collects chats by a rule — people, groups, unread — and keeps whatever you add by hand.": {
       "extractionState": "manual",
       "localizations": {
@@ -89,6 +122,17 @@
         }
       }
     },
+    "Add": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавить"
+          }
+        }
+      }
+    },
     "Add device": {
       "extractionState": "manual",
       "localizations": {
@@ -96,6 +140,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Добавить устройство"
+          }
+        }
+      }
+    },
+    "Add member": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавить участника"
           }
         }
       }
@@ -133,6 +188,39 @@
         }
       }
     },
+    "admin": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "админ"
+          }
+        }
+      }
+    },
+    "Admins only": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Только администраторы"
+          }
+        }
+      }
+    },
+    "All members": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Все участники"
+          }
+        }
+      }
+    },
     "Already have an account — log in by code": {
       "localizations": {
         "ru": {
@@ -154,6 +242,28 @@
         }
       }
     },
+    "Attachments": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вложения"
+          }
+        }
+      }
+    },
+    "Auto-delete": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Автоудаление"
+          }
+        }
+      }
+    },
     "Bio": {
       "extractionState": "manual",
       "localizations": {
@@ -161,6 +271,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "О себе"
+          }
+        }
+      }
+    },
+    "Block": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Заблокировать"
+          }
+        }
+      }
+    },
+    "Block %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Заблокировать %@"
           }
         }
       }
@@ -230,6 +362,39 @@
         }
       }
     },
+    "Clear": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Очистить"
+          }
+        }
+      }
+    },
+    "Clear history": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Очистить историю"
+          }
+        }
+      }
+    },
+    "Clear history?": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Очистить историю?"
+          }
+        }
+      }
+    },
     "Clear media cache": {
       "extractionState": "manual",
       "localizations": {
@@ -281,6 +446,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Контакты: %lld"
+          }
+        }
+      }
+    },
+    "Copied!": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Скопировано!"
           }
         }
       }
@@ -363,6 +539,50 @@
           "stringUnit": {
             "state": "translated",
             "value": "Данные"
+          }
+        }
+      }
+    },
+    "Delete": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить"
+          }
+        }
+      }
+    },
+    "Delete chat": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить чат"
+          }
+        }
+      }
+    },
+    "Delete chat?": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить чат?"
+          }
+        }
+      }
+    },
+    "Description": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Описание"
           }
         }
       }
@@ -476,6 +696,28 @@
         }
       }
     },
+    "Group": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Группа"
+          }
+        }
+      }
+    },
+    "Group name": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Название группы"
+          }
+        }
+      }
+    },
     "Groups": {
       "extractionState": "manual",
       "localizations": {
@@ -497,6 +739,17 @@
         }
       }
     },
+    "Invite link": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ссылка-приглашение"
+          }
+        }
+      }
+    },
     "It will appear in the device list. Access can be revoked there too.": {
       "extractionState": "manual",
       "localizations": {
@@ -504,6 +757,39 @@
           "stringUnit": {
             "state": "translated",
             "value": "Оно появится в списке устройств. Отозвать доступ можно там же."
+          }
+        }
+      }
+    },
+    "Leave": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Покинуть"
+          }
+        }
+      }
+    },
+    "Leave group": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Покинуть группу"
+          }
+        }
+      }
+    },
+    "Leave group?": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Покинуть группу?"
           }
         }
       }
@@ -582,6 +868,39 @@
         }
       }
     },
+    "Make admin": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сделать админом"
+          }
+        }
+      }
+    },
+    "Member rights": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Права участников"
+          }
+        }
+      }
+    },
+    "Members": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Участники"
+          }
+        }
+      }
+    },
     "Messages and keys on this device will be deleted.": {
       "extractionState": "manual",
       "localizations": {
@@ -600,6 +919,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Переписка и ключи с этого устройства будут удалены. Восстановить их нельзя."
+          }
+        }
+      }
+    },
+    "Mute": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Без звука"
           }
         }
       }
@@ -689,6 +1019,17 @@
         }
       }
     },
+    "Off": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выкл"
+          }
+        }
+      }
+    },
     "On a device already logged in, open:\nSettings → Devices → Add device\nand enter this code there.": {
       "localizations": {
         "ru": {
@@ -743,6 +1084,28 @@
         }
       }
     },
+    "Profile": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Профиль"
+          }
+        }
+      }
+    },
+    "Remove": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить"
+          }
+        }
+      }
+    },
     "Repeat the passcode": {
       "extractionState": "manual",
       "localizations": {
@@ -761,6 +1124,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Отозвать"
+          }
+        }
+      }
+    },
+    "Revoke admin": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Снять админа"
           }
         }
       }
@@ -787,6 +1161,17 @@
         }
       }
     },
+    "Safety number": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Код безопасности"
+          }
+        }
+      }
+    },
     "Save": {
       "extractionState": "manual",
       "localizations": {
@@ -798,6 +1183,28 @@
         }
       }
     },
+    "Save description": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сохранить описание"
+          }
+        }
+      }
+    },
+    "Save name": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сохранить название"
+          }
+        }
+      }
+    },
     "Security": {
       "extractionState": "manual",
       "localizations": {
@@ -805,6 +1212,50 @@
           "stringUnit": {
             "state": "translated",
             "value": "Безопасность"
+          }
+        }
+      }
+    },
+    "Send %lld messages": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отправить %lld сообщений"
+          }
+        }
+      }
+    },
+    "Send albums 2/3/5/10": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отправить альбомы 2/3/5/10"
+          }
+        }
+      }
+    },
+    "Send attachments ×%lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отправить вложения ×%lld"
+          }
+        }
+      }
+    },
+    "Sent %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отправлено %lld"
           }
         }
       }
@@ -841,6 +1292,17 @@
         }
       }
     },
+    "Test data": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Тестовые данные"
+          }
+        }
+      }
+    },
     "The account keys did not match. Start over.": {
       "localizations": {
         "ru": {
@@ -869,6 +1331,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "В баннере видны имя отправителя и текст."
+          }
+        }
+      }
+    },
+    "The chat and its messages will be deleted from this device. The other person keeps the conversation. If they write again, the chat comes back.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Чат и его сообщения удалятся с этого устройства. У собеседника переписка останется. Если он напишет снова, чат появится заново."
           }
         }
       }
@@ -932,6 +1405,50 @@
           "stringUnit": {
             "state": "translated",
             "value": "Пароля нет: попасть в аккаунт с нового устройства можно только отсюда. Пока хотя бы одно устройство на руках, доступ не потерян."
+          }
+        }
+      }
+    },
+    "They will be able to message you again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Собеседник снова сможет писать вам."
+          }
+        }
+      }
+    },
+    "They will not be able to message you, and their messages will not be delivered.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Собеседник не сможет писать вам, а его сообщения не будут доставляться."
+          }
+        }
+      }
+    },
+    "This chat's messages will be deleted from this device. The other members keep them.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сообщения этого чата удалятся с этого устройства. У остальных участников они останутся."
+          }
+        }
+      }
+    },
+    "This chat's messages will be deleted from this device. The other person keeps them.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сообщения этого чата удалятся с этого устройства. У собеседника они останутся."
           }
         }
       }
@@ -1084,6 +1601,17 @@
         }
       }
     },
+    "What this group is about": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "О чём эта группа"
+          }
+        }
+      }
+    },
     "What's included automatically": {
       "extractionState": "manual",
       "localizations": {
@@ -1091,6 +1619,50 @@
           "stringUnit": {
             "state": "translated",
             "value": "Что входит автоматически"
+          }
+        }
+      }
+    },
+    "Who can invite": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кто может приглашать"
+          }
+        }
+      }
+    },
+    "Who can write": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кто может писать"
+          }
+        }
+      }
+    },
+    "You will leave the group, and its messages will be deleted from this device.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вы выйдете из группы, её сообщения удалятся с этого устройства."
+          }
+        }
+      }
+    },
+    "Your name is what people see in the chat list and the conversation header.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Имя видят собеседники в списке чатов и в шапке переписки."
           }
         }
       }
