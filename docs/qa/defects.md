@@ -169,6 +169,23 @@ and reproduced live on 2026-08-20: in the request rows of the chat list a tap at
 (100, 291) on the name itself opened the chat. So the hit area is the label, not
 the row.
 
+Cause and fix: `ChatRow` carries the navigation in a `NavigationLink` whose
+label is an `EmptyView` at `opacity(0)`, so nothing in the row was hit-testable
+except the content's own letters and avatar; the same in `NewChatView`'s rows,
+where `buttonStyle(.plain)` takes away the cell behaviour a List button would
+have had. Both now state `contentShape(Rectangle())`, and a tap at (300, 305) —
+the far right of a row — opens the chat. The rows of settings, folders and chat
+info go through List buttons and NavigationLinks, which already answer across
+the row; the search results already stated the shape.
+
+### The block button on a request has no contrast in the dark appearance
+Seen in passing on 2026-08-20 while reproducing the row hit areas: on the
+request screen «Заблокировать» is a `.bordered` button with a destructive role,
+but the app's accent tint paints it, so on the dark ground it reads as orange
+letters on dark brown. A destructive action normally carries its own colour
+rather than the accent; part of the dark-appearance pass, and a taste call for
+the owner if the accent is meant to stay.
+
 ### The in-app banner does not react to a tap
 Reported 2026-08-19 from the device. Tapping the in-app notification banner does
 nothing; it has to open the chat it announces. The tap-opens-chat path exists and
