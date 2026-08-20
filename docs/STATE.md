@@ -6,13 +6,25 @@ work in it looks like clutter.
 
 Delete an entry when its branch is merged and gone.
 
-One slot is open by the owner's word and taken: `feedextras` on
-**run-feedextras** — sticky date separators and sender avatars in the feed. The
-dispatcher itself runs the localization pass on main between ticks, screen by
-screen. `.claude/agents.tsv` holds only live work, so `scripts/agents.py` is the
-picture of the site.
+One slot is open by the owner's word and taken: `reactions` on
+**run-reactions** — the who-reacted list, forwarding that keeps the quote and
+the reactions, edit history, and the unwatched 🟡 claims of that ROADMAP
+block. The dispatcher itself runs the localization pass on main between ticks,
+screen by screen: the onboarding screens and the settings cluster (Settings,
+Sessions, Username, AddDevice) are in English with ru in the catalog, UI tests
+look elements up by identifier. `.claude/agents.tsv` holds only live work, so
+`scripts/agents.py` is the picture of the site.
 
 ## Merged on 2026-08-21
+
+run-feedextras (`9d233b2`): group feeds show sender avatars — the column is
+reserved in the layout plan, the picture rides the last message of a run — and
+the current day floats as a sticky capsule under the header while the reader
+scrolls, yielding to the real separator at the boundary. The run's pixel diff
+holds the anchor rule: an incoming message while reading history moved nothing
+but the unread badge (`docs/qa/runs/2026-08-21-feedextras-run.md`). A defect
+the run found — a doubled «Сегодня» capsule during the 0.3 s handoff fade —
+was fixed in the branch.
 
 run-devices (`34fbf01`): the set of a user's devices carries
 `users.devices_version`, the `devices` frame names it, the sync answer confirms
