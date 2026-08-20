@@ -21,8 +21,10 @@ export interface Env {
 // --- WS frames: client -> server ---
 export type ClientFrame =
   // sync: full cursor map of everything the client knows; chats missing from it
-  // are new to the client and get their state replayed
-  | { t: "sync"; cursors: Record<string, number> }
+  // are new to the client and get their state replayed. deviceVersions is the
+  // client's device cache — userId to the devices_version it holds — answered
+  // with a deviceVersions frame so entries still current survive the reconnect
+  | { t: "sync"; cursors: Record<string, number>; deviceVersions?: Record<string, number> }
   // catchup: next portion for the chats that are still behind
   | { t: "catchup"; cursors: Record<string, number> }
   | { t: "send"; chatId: string; clientMsgId: string; sentAt: number; body: unknown; service?: boolean }
@@ -54,10 +56,15 @@ export type ServerFrame =
   /// someone's card changed: name, bio, avatar or username. The profile is
   /// public, so the frame carries the whole row rather than a hint to refetch
   | { t: "profile"; user: PublicUser }
-  /// a user's device set changed: a device was linked or revoked. A sender
-  /// drops its cached device list and re-reads /api/devices before the next
-  /// envelope, so it carries only the userId
-  | { t: "devices"; userId: string }
+  /// a user's device set changed: a device was linked or revoked. version is
+  /// the user's devices_version after the change: a sender holding an older
+  /// one drops its cached device list and re-reads /api/devices
+  | { t: "devices"; userId: string; version: number }
+  /// answer to the deviceVersions map of a sync frame: the current
+  /// devices_version of every asked user the server knows. An entry the
+  /// client holds at the same version is still current; anything else,
+  /// including a user missing from the answer, is stale
+  | { t: "deviceVersions"; versions: Record<string, number> }
   /// state is absent only for event "removed": the addressee is no longer a
   /// member, so the roster is not handed to them
   | { t: "chat"; chatId: string; event: string; state?: ChatState }
