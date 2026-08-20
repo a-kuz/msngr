@@ -26,6 +26,15 @@ with a direct `POST /api/chats` call (the same one `DirectChat.open` makes)
 and let each client's own snapshot/WS pick it up; both apps opened and used
 the resulting chat normally once it existed.
 
+Closed the same evening: this is the row hit area, not the Task. The row of
+`NewChatView` carried no shape of its own, so only its letters and avatar
+answered a touch — a tap aimed at the centre of the row's frame landed in the
+gap beside the name and did nothing, which is exactly what the run saw. The pin
+run was built from main as of the night before and did not have `324c4d2`, where
+the row states `contentShape(Rectangle())`. Verified on the shared stand with a
+build that has it: a peer registered a minute earlier, no chat between us,
+searched in «Новый чат», one tap on the row — the chat opened.
+
 ### Sends to pre-binding accounts hang, and block everything behind them
 Reported 2026-08-19 from the device, after a rebuild: «не отправляются
 сообщения». The stand and the tunnel were healthy (probe-send.mjs green through
