@@ -94,7 +94,10 @@ struct ChatScreen: View {
             if !searching { headerFade }
         }
         .navigationBarTitleDisplayMode(.inline)
-        .navigationBarBackButtonHidden(true)
+        // the back button stays the system one. A leading item of our own in its
+        // place left the list's bar in the pushed state on the way back — no
+        // large title, both its glyphs washed out until the list was scrolled
+        // (docs/qa/runs/2026-08-20-nav-bar/)
         // the search field lives in the screen itself: focus does not reach a text
         // field hosted by the navigation bar, and the keyboard has to come up with it
         .toolbar(searching ? .hidden : .visible, for: .navigationBar)
@@ -114,22 +117,6 @@ struct ChatScreen: View {
                         .accessibilityIdentifier("chat.selection.count")
                 }
             } else if !searching {
-                // own button instead of the system one, only so that the tests and the
-                // scenarios have an identifier to aim at; it is drawn to match the back
-                // button every other screen gets from the system
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button { dismiss() } label: {
-                        Image(systemName: "chevron.backward")
-                            // the size of the other bar button: the chevron leads
-                            // the header by position, not by being twice as big
-                            .font(Theme.glyph(17, max: 19).weight(.medium))
-                            .foregroundStyle(.primary)
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .accessibilityLabel("Назад")
-                    .accessibilityIdentifier("chat.back")
-                }
                 ToolbarItem(placement: .principal) { header }
                 if !model.contentHidden {
                     ToolbarItem(placement: .navigationBarTrailing) {

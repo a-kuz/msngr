@@ -299,7 +299,7 @@ final class VoiceTests: XCTestCase {
         micCenter().press(forDuration: 1.0,
                           thenDragTo: micCenter().withOffset(CGVector(dx: 0, dy: -110)))
         XCTAssertTrue(recordingBar.waitForExistence(timeout: 3), "the recording never locked")
-        app.buttons["chat.back"].tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap() // the system back button
         XCTAssertTrue(chatList.waitForExistence(timeout: 10), "never got back to the list")
         openPeerChat()
         XCTAssertFalse(recordingBar.waitForExistence(timeout: 3),
@@ -386,7 +386,7 @@ final class VoiceTests: XCTestCase {
         let left = progress(above: 0)
         XCTAssertGreaterThan(left, 0, "playback never started")
 
-        app.buttons["chat.back"].tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap() // the system back button
         XCTAssertTrue(chatList.waitForExistence(timeout: 10), "never got back to the list")
         Thread.sleep(forTimeInterval: 2)
         openPeerChat()
@@ -446,7 +446,7 @@ final class VoiceTests: XCTestCase {
         // the walk begins with the whole take ahead of it, or a message that simply ended
         // reads the same as one that was cut off
         rewind()
-        app.buttons["chat.back"].tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap() // the system back button
         XCTAssertTrue(chatList.waitForExistence(timeout: 10), "never got back to the list")
         Thread.sleep(forTimeInterval: 1.5)
         openPeerChat()
