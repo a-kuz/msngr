@@ -129,11 +129,28 @@ of it, so everything after types before the first. Points at the composer's
 text binding rewriting the field's text and resetting the selection while the
 first keystroke is still being composed.
 
-### The chat list title vanishes in the dark theme
-Reported 2026-08-19 from the device, with a screenshot. In the dark theme the
-area above the folder tabs is blank — the list's large title is drawn in a colour
-that disappears on the dark background. Sweep the dark palette for other
-foregrounds that lost contrast with it rather than fixing the one label.
+Cause and fix, 2026-08-20: the composer's programmatic write restored the caret
+by its absolute position. When the binding runs ahead of the view — the first
+character of a field the view still reports as empty — that position is 0, so
+the caret landed in front of the character just typed and «123» came out
+«231». The write now keeps the caret's distance from the end of the text
+instead. `ComposerCaretTests` fails on the old rule (caret 0, order «231», a
+restored draft's caret at its start) and passes on the new one; MsngrTests green
+whole. Not re-run on the owner's device yet.
+
+### The dark theme is missing something
+Reported 2026-08-19 from the device, with a screenshot: «темная тема чего-то не
+хватает». Checked live on a simulator in the dark appearance, 2026-08-20
+(`runs/2026-08-20-dark-theme/`): the large title «Чаты» is white and legible, so
+the reading that it vanishes was wrong. What the dark appearance does lose is
+the empty-screen glyph — the accent at 55 % over a near-black ground turned to
+mud (`list-before.png`) — fixed through a `Theme.decorativeGlyph` role that
+carries a different opacity per appearance (`list-after.png`).
+
+Open beyond that, and a taste call for the owner: the chat list itself is pure
+system black in the dark appearance, while in the light one the palette tints
+every screen (cream for graphite). The dark theme therefore carries none of the
+palette's identity. The other screens still need the same look-over.
 
 ### The in-app banner does not react to a tap
 Reported 2026-08-19 from the device. Tapping the in-app notification banner does
