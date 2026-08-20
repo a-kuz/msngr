@@ -23,6 +23,11 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private let tickView = UIImageView()
     private let statusBackdrop = UIView()
     private var mediaViews: [UIImageView] = []
+    /// One fingerprint per media view (blurhash + mediaId + local paths): a
+    /// message's media is no longer immutable once picked — it fills in from
+    /// a placeholder to a finished upload — so an in-place reconfigure has to
+    /// tell "nothing changed" from "the same slot now points at more".
+    private var mediaSignatures: [String] = []
     private var reactionViews: [ReactionCapsuleView] = []
     private let voiceView = VoiceMessageView()
     private var msg: Message?
@@ -390,26 +395,44 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         applySelectionLayout(animated: false)
     }
 
+    /// A fingerprint of what a media view should be showing: two calls with the
+    /// same signature would load the same picture, so a change here is the
+    /// only thing worth another fetch. A message being sent goes through
+    /// several of these for the same slot — a blank placeholder, a fast
+    /// BlurHash, the finished upload — as `SyncEngine.updateMediaPreview`/
+    /// `finalizeMedia` fill it in.
+    private static func mediaSignature(_ media: MediaInfo) -> String {
+        [media.blurhash ?? "", media.mediaId, media.localPath ?? "",
+         media.thumbMediaId ?? "", media.thumbLocalPath ?? ""].joined(separator: "|")
+    }
+
     private func configureMedia(msg: Message, plan: BubbleLayoutPlan) {
         guard let mediaFrame = plan.mediaFrame else {
             mediaViews.forEach { $0.removeFromSuperview() }
             mediaViews = []
+            mediaSignatures = []
             return
         }
         let rects: [(Int, CGRect)] = plan.albumRects.isEmpty
             ? [(0, mediaFrame)]
             : plan.albumRects.map { ($0.index, $0.frame.offsetBy(dx: mediaFrame.minX, dy: mediaFrame.minY)) }
         let medias: [MediaInfo] = msg.album ?? (msg.media.map { [$0] } ?? [])
+        let signatures = medias.map { Self.mediaSignature($0) }
 
-        // the same message reconfigured in place (a reaction, an ack) keeps its media
-        // views: the images are immutable, and a teardown mid-resize would flash the
-        // blurhash placeholder until the pipeline answers again
+        // the same message reconfigured in place (a reaction, an ack, a step of
+        // sending) keeps its media views — a teardown mid-resize would flash the
+        // blurhash placeholder — but a slot whose signature moved on (the send
+        // pipeline filling it in) still gets its image reloaded
         if configuredMsgId == msg.id, !mediaViews.isEmpty, mediaViews.count == rects.count,
            zip(mediaViews, rects).allSatisfy({ $0.0.tag == $0.1.0 }) {
-            for (iv, (_, rect)) in zip(mediaViews, rects) {
+            for (iv, (index, rect)) in zip(mediaViews, rects) {
                 iv.frame = rect
                 applyMediaCorners(iv, rect: rect, plan: plan)
+                if index < medias.count, index >= mediaSignatures.count || signatures[index] != mediaSignatures[index] {
+                    loadMedia(into: iv, media: medias[index], index: index, rect: rect)
+                }
             }
+            mediaSignatures = signatures
             return
         }
 
@@ -417,6 +440,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         // media views are torn down here and not only in prepareForReuse
         mediaViews.forEach { $0.removeFromSuperview() }
         mediaViews = []
+        mediaSignatures = signatures
 
         for (index, rect) in rects {
             guard index < medias.count else { continue }
@@ -433,44 +457,51 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             iv.addGestureRecognizer(tap)
             bubbleView.addSubview(iv)
             mediaViews.append(iv)
+            loadMedia(into: iv, media: media, index: index, rect: rect)
 
-            // the blurhash placeholder shows at once, the real image replaces it later
-            if let bh = media.blurhash, let px = BlurHash.decodePixels(bh, width: 32, height: 32) {
-                iv.image = UIImage.fromRGBA(px, width: 32, height: 32)
-            }
-            let scale = UIScreen.main.scale
-            let target = CGSize(width: rect.width * scale, height: rect.height * scale)
-            let isVideo = media.type == "video"
-            Task { [weak iv] in
-                guard let mm = AppState.shared.media else { return }
-                let effective: MediaInfo = {
-                    // video preview: the uploaded thumb blob, or the local frame before the upload
-                    if isVideo, media.thumbMediaId != nil || media.thumbLocalPath != nil {
-                        var t = MediaInfo(type: "photo", mediaId: media.thumbMediaId ?? "",
-                                          key: media.thumbKey ?? "", hash: media.thumbHash ?? "",
-                                          size: 0, mime: "image/jpeg")
-                        t.localPath = media.thumbLocalPath
-                        return t
-                    }
-                    return media
-                }()
-                guard let url = try? await mm.fetch(effective) else { return }
-                let cg = await ImagePipeline.shared.image(at: url, targetPixelSize: target)
-                await MainActor.run {
-                    guard let iv, iv.tag == index, let cg else { return }
-                    UIView.transition(with: iv, duration: 0.18, options: .transitionCrossDissolve) {
-                        iv.image = UIImage(cgImage: cg)
-                    }
-                }
-            }
-
-            if isVideo {
+            if media.type == "video" {
                 let play = UIImageView(image: UIImage(systemName: "play.circle.fill"))
                 play.tintColor = .white.withAlphaComponent(0.9)
                 play.frame = CGRect(x: rect.width / 2 - 22, y: rect.height / 2 - 22, width: 44, height: 44)
                 play.autoresizingMask = [.flexibleLeftMargin, .flexibleRightMargin,
                                          .flexibleTopMargin, .flexibleBottomMargin]
                 iv.addSubview(play)
+            }
+        }
+    }
+
+    /// The blurhash placeholder shows at once, the real image replaces it once the
+    /// pipeline can fetch it — from the local file while a send is still in flight,
+    /// from the server once it is uploaded. Safe to call again for the same view: a
+    /// fetch that resolves against a stale tag (the cell moved on to another slot)
+    /// is dropped, and one that resolves against nothing yet to fetch is a no-op.
+    private func loadMedia(into iv: UIImageView, media: MediaInfo, index: Int, rect: CGRect) {
+        if let bh = media.blurhash, let px = BlurHash.decodePixels(bh, width: 32, height: 32) {
+            iv.image = UIImage.fromRGBA(px, width: 32, height: 32)
+        }
+        let scale = UIScreen.main.scale
+        let target = CGSize(width: rect.width * scale, height: rect.height * scale)
+        let isVideo = media.type == "video"
+        Task { [weak iv] in
+            guard let mm = AppState.shared.media else { return }
+            let effective: MediaInfo = {
+                // video preview: the uploaded thumb blob, or the local frame before the upload
+                if isVideo, media.thumbMediaId != nil || media.thumbLocalPath != nil {
+                    var t = MediaInfo(type: "photo", mediaId: media.thumbMediaId ?? "",
+                                      key: media.thumbKey ?? "", hash: media.thumbHash ?? "",
+                                      size: 0, mime: "image/jpeg")
+                    t.localPath = media.thumbLocalPath
+                    return t
+                }
+                return media
+            }()
+            guard let url = try? await mm.fetch(effective) else { return }
+            let cg = await ImagePipeline.shared.image(at: url, targetPixelSize: target)
+            await MainActor.run {
+                guard let iv, iv.tag == index, let cg else { return }
+                UIView.transition(with: iv, duration: 0.18, options: .transitionCrossDissolve) {
+                    iv.image = UIImage(cgImage: cg)
+                }
             }
         }
     }
