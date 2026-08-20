@@ -139,6 +139,8 @@ struct NewChatView: View {
                         .foregroundStyle(selected.contains(id) ? Theme.accent : .secondary)
                 }
             }
+            // the row answers across its whole width, not only on the letters
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }

@@ -371,6 +371,10 @@ struct ChatRow<Content: View>: View {
             NavigationLink(value: chatId) { EmptyView() }.opacity(0)
             content()
         }
+        // the row answers across its whole width: the link carries no label of
+        // its own, and without a shape only the letters and the avatar of the
+        // content are hit-tested — a tap in the gap beside them does nothing
+        .contentShape(Rectangle())
         .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
     }
 }
