@@ -21,6 +21,9 @@ struct BubbleLayoutPlan: Equatable {
     var forwardText: String?
     var authorNameFrame: CGRect?    // the name shown in groups
     var authorName: String?
+    /// the sender's avatar in group chats, in cell coordinates; set only on the
+    /// message that carries the picture (the last of a run)
+    var avatarFrame: CGRect?
     var reactionsFrames: [(emoji: String, count: Int, mine: Bool, frame: CGRect)]
     var reactionsHeight: CGFloat
     var isOutgoing: Bool
@@ -73,6 +76,10 @@ enum BubbleLayout {
     static var attachmentWidth: CGFloat { TypeScale.scaled(220, max: 340) }
     /// Delivery ticks next to the time.
     static var tickWidth: CGFloat { TypeScale.scaled(20, relativeTo: .caption1, max: 34) }
+    /// Sender avatar beside an incoming group bubble.
+    static var avatarSize: CGFloat { TypeScale.scaled(30, max: 42) }
+    /// Horizontal room the avatar column takes: the picture plus its gap.
+    static var avatarSpan: CGFloat { avatarSize + 6 }
 
     /// Plan cache: (msgId|width|version) → plan.
     private static let cache = NSCache<NSString, Box>()
@@ -82,20 +89,22 @@ enum BubbleLayout {
     }
 
     static func cacheKey(_ msg: Message, width: CGFloat, tightGap: Bool, showTail: Bool,
-                         showName: Bool, ownId: String) -> NSString {
+                         showName: Bool, avatarInset: Bool, ownId: String) -> NSString {
         let reactions = msg.reactions.map { "\($0.key)\($0.value.count)\($0.value.contains(ownId) ? "*" : "")" }.sorted().joined()
         let ver = "\(msg.text ?? "")|\(msg.status.rawValue)|\(msg.edited)|\(reactions)|\(msg.deletedForAll)"
-        return "\(msg.id)|\(Int(width))|\(TypeScale.category.rawValue)|\(tightGap)|\(showTail)|\(showName)|\(ver.hashValue)" as NSString
+        return "\(msg.id)|\(Int(width))|\(TypeScale.category.rawValue)|\(tightGap)|\(showTail)|\(showName)|\(avatarInset)|\(ver.hashValue)" as NSString
     }
 
     static func plan(for msg: Message, width: CGFloat, tightGap: Bool, showTail: Bool,
-                     showName: Bool, authorName: String?, replyAuthorName: String? = nil) -> BubbleLayoutPlan {
+                     showName: Bool, authorName: String?, replyAuthorName: String? = nil,
+                     avatarInset: Bool = false) -> BubbleLayoutPlan {
         let key = cacheKey(msg, width: width, tightGap: tightGap, showTail: showTail,
-                           showName: showName, ownId: OwnUser.id)
+                           showName: showName, avatarInset: avatarInset, ownId: OwnUser.id)
         if let boxed = cache.object(forKey: key) { return boxed.plan }
         let p = PerfTrace.shared.measure("bubble.measure") {
             compute(for: msg, width: width, tightGap: tightGap, showTail: showTail,
-                    showName: showName, authorName: authorName, replyAuthorName: replyAuthorName)
+                    showName: showName, authorName: authorName, replyAuthorName: replyAuthorName,
+                    avatarInset: avatarInset)
         }
         cache.setObject(Box(p), forKey: key)
         return p
@@ -107,11 +116,13 @@ enum BubbleLayout {
 
     private static func compute(for msg: Message, width: CGFloat, tightGap: Bool, showTail: Bool,
                                 showName: Bool, authorName: String?,
-                                replyAuthorName: String?) -> BubbleLayoutPlan {
+                                replyAuthorName: String?, avatarInset: Bool) -> BubbleLayoutPlan {
         // guards against a collection width reported too small or too large: a bubble is
         // never wider than the screen
         let safeWidth = min(width, UIScreen.main.bounds.width)
-        let maxBubbleWidth = floor(safeWidth * Theme.bubbleMaxWidthRatio)
+        // the avatar column narrows an incoming group bubble the way it shifts it
+        let inset = avatarInset && !msg.isOutgoing
+        let maxBubbleWidth = floor(safeWidth * Theme.bubbleMaxWidthRatio) - (inset ? avatarSpan : 0)
         let timeString = Self.timeString(msg)
         let statusWidth = Self.statusWidth(msg, timeString: timeString)
         let statusH = statusHeight
@@ -355,8 +366,16 @@ enum BubbleLayout {
         // the gap occupies the top of the cell and the bubble is pinned to its bottom: on
         // screen that is the distance up to the message above, which is what tightGap means
         let seriesGap = tightGap ? groupGap : normalGap
-        let bubbleX = msg.isOutgoing ? safeWidth - sideMargin - bubbleWidth : sideMargin
+        let bubbleX = msg.isOutgoing ? safeWidth - sideMargin - bubbleWidth
+            : sideMargin + (inset ? avatarSpan : 0)
         let bubbleFrame = CGRect(x: bubbleX, y: seriesGap, width: bubbleWidth, height: bubbleHeight)
+
+        // the picture sits in the reserved column, bottom-aligned with the bubble
+        // of the run's last message — the same one that carries the tail
+        let avatarFrame: CGRect? = inset && showTail
+            ? CGRect(x: sideMargin, y: bubbleFrame.maxY - avatarSize,
+                     width: avatarSize, height: avatarSize)
+            : nil
 
         // the name width can only be settled now that the bubble width is known
         if var nf = authorNameFrame {
@@ -383,6 +402,7 @@ enum BubbleLayout {
             forwardFrame: forwardFrame,
             forwardText: msg.forward.map { "Переслано от \($0.fromName)" },
             authorNameFrame: authorNameFrame, authorName: authorName,
+            avatarFrame: avatarFrame,
             reactionsFrames: reactionsFrames.map { ($0.0, $0.1, $0.2, $0.3) },
             reactionsHeight: reactionsHeight,
             isOutgoing: msg.isOutgoing,

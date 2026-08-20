@@ -7,11 +7,21 @@ import MsngrCore
 /// tightGap is a narrow gap above, set when the message continues a series by the
 /// same author higher up the screen; showTail draws the bubble's tail, set when
 /// nothing of the same series sits below.
+/// The sender behind an incoming group bubble. Its presence reserves the avatar
+/// column in the layout; the picture itself is drawn on the last message of a
+/// run (the one with the tail), the ones above leave the space empty.
+struct FeedAvatar: Equatable {
+    let userId: String
+    let name: String
+    let avatarId: String?
+}
+
 enum ChatFeedItem: Identifiable, Equatable {
     /// replyAuthorName is the author of the quoted message ("you" for our own),
-    /// nil for messages without a quote.
+    /// nil for messages without a quote. avatar is non-nil only for incoming
+    /// messages in group chats.
     case message(Message, tightGap: Bool, showTail: Bool, showName: Bool, authorName: String?,
-                 replyAuthorName: String? = nil)
+                 replyAuthorName: String? = nil, avatar: FeedAvatar? = nil)
     /// id is unique within the feed; label is not, because sentAt is not monotonic
     /// and the same day can appear twice.
     case dateSeparator(id: String, label: String)
@@ -27,7 +37,7 @@ enum ChatFeedItem: Identifiable, Equatable {
 
     var id: String {
         switch self {
-        case .message(let m, _, _, _, _, _): return m.id
+        case .message(let m, _, _, _, _, _, _): return m.id
         case .dateSeparator(let id, _): return id
         case .unreadMarker(let id, _): return id
         case .unreadable(let id): return id
@@ -451,6 +461,7 @@ final class ChatViewModel: ObservableObject {
         var out: [ChatFeedItem] = []
         let cal = Calendar.current
         let nameById = Dictionary(uniqueKeysWithValues: members.map { ($0.id, $0.displayName) })
+        let avatarIdById = Dictionary(uniqueKeysWithValues: members.map { ($0.id, $0.avatarId) })
         let isGroupChat = members.count > 2
 
         // author of the quoted message: "you" for our own, otherwise a member's name
@@ -476,10 +487,18 @@ final class ChatViewModel: ObservableObject {
             let tightGap = !firstInSeries
 
             let showName = isGroupChat && !msg.isOutgoing && firstInSeries && msg.kind != .system
+            // every incoming group message reserves the avatar column; whether the
+            // picture is drawn in it follows showTail (the last message of the run)
+            let avatar: FeedAvatar? = isGroupChat && !msg.isOutgoing && msg.kind != .system
+                ? FeedAvatar(userId: msg.fromUserId,
+                             name: nameById[msg.fromUserId] ?? "?",
+                             avatarId: avatarIdById[msg.fromUserId] ?? nil)
+                : nil
             out.append(.message(msg, tightGap: tightGap, showTail: showTail,
                                 showName: showName,
                                 authorName: nameById[msg.fromUserId] ?? "?",
-                                replyAuthorName: msg.replyTo.map(replyAuthorName)))
+                                replyAuthorName: msg.replyTo.map(replyAuthorName),
+                                avatar: avatar))
             let next = older
 
             // unreadable seqs between this message and the next (older) one. A hole
