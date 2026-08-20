@@ -36,7 +36,9 @@ struct ChatListView: View {
 
     private var deleteTitle: String {
         guard let item = deleteCandidate else { return "" }
-        return item.chat.kind == .group ? "Покинуть группу?" : "Удалить чат «\(item.title)»?"
+        return item.chat.kind == .group
+            ? String(localized: "Leave group?")
+            : String(localized: "Delete chat “\(item.title)”?")
     }
 
     var body: some View {
@@ -61,8 +63,8 @@ struct ChatListView: View {
             // than by the title: the navigation title never reaches the
             // accessibility tree while the list is empty and an overlay covers it
             .accessibilityIdentifier("chatlist.root")
-            .navigationTitle("Чаты")
-            .searchable(text: $model.searchText, prompt: "Поиск")
+            .navigationTitle("Chats")
+            .searchable(text: $model.searchText, prompt: "Search")
             // chats are filtered in place, messages and people are searched at their own pace
             .onChange(of: model.searchText) { _, text in
                 model.updateSearch()
@@ -115,15 +117,15 @@ struct ChatListView: View {
             .confirmationDialog(deleteTitle, isPresented: deleteConfirmPresented,
                                 titleVisibility: .visible) {
                 let isGroup = deleteCandidate?.chat.kind == .group
-                Button(isGroup ? "Покинуть" : "Удалить", role: .destructive) {
+                Button(isGroup ? "Leave" : "Delete", role: .destructive) {
                     if let item = deleteCandidate { model.deleteChat(item) }
                     deleteCandidate = nil
                 }
-                Button("Отмена", role: .cancel) { deleteCandidate = nil }
+                Button("Cancel", role: .cancel) { deleteCandidate = nil }
             } message: {
                 Text(deleteCandidate?.chat.kind == .group
-                     ? "Вы выйдете из группы, её сообщения удалятся с этого устройства."
-                     : "Чат и его сообщения удалятся с этого устройства. У собеседника переписка останется.")
+                     ? "You will leave the group, and its messages will be deleted from this device."
+                     : "The chat and its messages will be deleted from this device. The other person keeps the conversation.")
             }
         }
     }
@@ -135,9 +137,9 @@ struct ChatListView: View {
                 .foregroundStyle(Theme.decorativeGlyph)
                 .accessibilityHidden(true)
             VStack(spacing: 5) {
-                Text("Нет чатов")
+                Text("No chats")
                     .font(.title3.weight(.semibold))
-                Text("Найдите собеседника по юзернейму\nили из адресной книги")
+                Text("Find someone by username\nor from your address book")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -145,7 +147,7 @@ struct ChatListView: View {
             Button {
                 showNewChat = true
             } label: {
-                Text("Начать переписку")
+                Text("Start a conversation")
                     .fontWeight(.semibold)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 4)
@@ -232,15 +234,15 @@ struct ChatListView: View {
                 .foregroundStyle(Theme.decorativeGlyph)
                 .accessibilityHidden(true)
             VStack(spacing: 5) {
-                Text("В папке «\(folder.title)» пусто")
+                Text("The folder “\(folder.title)” is empty")
                     .font(.title3.weight(.semibold))
-                Text("Сюда попадут чаты по правилу папки\nи те, что вы добавите сами")
+                Text("Chats matching the folder's rule\nand ones you add yourself will land here")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
             Button { editingFolder = folder } label: {
-                Text("Настроить папку")
+                Text("Edit folder")
                     .fontWeight(.semibold)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 4)
@@ -260,26 +262,26 @@ struct ChatListView: View {
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 if let folder {
                     Button { model.setChat(item.id, inFolder: folder, included: false) } label: {
-                        Label("Из папки", systemImage: "folder.badge.minus")
+                        Label("Remove from folder", systemImage: "folder.badge.minus")
                     }.tint(.teal)
                 }
                 Button { model.toggleArchive(item) } label: {
-                    Label("Архив", systemImage: "archivebox.fill")
+                    Label("Archive", systemImage: "archivebox.fill")
                 }.tint(.gray)
                 Button { model.toggleMute(item) } label: {
                     let muted = MuteState.isMuted(muted: item.chat.muted, mutedUntil: item.chat.mutedUntil)
-                    Label(muted ? "Вкл. звук" : "Без звука",
+                    Label(muted ? "Unmute" : "Mute",
                           systemImage: muted ? "bell.fill" : "bell.slash.fill")
                 }.tint(.indigo)
                 // delete comes last, further from the edge
                 Button(role: .destructive) { deleteCandidate = item } label: {
-                    Label("Удалить", systemImage: "trash.fill")
+                    Label("Delete", systemImage: "trash.fill")
                 }
                 .accessibilityIdentifier("chatlist.delete")
             }
             .swipeActions(edge: .leading, allowsFullSwipe: false) {
                 Button { model.togglePin(item) } label: {
-                    Label(item.chat.pinned ? "Открепить" : "Закрепить",
+                    Label(item.chat.pinned ? "Unpin" : "Pin",
                           systemImage: item.chat.pinned ? "pin.slash.fill" : "pin.fill")
                 }.tint(.orange)
             }
@@ -293,7 +295,7 @@ struct ChatListView: View {
     private func folderMenu(_ item: ChatListItem) -> some View {
         if model.folders.isEmpty {
             Button { showFolders = true } label: {
-                Label("Создать папку", systemImage: "folder.badge.plus")
+                Label("New Folder", systemImage: "folder.badge.plus")
             }
         } else {
             let containing = model.folders(containing: item.id)
@@ -316,15 +318,15 @@ struct ChatListView: View {
                 // by accident takes the chat away for good
                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                     Button { model.blockRequest(item) } label: {
-                        Label("Заблокировать", systemImage: "hand.raised.fill")
+                        Label("Block", systemImage: "hand.raised.fill")
                     }.tint(.red)
                     Button { model.acceptRequest(item) } label: {
-                        Label("Принять", systemImage: "checkmark")
+                        Label("Accept", systemImage: "checkmark")
                     }.tint(.green)
                 }
             }
         } header: {
-            Text("Заявки на переписку")
+            Text("Message requests")
         }
     }
 
@@ -337,7 +339,7 @@ struct ChatListView: View {
                 Image(systemName: "archivebox")
                     .foregroundStyle(.secondary)
                     .frame(width: 52, height: 52)
-                Text("Архив").foregroundStyle(.secondary)
+                Text("Archive").foregroundStyle(.secondary)
                 Spacer()
                 Text("\(model.archived.count)").foregroundStyle(.secondary).font(.subheadline)
             }
@@ -391,7 +393,7 @@ struct ArchiveView: View {
                 }
                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                     Button { model.toggleArchive(item) } label: {
-                        Label("Из архива", systemImage: "tray.and.arrow.up.fill")
+                        Label("Unarchive", systemImage: "tray.and.arrow.up.fill")
                     }.tint(.blue)
                 }
             }
@@ -400,12 +402,12 @@ struct ArchiveView: View {
         .overlay {
             if model.archived.isEmpty {
                 ContentUnavailableView {
-                    Label("В архиве пусто", systemImage: "archivebox")
+                    Label("Archive is empty", systemImage: "archivebox")
                 } description: {
-                    Text("Чаты, убранные в архив, будут здесь")
+                    Text("Chats you archive will be here")
                 }
             }
         }
-        .navigationTitle("Архив")
+        .navigationTitle("Archive")
     }
 }

@@ -93,17 +93,17 @@ struct ChatRowView: View {
             Text(typing).foregroundStyle(Theme.accent).italic()
         } else if let draft = item.chat.draft,
                   !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            (Text("Черновик: ").foregroundStyle(.red) + Text(draft))
+            (Text("Draft: ").foregroundStyle(.red) + Text(draft))
         } else if let last = item.lastMessage {
             if last.deletedForAll {
-                Text("Сообщение удалено").italic()
+                Text("Message deleted").italic()
             } else {
                 switch last.kind {
-                case .photo: Label("Фото", systemImage: "photo").labelStyle(PreviewLabelStyle())
-                case .video: Label("Видео", systemImage: "video.fill").labelStyle(PreviewLabelStyle())
-                case .voice: Label("Голосовое сообщение", systemImage: "mic.fill").labelStyle(PreviewLabelStyle())
-                case .file: Label(last.media?.name ?? "Файл", systemImage: "doc.fill").labelStyle(PreviewLabelStyle())
-                case .album: Label("Альбом", systemImage: "photo.on.rectangle").labelStyle(PreviewLabelStyle())
+                case .photo: Label("Photo", systemImage: "photo").labelStyle(PreviewLabelStyle())
+                case .video: Label("Video", systemImage: "video.fill").labelStyle(PreviewLabelStyle())
+                case .voice: Label("Voice message", systemImage: "mic.fill").labelStyle(PreviewLabelStyle())
+                case .file: Label(last.media?.name ?? String(localized: "File"), systemImage: "doc.fill").labelStyle(PreviewLabelStyle())
+                case .album: Label("Album", systemImage: "photo.on.rectangle").labelStyle(PreviewLabelStyle())
                 default: Text(last.text ?? "")
                 }
             }
