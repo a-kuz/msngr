@@ -914,7 +914,9 @@ final class StickyDateOverlay: UIView {
     required init?(coder: NSCoder) { fatalError() }
 
     /// A repeated label is a no-op, so feed updates that stay within the same
-    /// day cannot make the capsule blink.
+    /// day cannot make the capsule blink. Losing the label means the real
+    /// separator cell has taken the top edge, standing exactly where this
+    /// capsule hangs: the handoff is instant, a fade would read as a double.
     func set(label: String?, maxWidth: CGFloat) {
         guard label != dayLabel else { return }
         dayLabel = label
@@ -924,7 +926,7 @@ final class StickyDateOverlay: UIView {
             capsule.frame.origin = .zero
             bounds.size = capsule.bounds.size
         }
-        applyVisibility()
+        applyVisibility(instant: label == nil)
     }
 
     /// The text was rendered for a type size that is gone: the next set() draws anew.
@@ -950,9 +952,14 @@ final class StickyDateOverlay: UIView {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.9, execute: work)
     }
 
-    private func applyVisibility() {
+    private func applyVisibility(instant: Bool = false) {
         let target: CGFloat = (revealed && dayLabel != nil) ? 1 : 0
         guard target != alpha else { return }
+        if instant {
+            layer.removeAllAnimations()
+            alpha = target
+            return
+        }
         UIView.animate(withDuration: target == 1 ? 0.15 : 0.3, delay: 0,
                        options: [.beginFromCurrentState]) { self.alpha = target }
     }
