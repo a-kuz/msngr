@@ -29,6 +29,11 @@ public actor WSClient {
     private var shouldRun = false
     private var pingTimer: Task<Void, Never>?
     private var awaitingPong = false
+    /// When this upgrade was started, and what the socket has said since: the
+    /// watchdog reads nothing else.
+    private var openedAt = Date()
+    private var lastFrameAt: Date?
+    private var pingSentAt: Date?
     private let pathMonitor = NWPathMonitor()
     private var lastPathStatus: NWPath.Status = .satisfied
 
@@ -90,22 +95,12 @@ public actor WSClient {
         guard shouldRun, task == nil else { return }
         let t = session.webSocketTask(with: url)
         task = t
+        openedAt = Date()
+        lastFrameAt = nil
+        pingSentAt = nil
         t.resume()
         receiveLoop(t)
-        // The first frame from the server ("hello") is what confirms the connection,
-        // and until it arrives nothing else watches this socket: the ping only starts
-        // on that frame. An upgrade that succeeded into a dead stream would otherwise
-        // hang as "connecting" forever, with `task != nil` blocking every retry.
-        Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 8_000_000_000)
-            await self?.handshakeDeadline(for: t)
-        }
-    }
-
-    /// Fires 8 s after an upgrade: a socket still unconfirmed by then is dead.
-    private func handshakeDeadline(for t: URLSessionWebSocketTask) {
-        guard task === t, !isConnected else { return }
-        socketDied()
+        startWatchdog()
     }
 
     private func receiveLoop(_ t: URLSessionWebSocketTask) {
@@ -119,11 +114,14 @@ public actor WSClient {
         guard t === task else { return } // a stale socket
         switch result {
         case .success(let msg):
+            // anything from the server is proof of life, whatever it says
+            lastFrameAt = Date()
+            pingSentAt = nil
+            awaitingPong = false
             if !isConnected {
                 isConnected = true
                 reconnectAttempt = 0
                 continuation?.yield(.connected)
-                startPing()
             }
             switch msg {
             case .string(let s):
@@ -179,7 +177,6 @@ public actor WSClient {
     }
 
     private func handleTextFrame(_ s: String) {
-        if s.contains("\"pong\"") { awaitingPong = false }
         continuation?.yield(.frame(Data(s.utf8)))
     }
 
@@ -196,6 +193,8 @@ public actor WSClient {
     private func setDisconnected() {
         isConnected = false
         awaitingPong = false
+        pingSentAt = nil
+        lastFrameAt = nil
     }
 
     /// Pause before attempt number `attempt`: exponential with a ceiling. The ceiling
@@ -222,28 +221,35 @@ public actor WSClient {
         connect()
     }
 
-    private func startPing() {
+    /// One watchdog over the socket's own clock, ticking every second from the
+    /// moment of the upgrade. A socket that stalls says nothing and calls back
+    /// never — an upgrade into a dead stream, a connection the network dropped
+    /// without closing it — so the only thing that catches it is this tick.
+    private func startWatchdog() {
         pingTimer?.cancel()
         awaitingPong = false
         pingTimer = Task { [weak self] in
             while !Task.isCancelled {
-                // 12s: presence on the server lives off ping freshness, TTL 35s
-                try? await Task.sleep(nanoseconds: 12_000_000_000)
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
                 guard let self else { return }
-                await self.pingTick()
+                await self.freshnessTick()
             }
         }
     }
 
-    private func pingTick() {
-        guard isConnected else { return }
-        if awaitingPong {
-            // no pong within a cycle: the socket is dead
+    private func freshnessTick() {
+        guard task != nil else { return }
+        switch WSFreshness.decide(now: Date(), connected: isConnected, openedAt: openedAt,
+                                  lastFrameAt: lastFrameAt, pingSentAt: pingSentAt) {
+        case .wait:
+            break
+        case .ping:
+            awaitingPong = true
+            pingSentAt = Date()
+            Task { try? await self.sendRaw(Data(#"{"t":"ping"}"#.utf8)) }
+        case .dead:
             socketDied()
-            return
         }
-        awaitingPong = true
-        Task { try? await self.sendRaw(Data(#"{"t":"ping"}"#.utf8)) }
     }
 
     /// A nudge from the foreground: a socket that died in the background reconnects
@@ -255,7 +261,10 @@ public actor WSClient {
             reconnectAttempt = 0
             connectIfNeeded()
         } else {
-            awaitingPong = false
+            // the ping is on the clock as well: a socket that answers nothing to
+            // this one is dead a few seconds later instead of staying open
+            awaitingPong = true
+            pingSentAt = Date()
             Task { try? await self.sendRaw(Data(#"{"t":"ping"}"#.utf8)) }
         }
     }
