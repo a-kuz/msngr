@@ -653,65 +653,167 @@ struct ChatScreen: View {
 
     // MARK: - Sending attachments
 
-    private func sendPicked(_ items: [PhotosPickerItem]) async {
-        var photos: [(Data, CGSize, String)] = [] // (jpeg, size, blurhash)
-        for item in items {
-            if item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) }) {
-                if let movie = try? await item.loadTransferable(type: VideoTransferable.self) {
-                    await sendVideo(movie.url)
-                }
-            } else if let data = try? await item.loadTransferable(type: Data.self),
-                      let prepared = ImageProcessor.prepareForSending(data) {
-                let bh = ImageProcessor.rgbaPixels(prepared.data).flatMap {
-                    BlurHash.encode(pixels: $0.pixels, width: $0.width, height: $0.height)
-                } ?? ""
-                photos.append((prepared.data, prepared.size, bh))
-            }
+    /// Retries until the operation succeeds: a picked attachment never
+    /// disappears from the chat and never raises an alert over a preparation
+    /// failure — only how long it takes to get there is in question, the same
+    /// rule the outbox already follows once a message is queued.
+    private func retrying<T>(_ label: String, _ operation: @escaping () async -> T?) async -> T {
+        var delaySeconds: UInt64 = 1
+        while true {
+            if let result = await operation() { return result }
+            MsngrLog.outbox.error("\(label) failed, retrying in \(delaySeconds)s")
+            try? await Task.sleep(nanoseconds: delaySeconds * 1_000_000_000)
+            delaySeconds = min(delaySeconds * 2, 30)
         }
-        await sendPhotos(photos, caption: nil)
+    }
+
+    private static func blankPhoto() -> MediaInfo {
+        MediaInfo(type: "photo", mediaId: "", key: "", hash: "", size: 0, mime: "image/jpeg")
+    }
+
+    private func sendPicked(_ items: [PhotosPickerItem]) async {
+        guard !items.isEmpty else { return }
+        let isVideo: (PhotosPickerItem) -> Bool = { $0.supportedContentTypes.contains { $0.conforms(to: .movie) } }
+        for item in items where isVideo(item) {
+            Task { await sendVideoItem(item) }
+        }
+        let photoItems = items.filter { !isVideo($0) }
+        guard !photoItems.isEmpty else { return }
+        let sources: [() async -> Data?] = photoItems.map { item in { try? await item.loadTransferable(type: Data.self) } }
+        await sendPhotoSources(sources, caption: nil)
     }
 
     /// Images pasted from the clipboard take the same path as ones chosen in the picker.
     private func sendImages(_ images: [UIImage], caption: String) async {
-        var photos: [(Data, CGSize, String)] = []
-        for image in images {
-            guard let data = image.jpegData(compressionQuality: 0.95),
-                  let prepared = ImageProcessor.prepareForSending(data) else { continue }
-            let bh = ImageProcessor.rgbaPixels(prepared.data).flatMap {
-                BlurHash.encode(pixels: $0.pixels, width: $0.width, height: $0.height)
-            } ?? ""
-            photos.append((prepared.data, prepared.size, bh))
-        }
-        await sendPhotos(photos, caption: caption.isEmpty ? nil : caption)
+        guard !images.isEmpty else { return }
+        let sources: [() async -> Data?] = images.map { image in { image.jpegData(compressionQuality: 0.95) } }
+        await sendPhotoSources(sources, caption: caption.isEmpty ? nil : caption)
     }
 
-    private func sendPhotos(_ photos: [(Data, CGSize, String)], caption: String?) async {
-        guard !photos.isEmpty else { return }
+    /// One row appears the instant the selection is known — a blurred tile per
+    /// source, in a frame of default aspect — and every tile fills in on its
+    /// own timeline as its data loads and compresses. The row is queued for
+    /// sending only once every tile is ready, since an album travels as one
+    /// `album: [MediaInfo]`.
+    private func sendPhotoSources(_ sources: [() async -> Data?], caption: String?) async {
+        let clientMsgId = UUID().uuidString
+        let isAlbum = sources.count > 1
+        await model.beginMedia(clientMsgId: clientMsgId, kind: isAlbum ? .album : .photo, text: caption,
+                               media: isAlbum ? nil : Self.blankPhoto(),
+                               album: isAlbum ? Array(repeating: Self.blankPhoto(), count: sources.count) : nil)
 
-        // nothing is lost offline: the file goes to a permanent folder, the outbox worker uploads it
-        var infos: [MediaInfo] = []
-        for (jpeg, size, bh) in photos {
-            guard let localName = stash(jpeg, mime: "image/jpeg") else { return }
-            var info = MediaInfo(type: "photo", mediaId: "", key: "",
-                                 hash: "", size: jpeg.count, mime: "image/jpeg")
-            info.localPath = localName
-            info.w = Int(size.width)
-            info.h = Int(size.height)
-            info.blurhash = bh
-            infos.append(info)
+        let finals = await withTaskGroup(of: (Int, MediaInfo).self) { group in
+            for (index, source) in sources.enumerated() {
+                group.addTask {
+                    let media = await processPhotoSource(source, clientMsgId: clientMsgId,
+                                                          index: isAlbum ? index : nil)
+                    return (index, media)
+                }
+            }
+            var finals = Array(repeating: Self.blankPhoto(), count: sources.count)
+            for await (index, media) in group { finals[index] = media }
+            return finals
         }
-        guard !infos.isEmpty else { return }
-        if infos.count == 1 {
-            var c = ContentPayload(kind: "photo")
-            c.media = infos[0]
-            c.text = caption
-            model.enqueue(c)
-        } else {
-            var c = ContentPayload(kind: "album")
-            c.album = infos
-            c.text = caption
-            model.enqueue(c)
+
+        var c = ContentPayload(kind: isAlbum ? "album" : "photo")
+        c.text = caption
+        if isAlbum { c.album = finals } else { c.media = finals.first }
+        try? await app.engine.finalizeMedia(chatId: chatId, clientMsgId: clientMsgId, content: c)
+    }
+
+    /// One picked photo, quick pass then heavy pass. `index` is the album slot
+    /// to update, nil for a single-photo send.
+    private func processPhotoSource(_ source: @escaping () async -> Data?, clientMsgId: String,
+                                    index: Int?) async -> MediaInfo {
+        func publish(_ media: MediaInfo) async {
+            if let index {
+                try? await app.engine.updateAlbumItemPreview(clientMsgId: clientMsgId, index: index, media: media)
+            } else {
+                try? await app.engine.updateMediaPreview(clientMsgId: clientMsgId, media: media, album: nil)
+            }
         }
+
+        let data = await retrying("load picked photo") { await source() }
+        var info = Self.blankPhoto()
+
+        // quick pass: a fast BlurHash and its own thumbnail's aspect stand in
+        // for the real preview while the heavy pass below is still running
+        if let px = ImageProcessor.rgbaPixels(data) {
+            info.blurhash = BlurHash.encode(pixels: px.pixels, width: px.width, height: px.height)
+            info.w = px.width
+            info.h = px.height
+            await publish(info)
+        }
+
+        // heavy pass: compress for sending and stash to disk — gating steps,
+        // retried until they succeed
+        let prepared = await retrying("compress photo") { ImageProcessor.prepareForSending(data) }
+        let localName = await retrying("stash photo") { try? app.media.stash(prepared.data, mime: "image/jpeg") }
+        info.localPath = localName
+        info.size = prepared.data.count
+        info.w = Int(prepared.size.width)
+        info.h = Int(prepared.size.height)
+        await publish(info)
+        return info
+    }
+
+    private func sendVideoItem(_ item: PhotosPickerItem) async {
+        let movie = await retrying("load picked video") { try? await item.loadTransferable(type: VideoTransferable.self) }
+        await sendVideo(movie.url)
+    }
+
+    private func sendVideo(_ url: URL) async {
+        let clientMsgId = UUID().uuidString
+        let asset = AVURLAsset(url: url)
+        var info = MediaInfo(type: "video", mediaId: "", key: "", hash: "", size: 0, mime: "video/mp4")
+        await model.beginMedia(clientMsgId: clientMsgId, kind: .video, text: nil, media: info, album: nil)
+
+        // quick pass: the track's real aspect, a poster frame and its BlurHash —
+        // all far cheaper than the transcode below, so the bubble firms up long
+        // before the video itself is ready to send
+        if let track = try? await asset.loadTracks(withMediaType: .video).first,
+           let size = try? await track.load(.naturalSize),
+           let transform = try? await track.load(.preferredTransform) {
+            let real = CGRect(origin: .zero, size: size).applying(transform)
+            info.w = Int(abs(real.width))
+            info.h = Int(abs(real.height))
+        }
+        let gen = AVAssetImageGenerator(asset: asset)
+        gen.appliesPreferredTrackTransform = true
+        if let cg = try? gen.copyCGImage(at: .init(seconds: 0.1, preferredTimescale: 600), actualTime: nil) {
+            if info.w == nil { info.w = cg.width; info.h = cg.height }
+            let ui = UIImage(cgImage: cg)
+            if let jpeg = ui.jpegData(compressionQuality: 0.7) {
+                if let px = ImageProcessor.rgbaPixels(jpeg) {
+                    info.blurhash = BlurHash.encode(pixels: px.pixels, width: px.width, height: px.height)
+                }
+                // the thumbnail is optional: without it the video goes out with the blurhash alone
+                info.thumbLocalPath = try? app.media.stash(jpeg, mime: "image/jpeg")
+            }
+        }
+        try? await app.engine.updateMediaPreview(clientMsgId: clientMsgId, media: info, album: nil)
+
+        // heavy pass: compress into a progressive mp4 — a gating step, retried until it succeeds
+        let data: Data = await retrying("export video") {
+            guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset1280x720) else { return nil }
+            let out = FileManager.default.temporaryDirectory.appendingPathComponent("v-\(UUID().uuidString).mp4")
+            export.outputURL = out
+            export.outputFileType = .mp4
+            export.shouldOptimizeForNetworkUse = true // faststart
+            await export.export()
+            defer { try? FileManager.default.removeItem(at: out) }
+            guard export.status == .completed else { return nil }
+            return try? Data(contentsOf: out)
+        }
+        let localName = await retrying("stash video") { try? app.media.stash(data, mime: "video/mp4") }
+        info.localPath = localName
+        info.size = data.count
+        if let d = try? await asset.load(.duration) { info.dur = d.seconds }
+
+        var c = ContentPayload(kind: "video")
+        c.media = info
+        try? await app.engine.finalizeMedia(chatId: chatId, clientMsgId: clientMsgId, content: c)
+        try? FileManager.default.removeItem(at: url)
     }
 
     /// Puts the attachment's source file into a permanent folder. nil means the write
@@ -725,48 +827,6 @@ struct ChatScreen: View {
             model.sendFailure = "Вложение не отправлено: не удалось сохранить его на устройстве"
             return nil
         }
-    }
-
-    private func sendVideo(_ url: URL) async {
-        // compress into a progressive mp4, then take a poster frame
-        let asset = AVURLAsset(url: url)
-        guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset1280x720) else { return }
-        let out = FileManager.default.temporaryDirectory.appendingPathComponent("v-\(UUID().uuidString).mp4")
-        export.outputURL = out
-        export.outputFileType = .mp4
-        export.shouldOptimizeForNetworkUse = true // faststart
-        await export.export()
-        guard export.status == .completed, let data = try? Data(contentsOf: out),
-              let localName = stash(data, mime: "video/mp4") else { return }
-
-        let gen = AVAssetImageGenerator(asset: asset)
-        gen.appliesPreferredTrackTransform = true
-        var thumbLocal: String?
-        var blurhash = ""
-        var dims = CGSize(width: 16, height: 9)
-        if let cg = try? gen.copyCGImage(at: .init(seconds: 0.1, preferredTimescale: 600), actualTime: nil) {
-            dims = CGSize(width: cg.width, height: cg.height)
-            let ui = UIImage(cgImage: cg)
-            if let jpeg = ui.jpegData(compressionQuality: 0.7) {
-                // the thumbnail is optional: without it the video goes out with the blurhash alone
-                thumbLocal = try? app.media.stash(jpeg, mime: "image/jpeg")
-                if let px = ImageProcessor.rgbaPixels(jpeg) {
-                    blurhash = BlurHash.encode(pixels: px.pixels, width: px.width, height: px.height) ?? ""
-                }
-            }
-        }
-        var info = MediaInfo(type: "video", mediaId: "", key: "",
-                             hash: "", size: data.count, mime: "video/mp4")
-        info.localPath = localName
-        info.thumbLocalPath = thumbLocal
-        info.w = Int(dims.width)
-        info.h = Int(dims.height)
-        if let d = try? await asset.load(.duration) { info.dur = d.seconds }
-        info.blurhash = blurhash
-        var c = ContentPayload(kind: "video")
-        c.media = info
-        model.enqueue(c)
-        try? FileManager.default.removeItem(at: out)
     }
 
     private func sendFile(_ url: URL) async {
