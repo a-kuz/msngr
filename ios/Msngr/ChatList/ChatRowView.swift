@@ -221,7 +221,22 @@ struct AvatarView: View {
         }
     }
 
-    private var gradientColors: [Color] {
+    private var initialsView: some View {
+        LinearGradient(colors: AvatarStyle.gradient(for: name), startPoint: .top, endPoint: .bottom)
+            .overlay(
+                Text(AvatarStyle.initials(name))
+                    .font(.system(size: 100, weight: .semibold))
+                    .minimumScaleFactor(0.1)
+                    .padding(8)
+                    .foregroundStyle(.white)
+            )
+    }
+}
+
+/// The initials fallback shared by every avatar drawing: the same name gets the
+/// same gradient in the chat list and in the feed.
+enum AvatarStyle {
+    static func gradient(for name: String) -> [Color] {
         let palettes: [[Color]] = [
             [.red, .orange], [.blue, .cyan], [.purple, .pink],
             [.green, .mint], [.orange, .yellow], [.indigo, .blue], [.pink, .red],
@@ -229,18 +244,7 @@ struct AvatarView: View {
         return palettes[StableHash.index(name, modulo: palettes.count)]
     }
 
-    private var initialsView: some View {
-        LinearGradient(colors: gradientColors, startPoint: .top, endPoint: .bottom)
-            .overlay(
-                Text(initials)
-                    .font(.system(size: 100, weight: .semibold))
-                    .minimumScaleFactor(0.1)
-                    .padding(8)
-                    .foregroundStyle(.white)
-            )
-    }
-
-    private var initials: String {
+    static func initials(_ name: String) -> String {
         let parts = name.split(separator: " ").prefix(2)
         return parts.map { String($0.prefix(1)).uppercased() }.joined()
     }

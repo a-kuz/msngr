@@ -52,6 +52,9 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     /// Отправка ждёт своего сообщения: оно обязано приехать в низ ленты
     /// и появиться там с анимацией, из какого бы места истории его ни отправили.
     private var awaitingOwnSend = false
+    /// The floating day capsule under the header. A plain subview over the feed,
+    /// not a supplementary view: pointwise updates and cell reloads cannot move it.
+    private let stickyDate = StickyDateOverlay()
 
     /// Своя отправка: лента уезжает к концу сразу, не дожидаясь, пока сообщение
     /// ляжет в базу и придёт из наблюдения.
@@ -68,7 +71,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     /// на прочитанной истории, снова цепляется за новейшие, и лента приезжает
     /// другим набором сообщений целиком.
     private func ownSendLanded(newFirst: ChatFeedItem?, oldIds: Set<String>) -> Bool {
-        guard awaitingOwnSend, case .message(let m, _, _, _, _, _)? = newFirst, m.isOutgoing,
+        guard awaitingOwnSend, case .message(let m, _, _, _, _, _, _)? = newFirst, m.isOutgoing,
               !oldIds.contains(m.id) else { return false }
         awaitingOwnSend = false
         return true
@@ -123,6 +126,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         collectionView.register(SystemCell.self, forCellWithReuseIdentifier: "system")
         collectionView.register(UnreadMarkerCell.self, forCellWithReuseIdentifier: "unread")
         view.addSubview(collectionView)
+        view.addSubview(stickyDate)
         backSwipe.addTarget(self, action: #selector(handleBackSwipe(_:)))
         backSwipe.delegate = self
         view.addGestureRecognizer(backSwipe)
@@ -142,6 +146,8 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         guard isViewLoaded else { return }
         let anchor = readingAnchor()
         BubbleLayout.clearCache()
+        // the capsule text was rendered with the old font
+        stickyDate.invalidate()
         collectionView.collectionViewLayout.invalidateLayout()
         collectionView.reloadData()
         collectionView.layoutIfNeeded()
@@ -334,7 +340,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         let anchor = readingAnchor()
         // своё новое сообщение лежит первым элементом инвертированной ленты
         let ownAtBottom: Bool = {
-            guard case .message(let m, _, _, _, _, _)? = newItems.first else { return false }
+            guard case .message(let m, _, _, _, _, _, _)? = newItems.first else { return false }
             return m.isOutgoing && oldIndex[newIds[0]] == nil
         }()
         // вызывается всегда: он же снимает ожидание отправки
@@ -376,7 +382,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         // inverted list
         let newBottom: (id: String, outgoing: Bool)? = {
             guard inserts.contains(where: { $0.item == 0 }),
-                  case .message(let m, _, _, _, _, _) = newItems[0] else { return nil }
+                  case .message(let m, _, _, _, _, _, _) = newItems[0] else { return nil }
             return (m.id, m.isOutgoing)
         }()
 
@@ -436,12 +442,13 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     private func refreshItem(at index: Int, item: ChatFeedItem) {
         let indexPath = IndexPath(item: index, section: 0)
         switch item {
-        case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName)
+        case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName,
+                      let avatar)
             where msg.kind != .system:
             if let cell = collectionView.cellForItem(at: indexPath) as? MessageCell {
                 let plan = BubbleLayout.plan(for: msg, width: collectionView.bounds.width, tightGap: tightGap,
                                              showTail: showTail, showName: showName, authorName: authorName,
-                                             replyAuthorName: replyAuthorName)
+                                             replyAuthorName: replyAuthorName, avatarInset: avatar != nil)
                 // an inline reaction changes only the width, so the spring wraps every
                 // reconfigure; the batch update joins in only when the height moved. It
                 // re-reads sizeForItemAt, which serves the new plan from the cache;
@@ -451,7 +458,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
                 UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: 0.86,
                                initialSpringVelocity: 0,
                                options: [.allowUserInteraction, .beginFromCurrentState]) {
-                    self.configureMessageCell(cell, msg: msg, plan: plan)
+                    self.configureMessageCell(cell, msg: msg, plan: plan, avatar: avatar)
                     if !sameHeight { self.collectionView.performBatchUpdates(nil) }
                 }
                 return
@@ -469,8 +476,9 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
 
     /// Full setup of a message cell: content plus callbacks. The closures capture msg, so
     /// when the content is updated they have to be reinstalled along with it.
-    private func configureMessageCell(_ cell: MessageCell, msg: Message, plan: BubbleLayoutPlan) {
-        cell.configure(msg: msg, plan: plan)
+    private func configureMessageCell(_ cell: MessageCell, msg: Message, plan: BubbleLayoutPlan,
+                                      avatar: FeedAvatar? = nil) {
+        cell.configure(msg: msg, plan: plan, avatar: avatar)
         cell.onReply = { [weak self] in self?.onReply?(msg) }
         cell.onReact = { [weak self] emoji in self?.onReact?(msg, emoji) }
         cell.onContextAction = { [weak self] action in self?.onContextAction?(msg, action) }
@@ -498,8 +506,8 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
 
     private func contentEqual(_ a: ChatFeedItem, _ b: ChatFeedItem) -> Bool {
         switch (a, b) {
-        case let (.message(m1, t1, s1, _, _, _), .message(m2, t2, s2, _, _, _)):
-            return m1 == m2 && t1 == t2 && s1 == s2
+        case let (.message(m1, t1, s1, _, _, _, a1), .message(m2, t2, s2, _, _, _, a2)):
+            return m1 == m2 && t1 == t2 && s1 == s2 && a1 == a2
         case let (.dateSeparator(_, l1), .dateSeparator(_, l2)):
             return l1 == l2
         case let (.unreadMarker(_, c1), .unreadMarker(_, c2)):
@@ -538,20 +546,50 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         let offsetInView: CGFloat
     }
 
-    /// An anchor is only taken while someone is reading the history: at the bottom the
-    /// feed is led by new messages and there is nothing to hold.
-    private func readingAnchor() -> ReadingAnchor? {
-        guard isViewLoaded, !atBottom else { return nil }
+    /// The item at the visual top of the screen: in the inverted list that is
+    /// the visible item with the largest maxY.
+    private func topVisible() -> (index: Int, frame: CGRect)? {
         let visibleRect = collectionView.bounds.inset(by: collectionView.adjustedContentInset)
-        // the list is inverted: the visual top of the screen is the item with the largest maxY
         let top = collectionView.indexPathsForVisibleItems.compactMap { path -> (IndexPath, CGRect)? in
             guard let attrs = collectionView.layoutAttributesForItem(at: path),
                   attrs.frame.intersects(visibleRect) else { return nil }
             return (path, attrs.frame)
         }.max { $0.1.maxY < $1.1.maxY }
         guard let top, top.0.item < items.count else { return nil }
-        return ReadingAnchor(id: items[top.0.item].id,
-                             offsetInView: top.1.maxY - collectionView.contentOffset.y)
+        return (top.0.item, top.1)
+    }
+
+    /// An anchor is only taken while someone is reading the history: at the bottom the
+    /// feed is led by new messages and there is nothing to hold.
+    private func readingAnchor() -> ReadingAnchor? {
+        guard isViewLoaded, !atBottom, let top = topVisible() else { return nil }
+        return ReadingAnchor(id: items[top.index].id,
+                             offsetInView: top.frame.maxY - collectionView.contentOffset.y)
+    }
+
+    // MARK: - The floating day capsule
+
+    /// Renames the capsule after every geometry change. The text is compared
+    /// inside the overlay, so an update that lands on the same day is a no-op
+    /// and a pointwise insert cannot make the capsule blink.
+    private func updateStickyDate() {
+        stickyDate.set(label: Self.stickyLabel(items: items, topIndex: topVisible()?.index),
+                       maxWidth: view.bounds.width - 40)
+        stickyDate.center = CGPoint(x: view.bounds.midX,
+                                    y: view.safeAreaInsets.top + 11 + stickyDate.bounds.height / 2)
+    }
+
+    /// The day of the item at the top edge, read from the nearest date separator
+    /// above it — later in the inverted array. Nil while that separator itself is
+    /// the topmost item: the real capsule then stands exactly where the floating
+    /// one would hang, and the floating one yields to it.
+    static func stickyLabel(items: [ChatFeedItem], topIndex: Int?) -> String? {
+        guard let topIndex, topIndex < items.count else { return nil }
+        if case .dateSeparator = items[topIndex] { return nil }
+        for i in (topIndex + 1)..<items.count {
+            if case .dateSeparator(_, let label) = items[i] { return label }
+        }
+        return nil
     }
 
     /// Puts the anchored item back exactly where it stood before the update.
@@ -586,6 +624,9 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         recomputingAtBottom = true
         defer { recomputingAtBottom = false }
         if layoutFirst { collectionView.layoutIfNeeded() }
+        // every path that changes the feed's geometry comes through here, so the
+        // floating day capsule is renamed in the same breath
+        updateStickyDate()
         // the insets come off the bounds: whatever lies under the input bar or the nav bar
         // is not something the reader sees
         let visibleRect = collectionView.bounds.inset(by: collectionView.adjustedContentInset)
@@ -612,7 +653,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         // the list is inverted: the visual top of the screen is the largest maxY
         let top = collectionView.indexPathsForVisibleItems.compactMap { path -> (String, CGFloat)? in
             guard path.item < items.count,
-                  case .message(let msg, _, _, _, _, _) = items[path.item],
+                  case .message(let msg, _, _, _, _, _, _) = items[path.item],
                   let attrs = collectionView.layoutAttributesForItem(at: path),
                   attrs.frame.intersects(visibleRect) else { return nil }
             return (msg.msgId ?? msg.id, attrs.frame.maxY)
@@ -644,7 +685,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     /// references to them (a quote, a pin) use the server msgId.
     static func index(ofMsgId msgId: String, in items: [ChatFeedItem]) -> Int? {
         items.firstIndex { item in
-            guard case .message(let m, _, _, _, _, _) = item else { return false }
+            guard case .message(let m, _, _, _, _, _, _) = item else { return false }
             return m.id == msgId || m.msgId == msgId
         }
     }
@@ -684,7 +725,8 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "system", for: indexPath) as! SystemCell
             cell.configure(text: SystemCell.historyStartText)
             return cell
-        case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName):
+        case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName,
+                      let avatar):
             if msg.kind == .system {
                 let cell = cv.dequeueReusableCell(withReuseIdentifier: "system", for: indexPath) as! SystemCell
                 cell.configure(msg, ownUserId: ownUserId)
@@ -693,8 +735,8 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "msg", for: indexPath) as! MessageCell
             let plan = BubbleLayout.plan(for: msg, width: cv.bounds.width, tightGap: tightGap,
                                          showTail: showTail, showName: showName, authorName: authorName,
-                                         replyAuthorName: replyAuthorName)
-            configureMessageCell(cell, msg: msg, plan: plan)
+                                         replyAuthorName: replyAuthorName, avatarInset: avatar != nil)
+            configureMessageCell(cell, msg: msg, plan: plan, avatar: avatar)
             // the original's cell is created while the scroll to it is under way, and the flash was waiting
             if let id = pendingHighlightId, id == msg.id || id == msg.msgId {
                 pendingHighlightId = nil
@@ -722,7 +764,8 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
         case .historyStart:
             return CGSize(width: cv.bounds.width,
                           height: FeedNote.height(SystemCell.historyStartText, width: cv.bounds.width) + 12)
-        case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName):
+        case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName,
+                      let avatar):
             if msg.kind == .system {
                 return CGSize(width: cv.bounds.width,
                               height: FeedNote.height(SystemCell.text(for: msg, ownUserId: ownUserId),
@@ -730,7 +773,7 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             }
             let plan = BubbleLayout.plan(for: msg, width: cv.bounds.width, tightGap: tightGap,
                                          showTail: showTail, showName: showName, authorName: authorName,
-                                         replyAuthorName: replyAuthorName)
+                                         replyAuthorName: replyAuthorName, avatarInset: avatar != nil)
             return CGSize(width: cv.bounds.width, height: plan.cellHeight)
         }
     }
@@ -746,10 +789,28 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
     func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
         flushPendingHighlight()
         updateAtBottom(layoutFirst: true)
+        stickyDate.scheduleHide()
+    }
+
+    /// The day capsule shows only for a reader's own scrolling: a feed moved by
+    /// an insert or a programmatic jump keeps it as it was, so updates cannot
+    /// flash it.
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        updateStickyDate()
+        stickyDate.reveal()
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        if !decelerate { stickyDate.scheduleHide() }
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        stickyDate.scheduleHide()
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         updateAtBottom()
+        if scrollView.isTracking || scrollView.isDecelerating { stickyDate.reveal() }
         // pagination: close to the "top" of the history, which in the inverted system is
         // the end of the content
         if scrollView.contentOffset.y > scrollView.contentSize.height - scrollView.bounds.height - 600 {
@@ -777,39 +838,123 @@ enum FeedNote {
     }
 }
 
-final class DateSeparatorCell: UICollectionViewCell {
+/// The day capsule: one look shared by the in-feed separator cell and the
+/// floating sticky copy under the header.
+final class DateCapsuleView: UIView {
     private let label = UILabel()
-    private let capsule = UIView()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = UIColor.black.withAlphaComponent(0.18)
+        label.textColor = .white
+        label.numberOfLines = 0
+        label.textAlignment = .center
+        addSubview(label)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// Sizes itself to the text at the current type size.
+    func set(text: String, maxWidth: CGFloat, height: CGFloat) {
+        label.font = FeedNote.font
+        label.text = text
+        let inset: CGFloat = 10
+        let maxW = max(40, maxWidth)
+        let size = label.sizeThatFits(CGSize(width: maxW, height: .greatestFiniteMagnitude))
+        bounds.size = CGSize(width: min(maxW, size.width) + 2 * inset, height: max(0, height))
+        layer.cornerRadius = bounds.height / 2
+        label.frame = bounds.insetBy(dx: inset, dy: 0)
+    }
+}
+
+final class DateSeparatorCell: UICollectionViewCell {
+    private let capsule = DateCapsuleView()
+    private var text = ""
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         contentView.transform = CGAffineTransform(scaleX: 1, y: -1)
-        capsule.backgroundColor = UIColor.black.withAlphaComponent(0.18)
-        label.textColor = .white
-        label.numberOfLines = 0
-        label.textAlignment = .center
         contentView.addSubview(capsule)
-        capsule.addSubview(label)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(_ text: String) {
-        label.font = FeedNote.font
-        label.text = text
-        let inset: CGFloat = 10
-        let maxW = max(40, contentView.bounds.width - 40)
-        let size = label.sizeThatFits(CGSize(width: maxW, height: .greatestFiniteMagnitude))
-        let w = min(maxW, size.width) + 2 * inset
-        let h = contentView.bounds.height - 10
-        capsule.frame = CGRect(x: (contentView.bounds.width - w) / 2, y: 5, width: w, height: max(0, h))
-        capsule.layer.cornerRadius = capsule.bounds.height / 2
-        label.frame = capsule.bounds.insetBy(dx: inset, dy: 0)
+        self.text = text
+        capsule.set(text: text, maxWidth: contentView.bounds.width - 40,
+                    height: contentView.bounds.height - 10)
+        capsule.center = CGPoint(x: contentView.bounds.midX, y: contentView.bounds.midY)
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        if let text = label.text { configure(text) }
+        if !text.isEmpty { configure(text) }
+    }
+}
+
+/// The floating date under the navigation bar: it appears while the reader
+/// scrolls, names the day passing the top edge, and dissolves shortly after the
+/// scrolling stops.
+final class StickyDateOverlay: UIView {
+    private let capsule = DateCapsuleView()
+    private var hideWork: DispatchWorkItem?
+    /// The day currently rendered; nil while the real separator cell holds the
+    /// top of the screen.
+    private(set) var dayLabel: String?
+    /// The reader is scrolling, or stopped a moment ago.
+    private var revealed = false
+
+    init() {
+        super.init(frame: .zero)
+        isUserInteractionEnabled = false
+        alpha = 0
+        addSubview(capsule)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// A repeated label is a no-op, so feed updates that stay within the same
+    /// day cannot make the capsule blink.
+    func set(label: String?, maxWidth: CGFloat) {
+        guard label != dayLabel else { return }
+        dayLabel = label
+        if let label {
+            capsule.set(text: label, maxWidth: maxWidth,
+                        height: FeedNote.height(label, width: maxWidth + 40, padding: 20))
+            capsule.frame.origin = .zero
+            bounds.size = capsule.bounds.size
+        }
+        applyVisibility()
+    }
+
+    /// The text was rendered for a type size that is gone: the next set() draws anew.
+    func invalidate() { dayLabel = nil }
+
+    func reveal() {
+        hideWork?.cancel()
+        hideWork = nil
+        guard !revealed else { return }
+        revealed = true
+        applyVisibility()
+    }
+
+    /// The fade starts a beat after the scrolling stops, the way Telegram holds it.
+    func scheduleHide() {
+        hideWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.revealed = false
+            self.applyVisibility()
+        }
+        hideWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9, execute: work)
+    }
+
+    private func applyVisibility() {
+        let target: CGFloat = (revealed && dayLabel != nil) ? 1 : 0
+        guard target != alpha else { return }
+        UIView.animate(withDuration: target == 1 ? 0.15 : 0.3, delay: 0,
+                       options: [.beginFromCurrentState]) { self.alpha = target }
     }
 }
 

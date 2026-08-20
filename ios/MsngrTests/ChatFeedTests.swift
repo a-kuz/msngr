@@ -65,7 +65,7 @@ final class ChatFeedTests: XCTestCase {
         let markerIdx = feed.firstIndex { if case .unreadMarker = $0 { return true }; return false }
         XCTAssertNotNil(markerIdx)
         // the item just before the marker in the array is m3, which on screen sits under it
-        if case .message(let m, _, _, _, _, _) = feed[markerIdx! - 1] {
+        if case .message(let m, _, _, _, _, _, _) = feed[markerIdx! - 1] {
             XCTAssertEqual(m.id, "m3")
         } else {
             XCTFail("the first unread message must precede the marker, got \(feed[markerIdx! - 1])")
@@ -116,7 +116,7 @@ final class ChatFeedTests: XCTestCase {
         XCTAssertTrue(ChatViewModel.buildFeed(msgs, members: [], contentHidden: true).isEmpty)
         let shown = ChatViewModel.buildFeed(msgs, members: [], contentHidden: false)
         XCTAssertEqual(shown.compactMap { item -> String? in
-            if case .message(let m, _, _, _, _, _) = item { return m.id }
+            if case .message(let m, _, _, _, _, _, _) = item { return m.id }
             return nil
         }, ["m3", "m2", "m1"])
     }
@@ -126,7 +126,7 @@ final class ChatFeedTests: XCTestCase {
     /// Grouping flags in feed order, index 0 being the newest message.
     private func grouping(_ feed: [ChatFeedItem]) -> [(id: String, tightGap: Bool, showTail: Bool)] {
         feed.compactMap { item in
-            if case .message(let m, let tightGap, let showTail, _, _, _) = item {
+            if case .message(let m, let tightGap, let showTail, _, _, _, _) = item {
                 return (m.id, tightGap, showTail)
             }
             return nil
@@ -229,7 +229,7 @@ final class ChatFeedTests: XCTestCase {
 
     private func replyAuthorNames(_ feed: [ChatFeedItem]) -> [String?] {
         feed.compactMap { item in
-            if case .message(_, _, _, _, _, let replyAuthorName) = item { return replyAuthorName }
+            if case .message(_, _, _, _, _, let replyAuthorName, _) = item { return replyAuthorName }
             return nil
         }
     }
@@ -250,7 +250,7 @@ final class ChatFeedTests: XCTestCase {
         let feed = ChatViewModel.buildFeed([replyToPeer, replyToOwn, plain],
                                            members: [alice, bob], ownId: "me")
         let names = feed.compactMap { item -> (String, String?)? in
-            if case .message(let m, _, _, _, _, let name) = item { return (m.id, name) }
+            if case .message(let m, _, _, _, _, let name, _) = item { return (m.id, name) }
             return nil
         }
         func name(for id: String) -> String? { names.first { $0.0 == id }?.1 ?? nil }
