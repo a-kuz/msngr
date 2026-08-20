@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "MsngrKit",
+    defaultLocalization: "en",
     platforms: [.iOS(.v17), .macOS(.v14)],
     products: [
         .library(name: "MsngrCrypto", targets: ["MsngrCrypto"]),
@@ -18,7 +19,8 @@ let package = Package(
             dependencies: [
                 "MsngrCrypto",
                 .product(name: "GRDB", package: "GRDB.swift"),
-            ]
+            ],
+            resources: [.process("Resources")]
         ),
         .executableTarget(name: "msngrfixture", dependencies: ["MsngrCore"]),
         .testTarget(name: "MsngrCryptoTests", dependencies: ["MsngrCrypto"]),

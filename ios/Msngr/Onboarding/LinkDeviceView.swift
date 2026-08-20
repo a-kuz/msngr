@@ -39,7 +39,7 @@ struct LinkDeviceView: View {
             case .finishing:
                 VStack(spacing: 12) {
                     ProgressView()
-                    Text("Настраиваем устройство…").font(.footnote).foregroundStyle(.secondary)
+                    Text("Setting up this device…").font(.footnote).foregroundStyle(.secondary)
                 }
             case .failed(let message):
                 failed(message)
@@ -47,7 +47,7 @@ struct LinkDeviceView: View {
         }
         .padding(.horizontal, 32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .navigationTitle("Вход по коду")
+        .navigationTitle("Log in by code")
         .navigationBarTitleDisplayMode(.inline)
         .task { await start() }
         .onDisappear { cancelPending() }
@@ -55,7 +55,7 @@ struct LinkDeviceView: View {
 
     private var waiting: some View {
         VStack(spacing: 20) {
-            Text("Откройте на устройстве, где уже вошли:\nНастройки → Устройства → Добавить устройство\nи введите этот код.")
+            Text("On a device already logged in, open:\nSettings → Devices → Add device\nand enter this code there.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -65,11 +65,11 @@ struct LinkDeviceView: View {
                 .accessibilityIdentifier("link.code")
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Text(secondsLeft > 0 ? "Ждём подтверждения · \(secondsLeft) с" : "Ждём подтверждения")
+                Text(secondsLeft > 0 ? "Waiting for confirmation · \(secondsLeft) s" : "Waiting for confirmation")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            Text("История переписки на это устройство не переносится: старые сообщения останутся только там, где вы их читали.")
+            Text("The history does not move to this device: older messages stay only where you read them.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -82,20 +82,20 @@ struct LinkDeviceView: View {
                 .font(.system(size: 56))
                 .foregroundStyle(Theme.accent)
                 .accessibilityHidden(true)
-            Text("Войти как @\(username)?").font(.title3.bold())
+            Text("Log in as @\(username)?").font(.title3.bold())
             Text(displayName).font(.body).foregroundStyle(.secondary)
-            Text("Если это не ваш аккаунт, отмените вход.")
+            Text("If this is not your account, cancel the login.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             Button {
                 Task { await finish() }
             } label: {
-                Text("Войти")
+                Text("Log in")
             }
             .buttonStyle(.primaryAction)
             .accessibilityIdentifier("link.confirm")
-            Button("Отмена") { cancelPending(); dismiss() }
+            Button("Cancel") { cancelPending(); dismiss() }
                 .font(.footnote)
         }
     }
@@ -103,7 +103,7 @@ struct LinkDeviceView: View {
     private func failed(_ message: String) -> some View {
         VStack(spacing: 16) {
             Text(message).font(.body).multilineTextAlignment(.center)
-            Button("Попробовать снова") { Task { await start() } }
+            Button("Try again") { Task { await start() } }
         }
     }
 
@@ -120,7 +120,7 @@ struct LinkDeviceView: View {
             stage = .waiting
             await waitForApproval(started)
         } catch {
-            stage = .failed("Не удалось связаться с сервером")
+            stage = .failed(String(localized: "Could not reach the server"))
         }
     }
 
@@ -145,7 +145,7 @@ struct LinkDeviceView: View {
                 // a poll that did not land is one poll; the session outlives it
             }
         }
-        stage = .failed("Код больше не действует. Начните заново.")
+        stage = .failed(String(localized: "The code is no longer valid. Start over."))
     }
 
     private func finish() async {
@@ -176,13 +176,13 @@ struct LinkDeviceView: View {
                                         token: claimed.token, username: bundle.username))
         } catch DeviceLink.Failure.accountMismatch {
             AppState.wipeLocalData()
-            stage = .failed("Код подтвердили с чужого аккаунта. Начните заново.")
+            stage = .failed(String(localized: "The code was approved from a different account. Start over."))
         } catch let e as APIError {
             stage = .failed(e.code == "identity_mismatch"
-                            ? "Ключи аккаунта не совпали. Начните заново."
-                            : "Не удалось войти: \(e.code)")
+                            ? String(localized: "The account keys did not match. Start over.")
+                            : String(localized: "Could not log in: \(e.code)"))
         } catch {
-            stage = .failed("Не удалось войти на этом устройстве")
+            stage = .failed(String(localized: "Could not log in on this device"))
         }
     }
 

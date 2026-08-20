@@ -20,14 +20,14 @@ struct RegisterView: View {
                     .accessibilityHidden(true)
                 Text("Msngr")
                     .font(.largeTitle.bold())
-                Text("Сквозное шифрование. Ключи создаются на этом устройстве.")
+                Text("End-to-end encrypted. The keys are created on this device.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 40)
 
                 VStack(spacing: 12) {
-                    TextField("Юзернейм (a-z, 0-9, _)", text: $username)
+                    TextField("Username (a-z, 0-9, _)", text: $username)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .textFieldStyle(.roundedBorder)
@@ -37,7 +37,7 @@ struct RegisterView: View {
                     if let hint = AccountValidator.usernameHint(username) {
                         fieldHint(hint, id: "reg.usernameHint")
                     }
-                    TextField("Имя", text: $displayName)
+                    TextField("Name", text: $displayName)
                         .textFieldStyle(.roundedBorder)
                         .accessibilityIdentifier("reg.displayName")
                     if let hint = AccountValidator.nameHint(displayName) {
@@ -53,7 +53,7 @@ struct RegisterView: View {
                 Button {
                     Task { await register() }
                 } label: {
-                    if busy { ProgressView() } else { Text("Создать аккаунт") }
+                    if busy { ProgressView() } else { Text("Create account") }
                 }
                 .buttonStyle(.primaryAction)
                 .disabled(busy || !formValid)
@@ -65,7 +65,7 @@ struct RegisterView: View {
                 NavigationLink {
                     LinkDeviceView()
                 } label: {
-                    Text("Уже есть аккаунт — войти по коду")
+                    Text("Already have an account — log in by code")
                         .font(.footnote)
                 }
                 .accessibilityIdentifier("reg.link")
@@ -130,14 +130,14 @@ struct RegisterView: View {
                 try app.saveSession(session)
             } catch {
                 MsngrLog.session.error("failed to save the session: \(error)")
-                self.error = "Не удалось сохранить сессию на устройстве"
+                self.error = String(localized: "Could not save the session on this device")
                 return
             }
         } catch let e as APIError {
             MsngrLog.session.error("registration refused: \(e.code)")
-            error = e.code == "username_taken" ? "Юзернейм занят" : "Не удалось создать аккаунт"
+            error = e.code == "username_taken" ? String(localized: "Username is taken") : String(localized: "Could not create the account")
         } catch {
-            self.error = "Нет связи с сервером"
+            self.error = String(localized: "No connection to the server")
         }
     }
 }
