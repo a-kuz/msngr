@@ -6,6 +6,22 @@ with the commit that closed it.
 
 ## Open
 
+### An XCUITest tap on the locked-recording send button fires no action
+Found 2026-08-21 by the uicheck on main: `VoiceTests.testG_PlaybackSurvivesAnotherChat`
+failed twice in a row at `sendVoice` — the tap on `chat.sendVoice` after a 25 s
+locked take leaves the recording running. The synthesized event lands on the
+button's centre (375.3, 815.7 in the event plist, matching the button's frame),
+"Check for interrupting elements" passes, yet the screen recording shows the
+timer walking on past the tap (0:25,7 → 0:29,2) until teardown. The product
+path is fine: the same gesture driven by hand over idb — lock, 30 s, tap the
+same point — sends the take and drops the bar (screenshots in the session log,
+a 0:40 bubble landed). `testF1` (20 s) and `testH` (10 s) tap the same button
+through the same helper and pass in the same run, and a third isolated run of
+G passed — so the tap is lost intermittently, twice out of three here.
+Mechanism unknown — needs its own investigation before any test-side
+accommodation; until then a red G with the timer still walking in the
+recording is this defect, not the product.
+
 ### A search result in "Новый чат" does not open a chat
 Found 2026-08-20 while running the pin-depth scenario (`run-pin` branch),
 unrelated to that change. Tapping a row under "Глобальный поиск" in
