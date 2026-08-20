@@ -352,6 +352,16 @@ frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
 
+### A SyncEngine started again after stop() never drains the outbox
+Found 2026-08-21 on the run-devices branch, in a test that restarted the
+engine. The outbox and action loops iterate `AsyncStream`s created once at
+init; cancelling their tasks in `stop()` ends those streams, so a second
+`start()` subscribes to streams that are already over and every wakeup after
+that is lost — a send enqueues and sits in the outbox forever. No app path
+restarts an engine today (bootstrap always builds a fresh one), so nothing
+user-visible. Fixed in passing on the same branch: `start()` recreates the
+wakeup streams.
+
 ### Unread counts must work offline, and the read must reach the server later
 Reported 2026-08-19. Closed by the live run in
 `runs/2026-08-19-offlineread-run.md`, no code change: 5 unread accumulated on

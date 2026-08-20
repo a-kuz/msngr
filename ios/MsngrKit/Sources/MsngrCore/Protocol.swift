@@ -28,8 +28,10 @@ public enum MsngrProtocol {
 /// Mirror of the server protocol (docs/protocol.md).
 public enum WSOutgoing {
     /// Everything the client knows about: any chat missing from the cursors is sent
-    /// as state and replayed from scratch.
-    case sync(cursors: [String: Int])
+    /// as state and replayed from scratch. deviceVersions carries the device
+    /// cache the client held across the reconnect — userId to devices_version —
+    /// answered by a `deviceVersions` frame naming which entries are still current.
+    case sync(cursors: [String: Int], deviceVersions: [String: Int])
     /// The next batch for the chats that are still behind.
     case catchup(cursors: [String: Int])
     // service: a service frame (skd/reaction/edit/disappearing)
@@ -43,8 +45,9 @@ public enum WSOutgoing {
     public func encode() throws -> Data {
         var obj: [String: Any]
         switch self {
-        case .sync(let cursors):
+        case .sync(let cursors, let deviceVersions):
             obj = ["t": "sync", "cursors": cursors]
+            if !deviceVersions.isEmpty { obj["deviceVersions"] = deviceVersions }
         case .catchup(let cursors):
             obj = ["t": "catchup", "cursors": cursors]
         case .send(let chatId, let clientMsgId, let sentAt, let body, let service):
@@ -137,6 +140,10 @@ public struct WSIncoming: Decodable {
     /// syncState: the chat has history beyond the cursor;
     /// syncDone: the batch is closed but the catch-up is not finished
     public let more: Bool?
+    /// devices: the user's devices_version after the change
+    public let version: Int?
+    /// deviceVersions: the current devices_version of every user the sync asked about
+    public let versions: [String: Int]?
 }
 
 public struct ChatStateDTO: Decodable {

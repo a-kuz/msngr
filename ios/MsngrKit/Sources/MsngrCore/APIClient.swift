@@ -307,16 +307,20 @@ public final class APIClient: @unchecked Sendable {
         public let identitySignKey: String
         public let identityKeySig: String
     }
-    public struct DevicesResponse: Decodable { public let devices: [DeviceDTO] }
+    public struct DevicesResponse: Decodable {
+        public let devices: [DeviceDTO]
+        /// devices_version per asked user; a user the server does not know is absent
+        public let versions: [String: Int]
+    }
     /// How many times /api/devices was actually hit; the device cache tests
     /// assert on it.
     public private(set) var devicesRequestCount = 0
     /// Devices of several users in one request; consumes no prekeys.
-    public func devices(userIds: [String]) async throws -> [DeviceDTO] {
-        guard !userIds.isEmpty else { return [] }
+    public func devices(userIds: [String]) async throws -> DevicesResponse {
+        guard !userIds.isEmpty else { return DevicesResponse(devices: [], versions: [:]) }
         devicesRequestCount += 1
         return try await get("api/devices?ids=\(userIds.joined(separator: ","))",
-                             as: DevicesResponse.self).devices
+                             as: DevicesResponse.self)
     }
 
     public struct PrekeyBundleDTO: Decodable {

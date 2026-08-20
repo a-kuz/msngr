@@ -137,4 +137,103 @@ final class DeviceCacheTests: XCTestCase {
         }
         XCTAssertTrue(narrowed, "the send after revocation must see one device")
     }
+
+    func testReconnectKeepsCurrentCacheAndRefetchesChanged() async throws {
+        guard await CoreIntegrationTests.serverUp() else {
+            throw XCTSkip("wrangler dev is not running")
+        }
+        let suffix = makeSuffix()
+        let alice = try await CoreIntegrationTests.makeClient(username: "dcr_\(suffix)")
+        let bob = try await CoreIntegrationTests.makeClient(username: "dcs_\(suffix)")
+        defer { Task { await alice.engine.stop(); await bob.engine.stop() } }
+
+        let chatId = try await alice.api.createChat(kind: "direct", memberIds: [bob.userId], title: nil)
+        try await alice.engine.refreshSnapshot()
+
+        // warm the cache and let the ack confirm the send went out
+        var first = ContentPayload(kind: "text")
+        first.text = "before the reconnect"
+        try await alice.engine.enqueue(content: first, chatId: chatId)
+        let warmed = try await waitUntil {
+            alice.e2ee.cachedDeviceState(userId: bob.userId)?.verified == true
+        }
+        XCTAssertTrue(warmed, "the first send did not fill the device cache")
+
+        // a reconnect with nothing changed: the sync's deviceVersions answer
+        // confirms the entry instead of a /api/devices round trip
+        await alice.engine.stop()
+        await alice.engine.start()
+        let reconnected = try await waitUntil { await alice.engine.isConnected }
+        XCTAssertTrue(reconnected, "the engine did not reconnect")
+        let confirmed = try await waitUntil {
+            alice.e2ee.cachedDeviceState(userId: bob.userId)?.verified == true
+        }
+        XCTAssertTrue(confirmed, "the sync answer did not confirm the cached entry")
+
+        let before = alice.api.devicesRequestCount
+        var second = ContentPayload(kind: "text")
+        second.text = "after the quiet reconnect"
+        try await alice.engine.enqueue(content: second, chatId: chatId)
+        let secondAcked = try await waitUntil(15) {
+            try await alice.db.read { dbc in
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND seq IS NOT NULL",
+                                 arguments: [chatId]) == 2
+            }
+        }
+        XCTAssertTrue(secondAcked, "the send after the reconnect was not acked")
+        XCTAssertEqual(alice.api.devicesRequestCount, before,
+                       "an unchanged device set must cost no /api/devices after a reconnect")
+
+        // bob links a second device while alice is offline: the frame is lost,
+        // the version comparison on reconnect is what has to catch it
+        await alice.engine.stop()
+        let db2 = try AppDatabase.openInMemory()
+        let store2 = try IdentityStore(db: db2, masterKeyProvider: StaticMasterKey())
+        let api2 = APIClient(baseURL: CoreIntegrationTests.base)
+        let pending = try await DeviceLink.begin(api: api2, deviceName: "second", platform: "test")
+        let lookup = try await bob.api.provisionLookup(code: pending.code)
+        try await DeviceLink.approve(api: bob.api, lookup: lookup,
+                                     identity: bob.e2ee.store.identity(),
+                                     userId: bob.userId, username: "dcs_\(suffix)",
+                                     displayName: "dcs_\(suffix)")
+        guard let bundle = try await DeviceLink.poll(api: api2, pending: pending) else {
+            XCTFail("provisioning bundle did not arrive"); return
+        }
+        let claimed = try await DeviceLink.claim(api: api2, pending: pending, bundle: bundle,
+                                                 store: store2, deviceName: "second")
+        api2.token = claimed.token
+
+        await alice.engine.start()
+        let droppedOffline = try await waitUntil {
+            alice.e2ee.cachedDevices(userId: bob.userId) == nil
+        }
+        XCTAssertTrue(droppedOffline,
+                      "a device set that changed while offline must drop the entry on reconnect")
+
+        // the next message is addressed to the set that includes the new device
+        let e2ee2 = E2EEManager(store: store2, api: api2,
+                                ownUserId: claimed.userId, ownDeviceId: claimed.deviceId)
+        var comps = URLComponents(url: CoreIntegrationTests.base.appendingPathComponent("ws"),
+                                  resolvingAgainstBaseURL: false)!
+        comps.scheme = "ws"
+        comps.queryItems = [URLQueryItem(name: "token", value: claimed.token)]
+        let engine2 = SyncEngine(db: db2, api: api2, e2ee: e2ee2, wsURL: comps.url!,
+                                 ownUserId: claimed.userId, ownDeviceId: claimed.deviceId)
+        await engine2.start()
+        defer { Task { await engine2.stop() } }
+        try await engine2.refreshSnapshot()
+
+        var third = ContentPayload(kind: "text")
+        third.text = "for the device linked offline"
+        try await alice.engine.enqueue(content: third, chatId: chatId)
+        let reachedNew = try await waitUntil(15) {
+            try await db2.read { dbc in
+                try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND text = 'for the device linked offline'",
+                                 arguments: [chatId]) == 1
+            }
+        }
+        XCTAssertTrue(reachedNew, "the message never reached the device linked while offline")
+        XCTAssertEqual(alice.e2ee.cachedDevices(userId: bob.userId)?.count, 2,
+                       "the re-read list must hold both of Bob's devices")
+    }
 }

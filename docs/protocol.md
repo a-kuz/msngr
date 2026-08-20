@@ -66,7 +66,8 @@ POST /api/provision/:id/claim     (x-provision-token) {identityKey, identitySign
 POST /api/provision/:id/cancel    (x-provision-token)
 GET  /api/users?q=                search by username/displayName (LOWER LIKE, limit 20)
 GET  /api/users/:id               → {user, presence:{online,lastSeen}}
-GET  /api/devices?ids=a,b,c       devices and identity keys; spends nothing
+GET  /api/devices?ids=a,b,c       devices and identity keys, plus versions:{userId:
+                                  devices_version} stamped in the same snapshot; spends nothing
 GET  /api/users/:id/prekeys       X3DH bundles of every device; a one-time prekey is handed out and deleted
 GET  /api/prekeys/count           how many of your own one-time prekeys are left
 POST /api/prekeys                 {oneTimePrekeys:[{id,key}]} — a top-up (up to 200 at a time)
@@ -160,7 +161,8 @@ history.
 ## WS: client → server
 
 ```
-{t:"sync",  cursors:{chatId: lastSeq, ...}}    // the whole world as the client knows it
+{t:"sync",  cursors:{chatId: lastSeq, ...},    // the whole world as the client knows it
+            deviceVersions?:{userId: v, ...}}  // the device cache held across the reconnect
 {t:"catchup", cursors:{chatId: cursor, ...}}   // the next catch-up portion
 {t:"send",  chatId, clientMsgId, sentAt, body, service?}   // body is the E2E envelope
 {t:"recv",  chatId, seqs:[...]}                            // → delivered receipts to the author
@@ -189,7 +191,8 @@ line; the rest are listed in `SyncEngine.rowlessKinds`.
 {t:"typing",  chatId, from, kind}
 {t:"presence",userId, online, lastSeen}
 {t:"profile", user}
-{t:"devices", userId}
+{t:"devices", userId, version}
+{t:"deviceVersions", versions:{userId: v, ...}}
 {t:"chat",    chatId, event:"created"|"members"|"settings"|"pinned"|"sync", state}
 {t:"deleted", chatId, msgIds, forAll, by}
 {t:"syncState", chatId, cursor, more}
@@ -204,9 +207,19 @@ instead of `sent`, with the same `clientMsgId`.
 
 `devices` says the user's device set changed — a device was linked or revoked.
 It goes to the user's own other devices and to everyone they share a chat with.
-A sender caches device lists between sends; this frame (or a reconnect, which
-may have missed it) drops the cached entry, and the next envelope re-reads
-`GET /api/devices`.
+`version` is the user's `devices_version` after the change: every link and
+revocation bumps it in the same D1 batch. A sender caches device lists between
+sends, stamped with the version `GET /api/devices` read them under; a frame
+naming a version the cache already holds confirms the entry, anything newer
+drops it, and the next envelope re-reads the list.
+
+A frame sent while the socket was down is gone, so a reconnect leaves every
+cached entry suspect: the client sends its versions in the sync's
+`deviceVersions` map, and the server answers with a `deviceVersions` frame
+naming the current version of every asked user. Entries the answer confirms are
+trusted again; the changed and the unknown are dropped. A send that races the
+answer treats a suspect entry as absent and re-reads the list — a device linked
+while the client was offline is never sent past.
 
 `state` in a `chat` frame is the chat's full snapshot: `members` (userId, role,
 joinedAt, accepted), `title`, `avatarId`, `description`, `sendPolicy`,

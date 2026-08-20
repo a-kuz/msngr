@@ -71,6 +71,11 @@ public actor SyncEngine {
         try? await db.write { dbc in
             try dbc.execute(sql: "UPDATE outbox SET state = 'ready' WHERE state IN ('inflight', 'waiting')")
         }
+        // an AsyncStream serves one iteration: a started-again engine (stop,
+        // then start) needs fresh wakeups, or the outbox and action loops
+        // consume streams that already ended with their cancelled tasks
+        outboxWakeup = AsyncStream<Void>.makeStream()
+        actionWakeup = AsyncStream<Void>.makeStream()
         let events = await ws.events()
         await ws.start()
         eventTask = Task { [weak self] in
@@ -292,8 +297,9 @@ public actor SyncEngine {
             connected = true
             connectionStream.send(true)
             // a `devices` frame sent while the socket was down is gone, so
-            // every cached device list is suspect
-            e2ee.invalidateDeviceCache()
+            // every cached device list is suspect until the sync's
+            // deviceVersions answer confirms which ones are still current
+            e2ee.markDeviceCacheSuspect()
             await sendSyncCursors()
             outboxWakeup.continuation.yield()
             actionWakeup.continuation.yield()
@@ -404,7 +410,8 @@ public actor SyncEngine {
         }) ?? [:]
         catchupPending = []
         catchupSent = cursors
-        try? await ws.send(.sync(cursors: cursors))
+        try? await ws.send(.sync(cursors: cursors,
+                                 deviceVersions: e2ee.deviceCacheVersions()))
     }
 
     /// Catch-up progress for one chat. The cursor is confirmed only once the
@@ -470,8 +477,15 @@ public actor SyncEngine {
         case "devices":
             // someone linked or revoked a device: the next envelope to them
             // must be addressed to the new set, so their cached list goes
+            // unless it already holds the version the frame names
             if let userId = f.userId {
-                e2ee.invalidateDeviceCache(userId: userId)
+                e2ee.invalidateDeviceCache(userId: userId, version: f.version)
+            }
+        case "deviceVersions":
+            // the answer to the versions sent with the sync: confirmed entries
+            // are trusted again, the rest are re-read on the next send
+            if let versions = f.versions {
+                e2ee.reconcileDeviceVersions(versions)
             }
         case "chat":
             // removed from the chat while the device was offline: such a frame
