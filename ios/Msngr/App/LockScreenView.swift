@@ -14,7 +14,7 @@ struct LockScreenView: View {
                     .font(.system(size: 34))
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
-                Text("Введите код-пароль")
+                Text("Enter the passcode")
                     .font(.headline)
                 HStack(spacing: 18) {
                     ForEach(0..<4, id: \.self) { i in

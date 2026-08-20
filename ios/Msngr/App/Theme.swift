@@ -17,7 +17,7 @@ enum Palette: String, CaseIterable, Identifiable {
         switch self {
         case .imessage: return "iMessage"
         case .telegram: return "Telegram"
-        case .graphite: return "Графит"
+        case .graphite: return String(localized: "Graphite")
         }
     }
 
@@ -372,8 +372,8 @@ enum Theme {
     static let bubbleMaxWidthRatio: CGFloat = 0.76
 }
 
-/// The filled action a screen is built around: «Создать аккаунт», «Далее»,
-/// «Войти». The box grows with the label instead of holding 48 pt, so an
+/// The filled action a screen is built around: "Create account", "Next",
+/// "Log in". The box grows with the label instead of holding 48 pt, so an
 /// accessibility size wraps the text rather than clipping it.
 struct PrimaryActionButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View { Filled(configuration: configuration) }

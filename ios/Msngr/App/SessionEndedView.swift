@@ -15,9 +15,9 @@ struct SessionEndedView: View {
                     .font(.system(size: 56))
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
-                Text("Сессия завершена")
+                Text("Session ended")
                     .font(.title2.bold())
-                Text("Доступ этого устройства к аккаунту отозван. Переписка и ключи, которые хранились здесь, удаляются.")
+                Text("This device's access to the account has been revoked. The messages and keys stored here are being deleted.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -29,7 +29,7 @@ struct SessionEndedView: View {
                     if busy { ProgressView() }
                     // the start screen offers both: a new account and
                     // signing back in from a device still on this one
-                    else { Text("Начать заново") }
+                    else { Text("Start over") }
                 }
                 .buttonStyle(.primaryAction)
                 .disabled(busy)
