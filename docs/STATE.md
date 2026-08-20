@@ -25,6 +25,13 @@ letters (`324c4d2`), the chat search that fired a request per keystroke
 out — its cause was the custom back button. Sends to accounts registered before
 the identity binding no longer hang the whole outbox (`123a23d`), and the in-app
 banner is laid out inside its own window band with tests holding that shape.
+The socket now watches itself by the clock (`21f73fb`): `WSFreshness` holds the
+rule — 8 s for a handshake, 4 s for a pong, 12 s of quiet — and `WSClient` asks
+it once a second from the upgrade, so a stalled stream is caught by a tick
+rather than by a callback that never comes. Death is noticed within 16 s at
+worst instead of 24; the core suite is green at 363 tests and a 100-message
+burst still lands in 410 ms.
+
 Every fix has its story in `docs/qa/defects.md`; the gate ran green after each.
 
 ## In main since 2026-08-19
