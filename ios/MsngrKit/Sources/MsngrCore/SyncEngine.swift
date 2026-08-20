@@ -1696,6 +1696,95 @@ public actor SyncEngine {
         outboxWakeup.continuation.yield()
     }
 
+    // MARK: - Staged media sends
+    //
+    // A photo, an album or a video is not ready the instant the user picks it:
+    // it still has to be compressed (and, for video, transcoded), which can take
+    // seconds. The row appears at once — `beginMedia` — and is refined in place
+    // as preparation progresses — `updateMediaPreview` — while the `outbox` row
+    // that makes it eligible for upload is only written once the file is on
+    // disk — `finalizeMedia`. Writing `outbox` any earlier would hand the send
+    // worker a `MediaInfo` with no `localPath` yet, which it cannot upload and
+    // would otherwise send bare, with an empty mediaId/key/hash.
+
+    /// Phase 1: the row appears in the feed before the attachment is ready. No
+    /// `outbox` entry — nothing is sent until `finalizeMedia` runs. `kind` and
+    /// the slot count of `album` are known synchronously from the user's
+    /// picker selection, so this can run before any attachment is even loaded.
+    public func beginMedia(clientMsgId: String, chatId: String, kind: MessageKind, text: String?,
+                           media: MediaInfo?, album: [MediaInfo]?) async throws {
+        let now = Date().timeIntervalSince1970
+        var msg = Message(id: clientMsgId, chatId: chatId, fromUserId: ownUserId, sentAt: now,
+                          kind: kind, text: text, status: .sending, isOutgoing: true)
+        msg.clientMsgId = clientMsgId
+        msg.media = media
+        msg.album = album
+        try await db.write { [msg] dbc in
+            try msg.save(dbc)
+            try dbc.execute(sql: "UPDATE chat SET lastActivityAt = ? WHERE id = ?", arguments: [now, chatId])
+        }
+    }
+
+    /// Phase 2 (repeatable): refines the placeholder — a fast BlurHash, a
+    /// video's poster frame, truer dimensions — without touching `outbox`.
+    public func updateMediaPreview(clientMsgId: String, media: MediaInfo?, album: [MediaInfo]?) async throws {
+        try await db.write { dbc in
+            try Self.writeMedia(dbc, clientMsgId: clientMsgId, media: media, album: album)
+        }
+    }
+
+    /// The same as `updateMediaPreview`, for one slot of an album whose
+    /// siblings are prepared concurrently and must not clobber each other:
+    /// this reads the current array and rewrites it inside one transaction.
+    public func updateAlbumItemPreview(clientMsgId: String, index: Int, media: MediaInfo) async throws {
+        try await db.write { dbc in
+            guard let json = try String.fetchOne(dbc, sql: "SELECT album FROM message WHERE clientMsgId = ?",
+                                                 arguments: [clientMsgId]),
+                  var album = try? JSONDecoder().decode([MediaInfo].self, from: Data(json.utf8)),
+                  index < album.count else { return }
+            album[index] = media
+            try Self.writeMedia(dbc, clientMsgId: clientMsgId, media: nil, album: album)
+        }
+    }
+
+    /// Phase 3: the attachment is compressed and stashed on disk
+    /// (`media`/`album` here carry `localPath`). Writes the final content and,
+    /// only now, the `outbox` row — from this point the send worker may pick
+    /// it up.
+    public func finalizeMedia(chatId: String, clientMsgId: String, content: ContentPayload) async throws {
+        let now = Date().timeIntervalSince1970
+        let payload = try JSONEncoder().encode(content)
+        try await db.write { dbc in
+            try Self.writeMedia(dbc, clientMsgId: clientMsgId, media: content.media, album: content.album)
+            try OutboxItem(clientMsgId: clientMsgId, chatId: chatId, createdAt: now, payload: payload).save(dbc)
+        }
+        outboxWakeup.continuation.yield()
+    }
+
+    /// Preparation failed (a disk write, a video export): withdraw the
+    /// placeholder. It never reached `outbox`, so there is nothing to retry —
+    /// same end state as today's silent "never enqueued".
+    public func abandonMedia(clientMsgId: String) async throws {
+        try await db.write { dbc in
+            try dbc.execute(sql: "DELETE FROM message WHERE clientMsgId = ?", arguments: [clientMsgId])
+        }
+    }
+
+    private static func writeMedia(_ dbc: GRDB.Database, clientMsgId: String,
+                                   media: MediaInfo?, album: [MediaInfo]?) throws {
+        let enc = JSONEncoder()
+        let mediaJSON = media.flatMap { try? enc.encode($0) }.flatMap { String(data: $0, encoding: .utf8) }
+        let albumJSON = album.flatMap { try? enc.encode($0) }.flatMap { String(data: $0, encoding: .utf8) }
+        if media != nil {
+            try dbc.execute(sql: "UPDATE message SET media = ? WHERE clientMsgId = ?",
+                            arguments: [mediaJSON, clientMsgId])
+        }
+        if album != nil {
+            try dbc.execute(sql: "UPDATE message SET album = ? WHERE clientMsgId = ?",
+                            arguments: [albumJSON, clientMsgId])
+        }
+    }
+
     private func wakeOutbox() {
         outboxWakeup.continuation.yield()
     }
