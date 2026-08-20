@@ -8,6 +8,9 @@ final class MessageContextOverlay: UIView {
     struct Item {
         let title: String
         let icon: String
+        /// Stable handle for UI tests; the title is what the user reads and
+        /// changes with the language.
+        var id: String?
         var destructive = false
         var submenu: [Item] = []
         var handler: (() -> Void)?
@@ -500,6 +503,7 @@ private final class MenuRow: UIControl {
     init(item: MessageContextOverlay.Item) {
         super.init(frame: .zero)
         titleLabel.text = item.title
+        titleLabel.accessibilityIdentifier = item.id
         titleLabel.font = Theme.Text.menuItem.uiFont
         titleLabel.textColor = item.destructive ? .systemRed : .label
         iconView.image = UIImage(systemName: item.icon)

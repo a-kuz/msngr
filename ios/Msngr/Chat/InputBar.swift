@@ -63,6 +63,7 @@ struct InputBar: View {
                         Button { onAttachPhoto() } label: {
                             Label("Фото или видео", systemImage: "photo.on.rectangle")
                         }
+                        .accessibilityIdentifier("chat.attach.photo")
                         Button { onAttachFile() } label: {
                             Label("Файл", systemImage: "doc")
                         }
