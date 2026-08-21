@@ -149,7 +149,10 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ a draft survives leaving the chat and a kill (offline-run 5)
   - ✅ the reply strip and the edit mode above the field, cancel returning the
     draft (header-run)
-  - ⬜ pasting an image from the clipboard
+  - ✅ pasting an image from the clipboard: the attachment menu offers «Вставить»
+    when the pasteboard holds one, the system paste gesture lands it as an
+    attachment, and it goes out as a photo message
+    (qa/runs/2026-08-15-reply-file-clipboard)
   - ⬜ mentions and autocomplete
   - ⬜ sending at a chosen time: the message waits in the outbox, the chat shows
     what is queued for when, and it can be edited or cancelled before it leaves
