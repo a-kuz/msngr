@@ -838,6 +838,20 @@ struct ChatScreen: View {
             await publish(info)
         }
 
+        // an animated GIF travels as it came: the JPEG pass keeps one frame, and
+        // one frame is not what was sent
+        if ImageProcessor.isAnimatedGIF(data) {
+            info.mime = "image/gif"
+            if let size = ImageProcessor.pixelSize(data) {
+                info.w = Int(size.width)
+                info.h = Int(size.height)
+            }
+            info.size = data.count
+            info.localPath = await retrying("stash gif") { try? app.media.stash(data, mime: "image/gif") }
+            await publish(info)
+            return info
+        }
+
         // heavy pass: compress for sending and stash to disk — gating steps,
         // retried until they succeed
         let prepared = await retrying("compress photo") { ImageProcessor.prepareForSending(data) }

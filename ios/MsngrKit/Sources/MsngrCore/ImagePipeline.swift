@@ -104,6 +104,24 @@ public enum ImageProcessor {
         return (output as Data, CGSize(width: image.width, height: image.height))
     }
 
+    /// True when the data is a GIF holding more than one frame. Such a file is sent
+    /// as it came: the JPEG pass below keeps a single frame and the animation is
+    /// what the sender meant to send.
+    public static func isAnimatedGIF(_ data: Data) -> Bool {
+        guard data.count > 6, data.starts(with: Array("GIF8".utf8)) else { return false }
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return false }
+        return CGImageSourceGetCount(source) > 1
+    }
+
+    /// The pixel size of the first frame, for a file that travels unchanged.
+    public static func pixelSize(_ data: Data) -> CGSize? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = props[kCGImagePropertyPixelWidth] as? Int,
+              let height = props[kCGImagePropertyPixelHeight] as? Int else { return nil }
+        return CGSize(width: width, height: height)
+    }
+
     /// RGBA8 pixels of a shrunken copy with a long side of about 32px, for BlurHash encoding.
     public static func rgbaPixels(_ data: Data, maxDimension: CGFloat = 32) -> (pixels: [UInt8], width: Int, height: Int)? {
         guard let image = downsample(data, maxDimension: maxDimension) else { return nil }

@@ -30,6 +30,9 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     /// Muted looping players over the video tiles whose files are already on
     /// the device; torn down together with the media views.
     private var autoplay: [(layer: AVPlayerLayer, looper: NSObjectProtocol)] = []
+    /// Frame loops of the animated GIFs on screen. Each holds a flag the loop
+    /// reads: cleared, the animation stops with the view it was drawing into.
+    private var gifLoops: [GIFAnimation] = []
     /// One fingerprint per media view (blurhash + mediaId + local paths): a
     /// message's media is no longer immutable once picked — it fills in from
     /// a placeholder to a finished upload — so an in-place reconfigure has to
@@ -544,6 +547,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             layer.removeFromSuperlayer()
         }
         autoplay = []
+        for loop in gifLoops { loop.stop() }
+        gifLoops = []
     }
 
     /// Off-screen cells stop their players; the collection view drives this
@@ -552,6 +557,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         for (layer, _) in autoplay {
             if active { layer.player?.play() } else { layer.player?.pause() }
         }
+        for loop in gifLoops { loop.setPaused(!active) }
     }
 
     /// The blurhash placeholder shows at once, the real image replaces it once the
@@ -580,6 +586,18 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
                 return media
             }()
             guard let url = try? await mm.fetch(effective) else { return }
+            // a GIF plays where it stands: its frames go into the same tile the
+            // still image would have filled
+            if effective.mime == "image/gif", let data = try? Data(contentsOf: url),
+               ImageProcessor.isAnimatedGIF(data) {
+                await MainActor.run { [weak self] in
+                    guard let self, let iv, iv.tag == index else { return }
+                    let loop = GIFAnimation(data: data, into: iv)
+                    self.gifLoops.append(loop)
+                    loop.start()
+                }
+                return
+            }
             let cg = await ImagePipeline.shared.image(at: url, targetPixelSize: target)
             await MainActor.run {
                 guard let iv, iv.tag == index, let cg else { return }

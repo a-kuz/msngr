@@ -140,6 +140,10 @@ private struct MediaPage: View {
                 } else {
                     ProgressView().tint(.white)
                 }
+            } else if let url = localURL, media.mime == "image/gif" {
+                // a GIF is animated here as well: AsyncImage would show its first
+                // frame and nothing else
+                GIFPage(url: url)
             } else if let url = localURL {
                 AsyncImage(url: url) { phase in
                     if let image = phase.image {
@@ -184,6 +188,38 @@ private struct MediaPage: View {
                 ProgressView().tint(.white)
             }
         }
+    }
+}
+
+/// An animated GIF at full screen, played by the same frame loop the feed uses.
+private struct GIFPage: UIViewRepresentable {
+    let url: URL
+
+    func makeUIView(context: Context) -> UIImageView {
+        let view = UIImageView()
+        view.contentMode = .scaleAspectFit
+        return view
+    }
+
+    func updateUIView(_ view: UIImageView, context: Context) {
+        guard context.coordinator.shownURL != url else { return }
+        context.coordinator.shownURL = url
+        context.coordinator.animation?.stop()
+        guard let data = try? Data(contentsOf: url) else { return }
+        let animation = GIFAnimation(data: data, into: view)
+        context.coordinator.animation = animation
+        animation.start()
+    }
+
+    static func dismantleUIView(_ view: UIImageView, coordinator: Coordinator) {
+        coordinator.animation?.stop()
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        var animation: GIFAnimation?
+        var shownURL: URL?
     }
 }
 
