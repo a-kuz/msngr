@@ -28,20 +28,8 @@ struct MessageSelection: Equatable {
         MessageDeletion.canDeleteForAll(selected)
     }
 
-    /// Counter in the header, in Russian plural forms of "N messages".
+    /// Counter in the header: "N messages" in the plural form of the current locale.
     static func title(count: Int) -> String {
-        let mod100 = count % 100
-        let mod10 = count % 10
-        let noun: String
-        if mod100 / 10 == 1 {
-            noun = "сообщений"
-        } else if mod10 == 1 {
-            noun = "сообщение"
-        } else if (2...4).contains(mod10) {
-            noun = "сообщения"
-        } else {
-            noun = "сообщений"
-        }
-        return "\(count) \(noun)"
+        String(localized: "\(count) messages")
     }
 }

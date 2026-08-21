@@ -348,7 +348,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         }
 
         // status: time and ticks
-        timeLabel.text = (plan.edited ? "изм. " : "") + plan.timeString
+        timeLabel.text = (plan.edited ? BubbleLayout.editedMark : "") + plan.timeString
         timeLabel.textColor = plan.statusOnMedia ? .white
             : (plan.isOutgoing ? UIColor(Theme.outgoingMeta) : .secondaryLabel)
         statusBackdrop.isHidden = !plan.statusOnMedia
@@ -625,12 +625,12 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         g === pressGesture || other === pressGesture
     }
 
-    /// Ширина левой кромки экрана, принадлежащей возврату по свайпу.
+    /// Width of the screen's left edge that belongs to the back swipe.
     static let backSwipeEdge: CGFloat = 24
 
     override func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
         guard let pan = g as? UIPanGestureRecognizer else { return true }
-        // жест от левой кромки экрана — это возврат: свайп-ответ его не перехватывает
+        // a gesture from the screen's left edge is the back swipe: swipe-to-reply does not steal it
         if pan.location(in: nil).x < Self.backSwipeEdge { return false }
         let v = pan.velocity(in: contentView)
         return abs(v.x) > abs(v.y) && v.x > 0
@@ -1012,48 +1012,48 @@ extension MessageCell {
         // to, forwarded or pinned, and the only two things to do with it are to
         // send it again and to throw it away
         if msg.status == .failed {
-            items.append(.init(title: "Отправить заново", icon: "arrow.clockwise") { [weak self] in
+            items.append(.init(title: String(localized: "Send again"), icon: "arrow.clockwise") { [weak self] in
                 self?.onContextAction?(.resend)
             })
             if msg.kind == .text {
-                items.append(.init(title: "Копировать", icon: "doc.on.doc") { [weak self] in
+                items.append(.init(title: String(localized: "Copy"), icon: "doc.on.doc") { [weak self] in
                     self?.onContextAction?(.copy)
                 })
             }
-            items.append(.init(title: "Удалить", icon: "trash", destructive: true) { [weak self] in
+            items.append(.init(title: String(localized: "Delete"), icon: "trash", destructive: true) { [weak self] in
                 self?.onContextAction?(.delete)
             })
             presentContextMenu(items, in: window, msg: msg, showsReactions: false)
             return
         }
-        items.append(.init(title: "Ответить", icon: "arrowshape.turn.up.left", id: "chat.menu.reply") { [weak self] in
+        items.append(.init(title: String(localized: "Reply"), icon: "arrowshape.turn.up.left", id: "chat.menu.reply") { [weak self] in
             self?.onContextAction?(.reply)
         })
         // a photo or album goes to the clipboard as an image, text as a string
         if msg.kind == .text || msg.kind == .photo || msg.kind == .album {
-            items.append(.init(title: "Копировать", icon: "doc.on.doc") { [weak self] in
+            items.append(.init(title: String(localized: "Copy"), icon: "doc.on.doc") { [weak self] in
                 self?.onContextAction?(.copy)
             })
         }
-        items.append(.init(title: "Переслать", icon: "arrowshape.turn.up.right") { [weak self] in
+        items.append(.init(title: String(localized: "Forward"), icon: "arrowshape.turn.up.right") { [weak self] in
             self?.onContextAction?(.forward)
         })
-        items.append(.init(title: "Выбрать", icon: "checkmark.circle") { [weak self] in
+        items.append(.init(title: String(localized: "Select"), icon: "checkmark.circle") { [weak self] in
             self?.onContextAction?(.select)
         })
         // a pin is held by the server msgId, so a message the server has not
         // acknowledged yet has nothing to pin to
         if isPinned?() == true {
-            items.append(.init(title: "Открепить", icon: "pin.slash") { [weak self] in
+            items.append(.init(title: String(localized: "Unpin"), icon: "pin.slash") { [weak self] in
                 self?.onContextAction?(.unpin)
             })
         } else if msg.msgId != nil {
-            items.append(.init(title: "Закрепить", icon: "pin") { [weak self] in
+            items.append(.init(title: String(localized: "Pin"), icon: "pin") { [weak self] in
                 self?.onContextAction?(.pin)
             })
         }
         if msg.isOutgoing && msg.kind == .text {
-            items.append(.init(title: "Изменить", icon: "pencil") { [weak self] in
+            items.append(.init(title: String(localized: "Edit"), icon: "pencil") { [weak self] in
                 self?.onContextAction?(.edit)
             })
         }
@@ -1063,7 +1063,7 @@ extension MessageCell {
                 self?.onContextAction?(.editHistory)
             })
         }
-        items.append(.init(title: "Удалить", icon: "trash", destructive: true) { [weak self] in
+        items.append(.init(title: String(localized: "Delete"), icon: "trash", destructive: true) { [weak self] in
             self?.onContextAction?(.delete)
         })
 
@@ -1073,8 +1073,8 @@ extension MessageCell {
     private func presentContextMenu(_ items: [MessageContextOverlay.Item], in window: UIWindow,
                                     msg: Message, showsReactions: Bool = true) {
         let mine = msg.reactions.first(where: { $0.value.contains(OwnUser.id) })?.key
-        // текст приподнятого баббла выделяется протяжкой, поэтому он уходит
-        // в меню живым, а снимок рендерится без него
+        // the lifted bubble's text is selectable by dragging, so it goes into the
+        // menu live and the snapshot is rendered without it
         var selectable: MessageContextOverlay.SelectableText?
         if let plan, let tf = plan.textFrame, let text = plan.text, !msg.deletedForAll {
             let colors = Self.textColors(plan: plan, deleted: msg.deletedForAll)

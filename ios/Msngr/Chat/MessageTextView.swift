@@ -38,8 +38,8 @@ final class MessageTextView: UIView {
         setNeedsDisplay()
     }
 
-    /// Цвета текста и ссылок поверх плана раскладки. Тем же текстом рисует
-    /// приподнятый баббл контекстного меню, поэтому раскраска общая.
+    /// Text and link colors on top of the layout plan. The lifted bubble of the
+    /// context menu draws with the same text, so the coloring is shared.
     static func coloured(_ attr: NSAttributedString, color: UIColor,
                          linkColor: UIColor) -> NSMutableAttributedString {
         let mutable = NSMutableAttributedString(attributedString: attr)

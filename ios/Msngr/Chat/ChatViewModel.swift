@@ -71,7 +71,7 @@ final class ChatViewModel: ObservableObject {
     /// The message never reached the send queue. Shown as an alert: otherwise the
     /// typed text or the attachment would vanish without a word.
     @Published var sendFailure: String?
-    /// Счётчик своих отправок: каждая ведёт ленту к концу чата.
+    /// My send counter: each one scrolls the feed to the end of the chat.
     @Published private(set) var sendTick = 0
 
     /// Unread banner: the state lives from the moment the chat is opened, and the
@@ -379,7 +379,6 @@ final class ChatViewModel: ObservableObject {
 
     /// Where the peer is right now. Presence arrives as a transition, so a device
     /// that was not connected when the peer came online holds a row that says
-    /// «был(а)» while the peer is reading. The chat asks once when it opens and
     /// again when the app comes back to the screen.
     private func askPresence(force: Bool = false) {
         guard chat?.kind == .direct, let peerId = peer?.id else { return }
@@ -466,7 +465,7 @@ final class ChatViewModel: ObservableObject {
 
         // author of the quoted message: "you" for our own, otherwise a member's name
         func replyAuthorName(_ reply: ReplyPreview) -> String {
-            reply.authorId == ownId ? "Вы" : (nameById[reply.authorId] ?? "?")
+            reply.authorId == ownId ? String(localized: "You") : (nameById[reply.authorId] ?? "?")
         }
 
         func sameSeries(_ a: Message, _ b: Message) -> Bool {
@@ -546,8 +545,8 @@ final class ChatViewModel: ObservableObject {
 
     static func dayLabel(_ date: Date) -> String {
         let cal = Calendar.current
-        if cal.isDateInToday(date) { return "Сегодня" }
-        if cal.isDateInYesterday(date) { return "Вчера" }
+        if cal.isDateInToday(date) { return String(localized: "Today") }
+        if cal.isDateInYesterday(date) { return String(localized: "Yesterday") }
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "ru_RU")
         fmt.dateFormat = cal.isDate(date, equalTo: Date(), toGranularity: .year) ? "d MMMM" : "d MMMM yyyy"
@@ -558,52 +557,40 @@ final class ChatViewModel: ObservableObject {
 
     var headerTitle: String {
         if chat?.kind == .direct { return peer?.displayName ?? "…" }
-        return chat?.title ?? "Группа"
+        return chat?.title ?? String(localized: "Group")
     }
 
     var headerSubtitle: String {
-        // with no connection any presence is stale, so don't claim the peer is online
-        if !connected { return "подключение…" }
+        if !connected { return String(localized: "connecting…") }
         if !typingUsers.isEmpty {
             if chat?.kind == .group, let name = members.first(where: { $0.id == typingUsers[0] })?.displayName {
-                return "\(name) печатает…"
+                return "\(name) " + String(localized: "typing…")
             }
-            return "печатает…"
+            return String(localized: "typing…")
         }
         if chat?.kind == .group {
             return Self.membersText(members.count)
         }
         guard let peer else { return "" }
-        if peer.online { return "в сети" }
+        if peer.online { return String(localized: "online") }
         if peer.lastSeen > 0 { return Self.lastSeenText(peer.lastSeen) }
         return ""
     }
 
-    /// "N participants", in Russian plural forms.
-    static func membersText(_ count: Int) -> String {
-        let mod100 = count % 100
-        let mod10 = count % 10
-        let noun: String
-        if mod100 / 10 == 1 {
-            noun = "участников"
-        } else if mod10 == 1 {
-            noun = "участник"
-        } else if (2...4).contains(mod10) {
-            noun = "участника"
-        } else {
-            noun = "участников"
-        }
-        return "\(count) \(noun)"
+    var headerSubtitleAccented: Bool {
+        !typingUsers.isEmpty || (peer?.online ?? false)
     }
 
-    /// The "last seen" line built from a timestamp. A fresh timestamp plus a server
-    /// clock running ahead gives a negative difference, which the relative formatter
-    /// renders as a moment in the future, so a recent departure gets its own wording.
+    static func membersText(_ count: Int) -> String {
+        "\(count) " + (count == 1 ? "participant" : "participants")
+    }
+
     static func lastSeenText(_ lastSeen: TimeInterval, now: Date = Date()) -> String {
         let elapsed = now.timeIntervalSince1970 - lastSeen
-        if elapsed < 60 { return "был(а) только что" }
-        return "был(а) " + RelativeDateTimeFormatter.ruShort.localizedString(
+        if elapsed < 60 { return String(localized: "last seen just now") }
+        let relTime = RelativeDateTimeFormatter.ruShort.localizedString(
             for: Date(timeIntervalSince1970: lastSeen), relativeTo: now)
+        return String(localized: "last seen") + " " + relTime
     }
 
     // MARK: - Rights
@@ -649,7 +636,7 @@ final class ChatViewModel: ObservableObject {
                 try await app.engine.enqueue(content: content, chatId: target)
             } catch {
                 MsngrLog.outbox.error("failed to enqueue \(content.kind): \(error)")
-                self?.sendFailure = "Сообщение не отправлено: не удалось записать его на устройство"
+                self?.sendFailure = String(localized: "Failed to save message")
             }
         }
     }
@@ -670,18 +657,15 @@ final class ChatViewModel: ObservableObject {
                                             text: text, media: media, album: album)
         } catch {
             MsngrLog.outbox.error("failed to begin media \(kind.rawValue): \(error)")
-            sendFailure = "Сообщение не отправлено: не удалось записать его на устройство"
+            sendFailure = String(localized: "Failed to save message")
         }
     }
 
-    /// A message that ran out of tries goes back into the queue exactly as it
-    /// was written, attachments included. One that has no queue entry left
-    /// cannot be repeated, and the failure it shows says so by staying.
     func resend(_ msg: Message) {
         Task { [weak self] in
             guard let self else { return }
             let queued = await self.app.engine.retrySend(messageId: msg.id)
-            if !queued { self.sendFailure = "Это сообщение больше нельзя отправить" }
+            if !queued { self.sendFailure = String(localized: "Cannot send this message anymore") }
         }
     }
 
@@ -710,19 +694,17 @@ final class ChatViewModel: ObservableObject {
         Haptics.light()
     }
 
-    /// Отправка, у которой в этом чате появляется свой баббл: только она ведёт
-    /// ленту к концу. Правка, реакция и пересылка в другой чат — нет.
     nonisolated static func movesFeedToEnd(kind: String, target: String, chatId: String) -> Bool {
         target == chatId && !SyncEngine.serviceKinds.contains(kind)
     }
 
     static func previewText(_ m: Message) -> String {
         switch m.kind {
-        case .photo: return "Фото"
-        case .video: return "Видео"
-        case .voice: return "Голосовое сообщение"
-        case .file: return m.media?.name ?? "Файл"
-        case .album: return "Альбом"
+        case .photo: return String(localized: "Photo")
+        case .video: return String(localized: "Video")
+        case .voice: return String(localized: "Voice message")
+        case .file: return m.media?.name ?? String(localized: "File")
+        case .album: return String(localized: "Album")
         default: return String((m.text ?? "").prefix(80))
         }
     }
@@ -745,8 +727,6 @@ final class ChatViewModel: ObservableObject {
 
     var canDeleteSelectedForAll: Bool { MessageSelection.canDeleteForAll(selectedMessages) }
 
-    /// confirmingDelete — вход сразу к подтверждению удаления: сообщение
-    /// выбрано, внизу два действия, а не всплывающее меню поверх самого баббла.
     func beginSelection(with msg: Message, confirmingDelete: Bool = false) {
         selection.clear()
         selection.select(msg)
@@ -757,7 +737,6 @@ final class ChatViewModel: ObservableObject {
 
     func toggleSelection(_ msg: Message) {
         selection.toggle(msg)
-        // выбор опустел — подтверждать нечего
         if selection.isEmpty { confirmingDelete = false }
         Haptics.light()
     }

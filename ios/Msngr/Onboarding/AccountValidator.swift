@@ -18,7 +18,7 @@ enum AccountValidator {
 
     /// A name is required: it is the only place a person's own spelling of
     /// themselves lives, since a handle holds no Cyrillic. One character is
-    /// enough — «Ян» and «Li» are names, and a floor of three refused them.
+    /// enough — «Ian» and «Li» are names, and a floor of three refused them.
     static func isValidName(_ name: String) -> Bool {
         (1...nameMaxLength).contains(trimmedName(name).count)
     }

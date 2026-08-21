@@ -16,12 +16,12 @@ final class MessageContextOverlay: UIView {
         var handler: (() -> Void)?
     }
 
-    /// Текст сообщения, который в приподнятом состоянии выделяется протяжкой.
-    /// Снимок баббла рендерится без него, а сверху ложится живой текст той же
-    /// раскладки — иначе выделение закрасило бы картинку с текстом.
+    /// The message text that becomes drag-selectable in the lifted state.
+    /// The bubble snapshot is rendered without it and live text of the same layout
+    /// is laid on top — otherwise the selection would paint over the text image.
     struct SelectableText {
         let attributed: NSAttributedString
-        /// фрейм текста в координатах баббла
+        /// frame of the text in bubble coordinates
         let frame: CGRect
         let color: UIColor
         let linkColor: UIColor
@@ -55,9 +55,9 @@ final class MessageContextOverlay: UIView {
     private var emojiButtons: [UIButton] = []
     private let menuCard = UIView()
     private let menuStack = UIStackView()
-    /// живой текст поверх снимка, когда сообщение текстовое
+    /// live text over the snapshot when the message is textual
     private var textView: UITextView?
-    /// точка, от которой тянут выделение
+    /// the point the selection is dragged from
     private var dragAnchor: UITextPosition?
     private lazy var editMenu = UIEditMenuInteraction(delegate: self)
 
@@ -490,7 +490,7 @@ extension MessageContextOverlay: UIEditMenuInteractionDelegate {
     func editMenuInteraction(_ interaction: UIEditMenuInteraction,
                              menuFor configuration: UIEditMenuConfiguration,
                              suggestedActions: [UIMenuElement]) -> UIMenu? {
-        UIMenu(children: [UIAction(title: "Скопировать") { [weak self] _ in self?.copySelection() }])
+        UIMenu(children: [UIAction(title: String(localized: "Copy")) { [weak self] _ in self?.copySelection() }])
     }
 }
 
