@@ -16,7 +16,7 @@ struct ChatSearchField: View {
                 .font(Theme.glyph(14, max: 20))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
-            TextField("Поиск по чату", text: $text)
+            TextField("Search this chat", text: $text)
                 .textRole(Theme.Text.body)
                 .focused($focused)
                 .submitLabel(.search)
@@ -32,7 +32,7 @@ struct ChatSearchField: View {
                         .font(Theme.glyph(15, max: 21))
                         .foregroundStyle(.secondary)
                 }
-                .accessibilityLabel("Очистить")
+                .accessibilityLabel("Clear")
                 .accessibilityIdentifier("chat.search.clear")
             }
         }
@@ -82,7 +82,7 @@ struct ChatSearchResultsList: View {
         if session.searching {
             VStack(spacing: 8) {
                 ProgressView()
-                Text("Ищем в переписке…")
+                Text("Searching messages…")
                     .textRole(Theme.Text.body)
                     .foregroundStyle(.secondary)
             }
@@ -95,9 +95,9 @@ struct ChatSearchResultsList: View {
                     .font(Theme.glyph(34, max: 48))
                     .foregroundStyle(.tertiary)
                     .accessibilityHidden(true)
-                Text("Ничего не нашлось")
+                Text("Nothing found")
                     .font(.title3.weight(.semibold))
-                Text("В этом чате нет сообщений с таким текстом")
+                Text("No messages in this chat match that text")
                     .textRole(Theme.Text.body)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -112,8 +112,9 @@ struct ChatSearchResultsList: View {
     }
 
     private func author(of hit: MessageSearchHit) -> String {
-        if hit.fromUserId == ownUserId { return "Вы" }
-        return members.first { $0.id == hit.fromUserId }?.displayName ?? "Собеседник"
+        if hit.fromUserId == ownUserId { return String(localized: "You") }
+        return members.first { $0.id == hit.fromUserId }?.displayName
+            ?? String(localized: "Peer")
     }
 }
 
@@ -175,9 +176,9 @@ struct ChatSearchMatchBar: View {
             .disabled(session.hits.isEmpty)
             .accessibilityIdentifier("chat.search.status")
             Spacer(minLength: 8)
-            step(icon: "chevron.up", label: "Раньше", enabled: session.canStepOlder, offset: 1)
+            step(icon: "chevron.up", label: String(localized: "Older"), enabled: session.canStepOlder, offset: 1)
                 .accessibilityIdentifier("chat.search.older")
-            step(icon: "chevron.down", label: "Позже", enabled: session.canStepNewer, offset: -1)
+            step(icon: "chevron.down", label: String(localized: "Newer"), enabled: session.canStepNewer, offset: -1)
                 .accessibilityIdentifier("chat.search.newer")
         }
         .padding(.leading, 16)

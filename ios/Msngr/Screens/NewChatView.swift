@@ -21,7 +21,7 @@ struct NewChatView: View {
     /// left its own request running, the answers came back in whatever order
     /// and an older one could overwrite the results of the newest query.
     @State private var searchTask: Task<Void, Never>?
-    /// The query the results on screen answer. «Нет результатов» is said about
+    /// The query the results on screen answer. "No results" is said about
     /// this one only — while a newer query is still on its way the screen has
     /// nothing to report yet.
     @State private var answered = ""
@@ -38,18 +38,18 @@ struct NewChatView: View {
             List {
                 if groupMode {
                     Section {
-                        TextField("Название группы", text: $groupTitle)
+                        TextField("Group name", text: $groupTitle)
                     }
                 }
                 if !results.isEmpty {
-                    Section("Глобальный поиск") {
+                    Section("Global search") {
                         ForEach(results, id: \.id) { u in
                             row(id: u.id, name: u.display_name, username: u.username, avatarId: u.avatar_id)
                         }
                     }
                 }
                 if !contacts.isEmpty {
-                    Section("Контакты") {
+                    Section("Contacts") {
                         ForEach(contacts) { c in
                             row(id: c.id, name: c.bookName, username: c.username, avatarId: c.avatarId)
                         }
@@ -57,7 +57,7 @@ struct NewChatView: View {
                 }
                 if contactsDenied {
                     Section {
-                        Text("Разрешите доступ к контактам в Настройках, чтобы найти знакомых")
+                        Text("Allow contact access in Settings to find people you know")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -71,15 +71,15 @@ struct NewChatView: View {
                         ContentUnavailableView.search(text: query)
                     } else {
                         ContentUnavailableView {
-                            Label("Найдите собеседника", systemImage: "person.crop.circle.badge.plus")
+                            Label("Find someone", systemImage: "person.crop.circle.badge.plus")
                         } description: {
-                            Text("Введите юзернейм или имя собеседника.")
+                            Text("Enter a username or a name.")
                         } actions: {
                             if contactsStatus == .notDetermined {
                                 Button {
                                     Task { await requestContactsAndSync() }
                                 } label: {
-                                    Label("Найти по контактам", systemImage: "person.2")
+                                    Label("Find via contacts", systemImage: "person.2")
                                 }
                                 .buttonStyle(.bordered)
                             }
@@ -87,7 +87,7 @@ struct NewChatView: View {
                     }
                 }
             }
-            .searchable(text: $query, prompt: "Юзернейм или имя")
+            .searchable(text: $query, prompt: "Username or name")
             // the field searches usernames: autocapitalisation and autocorrection get in the way
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
@@ -109,15 +109,15 @@ struct NewChatView: View {
                     answered = q
                 }
             }
-            .navigationTitle(groupMode ? "Новая группа" : "Новый чат")
+            .navigationTitle(groupMode ? "New group" : "New chat")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Отмена") { dismiss() }
+                    Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     if groupMode {
-                        Button("Создать") {
+                        Button("Create") {
                             Task { await createGroup() }
                         }
                         .disabled(selected.isEmpty || groupTitle.isEmpty)
@@ -254,11 +254,11 @@ struct ForwardPickerView: View {
                 }
                 .buttonStyle(.plain)
             }
-            .navigationTitle("Переслать в…")
+            .navigationTitle("Forward to…")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Отмена") { dismiss() }
+                    Button("Cancel") { dismiss() }
                 }
             }
             .onAppear { model.start() }

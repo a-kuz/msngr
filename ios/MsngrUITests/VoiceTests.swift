@@ -80,7 +80,7 @@ final class VoiceTests: XCTestCase {
             existing.tap()
         } else {
             app.buttons["chatlist.new"].tap()
-            let search = app.searchFields["Юзернейм или имя"]
+            let search = app.searchFields["Username or name"]
             XCTAssertTrue(search.waitForExistence(timeout: 10), "no user search field")
             type(peer, into: search)
             let row = app.staticTexts["@\(peer)"]
