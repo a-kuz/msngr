@@ -361,7 +361,8 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ entering through the «Выбрать» item, leaving by the cross (qa/runs/2026-08-15-multiselect, 02)
   - ✅ checkboxes next to the bubbles, the selected counter and the action bar (qa/runs/2026-08-15-multiselect, 02)
   - ✅ bulk delete and forward (qa/runs/2026-08-15-multiselect, 05, 10)
-  - 🟡 bulk copy (no units, not captured live)
+  - ✅ bulk copy: one line per message, oldest on top, read back off the
+    simulator's pasteboard (MessageClipboardTests units, qa/runs/2026-08-21-bulk-copy)
 
 ## The media viewer
 

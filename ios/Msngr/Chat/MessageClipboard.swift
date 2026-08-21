@@ -30,7 +30,14 @@ enum MessageClipboard {
     static func copy(_ msgs: [Message]) {
         guard msgs.count != 1 else { return copy(msgs[0]) }
         guard !msgs.isEmpty else { return }
-        UIPasteboard.general.string = msgs.reversed()
+        UIPasteboard.general.string = bulkText(msgs)
+    }
+
+    /// What a bulk copy puts on the clipboard: the messages come in feed order
+    /// (newest first) and leave oldest on top; a message with no text is
+    /// represented by its preview line.
+    static func bulkText(_ msgs: [Message]) -> String {
+        msgs.reversed()
             .map { ($0.text?.isEmpty == false ? $0.text! : ChatViewModel.previewText($0)) }
             .joined(separator: "\n")
     }
