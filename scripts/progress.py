@@ -41,10 +41,18 @@ def roadmap(sha):
             "missing": text.count("⬜")}
 
 
+def defects(sha):
+    """Defect entries by section of docs/qa/defects.md: still open vs fixed."""
+    text = run(["show", f"{sha}:docs/qa/defects.md"])
+    open_part, _, closed_part = text.partition("## Closed")
+    return {"defects_open": open_part.count("\n### "),
+            "defects_fixed": closed_part.count("\n### ")}
+
+
 def rows():
     result = []
     for day, sha in daily_commits():
-        row = {"day": day, "code": code_lines(sha), **roadmap(sha)}
+        row = {"day": day, "code": code_lines(sha), **roadmap(sha), **defects(sha)}
         row["left"] = row["unwatched"] + row["missing"]
         result.append(row)
     return result
@@ -57,10 +65,10 @@ def paint(text, color, enabled):
     return f"\033[{codes[color]}m{text}\033[0m"
 
 
-def bar(done, unwatched, missing, colored):
-    """The roadmap as one strip: solid for done, half-tone for built but never
-    watched live, dots for what does not exist yet."""
-    total = done + unwatched + missing
+def bar(done, unwatched, total, colored):
+    """The roadmap as one strip against today's full item count, as if every
+    item existed from day one: solid for done, half-tone for built but never
+    watched live, dots for everything else — so the strip only ever grows."""
     if not total:
         return " " * BAR_WIDTH
     d = round(BAR_WIDTH * done / total)
@@ -80,23 +88,29 @@ def delta(value, prev, unit=""):
 
 def table(data):
     colored = sys.stdout.isatty()
-    print(paint(f"{'day':<12}{'code':>7}{'':9}  {'✅':>4} {'🟡':>3} {'⬜':>3}   roadmap",
+    print(paint(f"{'day':<12}{'code':>7}{'':9}  {'✅':>4} {'🟡':>3} {'⬜':>3} "
+                f"{'🐞':>3} {'✔':>3}   roadmap",
                 "bold", colored))
+    total = max(r["done"] + r["unwatched"] + r["missing"] for r in data)
     prev = None
     for r in data:
         code_d = delta(r["code"], prev and prev["code"])
         done_d = delta(r["done"], prev and prev["done"])
+        fixed_d = delta(r["defects_fixed"], prev and prev["defects_fixed"], "✔")
         line = (f"{r['day']:<12}{r['code']:>7}{code_d:<9}  "
-                f"{r['done']:>4} {r['unwatched']:>3} {r['missing']:>3}   "
-                f"{bar(r['done'], r['unwatched'], r['missing'], colored)}"
-                f"{paint(done_d, 'green', colored)}")
+                f"{r['done']:>4} {r['unwatched']:>3} {r['missing']:>3} "
+                f"{r['defects_open']:>3} {r['defects_fixed']:>3}   "
+                f"{bar(r['done'], r['unwatched'], total, colored)}"
+                f"{paint(done_d, 'green', colored)}"
+                f"{paint(fixed_d, 'green', colored)}")
         print(line)
         prev = r
     last = data[-1]
-    total = last["done"] + last["unwatched"] + last["missing"]
     pct = 100 * last["done"] // total if total else 0
     print(paint(f"{'':12}{'█ done':>10}   ▒ built, not watched   · not built"
-                f"   — {last['done']}/{total} ({pct}%)", "dim", colored))
+                f"   — {last['done']}/{total} ({pct}%)"
+                f"   🐞 {last['defects_open']} open, {last['defects_fixed']} fixed",
+                "dim", colored))
 
 
 def main():
