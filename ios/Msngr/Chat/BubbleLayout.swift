@@ -174,7 +174,10 @@ enum BubbleLayout {
             let aspect = CGFloat(msg.media?.w ?? 4) / CGFloat(max(msg.media?.h ?? 3, 1))
             let mw = maxBubbleWidth
             let mh = min(max(mw / max(aspect, 0.4), 120), 420)
-            mediaFrame = CGRect(x: 0, y: msg.replyTo == nil && !showName ? 0 : y, width: mw, height: mh)
+            // full bleed only with nothing above: any header row (author name,
+            // forward line, reply strip) pushes the media down or it covers them
+            let bareMedia = authorNameFrame == nil && forwardFrame == nil && replyFrame == nil
+            mediaFrame = CGRect(x: 0, y: bareMedia ? 0 : y, width: mw, height: mh)
             contentWidth = mw - 2 * hPadding
             y = mediaFrame!.maxY
             if let caption = msg.text, !caption.isEmpty {
@@ -192,10 +195,12 @@ enum BubbleLayout {
                 MosaicItem(aspect: CGFloat($0.w ?? 1) / CGFloat(max($0.h ?? 1, 1)))
             }
             let (rects, size) = AlbumMosaic.layout(items: items, maxWidth: maxBubbleWidth)
+            let bareMedia = authorNameFrame == nil && forwardFrame == nil && replyFrame == nil
+            let top = bareMedia ? 0 : y
             albumRects = rects
-            mediaFrame = CGRect(x: 0, y: 0, width: size.width, height: size.height)
+            mediaFrame = CGRect(x: 0, y: top, width: size.width, height: size.height)
             contentWidth = size.width - 2 * hPadding
-            y = size.height
+            y = top + size.height
             statusOnMedia = true
         case .voice:
             let w = attachmentWidth
