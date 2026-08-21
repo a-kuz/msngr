@@ -474,7 +474,8 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   socket (qa/runs/2026-08-21-presence-names)
 - ✅ the typing indicator in the header and in the chat list
   (qa/runs/2026-08-21-presence-names)
-- 🟡 read on returning from the background (the code is there, no separate run)
+- ✅ read on returning from the background: the receipt goes out on the
+  foreground return with the reader at the message (qa/runs/2026-08-21-read-on-return)
 - ⬜ aggregated read receipts in a group ("N read it")
 
 ## Notifications
