@@ -6,7 +6,7 @@ Workers backend. There is no production; this is a development stand.
 ## What is here
 
 - **server/** — the Cloudflare Worker: an HTTP API (hono) and WebSocket, two
-  Durable Objects (`UserSessionDO` for a user's device sockets, chat list,
+  Durable Objects (`UserDO` for a user's device sockets, chat list,
   presence and pushes; `ConversationDO` for the chat journal, membership, `seq`
   and fan-out), D1 (users, devices, prekeys, blocks, invites), R2 (media), APNs.
 - **ios/MsngrKit/** — the portable core, a Swift package:

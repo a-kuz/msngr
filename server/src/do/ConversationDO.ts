@@ -1027,7 +1027,7 @@ export class ConversationDO implements DurableObject {
       }
 
       case "/profile": {
-        // from UserSessionDO: a member's card changed. Unlike presence this is
+        // from UserDO: a member's card changed. Unlike presence this is
         // public, so an unaccepted request sees it too — the request screen
         // already shows the sender's name and avatar.
         const b = (await req.json()) as { userId: string; user: PublicUser };
@@ -1041,7 +1041,7 @@ export class ConversationDO implements DurableObject {
       }
 
       case "/devices": {
-        // from UserSessionDO: a member's device set changed. Anyone who may
+        // from UserDO: a member's device set changed. Anyone who may
         // address an envelope to them holds a device cache to drop, so the
         // frame travels like the profile — an unaccepted request included.
         const b = (await req.json()) as { userId: string; version: number };
@@ -1055,7 +1055,7 @@ export class ConversationDO implements DurableObject {
       }
 
       case "/presence": {
-        // from UserSessionDO: a user's online status changed, so tell the members
+        // from UserDO: a user's online status changed, so tell the members
         const b = (await req.json()) as { userId: string; online: boolean; lastSeen: number };
         const members = await this.loadMembers();
         // the presence of a recipient who has not accepted stays hidden from the requester

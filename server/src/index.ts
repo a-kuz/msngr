@@ -8,7 +8,7 @@ import {
 import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "./version";
 import { newCounters, wrapDB } from "./perf";
 
-export { UserSessionDO } from "./do/UserSessionDO";
+export { UserDO } from "./do/UserDO";
 export { ConversationDO } from "./do/ConversationDO";
 export { ApnsTokenDO } from "./do/ApnsTokenDO";
 
@@ -971,7 +971,7 @@ async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Re
   {
     const url = new URL(req.url);
 
-    // WS: authenticated here, the upgrade itself is done by UserSessionDO
+    // WS: authenticated here, the upgrade itself is done by UserDO
     if (url.pathname === "/ws") {
       if (req.headers.get("upgrade")?.toLowerCase() !== "websocket")
         return err("expected_websocket", 426);
