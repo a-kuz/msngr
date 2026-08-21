@@ -2512,6 +2512,17 @@
         }
       }
     },
+    "You blocked this user.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вы заблокировали этого пользователя."
+          }
+        }
+      }
+    },
     "You will leave the group, and its messages will be deleted from this device.": {
       "extractionState": "manual",
       "localizations": {

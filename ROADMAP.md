@@ -428,7 +428,7 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   - ✅ receipts and typing towards the blocker are not sent (smoke
     `block: no receipt to blocker`, `block: no typing to blocker`)
   - ✅ the blocker gets the `blocked` code on a send (smoke `block: blocker gets error code`)
-  - 🟡 unblocking from the blocked list (not verified live)
+  - ✅ unblocking from the blocked list (qa/runs/2026-08-21-block)
   - ✅ after unblocking delivery resumes and what was hidden stays hidden
     (smoke `block: delivery resumes after unblock`)
   - ⬜ who sees «был(а) в сети» and «в сети»: everyone, my contacts, or nobody,
@@ -612,7 +612,8 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - 🟡 Face ID (auto-lock is verified in qa/runs/2026-08-21-pin; biometry
   matching needs the Simulator.app menu and was not driven)
 - 🟡 the blur in the app switcher (not verified live)
-- 🟡 the blocked list and unblocking (not verified live)
+- ✅ the blocked list and unblocking, delivery resuming after
+  (qa/runs/2026-08-21-block)
 - 🟡 clearing the media cache with its size shown (not verified live)
 - ⬜ notification settings: previews on the banner, the default sound, and the
   per-chat and per-person exceptions listed under Notifications → Sounds
