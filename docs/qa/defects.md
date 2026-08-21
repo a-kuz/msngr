@@ -22,6 +22,26 @@ Mechanism unknown — needs its own investigation before any test-side
 accommodation; until then a red G with the timer still walking in the
 recording is this defect, not the product.
 
+Investigated 2026-08-21 on a simulator of its own, three runs of G against the
+shared stand. The reported symptom did not come back; what did:
+
+- Run 1 died a step earlier — the press-and-drag never locked the take, so no
+  send button ever appeared. Same family: a synthesized gesture on the mic
+  lost while the recorder republishes its state twenty times a second, which
+  rebuilds the bar the gesture is attached to.
+- Runs 2 and 3 died later, at «the message stopped playing on the way out of
+  the chat». That claim was checked by hand and the product is right: a 62 s
+  take recorded and sent in the same session, played, then the walk out to the
+  list and back — the bubble comes back showing pause and the position keeps
+  advancing (frames 4 s apart). An earlier hand run that seemed to reproduce it
+  was a 20 s take that simply ended during the walk. The app stops the player
+  nowhere: instrumented, the only stops are the one inside `play` and the one
+  from `audioPlayerDidFinishPlaying` at the end of the take.
+
+So the send-button tap is still unexplained, and G now has a second red of its
+own whose cause is not the playback rule it asserts. What the runs did close is
+a locator: see the closed entry about the localized search field.
+
 ### The in-app banner does not react to a tap
 Reported 2026-08-19 from the device. Tapping the in-app notification banner does
 nothing; it has to open the chat it announces. The tap-opens-chat path exists and
