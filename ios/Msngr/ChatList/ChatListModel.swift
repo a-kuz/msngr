@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import GRDB
 import MsngrCore
+import SwiftUI
 
 /// Chat list row: the chat plus the data derived for display.
 struct ChatListItem: Identifiable, Equatable {
@@ -99,11 +100,22 @@ final class ChatListModel: ObservableObject {
                     ChatListItem(chat: chat, peer: snapshot.peers[chat.id], lastMessage: snapshot.lasts[chat.id],
                                  typingText: self.typingLabel(chat.id, snapshot.peers[chat.id]))
                 }
-                self.requests = all.filter { $0.chat.isRequest }
-                self.archived = all.filter { $0.chat.archived && !$0.chat.isRequest }
-                self.items = all.filter { !$0.chat.archived && !$0.chat.isRequest }
-                self.folders = snapshot.folders
-                self.rebuildMembership(pins: snapshot.pins)
+                let visible = all.filter { !$0.chat.archived && !$0.chat.isRequest }
+                let apply = {
+                    self.requests = all.filter { $0.chat.isRequest }
+                    self.archived = all.filter { $0.chat.archived && !$0.chat.isRequest }
+                    self.items = visible
+                    self.folders = snapshot.folders
+                    self.rebuildMembership(pins: snapshot.pins)
+                }
+                // List animates a structural change only when the data moves
+                // inside an animated transaction; a modifier on the ForEach does
+                // not reach its diff. The first fill stays instant on purpose.
+                if self.loaded, visible.map(\.id) != self.items.map(\.id) {
+                    withAnimation(Theme.springFast, apply)
+                } else {
+                    apply()
+                }
                 self.loaded = true
                 self.updateSearch()
             })

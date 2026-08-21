@@ -6,21 +6,18 @@ with the commit that closed it.
 
 ## Open
 
-### An XCUITest tap on the locked-recording send button fires no action
-Found 2026-08-21 by the uicheck on main: `VoiceTests.testG_PlaybackSurvivesAnotherChat`
-failed twice in a row at `sendVoice` — the tap on `chat.sendVoice` after a 25 s
-locked take leaves the recording running. The synthesized event lands on the
-button's centre (375.3, 815.7 in the event plist, matching the button's frame),
-"Check for interrupting elements" passes, yet the screen recording shows the
-timer walking on past the tap (0:25,7 → 0:29,2) until teardown. The product
-path is fine: the same gesture driven by hand over idb — lock, 30 s, tap the
-same point — sends the take and drops the bar (screenshots in the session log,
-a 0:40 bubble landed). `testF1` (20 s) and `testH` (10 s) tap the same button
-through the same helper and pass in the same run, and a third isolated run of
-G passed — so the tap is lost intermittently, twice out of three here.
-Mechanism unknown — needs its own investigation before any test-side
-accommodation; until then a red G with the timer still walking in the
-recording is this defect, not the product.
+### An edit's envelope failed to open on the peer with no_session
+Seen in passing 2026-08-21 during the unread-recount run: alfa edited a
+message while charlie's headless engine was offline; on his next sync the
+edit's seq landed in `historyGap` with `no_session` and repair attempts
+counting up, while the edit itself HAD already applied to his row (edited=1,
+new text) — so the failing envelope is likely a replayed duplicate of a frame
+the live path had delivered, asked for again because the seq never joined the
+contiguous prefix. The session between the two accounts had been through a
+block/unblock round and repeated headless open/close cycles the same hour.
+Needs its own investigation: whether the duplicate replay of an
+already-applied service frame should be dropped by seq before it is treated
+as unreadable, and why the prefix stalls behind it.
 
 ### The in-app banner does not react to a tap
 Reported 2026-08-19 from the device. Tapping the in-app notification banner does
@@ -74,6 +71,45 @@ not on a single fix. Measured so far (bubbleanim run, merged 14c3a0a): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### The unread count inflates across an offline gap
+Found 2026-08-21 by a live check: a peer who was offline while the other side
+sent two messages, deleted one for everyone and edited the other came back to
+`unreadCount = 3` with exactly one readable new message — the snapshot
+estimates unread as `lastSeq − myReadUpTo`, and the service frames and the
+tombstone behind those seqs counted as messages. Closed in the same change:
+once a chat's contiguous prefix is complete the number is recounted from the
+rows — incoming, not system, not deleted, plus envelopes still waiting for a
+key (`SyncEngine.recountUnread`, called from the snapshot and at the end of a
+chat's catch-up; UnreadRecountTests hold the three shapes). A chat still
+behind keeps the estimate.
+
+### An XCUITest tap on the locked-recording send button fires no action
+Found 2026-08-21 by the uicheck on main: `VoiceTests.testG_PlaybackSurvivesAnotherChat`
+failed twice in a row at `sendVoice`, with the synthesized event landing on the
+button's centre and the recording timer walking on past it.
+Chased on 2026-08-21 over ten runs of G on a simulator of its own. The tap
+itself never went missing again; what the runs did find was two locators and
+one host gap, all of them reading as a lost tap from the outside:
+
+- The device had lost its microphone grant (an `uninstall` takes it with it), so
+  every frame of the press-and-drag asked for access again, got a refusal, and
+  put the gesture back to idle — the take never locked and no send button ever
+  appeared. `scripts/fixture.py grant` is what the run was missing.
+- The pause state was matched by the English label `label == 'Pause'`, and the
+  app translates it — «Пауза» on a ru host, so the run could never see a
+  message playing. The speed assertions compared «Speed 1,5×» the same way.
+- The new chat sheet's field was matched by its localised placeholder (its own
+  closed entry above).
+
+Closed by 878d6e5: the play button carries the state in its identifier
+(`voice.play` / `voice.pause`) and the speed rides in the element's value,
+while the translated labels stay for the reader. The product was right
+throughout — checked by hand with a 62 s and a 26 s take: after the walk out to
+the list and back the bubble shows pause and the position keeps advancing, and
+the only stops the player logs are its own `play` and the end of the take.
+VoiceTests green whole afterwards, 13 of 13, three consecutive runs of G before
+that.
 
 ### The time in a chat list row jumps when the preview's line count changes
 Reported by the owner on 2026-08-21 while watching the reorder run: a preview

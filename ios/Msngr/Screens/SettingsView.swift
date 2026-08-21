@@ -15,6 +15,9 @@ struct SettingsView: View {
     @State private var biometrics = PinStore.biometricsEnabled()
     @State private var showsMessageText = NotificationPreferences.showsMessageText(in: AppGroup.defaults)
     @State private var showLogoutConfirm = false
+    /// the media cache size shown next to the clear button; the label re-renders
+    /// only when this state moves, so the clear writes the new size back into it
+    @State private var cacheSize: Int64 = 0
     @State private var uploadingAvatar = false
     @State private var nameError: String?
 
@@ -132,14 +135,16 @@ struct SettingsView: View {
                 Section("Data") {
                     Button {
                         app.media?.clearCache()
+                        cacheSize = app.media?.totalCacheSize() ?? 0
                     } label: {
                         HStack {
                             Label("Clear media cache", systemImage: "trash")
                             Spacer()
-                            Text(Self.sizeLabel(app.media?.totalCacheSize() ?? 0))
+                            Text(Self.sizeLabel(cacheSize))
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    .onAppear { cacheSize = app.media?.totalCacheSize() ?? 0 }
                 }
 
                 Section {

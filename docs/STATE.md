@@ -6,14 +6,56 @@ work in it looks like clutter.
 
 Delete an entry when its branch is merged and gone.
 
-One slot is open by the owner's word and taken: `userdo` on **run-userdo** —
-step 3 of the backend rework: identity, prekeys and the device list move into
-the user's Durable Object. The dispatcher itself runs the localization pass on
-main between ticks — everything but the feed files is on English keys with ru
-in the catalog (~156 Russian lines left, all in the feed), and it also landed
-the safe half of rework step 2 on main (`01d12ff`): per-member mark keys and a
-window on the cmid idempotency records, smoke 261/261. `.claude/agents.tsv`
-holds only live work, so `scripts/agents.py` is the picture of the site.
+One slot is open by the owner's word and taken: `msgid` on **run-msgid** — the
+tail of rework step 2: the message's identity becomes `(chatId, seq)` and the
+ULID goes away. The dispatcher runs a bug conveyor on main between ticks (the
+owner's standing ask of 2026-08-21: fast wins, one after another) and finished
+the localization pass — every product string is an English key with ru in the
+catalog; the test-file tail is converted and being re-run before its commit.
+`.claude/agents.tsv` holds only live work, so `scripts/agents.py` is the
+picture of the site.
+
+## On main, 2026-08-21 late evening — the solo roadmap run
+
+A single agent working the easiest open ROADMAP items straight on main, one
+commit each, live-run evidence in `docs/qa/runs/`: clipboard paste closed as
+already-done (34000af); the chat list reorder animated and the stale
+`.animation`-on-ForEach removed (ebb76d4); the row height held steady across
+preview line counts — an owner report fixed the same hour (19e6bc6); the
+unread capsule rolls and pops on an increment — an owner ask (6e8b32c); bulk
+copy closed with units and a pasteboard read-back (e21a843); the passcode
+block verified end to end (6f19bc8); blocking, the blocked list and the
+resume of delivery verified, with a missing ru string for the blocked strip
+added (23022c8); delete-for-me verified against a relaunch and the peer's
+copy (ae2f165); the viewer's album paging and swipe-close verified and the
+cache row's stale size fixed (48b2efa); swipe-to-reply and the text and album
+quotes (638b3ae); header presence and group author names (521a59e); the
+typing indicator in the header and the list (939a5eb). `msngrfixture` grew
+`send` and `typing` subcommands along the way (db7b052, 939a5eb). Gates ran
+green after each batch.
+
+run-userdo (`b94698c`): identity keys, one-time prekeys and the E2EE device
+list moved from D1 into the user's own Durable Object (`UserSessionDO` renamed
+`UserDO`, wrangler migration v3 `renamed_classes`, storage preserved). The
+prekey handout consumes inside the object, so two senders never draw the same
+key; link/revoke bump `devicesVersion` and fan the `devices` frame from the
+object. A first message costs 2 D1 statements instead of 7, both auth
+(`docs/qa/runs/2026-08-21-userdo-run.md`). The "one object per user, not two"
+decision is argued in `docs/research/2026-08-19-per-user-do.md`. The shared
+stand's trio was re-seeded after the merge (old accounts had keys only in D1).
+`msngrfixture answer` came along: a headless peer that receives and answers
+through the real core, so a one-simulator scenario gets a live counterpart.
+
+Dispatcher fixes on main the same day: twelve fixed defect entries moved from
+the open list to closed where their fixes had been recorded all along, and
+progress.py now shows defect counts and grows its bar against today's item
+total (`4534593`); folder tabs, forward-picker rows and pin-pad keys got full
+hit areas (`152e106`); a message deleted for everyone is a bare tombstone —
+no forward line, no reply strip (`cc00390`); the request screen's block button
+paints its own destructive red instead of the accent (`48592cb`). The feed's
+strings moved to English keys (`fdb9c47`), and the unread-marker and
+participants counters that had been hardcoded in English on that path went
+through the catalog's plural forms.
 
 ## Merged on 2026-08-21
 
