@@ -987,9 +987,9 @@ final class UnreadMarkerCell: UICollectionViewCell {
         label.frame = band.bounds.insetBy(dx: 12, dy: 0)
     }
 
-    /// Russian plural forms of "N unread messages", for counts ending in 1, in 2 to 4, and in the rest.
+    /// "N unread messages" in the plural forms of the current locale.
     static func title(count: Int) -> String {
-        "\(count) " + (count == 1 ? "unread message" : "unread messages")
+        String(localized: "\(count) unread messages")
     }
 }
 
