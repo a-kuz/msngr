@@ -713,8 +713,9 @@ Decided in `docs/research/2026-08-19-per-user-do.md`; the queue orders the steps
 - ✅ identity keys, one-time prekeys and the device list live in `UserDO`; a
   first message costs 2 D1 statements instead of 7 (run-userdo,
   `runs/2026-08-21-userdo-run.md`)
-- ⬜ the message's identity is `(chatId, seq)`, the msgId ULID goes away
-  (run-msgid, in flight)
+- ✅ the message's identity is `(chatId, seq)`, the msgId ULID is gone from the
+  database, the frames and the REST (run-msgid,
+  `runs/2026-08-21-msgid-run.md`)
 - ⬜ `HandleDO`: the username claim and quarantine, designed together with the
   people-search index
 - ⬜ subscriptions between objects: a snapshot on subscribe, deltas after, the
