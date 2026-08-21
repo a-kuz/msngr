@@ -146,7 +146,7 @@ final class VoiceTests: XCTestCase {
 
     private var pauseButton: XCUIElement {
         app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier == 'voice.play' AND label == 'Пауза'"))
+            .matching(NSPredicate(format: "identifier == 'voice.play' AND label == 'Pause'"))
             .firstMatch
     }
 
@@ -343,11 +343,11 @@ final class VoiceTests: XCTestCase {
         // the speed belongs to a message that is still running, and the take this test
         // borrows can be a few seconds long, so the position goes back to the start first
         rewind()
-        XCTAssertEqual(rateButton.label, "Скорость 1×")
+        XCTAssertEqual(rateButton.label, "Speed 1×")
         rateButton.tap()
-        XCTAssertEqual(rateButton.label, "Скорость 1,5×", "the speed button did not step to 1,5×")
+        XCTAssertEqual(rateButton.label, "Speed 1,5×", "the speed button did not step to 1,5×")
         rateButton.tap()
-        XCTAssertEqual(rateButton.label, "Скорость 2×", "the speed button did not step to 2×")
+        XCTAssertEqual(rateButton.label, "Speed 2×", "the speed button did not step to 2×")
     }
 
     /// The speed is not just a caption on a button: at 2× the position walks the wave
@@ -367,7 +367,7 @@ final class VoiceTests: XCTestCase {
 
         rateButton.tap()
         rateButton.tap()
-        XCTAssertEqual(rateButton.label, "Скорость 2×", "the speed button did not reach 2×")
+        XCTAssertEqual(rateButton.label, "Speed 2×", "the speed button did not reach 2×")
         let twoFrom = progress()
         Thread.sleep(forTimeInterval: 3)
         let atTwo = progress() - twoFrom
@@ -424,11 +424,11 @@ final class VoiceTests: XCTestCase {
         XCTAssertTrue(rateButton.waitForExistence(timeout: 5),
                       "the message being played has no speed button")
         rateButton.tap()
-        XCTAssertEqual(rateButton.label, "Скорость 1,5×", "the speed button did not step to 1,5×")
+        XCTAssertEqual(rateButton.label, "Speed 1,5×", "the speed button did not step to 1,5×")
         // the buttons move as the speed button appears next to the duration, so ask again
         playButtons()[0].tap()
         Thread.sleep(forTimeInterval: 0.7)
-        XCTAssertEqual(rateButton.label, "Скорость 1,5×",
+        XCTAssertEqual(rateButton.label, "Speed 1,5×",
                        "the speed went back to 1× when another message started")
         XCTAssertGreaterThan(progress(above: 0), 0, "the other message never started")
     }

@@ -254,7 +254,7 @@ final class ChatFeedTests: XCTestCase {
             return nil
         }
         func name(for id: String) -> String? { names.first { $0.0 == id }?.1 ?? nil }
-        XCTAssertEqual(name(for: "m2"), "Вы")
+        XCTAssertEqual(name(for: "m2"), String(localized: "You"))
         XCTAssertEqual(name(for: "m3"), "Bob")
         XCTAssertNil(name(for: "m1"), "no replyTo means no quote author")
     }

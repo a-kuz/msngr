@@ -167,14 +167,14 @@ final class FeedWindowTests: XCTestCase {
         }
     }
 
-    /// Только своё сообщение с бабблом ведёт ленту к концу чата.
+    /// Only an own message with a bubble moves the feed to the end of the chat.
     func testOnlyOwnBubbleMovesFeedToEnd() {
         XCTAssertTrue(ChatViewModel.movesFeedToEnd(kind: "text", target: "c", chatId: "c"))
         XCTAssertTrue(ChatViewModel.movesFeedToEnd(kind: "photo", target: "c", chatId: "c"))
         XCTAssertFalse(ChatViewModel.movesFeedToEnd(kind: "reaction", target: "c", chatId: "c"))
         XCTAssertFalse(ChatViewModel.movesFeedToEnd(kind: "edit", target: "c", chatId: "c"))
         XCTAssertFalse(ChatViewModel.movesFeedToEnd(kind: "text", target: "other", chatId: "c"),
-                       "пересылка в другой чат ленту не двигает")
+                       "a forward into another chat does not move the feed")
     }
 
     /// A jump into the middle of a long chat: the window holds the target with history
