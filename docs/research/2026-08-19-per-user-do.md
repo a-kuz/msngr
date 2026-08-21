@@ -44,6 +44,32 @@ different things: the chat object owns the correspondence, the user object owns
 the person. The id of a direct chat stays derived from the two user ids, sorted,
 which is what `directChatName` already does.
 
+## One object per user, not two
+
+Step 1 put the keys into the session object itself, renamed `UserDO`, instead
+of adding a second per-user object beside it. The reasons, so nobody
+re-litigates them later:
+
+- Both would be addressed by `idFromName(userId)`. A second object adds no
+  isolation, only an extra hop for every flow that touches both halves.
+- Revocation decides it. The sockets to close live with the session state, and
+  the keys must go in the same act; one object makes that a single serialized
+  invocation, two make it a cross-object sequence with an order to get wrong.
+- A device-set change fans out over the chat list, and the chat list lives in
+  the session object. A separate keys object would call back into it on every
+  bump.
+- Contention between socket traffic and key reads is not a real cost at this
+  scale: the object serializes its input either way, and both sides are small.
+  If key handouts ever crowd a user's socket handling, that is the day to
+  split, with a measurement in hand.
+
+What the step changed in D1: registration stopped writing `identity_keys` and
+`one_time_prekeys`, and nothing bumps `users.devices_version` any more; the
+version lives in the object. The leftover tables are dropped in step 4 with
+the rest. `users` and `devices` stay written for now: auth resolves a bearer
+token to a user by `devices.token_hash`, a global lookup no per-user object
+can answer.
+
 ## Subscription instead of asking
 
 The client's only counterpart is the API in front of its own object; nothing else

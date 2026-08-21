@@ -7,7 +7,7 @@ There is no production and there are no users.
 
 ```
 server/src/index.ts        HTTP API (hono) + the /ws upgrade
-server/src/do/             UserSessionDO (sockets, presence, pushes), ConversationDO (the chat journal),
+server/src/do/             UserDO (sockets, presence, pushes), ConversationDO (the chat journal),
                            ApnsTokenDO (the singleton owner of the APNs JWT)
 server/src/push/apns.ts    APNs
 server/migrations/         D1 migrations (wrangler d1 migrations apply)
