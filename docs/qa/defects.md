@@ -22,23 +22,6 @@ Mechanism unknown — needs its own investigation before any test-side
 accommodation; until then a red G with the timer still walking in the
 recording is this defect, not the product.
 
-### The caret jumps in front of the first typed character
-Reported 2026-08-19 from the device, screen recording
-(`ScreenRecording_08-19-2026 20-16-45_1.MP4` in the owner's Downloads). Typing
-"123" produces "231": the first character lands, then the caret moves in front
-of it, so everything after types before the first. Points at the composer's
-text binding rewriting the field's text and resetting the selection while the
-first keystroke is still being composed.
-
-Cause and fix, 2026-08-20: the composer's programmatic write restored the caret
-by its absolute position. When the binding runs ahead of the view — the first
-character of a field the view still reports as empty — that position is 0, so
-the caret landed in front of the character just typed and «123» came out
-«231». The write now keeps the caret's distance from the end of the text
-instead. `ComposerCaretTests` fails on the old rule (caret 0, order «231», a
-restored draft's caret at its start) and passes on the new one; MsngrTests green
-whole. Not re-run on the owner's device yet — the entry closes with that run.
-
 ### The in-app banner does not react to a tap
 Reported 2026-08-19 from the device. Tapping the in-app notification banner does
 nothing; it has to open the chat it announces. The tap-opens-chat path exists and
@@ -74,14 +57,6 @@ app's own view of it, and only then look at the window geometry of the banner
 (its `UIHostingController` takes a top safe-area inset inside a window that is
 only as tall as the measured content, which would push the visible banner below
 the window's own bounds, where touches do not reach it).
-
-### Typing in the chat input misbehaves under load
-Reported 2026-08-19. Hard to catch: when the app stutters, letters appear with
-a delay, the input's resize lags behind, and sometimes the caret ends up not
-at the end but behind the just-typed text. Smells like the state round-trip
-writing text back into the field under lag (an echo write racing fast typing
-resets the caret) plus per-keystroke work on the main thread. Needs a
-reproduction under artificial main-thread load first.
 
 ### Impersonation by display name, and a freed username taken instantly
 Raised 2026-08-19 while answering whether a stranger can register someone
@@ -391,3 +366,29 @@ away from the origin (with the keyboard up it always does) the source bubble
 read through the blur as a second outline. The overlay now hides the source
 bubble for its lifetime and returns the snapshot to the bubble's current frame
 on dismissal, since the feed relayouts underneath when the keyboard leaves.
+
+### The caret jumps in front of the first typed character
+Reported 2026-08-19 from the device, screen recording
+(`ScreenRecording_08-19-2026 20-16-45_1.MP4` in the owner's Downloads). Typing
+"123" produced "231": the composer's programmatic write restored the caret by
+its absolute position, and when the binding runs ahead of the view — the first
+character of a field the view still reports as empty — that position is 0, so
+everything after the first character typed in front of it.
+Closed by the 2026-08-20 fix: the write keeps the caret's distance from the
+end of the text instead. `ComposerCaretTests` fails on the old rule and passes
+on the new one; MsngrTests green whole. Confirmed by the owner on 2026-08-21
+(«баг уже поправили»), and a live simulator run the same day typed 20
+characters in order with the caret at the end throughout.
+
+### Typing in the chat input misbehaves under load
+Reported 2026-08-19: when the app stutters, letters appear with a delay, the
+input's resize lags, and sometimes the caret ends up behind the just-typed
+text. The caret half was the absolute-position restore above; the same
+2026-08-20 fix removed it, and the composer only writes into the field when
+the binding holds a value the view never reported (send-clear, draft, edit),
+so ordinary typing takes no programmatic write at all.
+Closed with the owner's 2026-08-21 confirmation and a live run on main
+(dc17a5a): 20 fast HID keystrokes landed in order with the caret at the end,
+and insertion after a word-replacement kept its place. The one full-field
+wipe seen in the run was the system's autocorrect replacing a tapped
+misspelled "word" wholesale — stock UITextView behaviour, not the composer.
