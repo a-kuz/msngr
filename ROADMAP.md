@@ -370,8 +370,8 @@ A ✅ goes in only together with a link to the evidence.
 
 - ✅ fullscreen above the header, opened from the bubble (media-run)
 - 🟡 pinch zoom and a double tap 1 ↔ 2.5 (not verified live)
-- 🟡 closing by a swipe down with dimming (not verified live)
-- 🟡 paging through the album (not verified live)
+- ✅ closing by a swipe down with dimming (qa/runs/2026-08-21-media-viewer)
+- ✅ paging through the album, both directions (qa/runs/2026-08-21-media-viewer)
 - 🟡 sharing a file from the viewer (not verified live)
 - ✅ video in the viewer (media-close-out)
 - ⬜ a hero transition bubble ↔ viewer
@@ -616,7 +616,9 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - 🟡 the blur in the app switcher (not verified live)
 - ✅ the blocked list and unblocking, delivery resuming after
   (qa/runs/2026-08-21-block)
-- 🟡 clearing the media cache with its size shown (not verified live)
+- ✅ clearing the media cache with its size shown: the label follows the clear
+  in place (qa/runs/2026-08-21-media-viewer, the run also caught and fixed the
+  stale label)
 - ⬜ notification settings: previews on the banner, the default sound, and the
   per-chat and per-person exceptions listed under Notifications → Sounds
 - ⬜ a privacy screen gathering what E2EE, trust, privacy lists: last seen,
