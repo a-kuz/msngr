@@ -6,7 +6,7 @@ final class TypingStateTests: XCTestCase {
 
     /// A peer typing without pause repeats the frame every three seconds. Each frame
     /// moves the deadline, and nothing falls out in between: this is what made the
-    /// subtitle blink between «печатает…» and the presence line.
+    /// subtitle blink between "typing..." and the presence line.
     func testRepeatedFrameHoldsTheEntry() {
         var state = TypingState()
         state.began("u1", at: start)

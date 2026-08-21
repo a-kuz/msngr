@@ -74,14 +74,14 @@ final class VersioningTests: XCTestCase {
         try await makeDirectChat(db)
         let engine = try makeEngine(db: db)
         let json = """
-        {"t":"msg","chatId":"c1","seq":1,"msgId":"m1","from":"peer","fromDevice":"d1",
+        {"t":"msg","chatId":"c1","seq":1,"from":"peer","fromDevice":"d1",
         "sentAt":1,"ts":1,"body":{"v":\(MsngrProtocol.envelopeVersion + 1),"mode":"pw","msgs":{}}}
         """
 
         await engine.apply(try JSONDecoder().decode(WSIncoming.self, from: Data(json.utf8)))
 
         let pending = try await db.read { dbc in
-            try Row.fetchOne(dbc, sql: "SELECT * FROM pendingDecrypt WHERE chatId = 'c1' AND msgId = 'm1'")
+            try Row.fetchOne(dbc, sql: "SELECT * FROM pendingDecrypt WHERE chatId = 'c1' AND seq = 1")
         }
         let row = try XCTUnwrap(pending, "envelope dropped: a newer build would have nothing to open")
         XCTAssertFalse((row["body"] as Data).isEmpty)
@@ -107,14 +107,14 @@ final class VersioningTests: XCTestCase {
         try await makeDirectChat(db)
         let engine = try makeEngine(db: db)
         let json = """
-        {"t":"msg","chatId":"c1","seq":1,"msgId":"m1","from":"peer","fromDevice":"d1",
+        {"t":"msg","chatId":"c1","seq":1,"from":"peer","fromDevice":"d1",
         "sentAt":1,"ts":1,"body":{"v":\(MsngrProtocol.envelopeVersion),"mode":"pw","msgs":{}}}
         """
 
         await engine.apply(try JSONDecoder().decode(WSIncoming.self, from: Data(json.utf8)))
 
         let reason = try await db.read { dbc in
-            try String.fetchOne(dbc, sql: "SELECT reason FROM pendingDecrypt WHERE chatId = 'c1' AND msgId = 'm1'")
+            try String.fetchOne(dbc, sql: "SELECT reason FROM pendingDecrypt WHERE chatId = 'c1' AND seq = 1")
         }
         XCTAssertEqual(reason, "no_ciphertext")
     }

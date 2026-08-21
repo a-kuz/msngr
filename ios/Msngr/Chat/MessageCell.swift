@@ -1041,13 +1041,13 @@ extension MessageCell {
         items.append(.init(title: String(localized: "Select"), icon: "checkmark.circle") { [weak self] in
             self?.onContextAction?(.select)
         })
-        // a pin is held by the server msgId, so a message the server has not
+        // a pin is held by the seq, so a message the server has not
         // acknowledged yet has nothing to pin to
         if isPinned?() == true {
             items.append(.init(title: String(localized: "Unpin"), icon: "pin.slash") { [weak self] in
                 self?.onContextAction?(.unpin)
             })
-        } else if msg.msgId != nil {
+        } else if msg.seq != nil {
             items.append(.init(title: String(localized: "Pin"), icon: "pin") { [weak self] in
                 self?.onContextAction?(.pin)
             })

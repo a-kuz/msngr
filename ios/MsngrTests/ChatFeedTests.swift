@@ -242,9 +242,9 @@ final class ChatFeedTests: XCTestCase {
         let alice = User(id: "me", username: "me", displayName: "Me")
         let bob = User(id: "peer", username: "bob", displayName: "Bob")
         var replyToOwn = msg("m2", sentAt: base + 10, seq: 2)
-        replyToOwn.replyTo = ReplyPreview(msgId: "m1", authorId: "me", text: "mine", kind: "text")
+        replyToOwn.replyTo = ReplyPreview(seq: 1, authorId: "me", text: "mine", kind: "text")
         var replyToPeer = incoming("m3", sentAt: base + 20, seq: 3)
-        replyToPeer.replyTo = ReplyPreview(msgId: "m1", authorId: "peer", text: "theirs", kind: "text")
+        replyToPeer.replyTo = ReplyPreview(seq: 1, authorId: "peer", text: "theirs", kind: "text")
         let plain = msg("m1", sentAt: base, seq: 1)
 
         let feed = ChatViewModel.buildFeed([replyToPeer, replyToOwn, plain],
@@ -254,7 +254,7 @@ final class ChatFeedTests: XCTestCase {
             return nil
         }
         func name(for id: String) -> String? { names.first { $0.0 == id }?.1 ?? nil }
-        XCTAssertEqual(name(for: "m2"), "Вы")
+        XCTAssertEqual(name(for: "m2"), String(localized: "You"))
         XCTAssertEqual(name(for: "m3"), "Bob")
         XCTAssertNil(name(for: "m1"), "no replyTo means no quote author")
     }
@@ -265,7 +265,7 @@ final class ChatFeedTests: XCTestCase {
     func testReplyAuthorNameFallsBackForUnknownMember() {
         let base: TimeInterval = 1_700_000_000
         var m = msg("m2", sentAt: base + 10, seq: 2)
-        m.replyTo = ReplyPreview(msgId: "m1", authorId: "left-the-chat", text: "some text", kind: "text")
+        m.replyTo = ReplyPreview(seq: 1, authorId: "left-the-chat", text: "some text", kind: "text")
         let feed = ChatViewModel.buildFeed([m], members: [], ownId: "me")
         XCTAssertEqual(replyAuthorNames(feed).first ?? nil, "?")
     }

@@ -112,11 +112,11 @@ final class UnreadMarkerStateTests: XCTestCase {
 
     // plural forms in the marker's title
     func testMarkerTitlePluralization() {
-        XCTAssertEqual(UnreadMarkerCell.title(count: 1), "1 непрочитанное сообщение")
-        XCTAssertEqual(UnreadMarkerCell.title(count: 2), "2 непрочитанных сообщения")
-        XCTAssertEqual(UnreadMarkerCell.title(count: 5), "5 непрочитанных сообщений")
-        XCTAssertEqual(UnreadMarkerCell.title(count: 11), "11 непрочитанных сообщений")
-        XCTAssertEqual(UnreadMarkerCell.title(count: 21), "21 непрочитанное сообщение")
-        XCTAssertEqual(UnreadMarkerCell.title(count: 104), "104 непрочитанных сообщения")
+        XCTAssertEqual(UnreadMarkerCell.title(count: 1), NSString(format: String(localized: "%lld unread messages") as NSString, 1) as String)
+        XCTAssertEqual(UnreadMarkerCell.title(count: 2), NSString(format: String(localized: "%lld unread messages") as NSString, 2) as String)
+        XCTAssertEqual(UnreadMarkerCell.title(count: 5), NSString(format: String(localized: "%lld unread messages") as NSString, 5) as String)
+        XCTAssertEqual(UnreadMarkerCell.title(count: 11), NSString(format: String(localized: "%lld unread messages") as NSString, 11) as String)
+        XCTAssertEqual(UnreadMarkerCell.title(count: 21), NSString(format: String(localized: "%lld unread messages") as NSString, 21) as String)
+        XCTAssertEqual(UnreadMarkerCell.title(count: 104), NSString(format: String(localized: "%lld unread messages") as NSString, 104) as String)
     }
 }

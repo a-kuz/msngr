@@ -95,7 +95,7 @@ async function main() {
 
   for (let i = 0; i < TOTAL; i++) {
     await request("POST", "/3/device/sim-udid",
-      JSON.stringify({ aps: { alert: "x" }, chatId: `c${i}`, msgId: `m${i}` }));
+      JSON.stringify({ aps: { alert: "x" }, chatId: `c${i}`, seq: i }));
     await sleep(RATE_MS);
   }
 

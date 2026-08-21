@@ -313,7 +313,7 @@ final class MacChatModel: ObservableObject {
         var c = ContentPayload(kind: "text")
         c.text = text
         if let r = replyingTo {
-            c.replyTo = ReplyPreview(msgId: r.msgId ?? r.id, authorId: r.fromUserId,
+            c.replyTo = ReplyPreview(seq: r.seq, authorId: r.fromUserId,
                                      text: String((r.text ?? "").prefix(60)), kind: r.kind.rawValue)
         }
         replyingTo = nil
@@ -335,7 +335,7 @@ final class MacChatModel: ObservableObject {
 
     func react(_ m: Message, _ emoji: String) {
         var c = ContentPayload(kind: "reaction")
-        c.targetMsgId = m.msgId ?? m.id
+        c.targetLocalId = m.id
         let mine = m.reactions.first { $0.value.contains(OwnUser.id) }?.key
         c.emoji = (mine == emoji) ? nil : emoji
         enqueue(c)
@@ -344,7 +344,7 @@ final class MacChatModel: ObservableObject {
     func delete(_ m: Message, forAll: Bool) {
         Task {
             await MacAppStateHolder.shared?.engine.deleteMessages(
-                chatId: chatId, msgIds: [m.msgId ?? m.id], forAll: forAll)
+                chatId: chatId, ids: [m.id], forAll: forAll)
         }
     }
 

@@ -27,7 +27,6 @@ final class ChatGalleryTests: XCTestCase {
                                   sentAt: Double(seq), kind: kind,
                                   text: kind == .text ? "look at https://example.com/\(seq)" : nil,
                                   status: .sent, isOutgoing: false)
-                msg.msgId = "srv\(seq)"
                 msg.seq = seq
                 if kind != .text { msg.media = photo("blob\(seq)") }
                 try msg.save(dbc)
@@ -86,7 +85,6 @@ final class ChatGalleryTests: XCTestCase {
         try db.write { dbc in
             var msg = Message(id: "a1", chatId: "c1", fromUserId: "peer", sentAt: 1,
                               kind: .album, text: nil, status: .sent, isOutgoing: false)
-            msg.msgId = "srvA"
             msg.seq = 1
             msg.album = [photo("one"), photo("two"), photo("three")]
             try msg.save(dbc)
@@ -96,7 +94,7 @@ final class ChatGalleryTests: XCTestCase {
         }
         XCTAssertEqual(page.entries.count, 3)
         XCTAssertEqual(page.entries.map(\.index), [0, 1, 2])
-        XCTAssertEqual(Set(page.entries.map(\.messageId)), ["srvA"])
+        XCTAssertEqual(Set(page.entries.map(\.messageId)), ["a1"])
     }
 
     /// Links come out of message text through the parser the feed draws with,
@@ -109,7 +107,6 @@ final class ChatGalleryTests: XCTestCase {
                               "`code.example.com` inside code is not a link"].enumerated() {
                 var msg = Message(id: "t\(i)", chatId: "c1", fromUserId: "peer", sentAt: Double(i),
                                   kind: .text, text: text, status: .sent, isOutgoing: false)
-                msg.msgId = "srvT\(i)"
                 msg.seq = i + 1
                 try msg.save(dbc)
             }
@@ -128,7 +125,6 @@ final class ChatGalleryTests: XCTestCase {
         try db.write { dbc in
             var msg = Message(id: "d1", chatId: "c1", fromUserId: "peer", sentAt: 1,
                               kind: .photo, text: nil, status: .sent, isOutgoing: false)
-            msg.msgId = "srvD"
             msg.seq = 1
             msg.media = photo("gone")
             msg.deletedForAll = true

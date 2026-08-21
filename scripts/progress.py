@@ -9,8 +9,12 @@ JSON object per day instead, oldest first.
 """
 
 import json
+import os
 import subprocess
 import sys
+
+# counts are repo-wide regardless of where the script is invoked from
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 SOURCES = ["*.swift", "*.ts", "*.mjs"]
 BAR_WIDTH = 30

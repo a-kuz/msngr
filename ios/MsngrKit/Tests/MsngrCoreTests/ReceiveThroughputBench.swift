@@ -110,7 +110,6 @@ final class ReceiveThroughputBench: XCTestCase {
                 var m = Message(id: "pre-\(i)", chatId: chatId, fromUserId: c.userId,
                                 sentAt: Date().timeIntervalSince1970 - Double(rows - i),
                                 kind: .text, text: "history \(i)", status: .sent, isOutgoing: true)
-                m.msgId = "pre-\(i)"
                 m.seq = 1_000_000 + i
                 m.serverTs = m.sentAt
                 try m.save(dbc)

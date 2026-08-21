@@ -19,7 +19,6 @@ final class EditHistoryTests: XCTestCase {
         try await db.write { dbc in
             var msg = Message(id: "m1", chatId: "c1", fromUserId: "peer", sentAt: sentAt,
                               kind: .text, text: text, status: .sent, isOutgoing: false)
-            msg.msgId = "m1"
             msg.seq = 1
             try msg.save(dbc)
         }
@@ -27,13 +26,15 @@ final class EditHistoryTests: XCTestCase {
 
     private func edit(_ text: String) -> ContentPayload {
         var c = ContentPayload(kind: "edit")
-        c.targetMsgId = "m1"
+        c.targetSeq = 1
         c.text = text
         return c
     }
 
     private func fetch(_ db: DatabaseQueue) async throws -> Message {
-        try await db.read { dbc in try Message.fetchOne(dbc, key: "m1")! }
+        try await db.read { dbc in
+            try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE chatId = 'c1' AND seq = 1")!
+        }
     }
 
     func testEditKeepsThePreviousText() async throws {
@@ -41,7 +42,7 @@ final class EditHistoryTests: XCTestCase {
         try await insertOriginal(db, text: "first", sentAt: 100)
 
         try await db.write { dbc in
-            try SyncEngine.applyContent(dbc, self.edit("second"), chatId: "c1", msgId: "e1",
+            try SyncEngine.applyContent(dbc, self.edit("second"), chatId: "c1",
                                         seq: 2, from: "peer", sentAt: 200, ts: 200, ownUserId: "me")
         }
         let msg = try await fetch(db)
@@ -55,9 +56,9 @@ final class EditHistoryTests: XCTestCase {
         let db = try AppDatabase.openInMemory()
         try await insertOriginal(db, text: "first", sentAt: 100)
         try await db.write { dbc in
-            try SyncEngine.applyContent(dbc, self.edit("second"), chatId: "c1", msgId: "e1",
+            try SyncEngine.applyContent(dbc, self.edit("second"), chatId: "c1",
                                         seq: 2, from: "peer", sentAt: 200, ts: 200, ownUserId: "me")
-            try SyncEngine.applyContent(dbc, self.edit("third"), chatId: "c1", msgId: "e2",
+            try SyncEngine.applyContent(dbc, self.edit("third"), chatId: "c1",
                                         seq: 3, from: "peer", sentAt: 300, ts: 300, ownUserId: "me")
         }
         let msg = try await fetch(db)
@@ -72,9 +73,9 @@ final class EditHistoryTests: XCTestCase {
         let db = try AppDatabase.openInMemory()
         try await insertOriginal(db, text: "first", sentAt: 100)
         try await db.write { dbc in
-            try SyncEngine.applyContent(dbc, self.edit("second"), chatId: "c1", msgId: "e1",
+            try SyncEngine.applyContent(dbc, self.edit("second"), chatId: "c1",
                                         seq: 2, from: "peer", sentAt: 200, ts: 200, ownUserId: "me")
-            try SyncEngine.applyContent(dbc, self.edit("second"), chatId: "c1", msgId: "e1",
+            try SyncEngine.applyContent(dbc, self.edit("second"), chatId: "c1",
                                         seq: 2, from: "peer", sentAt: 200, ts: 200, ownUserId: "me")
         }
         let msg = try await fetch(db)
@@ -87,9 +88,9 @@ final class EditHistoryTests: XCTestCase {
         let db = try AppDatabase.openInMemory()
         try await insertOriginal(db, text: "first", sentAt: 100)
         try await db.write { dbc in
-            try SyncEngine.applyContent(dbc, self.edit("second"), chatId: "c1", msgId: "e1",
+            try SyncEngine.applyContent(dbc, self.edit("second"), chatId: "c1",
                                         seq: 2, from: "peer", sentAt: 200, ts: 200, ownUserId: "me")
-            try SyncEngine.applyContent(dbc, self.edit("first"), chatId: "c1", msgId: "e2",
+            try SyncEngine.applyContent(dbc, self.edit("first"), chatId: "c1",
                                         seq: 3, from: "peer", sentAt: 300, ts: 300, ownUserId: "me")
         }
         let msg = try await fetch(db)
@@ -103,11 +104,11 @@ final class EditHistoryTests: XCTestCase {
     func testEditBeforeOriginalKeepsTheOriginalText() async throws {
         let db = try AppDatabase.openInMemory()
         try await db.write { dbc in
-            try SyncEngine.applyContent(dbc, self.edit("second"), chatId: "c1", msgId: "e1",
+            try SyncEngine.applyContent(dbc, self.edit("second"), chatId: "c1",
                                         seq: 2, from: "peer", sentAt: 200, ts: 200, ownUserId: "me")
             var original = ContentPayload(kind: "text")
             original.text = "first"
-            try SyncEngine.applyContent(dbc, original, chatId: "c1", msgId: "m1",
+            try SyncEngine.applyContent(dbc, original, chatId: "c1",
                                         seq: 1, from: "peer", sentAt: 100, ts: 100, ownUserId: "me")
         }
         let msg = try await fetch(db)
@@ -130,7 +131,7 @@ final class EditHistoryTests: XCTestCase {
             try msg.save(dbc)
         }
         var c = ContentPayload(kind: "edit")
-        c.targetMsgId = "own1"
+        c.targetLocalId = "own1"
         c.text = "final"
         try await engine.enqueue(content: c, chatId: "c1")
 

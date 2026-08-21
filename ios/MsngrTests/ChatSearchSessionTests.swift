@@ -3,7 +3,7 @@ import MsngrCore
 @testable import Msngr
 
 private func searchHit(_ id: String) -> MessageSearchHit {
-    MessageSearchHit(id: id, chatId: "c1", messageId: id, fromUserId: "peer",
+    MessageSearchHit(id: id, chatId: "c1", fromUserId: "peer",
                      kind: .text, sortedAt: 1,
                      snippet: MessageSearchSnippet(text: id, matches: []))
 }

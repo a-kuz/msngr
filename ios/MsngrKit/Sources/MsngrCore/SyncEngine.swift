@@ -41,7 +41,7 @@ public actor SyncEngine {
     /// A message the socket delivered for the first time: what in-app banners run on.
     public struct IncomingMessage: Sendable {
         public let chatId: String
-        public let msgId: String
+        public let seq: Int
         public let fromUserId: String
         /// service frame (skd/edit/reaction/disappearing)
         public let isService: Bool
@@ -556,19 +556,19 @@ public actor SyncEngine {
         case "error":
             await applyServerError(f)
         case "deleted":
-            if let chatId = f.chatId, let msgIds = f.msgIds {
+            if let chatId = f.chatId, let seqs = f.seqs {
                 try? await db.write { dbc in
-                    for id in msgIds {
+                    for seq in seqs {
                         try dbc.execute(
                             sql: """
                             UPDATE message SET deletedForAll = 1, text = NULL, media = NULL,
-                            album = NULL, kind = 'text' WHERE chatId = ? AND msgId = ?
+                            album = NULL, kind = 'text' WHERE chatId = ? AND seq = ?
                             """,
-                            arguments: [chatId, id])
+                            arguments: [chatId, seq])
                         // nothing matched: the original has not been stored
                         // yet, so the tombstone waits for it
                         if dbc.changesCount == 0 {
-                            try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetMsgId: id,
+                            try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetSeq: seq,
                                                               kind: "deleted", fromUserId: f.by ?? "",
                                                               payload: "{}", seq: nil)
                         }
@@ -628,7 +628,7 @@ public actor SyncEngine {
 
     /// An incoming message frame with the fields every path below needs.
     private struct IncomingFrame {
-        let chatId: String, msgId: String, seq: Int
+        let chatId: String, seq: Int
         let from: String, fromDevice: String
         let sentAt: Double, ts: Double
         let body: JSONValue?
@@ -648,9 +648,9 @@ public actor SyncEngine {
     /// own before the next one starts.
     private func applyIncomingBatch(_ frames: [WSIncoming]) async {
         var items: [IncomingFrame] = frames.compactMap { f in
-            guard let chatId = f.chatId, let msgId = f.msgId, let seq = f.seq,
+            guard let chatId = f.chatId, let seq = f.seq,
                   let from = f.from, let fromDevice = f.fromDevice else { return nil }
-            return IncomingFrame(chatId: chatId, msgId: msgId, seq: seq, from: from,
+            return IncomingFrame(chatId: chatId, seq: seq, from: from,
                                  fromDevice: fromDevice, sentAt: f.sentAt ?? 0, ts: f.ts ?? 0,
                                  body: f.body, isService: f.service == true)
         }
@@ -695,13 +695,20 @@ public actor SyncEngine {
         // message right away
         await fetchMissingUsers([String](Set(items.map(\.from))))
 
-        // own echo from another device, or the ack path: deduplicated by msgId
-        let msgIds = items.map(\.msgId)
-        let stored = (try? await db.read { dbc in
-            try String.fetchSet(dbc, sql: """
-                SELECT msgId FROM message WHERE msgId IN (\(databaseQuestionMarks(count: msgIds.count)))
-                """, arguments: StatementArguments(msgIds))
-        }) ?? []
+        // own echo from another device, or the ack path: deduplicated by (chatId, seq)
+        var stored: Set<String> = []
+        for chatId in chatIds {
+            let seqs = items.filter { $0.chatId == chatId }.map(\.seq)
+            var args: [DatabaseValueConvertible] = [chatId]
+            args.append(contentsOf: seqs)
+            let known = (try? await db.read { dbc in
+                try Int.fetchSet(dbc, sql: """
+                    SELECT seq FROM message
+                    WHERE chatId = ? AND seq IN (\(databaseQuestionMarks(count: seqs.count)))
+                    """, arguments: StatementArguments(args))
+            }) ?? []
+            for seq in known { stored.insert(Message.feedId(chatId: chatId, seq: seq)) }
+        }
 
         var content: [(IncomingFrame, ContentPayload)] = []
         var cursors: [IncomingFrame] = []
@@ -717,7 +724,7 @@ public actor SyncEngine {
             cursors = []
             try? await db.write { [ownUserId] dbc in
                 for (item, payload) in rows {
-                    try SyncEngine.applyContent(dbc, payload, chatId: item.chatId, msgId: item.msgId,
+                    try SyncEngine.applyContent(dbc, payload, chatId: item.chatId,
                                                 seq: item.seq, from: item.from, sentAt: item.sentAt,
                                                 ts: item.ts, ownUserId: ownUserId)
                 }
@@ -729,7 +736,7 @@ public actor SyncEngine {
         }
 
         for item in items {
-            let fresh = !stored.contains(item.msgId)
+            let fresh = !stored.contains(Message.feedId(chatId: item.chatId, seq: item.seq))
             if fresh, let body = item.body {
                 let result: DecryptedIncoming
                 if item.from == ownUserId && item.fromDevice == ownDeviceId {
@@ -745,12 +752,12 @@ public actor SyncEngine {
                     touched.insert(item.chatId)
                 case .undecryptable(let reason):
                     await flush()
-                    await recordUnreadable(reason: reason, chatId: item.chatId, msgId: item.msgId,
+                    await recordUnreadable(reason: reason, chatId: item.chatId,
                                            seq: item.seq, from: item.from, fromDevice: item.fromDevice,
                                            sentAt: item.sentAt, ts: item.ts, body: body)
                 default:
                     await flush()
-                    await storeIncoming(result, chatId: item.chatId, msgId: item.msgId, seq: item.seq,
+                    await storeIncoming(result, chatId: item.chatId, seq: item.seq,
                                         from: item.from, fromDevice: item.fromDevice,
                                         sentAt: item.sentAt, ts: item.ts)
                     await retryPending(chatId: item.chatId)
@@ -788,7 +795,7 @@ public actor SyncEngine {
         // the in-app banner is told last, when the row it previews is written
         for item in announce {
             incomingMessageStream.send(IncomingMessage(
-                chatId: item.chatId, msgId: item.msgId, fromUserId: item.from,
+                chatId: item.chatId, seq: item.seq, fromUserId: item.from,
                 isService: item.isService, isOwn: item.from == ownUserId))
         }
     }
@@ -835,7 +842,7 @@ public actor SyncEngine {
     /// An envelope this device could not open, with the counters of what has
     /// been tried on it.
     private struct PendingEnvelope {
-        let chatId: String, msgId: String, seq: Int
+        let chatId: String, seq: Int
         let from: String, fromDevice: String
         let sentAt: Double, ts: Double
         let body: Data
@@ -852,14 +859,14 @@ public actor SyncEngine {
     /// retry. Recording the seq takes the failure out of silence: pagination
     /// stops asking the server for that range, and the feed knows the message is
     /// lost rather than absent.
-    private func recordUnreadable(reason rawReason: String, chatId: String, msgId: String, seq: Int,
+    private func recordUnreadable(reason rawReason: String, chatId: String, seq: Int,
                                   from: String, fromDevice: String, sentAt: Double,
                                   ts: Double, body: JSONValue) async {
         guard rawReason != "own_echo" else { return }
         // The extension may have opened this very envelope from its push and
         // written the message already; its ratchet step is exactly why this
         // attempt failed. Nothing is missing, so nothing is recorded.
-        guard await !stored(msgId: msgId) else { return }
+        guard await !stored(chatId: chatId, seq: seq) else { return }
         let reason: String
         if rawReason == "not_addressed" {
             // in a direct chat the sender addresses every device on both sides,
@@ -872,7 +879,7 @@ public actor SyncEngine {
             guard kind == ChatKind.direct.rawValue else {
                 try? await db.write { dbc in
                     try HistoryWindow.recordGap(dbc, chatId: chatId, seq: seq, reason: rawReason,
-                                                msgId: msgId, fromUserId: from, sentAt: sentAt)
+                                                fromUserId: from, sentAt: sentAt)
                 }
                 return
             }
@@ -883,7 +890,7 @@ public actor SyncEngine {
         guard let data = try? JSONEncoder().encode(body) else { return }
         let now = Date().timeIntervalSince1970
         let attempts = (try? await db.write { dbc -> Int in
-            try SyncEngine.deferEnvelope(dbc, reason: reason, chatId: chatId, msgId: msgId, seq: seq,
+            try SyncEngine.deferEnvelope(dbc, reason: reason, chatId: chatId, seq: seq,
                                          from: from, fromDevice: fromDevice, sentAt: sentAt, ts: ts,
                                          body: data, now: now)
         }) ?? 1
@@ -891,7 +898,7 @@ public actor SyncEngine {
             "unreadable chat=\(chatId, privacy: .public) seq=\(seq, privacy: .public) reason=\(reason, privacy: .public) attempts=\(attempts, privacy: .public)")
         // a reason that will not clear on its own: ask the sender for a copy now
         guard !MessageRepair.retryableReasons.contains(reason) else { return }
-        let pending = PendingEnvelope(chatId: chatId, msgId: msgId, seq: seq, from: from,
+        let pending = PendingEnvelope(chatId: chatId, seq: seq, from: from,
                                       fromDevice: fromDevice, sentAt: sentAt, ts: ts, body: data,
                                       reason: reason, attempts: attempts, firstSeenAt: now,
                                       lastTriedAt: now, repairAttempts: 0, repairAskedAt: 0)
@@ -899,10 +906,10 @@ public actor SyncEngine {
     }
 
     /// Whether the feed already holds this message, whoever wrote it.
-    private func stored(msgId: String) async -> Bool {
+    private func stored(chatId: String, seq: Int) async -> Bool {
         (try? await db.read { dbc in
-            try Bool.fetchOne(dbc, sql: "SELECT EXISTS(SELECT 1 FROM message WHERE msgId = ?)",
-                              arguments: [msgId]) ?? false
+            try Bool.fetchOne(dbc, sql: "SELECT EXISTS(SELECT 1 FROM message WHERE chatId = ? AND seq = ?)",
+                              arguments: [chatId, seq]) ?? false
         }) ?? false
     }
 
@@ -913,23 +920,23 @@ public actor SyncEngine {
     /// arrived by push and did not open is the only copy the device has until
     /// the socket replays it, and the sweep in the app works from this table.
     @discardableResult
-    static func deferEnvelope(_ dbc: GRDB.Database, reason: String, chatId: String, msgId: String,
+    static func deferEnvelope(_ dbc: GRDB.Database, reason: String, chatId: String,
                               seq: Int, from: String, fromDevice: String, sentAt: Double,
                               ts: Double, body: Data, now: Double) throws -> Int {
         try dbc.execute(
             sql: """
-            INSERT INTO pendingDecrypt (chatId, msgId, seq, fromUserId, fromDevice, sentAt, ts,
+            INSERT INTO pendingDecrypt (chatId, seq, fromUserId, fromDevice, sentAt, ts,
                                         body, reason, attempts, firstSeenAt, lastTriedAt)
-            VALUES (?,?,?,?,?,?,?,?,?,1,?,?)
-            ON CONFLICT(chatId, msgId) DO UPDATE SET
+            VALUES (?,?,?,?,?,?,?,?,1,?,?)
+            ON CONFLICT(chatId, seq) DO UPDATE SET
               reason = excluded.reason, attempts = pendingDecrypt.attempts + 1,
               lastTriedAt = excluded.lastTriedAt
             """,
-            arguments: [chatId, msgId, seq, from, fromDevice, sentAt, ts, body, reason, now, now])
+            arguments: [chatId, seq, from, fromDevice, sentAt, ts, body, reason, now, now])
         try HistoryWindow.recordGap(dbc, chatId: chatId, seq: seq, reason: reason,
-                                    msgId: msgId, fromUserId: from, sentAt: sentAt, now: now)
-        return try Int.fetchOne(dbc, sql: "SELECT attempts FROM pendingDecrypt WHERE chatId = ? AND msgId = ?",
-                                arguments: [chatId, msgId]) ?? 1
+                                    fromUserId: from, sentAt: sentAt, now: now)
+        return try Int.fetchOne(dbc, sql: "SELECT attempts FROM pendingDecrypt WHERE chatId = ? AND seq = ?",
+                                arguments: [chatId, seq]) ?? 1
     }
 
     private func pendingEnvelopes(chatId: String?) async -> [PendingEnvelope] {
@@ -939,7 +946,7 @@ public actor SyncEngine {
         let arguments: StatementArguments = chatId.map { [$0] } ?? []
         return (try? await db.read { dbc in
             try Row.fetchAll(dbc, sql: sql, arguments: arguments).map {
-                PendingEnvelope(chatId: $0["chatId"], msgId: $0["msgId"], seq: $0["seq"],
+                PendingEnvelope(chatId: $0["chatId"], seq: $0["seq"],
                                 from: $0["fromUserId"], fromDevice: $0["fromDevice"],
                                 sentAt: $0["sentAt"], ts: $0["ts"], body: $0["body"],
                                 reason: $0["reason"], attempts: $0["attempts"],
@@ -994,10 +1001,10 @@ public actor SyncEngine {
         // extension opens the same envelope from the push, and the ratchet moved
         // with it. Trying again would fail for good and set repair going after a
         // message that is not missing at all.
-        if await stored(msgId: pending.msgId) {
+        if await stored(chatId: pending.chatId, seq: pending.seq) {
             try? await db.write { dbc in
-                try dbc.execute(sql: "DELETE FROM pendingDecrypt WHERE chatId = ? AND msgId = ?",
-                                arguments: [pending.chatId, pending.msgId])
+                try dbc.execute(sql: "DELETE FROM pendingDecrypt WHERE chatId = ? AND seq = ?",
+                                arguments: [pending.chatId, pending.seq])
                 try dbc.execute(sql: "DELETE FROM historyGap WHERE chatId = ? AND seq = ?",
                                 arguments: [pending.chatId, pending.seq])
             }
@@ -1015,21 +1022,21 @@ public actor SyncEngine {
                 try dbc.execute(
                     sql: """
                     UPDATE pendingDecrypt SET attempts = attempts + 1, reason = ?, lastTriedAt = ?
-                    WHERE chatId = ? AND msgId = ?
+                    WHERE chatId = ? AND seq = ?
                     """,
-                    arguments: [reason, Date().timeIntervalSince1970, pending.chatId, pending.msgId])
+                    arguments: [reason, Date().timeIntervalSince1970, pending.chatId, pending.seq])
             }
             return false
         }
-        await storeIncoming(result, chatId: pending.chatId, msgId: pending.msgId, seq: pending.seq,
+        await storeIncoming(result, chatId: pending.chatId, seq: pending.seq,
                             from: pending.from, fromDevice: pending.fromDevice,
                             sentAt: pending.sentAt, ts: pending.ts)
         // the seq is settled: by a feed row, and then the gap record goes, or
         // by a silent reason, so pagination does not go after it again
         let settled = Self.settledReason(result)
         try? await db.write { dbc in
-            try dbc.execute(sql: "DELETE FROM pendingDecrypt WHERE chatId = ? AND msgId = ?",
-                            arguments: [pending.chatId, pending.msgId])
+            try dbc.execute(sql: "DELETE FROM pendingDecrypt WHERE chatId = ? AND seq = ?",
+                            arguments: [pending.chatId, pending.seq])
             if let settled {
                 try HistoryWindow.recordGap(dbc, chatId: pending.chatId, seq: pending.seq, reason: settled)
             } else {
@@ -1058,11 +1065,11 @@ public actor SyncEngine {
     /// gone and the repair attempts are spent. The record of the seq stays.
     private func dropExpired(_ pending: PendingEnvelope) async {
         try? await db.write { dbc in
-            try dbc.execute(sql: "DELETE FROM pendingDecrypt WHERE chatId = ? AND msgId = ?",
-                            arguments: [pending.chatId, pending.msgId])
+            try dbc.execute(sql: "DELETE FROM pendingDecrypt WHERE chatId = ? AND seq = ?",
+                            arguments: [pending.chatId, pending.seq])
             try HistoryWindow.recordGap(dbc, chatId: pending.chatId, seq: pending.seq,
                                         reason: pending.reason ?? "unknown",
-                                        msgId: pending.msgId, fromUserId: pending.from,
+                                        fromUserId: pending.from,
                                         sentAt: pending.sentAt)
         }
         MsngrLog.repair.error(
@@ -1091,24 +1098,24 @@ public actor SyncEngine {
         }
         var request = ContentPayload(kind: "repairRequest")
         request.to = pending.from
-        request.targetMsgId = pending.msgId
         request.repairSeq = pending.seq
         request.reason = pending.reason
         request.attempt = attempt
         try? await enqueue(content: request, chatId: pending.chatId,
-                           clientMsgId: MessageRepair.requestId(msgId: pending.msgId, attempt: attempt))
+                           clientMsgId: MessageRepair.requestId(chatId: pending.chatId,
+                                                                seq: pending.seq, attempt: attempt))
         try? await db.write { dbc in
             try dbc.execute(
                 sql: """
                 UPDATE pendingDecrypt SET repairAttempts = ?, repairAskedAt = ?
-                WHERE chatId = ? AND msgId = ?
+                WHERE chatId = ? AND seq = ?
                 """,
-                arguments: [attempt, now, pending.chatId, pending.msgId])
+                arguments: [attempt, now, pending.chatId, pending.seq])
             // the attempt counts for the feed too: the neutral placeholder
             // appears only once a repair has been tried
             try HistoryWindow.recordGap(dbc, chatId: pending.chatId, seq: pending.seq,
                                         reason: pending.reason ?? "unknown",
-                                        msgId: pending.msgId, fromUserId: pending.from,
+                                        fromUserId: pending.from,
                                         sentAt: pending.sentAt, now: now)
         }
         MsngrLog.repair.notice(
@@ -1143,10 +1150,10 @@ public actor SyncEngine {
     }
 
     /// The peer could not read our message, so it is encrypted again with the
-    /// current session and sent to him. The copy carries the original msgId, so
+    /// current session and sent to him. The copy carries the original seq, so
     /// in his feed it lands where the missing message was, not beside it.
     private func answerRepairRequest(_ request: ContentPayload, chatId: String, from: String) async {
-        guard let target = request.targetMsgId, from != ownUserId else { return }
+        guard let target = request.repairSeq, from != ownUserId else { return }
         // group: the chain never reached him, so the distribution is forgotten
         // and the next message to the chat hands it out again
         if request.reason == "no_sender_key" {
@@ -1154,12 +1161,12 @@ public actor SyncEngine {
         }
         let row = (try? await db.read { dbc in
             try Message.fetchOne(
-                dbc, sql: "SELECT * FROM message WHERE chatId = ? AND msgId = ? AND isOutgoing = 1",
+                dbc, sql: "SELECT * FROM message WHERE chatId = ? AND seq = ? AND isOutgoing = 1",
                 arguments: [chatId, target])
         }) ?? nil
         guard let row, !row.deletedForAll else {
             MsngrLog.repair.notice(
-                "repair asked for a message we do not hold chat=\(chatId, privacy: .public) msgId=\(target, privacy: .public)")
+                "repair asked for a message we do not hold chat=\(chatId, privacy: .public) seq=\(target, privacy: .public)")
             return
         }
         // a copy is only given for what was addressed to the asker in the first
@@ -1171,7 +1178,7 @@ public actor SyncEngine {
         }) ?? nil
         guard let joinedAt, row.sentAt >= joinedAt else {
             MsngrLog.repair.notice(
-                "repair asked for a message sent before the asker joined chat=\(chatId, privacy: .public) msgId=\(target, privacy: .public)")
+                "repair asked for a message sent before the asker joined chat=\(chatId, privacy: .public) seq=\(target, privacy: .public)")
             return
         }
         var original = ContentPayload(kind: row.kind.rawValue)
@@ -1182,34 +1189,33 @@ public actor SyncEngine {
         original.fwd = row.forward
         var reply = ContentPayload(kind: "repair")
         reply.to = from
-        reply.repairOf = target
-        reply.repairSeq = row.seq ?? request.repairSeq
+        reply.repairSeq = target
         reply.origSentAt = row.sentAt
         reply.attempt = request.attempt
         reply.orig = SyncEngine.payloadJSON(original)
         try? await enqueue(content: reply, chatId: chatId,
-                           clientMsgId: MessageRepair.replyId(msgId: target,
+                           clientMsgId: MessageRepair.replyId(chatId: chatId, seq: target,
                                                               attempt: request.attempt ?? 1))
         MsngrLog.repair.notice(
-            "repair sent chat=\(chatId, privacy: .public) msgId=\(target, privacy: .public) attempt=\(request.attempt ?? 1, privacy: .public)")
+            "repair sent chat=\(chatId, privacy: .public) seq=\(target, privacy: .public) attempt=\(request.attempt ?? 1, privacy: .public)")
     }
 
-    /// A copy from the sender. It goes in under the original msgId and seq, so
+    /// A copy from the sender. It goes in under the original (chatId, seq), so
     /// no duplicate appears in the feed, and it closes the record of the gap.
     private func applyRepair(_ repair: ContentPayload, chatId: String, from: String) async {
-        guard let target = repair.repairOf, let json = repair.orig,
+        guard let json = repair.orig,
               let original = try? JSONDecoder().decode(ContentPayload.self, from: Data(json.utf8)),
               let seq = repair.repairSeq, seq > 0 else { return }
         // a copy is accepted only from the author of the missing message, and
         // only where a record of that gap exists: otherwise any member of the
-        // chat could write his own text under someone else's msgId
+        // chat could write his own text under someone else's seq
         let author = (try? await db.read { dbc in
             try String.fetchOne(
-                dbc, sql: "SELECT fromUserId FROM pendingDecrypt WHERE chatId = ? AND msgId = ?",
-                arguments: [chatId, target])
+                dbc, sql: "SELECT fromUserId FROM pendingDecrypt WHERE chatId = ? AND seq = ?",
+                arguments: [chatId, seq])
                 ?? String.fetchOne(
-                    dbc, sql: "SELECT fromUserId FROM historyGap WHERE chatId = ? AND seq = ? AND msgId = ?",
-                    arguments: [chatId, seq, target])
+                    dbc, sql: "SELECT fromUserId FROM historyGap WHERE chatId = ? AND seq = ?",
+                    arguments: [chatId, seq])
         }) ?? nil
         guard author == from else {
             MsngrLog.repair.error(
@@ -1217,11 +1223,11 @@ public actor SyncEngine {
             return
         }
         let sentAt = repair.origSentAt ?? 0
-        await storeHistoric(content: original, chatId: chatId, msgId: target, seq: seq,
+        await storeHistoric(content: original, chatId: chatId, seq: seq,
                             from: from, sentAt: sentAt, ts: sentAt)
         try? await db.write { dbc in
-            try dbc.execute(sql: "DELETE FROM pendingDecrypt WHERE chatId = ? AND msgId = ?",
-                            arguments: [chatId, target])
+            try dbc.execute(sql: "DELETE FROM pendingDecrypt WHERE chatId = ? AND seq = ?",
+                            arguments: [chatId, seq])
             if Self.rowlessKinds.contains(original.kind) {
                 try HistoryWindow.recordGap(dbc, chatId: chatId, seq: seq, reason: "service")
             } else {
@@ -1246,7 +1252,7 @@ public actor SyncEngine {
                            clientMsgId: "ska:\(chatId):\(keyId):\(ownDeviceId):\(round)")
     }
 
-    private func storeIncoming(_ result: DecryptedIncoming, chatId: String, msgId: String,
+    private func storeIncoming(_ result: DecryptedIncoming, chatId: String,
                                seq: Int, from: String, fromDevice: String,
                                sentAt: Double, ts: Double) async {
         switch result {
@@ -1259,7 +1265,7 @@ public actor SyncEngine {
                 }
                 return
             }
-            await applyContent(content, chatId: chatId, msgId: msgId, seq: seq,
+            await applyContent(content, chatId: chatId, seq: seq,
                                from: from, sentAt: sentAt, ts: ts)
             if case .identityChanged(let uid, _) = result {
                 await insertSystemMessage(chatId: chatId, text: "identity_changed:\(uid)")
@@ -1272,36 +1278,36 @@ public actor SyncEngine {
         }
     }
 
-    func applyContent(_ content: ContentPayload, chatId: String, msgId: String,
+    func applyContent(_ content: ContentPayload, chatId: String,
                       seq: Int, from: String, sentAt: Double, ts: Double) async {
         try? await db.write { [ownUserId] dbc in
-            try SyncEngine.applyContent(dbc, content, chatId: chatId, msgId: msgId, seq: seq,
+            try SyncEngine.applyContent(dbc, content, chatId: chatId, seq: seq,
                                         from: from, sentAt: sentAt, ts: ts, ownUserId: ownUserId)
         }
     }
 
     static func applyContent(_ dbc: GRDB.Database, _ content: ContentPayload, chatId: String,
-                             msgId: String, seq: Int, from: String, sentAt: Double, ts: Double,
+                             seq: Int, from: String, sentAt: Double, ts: Double,
                              ownUserId: String) throws {
         switch content.kind {
         case "edit":
-            if let target = content.targetMsgId {
-                let found = try SyncEngine.applyEdit(dbc, chatId: chatId, targetMsgId: target,
+            if let target = content.targetSeq {
+                let found = try SyncEngine.applyEdit(dbc, chatId: chatId, targetSeq: target,
                                                      newText: content.text, sentAt: sentAt)
                 // nothing matched: the original is not stored yet
                 if !found {
-                    try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetMsgId: target,
+                    try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetSeq: target,
                                                       kind: "edit", fromUserId: from,
                                                       payload: SyncEngine.payloadJSON(content), seq: seq,
                                                       sentAt: sentAt)
                 }
             }
         case "reaction":
-            if let target = content.targetMsgId {
-                let found = try SyncEngine.applyReaction(dbc, chatId: chatId, targetMsgId: target,
+            if let target = content.targetSeq {
+                let found = try SyncEngine.applyReaction(dbc, chatId: chatId, targetSeq: target,
                                                          userId: from, emoji: content.emoji)
                 if !found {
-                    try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetMsgId: target,
+                    try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetSeq: target,
                                                       kind: "reaction", fromUserId: from,
                                                       payload: SyncEngine.payloadJSON(content), seq: seq)
                 }
@@ -1310,13 +1316,13 @@ public actor SyncEngine {
             try dbc.execute(sql: "UPDATE chat SET ttlSeconds = ? WHERE id = ?",
                             arguments: [content.ttlSeconds ?? 0, chatId])
         case GroupEvent.kind:
-            try SyncEngine.storeGroupEvent(dbc, content, chatId: chatId, msgId: msgId, seq: seq,
+            try SyncEngine.storeGroupEvent(dbc, content, chatId: chatId, seq: seq,
                                            from: from, sentAt: sentAt, ts: ts, ownUserId: ownUserId)
         default:
-            var msg = Message(id: msgId, chatId: chatId, fromUserId: from, sentAt: sentAt,
+            var msg = Message(id: Message.feedId(chatId: chatId, seq: seq), chatId: chatId,
+                              fromUserId: from, sentAt: sentAt,
                               kind: MessageKind(rawValue: content.kind) ?? .text,
                               text: content.text, status: .sent, isOutgoing: from == ownUserId)
-            msg.msgId = msgId
             msg.seq = seq
             msg.serverTs = ts
             msg.media = content.media
@@ -1326,7 +1332,7 @@ public actor SyncEngine {
             let ttl = try Int.fetchOne(dbc, sql: "SELECT ttlSeconds FROM chat WHERE id = ?", arguments: [chatId]) ?? 0
             if ttl > 0 { msg.expiresAt = Date().timeIntervalSince1970 + Double(ttl) }
             try msg.save(dbc)
-            try SyncEngine.applyBuffered(dbc, chatId: chatId, msgId: msgId)
+            try SyncEngine.applyBuffered(dbc, chatId: chatId, seq: seq)
             try dbc.execute(sql: "UPDATE chat SET lastActivityAt = ? WHERE id = ?",
                             arguments: [max(ts, sentAt), chatId])
         }
@@ -1336,12 +1342,12 @@ public actor SyncEngine {
     /// does not move up the list for it — a system row carries no preview, so
     /// the list would jump with nothing new to show.
     static func storeGroupEvent(_ dbc: GRDB.Database, _ content: ContentPayload, chatId: String,
-                                msgId: String, seq: Int, from: String, sentAt: Double, ts: Double,
+                                seq: Int, from: String, sentAt: Double, ts: Double,
                                 ownUserId: String) throws {
-        var msg = Message(id: msgId, chatId: chatId, fromUserId: from, sentAt: sentAt,
+        var msg = Message(id: Message.feedId(chatId: chatId, seq: seq), chatId: chatId,
+                          fromUserId: from, sentAt: sentAt,
                           kind: .system, text: content.text, status: .sent,
                           isOutgoing: from == ownUserId)
-        msg.msgId = msgId
         msg.seq = seq
         msg.serverTs = ts
         try msg.upsert(dbc)
@@ -1353,27 +1359,27 @@ public actor SyncEngine {
     /// onto its original, or waits for it when the replay order puts the event
     /// before its target. lastActivityAt is left alone: history is older than
     /// whatever the chat is doing now.
-    public func storeHistoric(content: ContentPayload, chatId: String, msgId: String,
+    public func storeHistoric(content: ContentPayload, chatId: String,
                               seq: Int, from: String, sentAt: Double, ts: Double) async {
         try? await db.write { [ownUserId] dbc in
             switch content.kind {
             case "edit":
-                if let target = content.targetMsgId {
-                    let found = try SyncEngine.applyEdit(dbc, chatId: chatId, targetMsgId: target,
+                if let target = content.targetSeq {
+                    let found = try SyncEngine.applyEdit(dbc, chatId: chatId, targetSeq: target,
                                                          newText: content.text, sentAt: sentAt)
                     if !found {
-                        try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetMsgId: target,
+                        try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetSeq: target,
                                                           kind: "edit", fromUserId: from,
                                                           payload: SyncEngine.payloadJSON(content), seq: seq,
                                                           sentAt: sentAt)
                     }
                 }
             case "reaction":
-                if let target = content.targetMsgId {
-                    let found = try SyncEngine.applyReaction(dbc, chatId: chatId, targetMsgId: target,
+                if let target = content.targetSeq {
+                    let found = try SyncEngine.applyReaction(dbc, chatId: chatId, targetSeq: target,
                                                              userId: from, emoji: content.emoji)
                     if !found {
-                        try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetMsgId: target,
+                        try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetSeq: target,
                                                           kind: "reaction", fromUserId: from,
                                                           payload: SyncEngine.payloadJSON(content), seq: seq)
                     }
@@ -1381,13 +1387,13 @@ public actor SyncEngine {
             case "disappearing":
                 break // the chat's current TTL is in its state; a historic change is not replayed
             case GroupEvent.kind:
-                try SyncEngine.storeGroupEvent(dbc, content, chatId: chatId, msgId: msgId, seq: seq,
+                try SyncEngine.storeGroupEvent(dbc, content, chatId: chatId, seq: seq,
                                                from: from, sentAt: sentAt, ts: ts, ownUserId: ownUserId)
             default:
-                var msg = Message(id: msgId, chatId: chatId, fromUserId: from, sentAt: sentAt,
+                var msg = Message(id: Message.feedId(chatId: chatId, seq: seq), chatId: chatId,
+                                  fromUserId: from, sentAt: sentAt,
                                   kind: MessageKind(rawValue: content.kind) ?? .text,
                                   text: content.text, status: .sent, isOutgoing: from == ownUserId)
-                msg.msgId = msgId
                 msg.seq = seq
                 msg.serverTs = ts
                 msg.media = content.media
@@ -1401,7 +1407,7 @@ public actor SyncEngine {
                                            arguments: [chatId]) ?? 0
                 if ttl > 0 { msg.expiresAt = Date().timeIntervalSince1970 + Double(ttl) }
                 try msg.upsert(dbc)
-                try SyncEngine.applyBuffered(dbc, chatId: chatId, msgId: msgId)
+                try SyncEngine.applyBuffered(dbc, chatId: chatId, seq: seq)
             }
         }
     }
@@ -1446,7 +1452,7 @@ public actor SyncEngine {
                     reasons[m.seq] = "service"
                     break
                 }
-                await storeHistoric(content: content, chatId: chatId, msgId: m.msgId, seq: m.seq,
+                await storeHistoric(content: content, chatId: chatId, seq: m.seq,
                                     from: m.from, sentAt: m.sentAt, ts: m.ts)
                 // edit/reaction/disappearing land on their target instead of
                 // taking a row of their own — the seq is processed all the same
@@ -1456,14 +1462,14 @@ public actor SyncEngine {
             case .undecryptable(let reason):
                 // the envelope is kept whatever the reason: it is the only local
                 // copy, and repair works from the record it leaves behind
-                await recordUnreadable(reason: reason, chatId: chatId, msgId: m.msgId, seq: m.seq,
+                await recordUnreadable(reason: reason, chatId: chatId, seq: m.seq,
                                        from: m.from, fromDevice: m.fromDevice,
                                        sentAt: m.sentAt, ts: m.ts, body: body)
             }
             if let reason = reasons[m.seq] {
                 try? await db.write { dbc in
                     try HistoryWindow.recordGap(dbc, chatId: chatId, seq: m.seq, reason: reason,
-                                                msgId: m.msgId, fromUserId: m.from, sentAt: m.sentAt)
+                                                fromUserId: m.from, sentAt: m.sentAt)
                 }
             }
         }
@@ -1487,7 +1493,7 @@ public actor SyncEngine {
     }
 
     private func applySentAck(_ f: WSIncoming) async {
-        guard let clientMsgId = f.clientMsgId, let msgId = f.msgId,
+        guard let clientMsgId = f.clientMsgId,
               let seq = f.seq, let chatId = f.chatId else { return }
         try? await db.write { dbc in
             // a disappearing message's clock runs from the moment it went out:
@@ -1496,16 +1502,19 @@ public actor SyncEngine {
                                        arguments: [chatId]) ?? 0
             try dbc.execute(
                 sql: """
-                UPDATE message SET msgId = ?, seq = ?, serverTs = ?, status = MAX(status, 1),
+                UPDATE message SET seq = ?, serverTs = ?, status = MAX(status, 1),
                   failReason = NULL, expiresAt = ?
                 WHERE clientMsgId = ?
                 """,
-                arguments: [msgId, seq, f.ts,
+                arguments: [seq, f.ts,
                             ttl > 0 ? Date().timeIntervalSince1970 + Double(ttl) : nil,
                             clientMsgId])
             try dbc.execute(sql: "DELETE FROM outbox WHERE clientMsgId = ?", arguments: [clientMsgId])
-            // edits and reactions that waited for their target's server id: it is here now
+            // edits and reactions that waited for their target's seq: it is here now
             try dbc.execute(sql: "UPDATE outbox SET state = 'ready' WHERE state = 'waiting'")
+            // a peer's edit or reaction may have arrived before this ack gave
+            // the row its seq: whatever waited on it lands now
+            try SyncEngine.applyBuffered(dbc, chatId: chatId, seq: seq)
             // what we sent counts as read by us, so the badge does not pile up
             try dbc.execute(
                 sql: """
@@ -1698,12 +1707,12 @@ public actor SyncEngine {
                 try dbc.execute(sql: "UPDATE chat SET lastActivityAt = ? WHERE id = ?", arguments: [now, chatId])
             }
             // an edit takes effect here before it is sent
-            if content.kind == "edit", let target = content.targetMsgId {
-                try SyncEngine.applyEdit(dbc, chatId: chatId, targetMsgId: target,
+            if content.kind == "edit", let target = content.targetLocalId {
+                try SyncEngine.applyEdit(dbc, chatId: chatId, targetId: target,
                                          newText: content.text, sentAt: now)
             }
-            if content.kind == "reaction", let target = content.targetMsgId {
-                try SyncEngine.applyReaction(dbc, chatId: chatId, targetMsgId: target,
+            if content.kind == "reaction", let target = content.targetLocalId {
+                try SyncEngine.applyReaction(dbc, chatId: chatId, targetId: target,
                                              userId: self.ownUserId, emoji: content.emoji)
             }
         }
@@ -1873,7 +1882,7 @@ public actor SyncEngine {
         }
     }
 
-    /// The target of a service frame has no server msgId: either the ack has not
+    /// The target of a service frame has no seq: either the ack has not
     /// arrived yet (`gone == false`, we wait for it), or the message never went out.
     struct TargetNotAcked: Error { let gone: Bool }
 
@@ -1940,24 +1949,25 @@ public actor SyncEngine {
         }
     }
 
-    /// An edit and a reaction point at a message by id, and for our own message that
-    /// id is local until the ack: the peer has no such row, and the event would settle
-    /// in their `pendingApply` under an id that never arrives. The target is resolved
-    /// at send time; until the ack is in, there is nothing to send.
+    /// An edit and a reaction point at a message by its local row id, and for
+    /// our own message that row has no seq until the ack: the peer applies by
+    /// seq, and there is nothing to send before one exists. The target is
+    /// resolved at send time; the local id never leaves the device.
     func resolveTarget(_ content: ContentPayload, chatId: String) async throws -> ContentPayload {
-        guard let target = content.targetMsgId else { return content }
+        guard let target = content.targetLocalId else { return content }
         let row = try await db.read { dbc in
-            try Row.fetchOne(dbc, sql: "SELECT msgId, status FROM message WHERE chatId = ? AND id = ?",
+            try Row.fetchOne(dbc, sql: "SELECT seq, status FROM message WHERE chatId = ? AND id = ?",
                              arguments: [chatId, target])
         }
-        // no row — the id is already a server one (the target came from the peer)
-        guard let row else { return content }
-        guard let serverId = row["msgId"] as String? else {
+        // no row — the target was deleted locally; the event has nowhere to land
+        guard let row else { throw TargetNotAcked(gone: true) }
+        guard let seq = row["seq"] as Int? else {
             // the target never went out: there is nothing on the server to react to
             throw TargetNotAcked(gone: (row["status"] as Int?) == MessageStatus.failed.rawValue)
         }
         var resolved = content
-        resolved.targetMsgId = serverId
+        resolved.targetSeq = seq
+        resolved.targetLocalId = nil
         return resolved
     }
 
@@ -2030,9 +2040,9 @@ public actor SyncEngine {
     // MARK: - Action queue (read / delete-for-all / accept)
 
     struct ReadActionPayload: Codable { var upToSeq: Int }
-    struct DeleteActionPayload: Codable { var msgIds: [String]; var forAll: Bool }
+    struct DeleteActionPayload: Codable { var seqs: [Int]; var forAll: Bool }
     struct BlockActionPayload: Codable { var userId: String; var blocked: Bool }
-    struct PinActionPayload: Codable { var msgId: String? }
+    struct PinActionPayload: Codable { var seq: Int? }
 
     /// Read actions collapse per chat: one row per chatId, the larger upToSeq wins.
     static func upsertReadAction(_ dbc: GRDB.Database, chatId: String, upToSeq: Int) throws {
@@ -2076,7 +2086,7 @@ public actor SyncEngine {
                     try await ws.send(.recv(chatId: a.chatId ?? "", seqs: [p.upToSeq]))
                 case "delete":
                     let p = try JSONDecoder().decode(DeleteActionPayload.self, from: Data(a.payload.utf8))
-                    try await ws.send(.delete(chatId: a.chatId ?? "", msgIds: p.msgIds, forAll: p.forAll))
+                    try await ws.send(.delete(chatId: a.chatId ?? "", seqs: p.seqs, forAll: p.forAll))
                 case "accept":
                     try await api.acceptChat(a.chatId ?? "")
                 case "deleteChat":
@@ -2086,7 +2096,7 @@ public actor SyncEngine {
                     try await api.setBlocked(p.userId, blocked: p.blocked)
                 case "pin":
                     let p = try JSONDecoder().decode(PinActionPayload.self, from: Data(a.payload.utf8))
-                    try await api.pinMessage(a.chatId ?? "", msgId: p.msgId)
+                    try await api.pinMessage(a.chatId ?? "", seq: p.seq)
                 default:
                     break // an unknown type is dropped below
                 }
@@ -2152,17 +2162,17 @@ public actor SyncEngine {
         actionWakeup.continuation.yield()
     }
 
-    /// Pinning a message, and unpinning with `msgId` nil: the chat row takes it
+    /// Pinning a message, and unpinning with `seq` nil: the chat row takes it
     /// at once and the server hears through the action queue, so the bar appears
     /// on this device without waiting for the frame that comes back, and the pin
     /// survives being offline. While the request is pending, `upsertChatState`
     /// leaves the local value alone: a snapshot taken before it landed would
     /// otherwise put the previous pin back.
-    public func pinMessage(chatId: String, msgId: String?) async {
+    public func pinMessage(chatId: String, seq: Int?) async {
         try? await db.write { dbc in
-            try dbc.execute(sql: "UPDATE chat SET pinnedMsgId = ? WHERE id = ?",
-                            arguments: [msgId, chatId])
-            let payload = String(data: try JSONEncoder().encode(PinActionPayload(msgId: msgId)),
+            try dbc.execute(sql: "UPDATE chat SET pinnedSeq = ? WHERE id = ?",
+                            arguments: [seq, chatId])
+            let payload = String(data: try JSONEncoder().encode(PinActionPayload(seq: seq)),
                                  encoding: .utf8)!
             try dbc.execute(
                 sql: """
@@ -2241,13 +2251,22 @@ public actor SyncEngine {
         try? await ws.send(.typing(chatId: chatId, kind: kind))
     }
 
-    public func deleteMessages(chatId: String, msgIds: [String], forAll: Bool) async {
-        try? await db.write { dbc in
-            for id in msgIds {
+    /// `ids` are local row ids. Delete-for-all names the messages to the server
+    /// by seq, so rows that never earned one (an own message the ack has not
+    /// reached) are removed locally and skipped in the request.
+    public func deleteMessages(chatId: String, ids: [String], forAll: Bool) async {
+        let seqs: [Int] = (try? await db.write { dbc -> [Int] in
+            var seqs: [Int] = []
+            for id in ids {
                 if forAll {
+                    if let seq = try Int.fetchOne(
+                        dbc, sql: "SELECT seq FROM message WHERE chatId = ? AND id = ?",
+                        arguments: [chatId, id]) {
+                        seqs.append(seq)
+                    }
                     try dbc.execute(
-                        sql: "UPDATE message SET deletedForAll = 1, text = NULL, media = NULL, album = NULL WHERE chatId = ? AND (msgId = ? OR id = ?)",
-                        arguments: [chatId, id, id])
+                        sql: "UPDATE message SET deletedForAll = 1, text = NULL, media = NULL, album = NULL WHERE chatId = ? AND id = ?",
+                        arguments: [chatId, id])
                 } else {
                     // a message thrown away is not sent afterwards: its queue
                     // entry goes with it, whether it is still waiting for its
@@ -2255,16 +2274,17 @@ public actor SyncEngine {
                     try dbc.execute(sql: """
                         DELETE FROM outbox WHERE clientMsgId IN
                           (SELECT clientMsgId FROM message
-                           WHERE chatId = ? AND (msgId = ? OR id = ?) AND clientMsgId IS NOT NULL)
-                        """, arguments: [chatId, id, id])
-                    try dbc.execute(sql: "DELETE FROM message WHERE chatId = ? AND (msgId = ? OR id = ?)",
-                                    arguments: [chatId, id, id])
+                           WHERE chatId = ? AND id = ? AND clientMsgId IS NOT NULL)
+                        """, arguments: [chatId, id])
+                    try dbc.execute(sql: "DELETE FROM message WHERE chatId = ? AND id = ?",
+                                    arguments: [chatId, id])
                 }
             }
-        }
-        if forAll {
+            return seqs
+        }) ?? []
+        if forAll, !seqs.isEmpty {
             try? await db.write { dbc in
-                let payload = String(data: try JSONEncoder().encode(DeleteActionPayload(msgIds: msgIds, forAll: true)),
+                let payload = String(data: try JSONEncoder().encode(DeleteActionPayload(seqs: seqs, forAll: true)),
                                      encoding: .utf8)!
                 try dbc.execute(
                     sql: "INSERT INTO pendingAction (id, type, chatId, payload, createdAt) VALUES (?,?,?,?,?)",
@@ -2315,7 +2335,7 @@ public actor SyncEngine {
             sql: """
             INSERT INTO chat (id, kind, title, avatarId, chatDescription, sendPolicy, invitePolicy,
                               createdBy, createdAt,
-                              pinnedMsgId, lastSeq, syncedSeq, syncCursor, myReadUpTo, peerReadUpTo,
+                              pinnedSeq, lastSeq, syncedSeq, syncCursor, myReadUpTo, peerReadUpTo,
                               peerDeliveredUpTo, lastActivityAt, isRequest, iAccepted, pinned, muted,
                               archived, unreadCount)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -2326,9 +2346,9 @@ public actor SyncEngine {
               -- a pin this device made and the server has not confirmed yet is
               -- kept: a snapshot built before the request landed carries the
               -- previous pin, and applying it would take the bar away again
-              pinnedMsgId = CASE
+              pinnedSeq = CASE
                 WHEN EXISTS(SELECT 1 FROM pendingAction WHERE type = 'pin' AND chatId = chat.id)
-                THEN chat.pinnedMsgId ELSE excluded.pinnedMsgId END,
+                THEN chat.pinnedSeq ELSE excluded.pinnedSeq END,
               lastSeq = MAX(chat.lastSeq, excluded.lastSeq),
               myReadUpTo = MAX(chat.myReadUpTo, excluded.myReadUpTo),
               peerReadUpTo = MAX(chat.peerReadUpTo, excluded.peerReadUpTo),
@@ -2346,7 +2366,7 @@ public actor SyncEngine {
             arguments: [s.chatId, s.kind, s.title, s.avatarId, s.description,
                         s.sendPolicy ?? ChatPermissions.openPolicy,
                         s.invitePolicy ?? ChatPermissions.openPolicy, s.createdBy,
-                        s.createdAt, s.pinnedMsgId, s.lastSeq, resume, resume,
+                        s.createdAt, s.pinnedSeq, s.lastSeq, resume, resume,
                         max(myRead, resume), 0, 0,
                         s.createdAt, isRequest, iAccepted,
                         flags?.pinned ?? false, flags?.muted ?? false, flags?.archived ?? false,
@@ -2405,11 +2425,20 @@ public actor SyncEngine {
     /// Returns false when the target message is not stored and the edit went
     /// nowhere.
     @discardableResult
-    static func applyEdit(_ dbc: GRDB.Database, chatId: String, targetMsgId: String,
+    static func applyEdit(_ dbc: GRDB.Database, chatId: String, targetSeq: Int,
                           newText: String?, sentAt: Double) throws -> Bool {
+        try applyEdit(dbc, chatId: chatId, targetId: nil, targetSeq: targetSeq,
+                      newText: newText, sentAt: sentAt)
+    }
+
+    /// The local flavour: an edit applied at enqueue time targets the row by
+    /// its id, which an own message has before any seq.
+    @discardableResult
+    static func applyEdit(_ dbc: GRDB.Database, chatId: String, targetId: String?,
+                          targetSeq: Int? = nil, newText: String?, sentAt: Double) throws -> Bool {
         guard let row = try Row.fetchOne(
-            dbc, sql: "SELECT id, text, sentAt, editedAt, editHistory FROM message WHERE chatId = ? AND (msgId = ? OR id = ?)",
-            arguments: [chatId, targetMsgId, targetMsgId]) else { return false }
+            dbc, sql: "SELECT id, text, sentAt, editedAt, editHistory FROM message WHERE chatId = ? AND (id = ? OR seq = ?)",
+            arguments: [chatId, targetId, targetSeq]) else { return false }
         let current: String? = row["text"]
         guard current != newText else { return true }
         var history = (row["editHistory"] as String?)
@@ -2426,11 +2455,18 @@ public actor SyncEngine {
     /// Returns false when the target message is not stored and the reaction
     /// went nowhere.
     @discardableResult
-    static func applyReaction(_ dbc: GRDB.Database, chatId: String, targetMsgId: String,
+    static func applyReaction(_ dbc: GRDB.Database, chatId: String, targetSeq: Int,
                               userId: String, emoji: String?) throws -> Bool {
+        try applyReaction(dbc, chatId: chatId, targetId: nil, targetSeq: targetSeq,
+                          userId: userId, emoji: emoji)
+    }
+
+    @discardableResult
+    static func applyReaction(_ dbc: GRDB.Database, chatId: String, targetId: String?,
+                              targetSeq: Int? = nil, userId: String, emoji: String?) throws -> Bool {
         guard let row = try Row.fetchOne(
-            dbc, sql: "SELECT id, reactions FROM message WHERE chatId = ? AND (msgId = ? OR id = ?)",
-            arguments: [chatId, targetMsgId, targetMsgId]) else { return false }
+            dbc, sql: "SELECT id, reactions FROM message WHERE chatId = ? AND (id = ? OR seq = ?)",
+            arguments: [chatId, targetId, targetSeq]) else { return false }
         var reactions = (try? JSONDecoder().decode([String: [String]].self,
                                                    from: Data((row["reactions"] as String).utf8))) ?? [:]
         // one reaction per user: drop him from every emoji, then add the new one
@@ -2455,23 +2491,23 @@ public actor SyncEngine {
 
     /// Holds an edit, reaction or delete whose target message is not stored
     /// yet. A repeat from the same author replaces the row, so the last one wins.
-    static func bufferPendingApply(_ dbc: GRDB.Database, chatId: String, targetMsgId: String,
+    static func bufferPendingApply(_ dbc: GRDB.Database, chatId: String, targetSeq: Int,
                                    kind: String, fromUserId: String, payload: String, seq: Int?,
                                    sentAt: Double? = nil) throws {
         try dbc.execute(
             sql: """
-            INSERT OR REPLACE INTO pendingApply (chatId, targetMsgId, kind, fromUserId, payload, seq, sentAt)
+            INSERT OR REPLACE INTO pendingApply (chatId, targetSeq, kind, fromUserId, payload, seq, sentAt)
             VALUES (?,?,?,?,?,?,?)
             """,
-            arguments: [chatId, targetMsgId, kind, fromUserId, payload, seq, sentAt])
+            arguments: [chatId, targetSeq, kind, fromUserId, payload, seq, sentAt])
     }
 
     /// Applies the held edits, reactions and deletes to a message that has just
-    /// been inserted.
-    static func applyBuffered(_ dbc: GRDB.Database, chatId: String, msgId: String) throws {
+    /// taken its seq — by being inserted, or by its ack.
+    static func applyBuffered(_ dbc: GRDB.Database, chatId: String, seq: Int) throws {
         let rows = try Row.fetchAll(
-            dbc, sql: "SELECT kind, fromUserId, payload, sentAt FROM pendingApply WHERE chatId = ? AND targetMsgId = ? ORDER BY seq",
-            arguments: [chatId, msgId])
+            dbc, sql: "SELECT kind, fromUserId, payload, sentAt FROM pendingApply WHERE chatId = ? AND targetSeq = ? ORDER BY seq",
+            arguments: [chatId, seq])
         guard !rows.isEmpty else { return }
         let dec = JSONDecoder()
         for row in rows {
@@ -2479,26 +2515,26 @@ public actor SyncEngine {
             switch row["kind"] as String {
             case "edit":
                 if let content {
-                    try applyEdit(dbc, chatId: chatId, targetMsgId: msgId, newText: content.text,
+                    try applyEdit(dbc, chatId: chatId, targetSeq: seq, newText: content.text,
                                   sentAt: (row["sentAt"] as Double?) ?? Date().timeIntervalSince1970)
                 }
             case "reaction":
                 if let content {
-                    try applyReaction(dbc, chatId: chatId, targetMsgId: msgId,
+                    try applyReaction(dbc, chatId: chatId, targetSeq: seq,
                                       userId: row["fromUserId"], emoji: content.emoji)
                 }
             case "deleted":
                 try dbc.execute(
                     sql: """
                     UPDATE message SET deletedForAll = 1, text = NULL, media = NULL,
-                    album = NULL, kind = 'text' WHERE chatId = ? AND msgId = ?
+                    album = NULL, kind = 'text' WHERE chatId = ? AND seq = ?
                     """,
-                    arguments: [chatId, msgId])
+                    arguments: [chatId, seq])
             default:
                 break
             }
         }
-        try dbc.execute(sql: "DELETE FROM pendingApply WHERE chatId = ? AND targetMsgId = ?",
-                        arguments: [chatId, msgId])
+        try dbc.execute(sql: "DELETE FROM pendingApply WHERE chatId = ? AND targetSeq = ?",
+                        arguments: [chatId, seq])
     }
 }

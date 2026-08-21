@@ -22,31 +22,6 @@ Mechanism unknown — needs its own investigation before any test-side
 accommodation; until then a red G with the timer still walking in the
 recording is this defect, not the product.
 
-### The caret jumps in front of the first typed character
-Reported 2026-08-19 from the device, screen recording
-(`ScreenRecording_08-19-2026 20-16-45_1.MP4` in the owner's Downloads). Typing
-"123" produces "231": the first character lands, then the caret moves in front
-of it, so everything after types before the first. Points at the composer's
-text binding rewriting the field's text and resetting the selection while the
-first keystroke is still being composed.
-
-Cause and fix, 2026-08-20: the composer's programmatic write restored the caret
-by its absolute position. When the binding runs ahead of the view — the first
-character of a field the view still reports as empty — that position is 0, so
-the caret landed in front of the character just typed and «123» came out
-«231». The write now keeps the caret's distance from the end of the text
-instead. `ComposerCaretTests` fails on the old rule (caret 0, order «231», a
-restored draft's caret at its start) and passes on the new one; MsngrTests green
-whole. Not re-run on the owner's device yet — the entry closes with that run.
-
-### The block button on a request has no contrast in the dark appearance
-Seen in passing on 2026-08-20 while reproducing the row hit areas: on the
-request screen «Заблокировать» is a `.bordered` button with a destructive role,
-but the app's accent tint paints it, so on the dark ground it reads as orange
-letters on dark brown. A destructive action normally carries its own colour
-rather than the accent; part of the dark-appearance pass, and a taste call for
-the owner if the accent is meant to stay.
-
 ### The in-app banner does not react to a tap
 Reported 2026-08-19 from the device. Tapping the in-app notification banner does
 nothing; it has to open the chat it announces. The tap-opens-chat path exists and
@@ -83,38 +58,6 @@ app's own view of it, and only then look at the window geometry of the banner
 only as tall as the measured content, which would push the visible banner below
 the window's own bounds, where touches do not reach it).
 
-### List rows are tappable only on their letters and icons
-Reported 2026-08-19 from the device. In many lists the tap works only exactly on
-the text or the icon, not anywhere in the row — the hit area does not cover the
-whole cell. Sweep the lists (settings, folders, chat info, search results) and
-give every row a full-width content shape.
-
-Swept on 2026-08-21 (`152e106`): three more instances of the same disease found
-by reading every `buttonStyle(.plain)` in the app — the folder tabs
-(`ChatFolderBar`, transparent padding without a content shape), the forward
-picker rows (`ForwardPickerView`, content-hugging label), and the pin pad's
-del/face keys (`Color.clear` is not hit-testable, only the glyph answered; the
-empty face key with biometrics off is now disabled rather than a dead zone).
-Settings, folders, chat info and the chat-list search results go through List
-buttons and NavigationLinks or already state their shape. Stays open until the
-fixed spots are re-run live on a simulator.
-
-### A forwarded message deleted for everyone keeps its forward line
-Found 2026-08-21 during the reactions/forward run, out of its scope. A
-forwarded message deleted for everyone renders «Переслано от …» above
-«Сообщение удалено»: deletion clears text and media but leaves the `forward`
-column, and the layout keeps drawing the header row. The tombstone should
-carry nothing but the deletion text. Seen live in the alfa–bravo direct chat
-(docs/qa/runs/2026-08-21-reactions-forward/, the deleted album).
-
-### Typing in the chat input misbehaves under load
-Reported 2026-08-19. Hard to catch: when the app stutters, letters appear with
-a delay, the input's resize lags behind, and sometimes the caret ends up not
-at the end but behind the just-typed text. Smells like the state round-trip
-writing text back into the field under lag (an echo write racing fast typing
-resets the caret) plus per-keystroke work on the main thread. Needs a
-reproduction under artificial main-thread load first.
-
 ### Impersonation by display name, and a freed username taken instantly
 Raised 2026-08-19 while answering whether a stranger can register someone
 else's username (they cannot: `[a-zA-Z0-9_]{3,32}`, UNIQUE COLLATE NOCASE,
@@ -131,6 +74,50 @@ not on a single fix. Measured so far (bubbleanim run, merged 14c3a0a): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### The time in a chat list row jumps when the preview's line count changes
+Reported by the owner on 2026-08-21 while watching the reorder run: a preview
+that wraps to a second line (or unwraps back) resizes the row, the vertically
+centered content rides the resize, and the cross-fade paints two time labels a
+few points apart. Closed in this change: the preview reserves two lines
+whether the text fills them or not, so the row's height never depends on the
+line count. Verified live in both directions — the neighbouring row and the
+time label hold still, the preview cross-fades in place
+(qa/runs/2026-08-21-chatlist-reorder, strips 04–06).
+
+### The block button on a request has no contrast in the dark appearance
+Seen in passing on 2026-08-20: on the request screen «Заблокировать» is a
+`.bordered` destructive button, but the app's accent tint painted it, so on
+the dark ground it read as orange letters on dark brown. Closed by `48592cb`:
+the button carries its own `.tint(.red)`, and a destructive action no longer
+inherits the accent. Verified live on 2026-08-21 in the dark appearance — a
+fresh peer's message request shows the block button in red over its own dark
+red ground. If the owner prefers the accent there after all, the tint is one
+line to take back.
+
+### List rows are tappable only on their letters and icons
+Reported 2026-08-19 from the device: in many lists the tap worked only exactly
+on the text or the icon. The first pass (`324c4d2`) gave the chat-list and
+new-chat rows a content shape and was verified live the same day. The sweep of
+2026-08-21 (`152e106`) read every `buttonStyle(.plain)` in the app and found
+three more instances: the folder tabs and the manage chip (`ChatFolderBar`,
+transparent padding without a content shape), the forward picker rows
+(`ForwardPickerView`, content-hugging label), and the pin pad's del/face keys
+(`Color.clear` is not hit-testable; the empty face key with biometrics off is
+disabled now rather than a dead zone). Verified live on a fixture simulator:
+a tap on the manage chip's padding opens the folders screen, a tap on the far
+right of a forward-picker row picks the chat and the forward lands. Settings,
+folders, chat info and the search results go through List buttons and
+NavigationLinks or already state their shape.
+
+### A forwarded message deleted for everyone keeps its forward line
+Found 2026-08-21 during the reactions/forward run, out of its scope: deletion
+cleared text and media but left the `forward` column, and the layout kept
+drawing the header row above «Сообщение удалено» (seen live in the alfa–bravo
+direct chat, docs/qa/runs/2026-08-21-reactions-forward/, the deleted album).
+Closed by `cc00390`: a message deleted for everyone lays out neither the
+forward line nor the reply strip. Verified live the same day — a forward into
+the Standup group deleted for everyone renders as a bare one-line tombstone.
 
 ### The «ack precedes push» smoke check races within milliseconds
 Seen 2026-08-19 in a gate run on `run-longpress` (server code untouched by the
@@ -389,3 +376,43 @@ away from the origin (with the keyboard up it always does) the source bubble
 read through the blur as a second outline. The overlay now hides the source
 bubble for its lifetime and returns the snapshot to the bubble's current frame
 on dismissal, since the feed relayouts underneath when the keyboard leaves.
+
+### The caret jumps in front of the first typed character
+Reported 2026-08-19 from the device, screen recording
+(`ScreenRecording_08-19-2026 20-16-45_1.MP4` in the owner's Downloads). Typing
+"123" produced "231": the composer's programmatic write restored the caret by
+its absolute position, and when the binding runs ahead of the view — the first
+character of a field the view still reports as empty — that position is 0, so
+everything after the first character typed in front of it.
+Closed by the 2026-08-20 fix: the write keeps the caret's distance from the
+end of the text instead. `ComposerCaretTests` fails on the old rule and passes
+on the new one; MsngrTests green whole. Confirmed by the owner on 2026-08-21
+(«баг уже поправили»), and a live simulator run the same day typed 20
+characters in order with the caret at the end throughout.
+
+### Typing in the chat input misbehaves under load
+Reported 2026-08-19: when the app stutters, letters appear with a delay, the
+input's resize lags, and sometimes the caret ends up behind the just-typed
+text. The caret half was the absolute-position restore above; the same
+2026-08-20 fix removed it, and the composer only writes into the field when
+the binding holds a value the view never reported (send-clear, draft, edit),
+so ordinary typing takes no programmatic write at all.
+Closed with the owner's 2026-08-21 confirmation and a live run on main
+(dc17a5a): 20 fast HID keystrokes landed in order with the caret at the end,
+and insertion after a word-replacement kept its place. The one full-field
+wipe seen in the run was the system's autocorrect replacing a tapped
+misspelled "word" wholesale — stock UITextView behaviour, not the composer.
+
+### The UI tests cannot find the user search field on a localized host
+Found 2026-08-21 while reproducing the lost tap below: `VoiceTests` and
+`SmokeTests` reach the new chat sheet by `app.searchFields["Username or name"]`,
+which matches the field by its placeholder. The simulators inherit the host's
+ru-RU locale, so the placeholder reads «Введите юзернейм или имя собеседника»
+and the lookup finds nothing — the fallback path that opens a chat with a peer
+the device has no row for dies at "no user search field", and every voice test
+run on a fresh user fails there before it reaches what it tests.
+Closed by d1ce36a: both suites now take the first search field that answers a
+touch — the list's own field sits behind the sheet and is not hittable, which
+is what tells the two apart, and no placeholder is named. Verified live: the
+sheet's field is the only hittable one in the tree on a ru simulator
+(`newchat` accessibility dump, 2026-08-21).

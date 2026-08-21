@@ -7,16 +7,16 @@ import MsngrCore
 /// longer knows.
 final class ReactionRosterTests: XCTestCase {
     private let users = [
-        User(id: "u1", username: "alfa", displayName: "Алиса"),
-        User(id: "u2", username: "bravo", displayName: "Боб"),
-        User(id: "u3", username: "charlie", displayName: "Чарли"),
+        User(id: "u1", username: "alfa", displayName: "Alice"),
+        User(id: "u2", username: "bravo", displayName: "Bob"),
+        User(id: "u3", username: "charlie", displayName: "Charlie"),
     ]
 
     func testGroupsByEmojiWithCountsDescending() {
         let sections = ReactionRoster.sections(
             reactions: ["👍": ["u1"], "❤️": ["u2", "u3"]], users: users)
         XCTAssertEqual(sections.map(\.emoji), ["❤️", "👍"])
-        XCTAssertEqual(sections[0].entries.map(\.name), ["Боб", "Чарли"])
+        XCTAssertEqual(sections[0].entries.map(\.name), ["Bob", "Charlie"])
     }
 
     /// The capsule that was tapped opens its own people first, whatever its count.
@@ -38,7 +38,7 @@ final class ReactionRosterTests: XCTestCase {
     func testUnknownReactorIsKept() {
         let sections = ReactionRoster.sections(
             reactions: ["❤️": ["u1", "gone"]], users: users)
-        XCTAssertEqual(sections[0].entries.map(\.name), ["Алиса", "gone"])
+        XCTAssertEqual(sections[0].entries.map(\.name), ["Alice", "gone"])
     }
 
     /// Equal counts fall back to the emoji itself, so redraws never shuffle.

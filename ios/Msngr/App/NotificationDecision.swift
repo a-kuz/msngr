@@ -28,10 +28,10 @@ enum NotificationDecision {
 
     /// Whether to present a notification the system asked the delegate about (willPresent).
     /// - isLocal: the app posted this notification itself from a WS frame. It
-    ///   passed every check when it was posted and its msgId is in alreadyShown,
+    ///   passed every check when it was posted and its key is in alreadyShown,
     ///   so the common dedup would suppress the app's own banner.
     /// - messageInDB: the message already arrived over WS (a row in the DB), the banner would be a duplicate
-    /// - alreadyShown: an in-app banner or a system push has already been shown for this msgId
+    /// - alreadyShown: an in-app banner or a system push has already been shown for this (chatId, seq)
     /// - messageRead: the message is already read (seq <= myReadUpTo)
     static func shouldPresentSystemPush(isLocal: Bool = false,
                                         chatOpen: Bool, alreadyShown: Bool,
