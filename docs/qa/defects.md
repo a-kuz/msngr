@@ -321,28 +321,6 @@ read through the blur as a second outline. The overlay now hides the source
 bubble for its lifetime and returns the snapshot to the bubble's current frame
 on dismissal, since the feed relayouts underneath when the keyboard leaves.
 
-### The «ack precedes push» smoke check races within milliseconds
-Seen 2026-08-19 in a gate run on `run-longpress` (server code untouched by the
-branch), not reported from outside. `smoke.mjs` check 21 asserts the sender's
-`sent` frame arrives before the push request reaches the APNs mock, comparing
-receive timestamps at the test process; one run out of three had the push 2 ms
-earlier (`ack 1787167581274 push 1787167581272`) and failed the gate. The
-1500 ms hold on the mock delays its response, not the request's arrival, so
-when the DO fires the ack and the push concurrently the arrival order within
-a few milliseconds is host scheduling, not the product. The check either needs
-the mock to stamp after the hold, or a tolerance the size of the real claim
-(«the ack does not wait 1.5 s for APNs»), decided on the server side.
-
-### A pin frame stood in the fanout queue for 235 seconds
-Seen 2026-08-19 in the live run on `run-pin`, not reported from outside. The
-server delivered the pin's chat frame after 235 s in the queue, and the second
-device was still on its previous seq. It belongs with the two entries above: the
-queue in `ConversationDO` is the one place all three symptoms pass through, and it
-gives up on a frame after three attempts with pauses of 200 ms and 1 s
-(`FANOUT_MAX_ATTEMPTS`) — after which nothing is retried and the client only
-recovers by asking for the range on its next catch-up. Measure the queue itself
-before touching the paths around it.
-
 ### Typing in the chat input misbehaves under load
 Reported 2026-08-19. Hard to catch: when the app stutters, letters appear with
 a delay, the input's resize lags behind, and sometimes the caret ends up not
@@ -367,6 +345,26 @@ not on a single fix. Measured so far (bubbleanim run, merged 14c3a0a): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### The «ack precedes push» smoke check races within milliseconds
+Seen 2026-08-19 in a gate run on `run-longpress` (server code untouched by the
+branch): `smoke.mjs` check 21 asserted the sender's `sent` frame arrives before
+the push request reaches the APNs mock, and one run out of three had the push
+2 ms earlier — host scheduling over an ordering the design never promises,
+since the push queue is independent of the ack path. Closed in 4df77d3: the
+check now asserts the real claim — the ack does not wait out the mock's
+1500 ms hold (`h1.at - hp1.at < 1000`) — and the quiet rerun was green whole
+(259/259).
+
+### A pin frame stood in the fanout queue for 235 seconds
+Seen 2026-08-19 in the live run on `run-pin`: the server delivered the pin's
+chat frame after 235 s, because the fanout gave up on a frame after three
+attempts (`FANOUT_MAX_ATTEMPTS`) and nothing was retried after that. The
+mechanism died with run-delivery: a `DeliveryRecord` per recipient lives until
+acknowledged and retries on a growing pause with no attempt cap
+(`ConversationDO.pumpUser`), so a frame can be late but can no longer be
+abandoned. Live numbers in `runs/2026-08-19-delivery-run.md` — a 100-burst
+lands in 255 ms with every tick following.
 
 ### A SyncEngine started again after stop() never drains the outbox
 Found 2026-08-21 on the run-devices branch, in a test that restarted the
