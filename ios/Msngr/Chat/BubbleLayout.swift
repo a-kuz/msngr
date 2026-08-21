@@ -149,9 +149,10 @@ enum BubbleLayout {
             y += h + 2
         }
 
-        // forward
-        if let fwd = msg.forward {
-            let text = "Переслано от \(fwd.fromName)"
+        // forward; a message deleted for everyone is a tombstone and carries
+        // nothing but the deletion text — no forward line, no reply strip
+        if let fwd = msg.forward, !msg.deletedForAll {
+            let text = Self.forwardedFrom(fwd.fromName)
             let h = forwardHeight
             let w = min(text.size(withAttributes: [.font: forwardFont]).width, maxBubbleWidth - 2 * hPadding)
             forwardFrame = CGRect(x: hPadding, y: y, width: w, height: h)
@@ -160,7 +161,7 @@ enum BubbleLayout {
         }
 
         // reply strip
-        if msg.replyTo != nil {
+        if msg.replyTo != nil, !msg.deletedForAll {
             let w = min(maxBubbleWidth - 2 * hPadding, replyWidth)
             let h = replyHeight
             replyFrame = CGRect(x: hPadding, y: y, width: w, height: h)
@@ -215,7 +216,7 @@ enum BubbleLayout {
             contentWidth = max(contentWidth, w)
             y += h
         default:
-            let display = msg.deletedForAll ? "Сообщение удалено" : (msg.text ?? "")
+            let display = msg.deletedForAll ? String(localized: "Message deleted") : (msg.text ?? "")
             let (f, a) = measureText(display, maxWidth: maxBubbleWidth - 2 * hPadding, startY: y)
             textFrame = f
             attrText = a
@@ -293,9 +294,9 @@ enum BubbleLayout {
                     rx += chip.width + chipGap
                 }
                 contentWidth = max(contentWidth, rx - chipGap - hPadding + gap + statusWidth)
-                // время прижато к низу строки, как и в баббле без реакций: там
-                // статус кончается вместе с текстом, и до низа баббла остаётся
-                // vPadding. Центрирование по капсуле давало другой отступ
+                // the time hugs the bottom of the line, the same as in a bubble without
+                // reactions: there the status ends with the text and vPadding remains to the
+                // bubble's bottom. Centering on the capsule gave a different inset
                 statusFrame = CGRect(x: hPadding + contentWidth - statusWidth,
                                      y: baseY + lineH - statusH, width: statusWidth, height: statusH)
                 y = baseY + lineH
@@ -405,7 +406,7 @@ enum BubbleLayout {
             replyAuthor: msg.replyTo != nil ? replyAuthorName : nil,
             replyText: msg.replyTo.map(Self.replyPreviewText),
             forwardFrame: forwardFrame,
-            forwardText: msg.forward.map { "Переслано от \($0.fromName)" },
+            forwardText: msg.deletedForAll ? nil : msg.forward.map { Self.forwardedFrom($0.fromName) },
             authorNameFrame: authorNameFrame, authorName: authorName,
             avatarFrame: avatarFrame,
             reactionsFrames: reactionsFrames.map { ($0.0, $0.1, $0.2, $0.3) },
@@ -417,16 +418,23 @@ enum BubbleLayout {
             statusWidth: statusWidth)
     }
 
+    static func forwardedFrom(_ name: String) -> String {
+        String(localized: "Forwarded from \(name)")
+    }
+
+    /// The marker next to the time on an edited message; layout and cell share it.
+    static let editedMark = String(localized: "edited") + " "
+
     /// Preview of the quoted message in the reply strip: media gets an icon and a caption
     /// instead of an empty line, text gets itself (or a stand-in when it was not kept).
     static func replyPreviewText(_ reply: ReplyPreview) -> String {
         switch MessageKind(rawValue: reply.kind) {
-        case .photo: return "📷 Фото"
-        case .video: return "🎥 Видео"
-        case .voice: return "🎤 Голосовое сообщение"
-        case .file: return "📎 " + (reply.text.isEmpty ? "Файл" : reply.text)
-        case .album: return "🖼 Альбом"
-        default: return reply.text.isEmpty ? "Сообщение" : reply.text
+        case .photo: return String(localized: "📷 Photo")
+        case .video: return String(localized: "🎥 Video")
+        case .voice: return String(localized: "🎤 Voice message")
+        case .file: return "📎 " + (reply.text.isEmpty ? String(localized: "File") : reply.text)
+        case .album: return String(localized: "🖼 Album")
+        default: return reply.text.isEmpty ? String(localized: "Message") : reply.text
         }
     }
 
@@ -507,7 +515,7 @@ enum BubbleLayout {
     static func statusWidth(_ msg: Message, timeString: String) -> CGFloat {
         let font = timeFont
         var w = timeString.size(withAttributes: [.font: font]).width
-        if msg.edited { w += "изм. ".size(withAttributes: [.font: font]).width }
+        if msg.edited { w += editedMark.size(withAttributes: [.font: font]).width }
         if msg.isOutgoing { w += tickWidth }
         return ceil(w) + 2
     }
