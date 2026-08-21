@@ -621,7 +621,8 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   (qa/runs/2026-08-21-pin)
 - 🟡 Face ID (auto-lock is verified in qa/runs/2026-08-21-pin; biometry
   matching needs the Simulator.app menu and was not driven)
-- 🟡 the blur in the app switcher (not verified live)
+- ✅ the blur in the app switcher: the card is unreadable, the chat glyph over
+  it (qa/runs/2026-08-21-switcher-blur)
 - ✅ the blocked list and unblocking, delivery resuming after
   (qa/runs/2026-08-21-block)
 - ✅ clearing the media cache with its size shown: the label follows the clear
