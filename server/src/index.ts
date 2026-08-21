@@ -6,6 +6,7 @@ import {
   isValidUsername, isValidDisplayName, USERNAME_QUARANTINE_MS,
 } from "./util";
 import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "./version";
+import { newCounters, wrapDB } from "./perf";
 
 export { UserSessionDO } from "./do/UserSessionDO";
 export { ConversationDO } from "./do/ConversationDO";
@@ -947,7 +948,8 @@ export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (!env.PERF_LOG) return handle(req, env, ctx);
     const t0 = Date.now();
-    const res = await handle(req, env, ctx);
+    const counters = newCounters();
+    const res = await handle(req, { ...env, DB: wrapDB(env.DB, counters) }, ctx);
     // 101 has no body to read, and reading one would consume the socket
     let size = 0;
     let out = res;
@@ -959,7 +961,7 @@ export default {
     const u = new URL(req.url);
     console.log(`HTTP ${JSON.stringify({
       method: req.method, path: u.pathname, query: u.search.slice(1),
-      status: res.status, down: size, ms: Date.now() - t0,
+      status: res.status, down: size, ms: Date.now() - t0, d1: counters.d1,
     })}`);
     return out;
   },
