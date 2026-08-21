@@ -64,6 +64,43 @@ function pushKey(id: number): string {
   return PUSH_PREFIX + String(id).padStart(16, "0");
 }
 
+/// The E2EE device set: one identity record per device (`ik:<deviceId>`), the
+/// one-time prekeys under `otp:<deviceId>:<keyId>`, and `devicesVersion`
+/// stamping the set. Reads and writes are serialized by the object, which is
+/// what the prekey handout (a read that deletes) actually needs.
+const IK_PREFIX = "ik:";
+
+interface IdentityRecord {
+  identityKey: string;
+  identitySignKey: string;
+  identityKeySig: string;
+  signedPrekeyId: number;
+  signedPrekey: string;
+  signedPrekeySig: string;
+}
+
+interface PrekeyUpload {
+  id: number;
+  key: string;
+}
+
+function ikKey(deviceId: string): string {
+  return IK_PREFIX + deviceId;
+}
+
+function otpPrefix(deviceId: string): string {
+  return `otp:${deviceId}:`;
+}
+
+/// Padded so lexicographic storage order is numeric key-id order: the handout
+/// consumes the lowest id first.
+function otpKey(deviceId: string, keyId: number): string {
+  return otpPrefix(deviceId) + String(keyId).padStart(10, "0");
+}
+
+/// storage.put/get take at most 128 keys per call
+const STORAGE_BATCH = 128;
+
 interface PushJob {
   chatId: string;
   msgId?: string;
@@ -110,6 +147,11 @@ export class UserDO implements DurableObject {
 
   private convStub(chatId: string) {
     const stub = this.env.CONV_DO.get(this.env.CONV_DO.idFromName(chatId));
+    return this.perf ? wrapStub(stub, this.perf) : stub;
+  }
+
+  private userStub(userId: string) {
+    const stub = this.env.USER_DO.get(this.env.USER_DO.idFromName(userId));
     return this.perf ? wrapStub(stub, this.perf) : stub;
   }
 
@@ -368,7 +410,11 @@ export class UserDO implements DurableObject {
       }
 
       case "/revoke-device": {
-        const b = (await req.json()) as { deviceId: string };
+        const b = (await req.json()) as { deviceId: string; userId?: string };
+        if (b.userId) {
+          await this.state.storage.put("userId", b.userId);
+          this.userId = b.userId;
+        }
         for (const ws of this.sockets()) {
           const att = ws.deserializeAttachment() as SocketAttachment | null;
           if (att?.deviceId !== b.deviceId) continue;
@@ -380,7 +426,134 @@ export class UserDO implements DurableObject {
           delete tokens[b.deviceId];
           await this.state.storage.put("apns", tokens);
         }
+        // the device's keys go with it: the next send builds no box for it and
+        // its prekeys stop being handed out
+        const otps = await this.state.storage.list({ prefix: otpPrefix(b.deviceId) });
+        const gone = [ikKey(b.deviceId), ...otps.keys()];
+        for (let i = 0; i < gone.length; i += STORAGE_BATCH) {
+          await this.state.storage.delete(gone.slice(i, i + STORAGE_BATCH));
+        }
+        const version = ((await this.state.storage.get<number>("devicesVersion")) ?? 1) + 1;
+        await this.state.storage.put("devicesVersion", version);
+        await this.broadcastDevicesChanged(version);
         if (this.sockets().length === 0) await this.broadcastPresence(false);
+        return json({ ok: true });
+      }
+
+      // --- the E2EE device set: identity keys, prekeys, the set's version ---
+
+      case "/keys-register": {
+        const b = (await req.json()) as {
+          userId: string; deviceId: string;
+          identityKey: string; identitySignKey: string; identityKeySig: string;
+          signedPrekey: { id: number; key: string; sig: string };
+          oneTimePrekeys?: PrekeyUpload[];
+          /// a linked device changes the set an existing account's peers hold;
+          /// the first registration starts it and nobody holds a copy yet
+          bump?: boolean;
+        };
+        await this.state.storage.put("userId", b.userId);
+        this.userId = b.userId;
+        let version = (await this.state.storage.get<number>("devicesVersion")) ?? 1;
+        if (b.bump) version++;
+        const puts: Record<string, unknown> = {
+          [ikKey(b.deviceId)]: {
+            identityKey: b.identityKey,
+            identitySignKey: b.identitySignKey,
+            identityKeySig: b.identityKeySig,
+            signedPrekeyId: b.signedPrekey.id,
+            signedPrekey: b.signedPrekey.key,
+            signedPrekeySig: b.signedPrekey.sig,
+          } satisfies IdentityRecord,
+          devicesVersion: version,
+        };
+        for (const k of (b.oneTimePrekeys ?? []).slice(0, 200)) {
+          puts[otpKey(b.deviceId, k.id)] = k.key;
+        }
+        await this.putBatched(puts);
+        if (b.bump) await this.broadcastDevicesChanged(version);
+        return json({ ok: true, version });
+      }
+
+      case "/keys-topup": {
+        const b = (await req.json()) as { deviceId: string; oneTimePrekeys?: PrekeyUpload[] };
+        const wanted = (b.oneTimePrekeys ?? []).slice(0, 200);
+        const names = wanted.map((k) => otpKey(b.deviceId, k.id));
+        const existing = new Set<string>();
+        for (let i = 0; i < names.length; i += STORAGE_BATCH) {
+          const got = await this.state.storage.get(names.slice(i, i + STORAGE_BATCH));
+          for (const k of got.keys()) existing.add(k);
+        }
+        // a key id already uploaded keeps its first value: a retry of the same
+        // top-up must not replace a key a bundle may have handed out meanwhile
+        const puts: Record<string, unknown> = {};
+        wanted.forEach((k, i) => {
+          if (!existing.has(names[i])) puts[names[i]] = k.key;
+        });
+        if (Object.keys(puts).length) await this.putBatched(puts);
+        return json({ ok: true });
+      }
+
+      case "/keys-count": {
+        const deviceId = url.searchParams.get("deviceId") ?? "";
+        const listed = await this.state.storage.list({ prefix: otpPrefix(deviceId) });
+        return json({ ok: true, count: listed.size });
+      }
+
+      case "/keys-prekeys": {
+        // X3DH bundles for every device; the one-time prekey with the lowest id
+        // is consumed here, inside the object, so two senders never draw the same one
+        const iks = await this.state.storage.list<IdentityRecord>({ prefix: IK_PREFIX });
+        const bundles = [];
+        for (const [key, d] of iks) {
+          const deviceId = key.slice(IK_PREFIX.length);
+          const prefix = otpPrefix(deviceId);
+          const otps = await this.state.storage.list<string>({ prefix, limit: 1 });
+          let oneTimePrekey: { id: number; key: string } | null = null;
+          for (const [otpName, otpVal] of otps) {
+            oneTimePrekey = { id: Number(otpName.slice(prefix.length)), key: otpVal };
+            await this.state.storage.delete(otpName);
+          }
+          bundles.push({
+            deviceId,
+            identityKey: d.identityKey,
+            identitySignKey: d.identitySignKey,
+            identityKeySig: d.identityKeySig,
+            signedPrekey: { id: d.signedPrekeyId, key: d.signedPrekey, sig: d.signedPrekeySig },
+            oneTimePrekey,
+          });
+        }
+        return json({ ok: true, bundles });
+      }
+
+      case "/keys-devices": {
+        const iks = await this.state.storage.list<IdentityRecord>({ prefix: IK_PREFIX });
+        const version = (await this.state.storage.get<number>("devicesVersion")) ?? null;
+        const devices = [...iks].map(([key, d]) => ({
+          deviceId: key.slice(IK_PREFIX.length),
+          identityKey: d.identityKey,
+          identitySignKey: d.identitySignKey,
+          identityKeySig: d.identityKeySig,
+        }));
+        return json({ ok: true, devices, version });
+      }
+
+      case "/keys-version": {
+        // null: no device ever registered here, so the user is unknown
+        const version = (await this.state.storage.get<number>("devicesVersion")) ?? null;
+        return json({ ok: true, version });
+      }
+
+      case "/keys-update": {
+        const b = (await req.json()) as {
+          deviceId: string; identityKey: string; identitySignKey: string; identityKeySig: string;
+        };
+        const rec = await this.state.storage.get<IdentityRecord>(ikKey(b.deviceId));
+        if (!rec) return err("not_found", 404);
+        rec.identityKey = b.identityKey;
+        rec.identitySignKey = b.identitySignKey;
+        rec.identityKeySig = b.identityKeySig;
+        await this.state.storage.put(ikKey(b.deviceId), rec);
         return json({ ok: true });
       }
 
@@ -419,32 +592,42 @@ export class UserDO implements DurableObject {
         return json({ ok: true });
       }
 
-      case "/devices-changed": {
-        // a device was linked or revoked: whoever encrypts to this user must
-        // drop its cached device list. Out to this user's own other devices
-        // and through every chat they are in, the same road as the profile.
-        const b = (await req.json()) as { userId: string; version: number };
-        this.broadcast({ t: "devices", userId: b.userId, version: b.version });
-        const ids = await this.chatIds();
-        const results = await Promise.allSettled(
-          ids.map(async (chatId) => {
-            const res = await this.convStub(chatId).fetch("https://do/devices", {
-              method: "POST",
-              body: JSON.stringify({ userId: b.userId, version: b.version }),
-            });
-            if (!res.ok) throw new Error(`status ${res.status}`);
-          })
-        );
-        results.forEach((r, i) => {
-          if (r.status === "rejected") {
-            console.warn(`devices of ${b.userId} in ${ids[i]} failed: ${r.reason}`);
-          }
-        });
-        return json({ ok: true });
-      }
-
       default:
         return err("unknown_path", 404);
+    }
+  }
+
+  /// A device was linked or revoked: whoever encrypts to this user must drop
+  /// its cached device list. Out to this user's own other devices and through
+  /// every chat they are in, the same road as the profile.
+  private async broadcastDevicesChanged(version: number) {
+    const userId = await this.getUserId();
+    if (!userId) return;
+    this.broadcast({ t: "devices", userId, version });
+    const ids = await this.chatIds();
+    const results = await Promise.allSettled(
+      ids.map(async (chatId) => {
+        const res = await this.convStub(chatId).fetch("https://do/devices", {
+          method: "POST",
+          body: JSON.stringify({ userId, version }),
+        });
+        if (!res.ok) throw new Error(`status ${res.status}`);
+      })
+    );
+    results.forEach((r, i) => {
+      if (r.status === "rejected") {
+        console.warn(`devices of ${userId} in ${ids[i]} failed: ${r.reason}`);
+      }
+    });
+  }
+
+  /// storage.put in chunks of the 128-key batch limit.
+  private async putBatched(entries: Record<string, unknown>) {
+    const keys = Object.keys(entries);
+    for (let i = 0; i < keys.length; i += STORAGE_BATCH) {
+      const chunk: Record<string, unknown> = {};
+      for (const k of keys.slice(i, i + STORAGE_BATCH)) chunk[k] = entries[k];
+      await this.state.storage.put(chunk);
     }
   }
 
@@ -816,15 +999,27 @@ export class UserDO implements DurableObject {
         if (frame.t === "sync" && frame.deviceVersions) {
           // the client's device cache survived the socket, its versions did
           // not: answer with the current ones before the catch-up, so the
-          // entries still current are trusted again as early as possible
+          // entries still current are trusted again as early as possible.
+          // Each version lives in its user's own object; a user no object
+          // knows is left out of the answer, which reads as stale.
           const ids = Object.keys(frame.deviceVersions).slice(0, 200);
           if (ids.length) {
-            const placeholders = ids.map(() => "?").join(",");
-            const rows = await this.env.DB.prepare(
-              `SELECT id, devices_version FROM users WHERE id IN (${placeholders})`
-            ).bind(...ids).all<{ id: string; devices_version: number }>();
             const versions: Record<string, number> = {};
-            for (const r of rows.results) versions[r.id] = r.devices_version;
+            await Promise.all(ids.map(async (id) => {
+              try {
+                let v: number | null;
+                if (id === userId) {
+                  // own object: read storage directly, a self-fetch has no answer
+                  v = (await this.state.storage.get<number>("devicesVersion")) ?? null;
+                } else {
+                  const r = await this.userStub(id).fetch("https://do/keys-version");
+                  v = ((await r.json()) as { version: number | null }).version;
+                }
+                if (v !== null) versions[id] = v;
+              } catch (e) {
+                console.warn(`devices version of ${id} unavailable: ${String(e)}`);
+              }
+            }));
             this.send(ws, { t: "deviceVersions", versions });
           }
         }
