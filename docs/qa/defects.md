@@ -392,3 +392,17 @@ Closed with the owner's 2026-08-21 confirmation and a live run on main
 and insertion after a word-replacement kept its place. The one full-field
 wipe seen in the run was the system's autocorrect replacing a tapped
 misspelled "word" wholesale — stock UITextView behaviour, not the composer.
+
+### The UI tests cannot find the user search field on a localized host
+Found 2026-08-21 while reproducing the lost tap below: `VoiceTests` and
+`SmokeTests` reach the new chat sheet by `app.searchFields["Username or name"]`,
+which matches the field by its placeholder. The simulators inherit the host's
+ru-RU locale, so the placeholder reads «Введите юзернейм или имя собеседника»
+and the lookup finds nothing — the fallback path that opens a chat with a peer
+the device has no row for dies at "no user search field", and every voice test
+run on a fresh user fails there before it reaches what it tests.
+Closed by d1ce36a: both suites now take the first search field that answers a
+touch — the list's own field sits behind the sheet and is not hittable, which
+is what tells the two apart, and no placeholder is named. Verified live: the
+sheet's field is the only hittable one in the tree on a ru simulator
+(`newchat` accessibility dump, 2026-08-21).
