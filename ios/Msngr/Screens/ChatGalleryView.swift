@@ -98,7 +98,7 @@ struct ChatGalleryView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Theme.chatBackground.ignoresSafeArea())
-        .navigationTitle("Вложения")
+        .navigationTitle("Attachments")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { model.load(model.tab) }
     }
@@ -197,7 +197,7 @@ struct ChatGalleryView: View {
         switch entry.kind {
         case .voice: return duration(entry.media?.dur ?? 0)
         case .text: return entry.link.map(host) ?? ""
-        default: return entry.media?.name ?? "Файл"
+        default: return entry.media?.name ?? String(localized: "File")
         }
     }
 
@@ -238,13 +238,13 @@ struct ChatGalleryView: View {
         Button {
             showInChat(entry)
         } label: {
-            Label("Показать в чате", systemImage: "bubble.left.and.text.bubble.right")
+            Label("Show in chat", systemImage: "bubble.left.and.text.bubble.right")
         }
         if let link = entry.link {
             Button {
                 UIPasteboard.general.string = link
             } label: {
-                Label("Скопировать ссылку", systemImage: "doc.on.doc")
+                Label("Copy link", systemImage: "doc.on.doc")
             }
         }
     }
@@ -309,19 +309,19 @@ struct ChatGalleryView: View {
 
     static func title(_ tab: GalleryTab) -> String {
         switch tab {
-        case .media: return "Медиа"
-        case .files: return "Файлы"
-        case .voice: return "Голосовые"
-        case .links: return "Ссылки"
+        case .media: return String(localized: "Media")
+        case .files: return String(localized: "Files")
+        case .voice: return String(localized: "Voice")
+        case .links: return String(localized: "Links")
         }
     }
 
     static func emptyText(_ tab: GalleryTab) -> String {
         switch tab {
-        case .media: return "Фото и видео этого чата собираются здесь"
-        case .files: return "Файлы этого чата собираются здесь"
-        case .voice: return "Голосовые сообщения этого чата собираются здесь"
-        case .links: return "Ссылки из переписки собираются здесь"
+        case .media: return String(localized: "Photos and videos of this chat collect here")
+        case .files: return String(localized: "Files of this chat collect here")
+        case .voice: return String(localized: "Voice messages of this chat collect here")
+        case .links: return String(localized: "Links from the conversation collect here")
         }
     }
 

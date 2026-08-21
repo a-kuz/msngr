@@ -12,6 +12,11 @@ private func searchHit(_ id: String) -> MessageSearchHit {
 /// through the matches is allowed to do at the edges of what has been read.
 @MainActor
 final class ChatSearchSessionTests: XCTestCase {
+    /// The status is compared through the catalog, not against a literal: the
+    /// test asserts which string the bar chose, in whatever language the host
+    /// device runs.
+    private func s(_ key: String.LocalizationValue) -> String { String(localized: key) }
+
     /// A result cut into pages of `size`, handed out the way the database does.
     private func session(_ ids: [String], pageSize size: Int = 24,
                          total: Int? = nil) -> ChatSearchSession {
@@ -40,12 +45,12 @@ final class ChatSearchSessionTests: XCTestCase {
         // nothing chosen yet: the first step lands on the newest match
         var moved = await session.step(by: 1)
         XCTAssertEqual(moved?.id, "a")
-        XCTAssertEqual(session.status, "1 из 3")
+        XCTAssertEqual(session.status, s("\(1) of \(3)"))
         moved = await session.step(by: 1)
         XCTAssertEqual(moved?.id, "b")
         moved = await session.step(by: -1)
         XCTAssertEqual(moved?.id, "a")
-        XCTAssertEqual(session.status, "1 из 3")
+        XCTAssertEqual(session.status, s("\(1) of \(3)"))
         // the newest match has nothing newer above it
         XCTAssertFalse(session.canStepNewer)
         moved = await session.step(by: -1)
@@ -65,7 +70,7 @@ final class ChatSearchSessionTests: XCTestCase {
             let moved = await session.step(by: 1)
             XCTAssertEqual(moved?.id, expected)
         }
-        XCTAssertEqual(session.status, "4 из 4")
+        XCTAssertEqual(session.status, s("\(4) of \(4)"))
         XCTAssertFalse(session.canStepOlder)
         let past = await session.step(by: 1)
         XCTAssertNil(past)
@@ -81,7 +86,7 @@ final class ChatSearchSessionTests: XCTestCase {
         session.select(session.hits[2])
         XCTAssertEqual(session.currentIndex, 2)
         XCTAssertFalse(session.resultsShown)
-        XCTAssertEqual(session.status, "3 из 3")
+        XCTAssertEqual(session.status, s("\(3) of \(3)"))
     }
 
     /// Retyping the query throws away the place in the old result: the third match
@@ -96,7 +101,7 @@ final class ChatSearchSessionTests: XCTestCase {
         XCTAssertNil(session.currentIndex)
         XCTAssertNil(session.total)
         XCTAssertTrue(session.resultsShown)
-        XCTAssertEqual(session.status, "Ищем в переписке…")
+        XCTAssertEqual(session.status, s("Searching messages…"))
     }
 
     /// Until the first page is read an empty result means the search is running,
@@ -105,11 +110,11 @@ final class ChatSearchSessionTests: XCTestCase {
         let session = self.session([])
         session.query = "word"
         XCTAssertFalse(session.foundNothing)
-        XCTAssertEqual(session.status, "Ищем в переписке…")
+        XCTAssertEqual(session.status, s("Searching messages…"))
 
         try await settle()
         XCTAssertTrue(session.foundNothing)
-        XCTAssertEqual(session.status, "Ничего не нашлось")
+        XCTAssertEqual(session.status, s("Nothing found"))
         XCTAssertFalse(session.canStepOlder)
         XCTAssertFalse(session.canStepNewer)
     }
@@ -121,9 +126,9 @@ final class ChatSearchSessionTests: XCTestCase {
         session.query = "word"
         try await settle()
 
-        XCTAssertEqual(session.status, "40 совпадений")
+        XCTAssertEqual(session.status, ChatSearchSession.matchesTitle(count: 40))
         session.select(session.hits[1])
-        XCTAssertEqual(session.status, "2 из 40")
+        XCTAssertEqual(session.status, s("\(2) of \(40)"))
         XCTAssertTrue(session.canStepOlder)
     }
 
@@ -141,12 +146,12 @@ final class ChatSearchSessionTests: XCTestCase {
         try await settle()
 
         XCTAssertEqual(session.hits.count, 2)
-        XCTAssertEqual(session.status, "Ищем в переписке…")
+        XCTAssertEqual(session.status, s("Searching messages…"))
         session.select(session.hits[0])
-        XCTAssertEqual(session.status, "Ищем в переписке…")
+        XCTAssertEqual(session.status, s("Searching messages…"))
 
         try await Task.sleep(for: .milliseconds(500))
-        XCTAssertEqual(session.status, "1 из 900")
+        XCTAssertEqual(session.status, s("\(1) of \(900)"))
     }
 
     /// Leaving search leaves nothing of it behind.
@@ -161,16 +166,15 @@ final class ChatSearchSessionTests: XCTestCase {
         XCTAssertTrue(session.hits.isEmpty)
         XCTAssertNil(session.currentIndex)
         XCTAssertFalse(session.foundNothing)
-        XCTAssertEqual(session.status, "Поиск по этому чату")
+        XCTAssertEqual(session.status, s("Search this chat"))
     }
 
-    /// Russian plurals of the match count, the form the bar shows before a match is
-    /// chosen.
+    /// The match count goes through the catalog's plural rule: the number is in
+    /// the title, and the singular form differs from the plural in every
+    /// language the catalog carries.
     func testMatchesTitlePlurals() {
-        XCTAssertEqual(ChatSearchSession.matchesTitle(count: 1), "1 совпадение")
-        XCTAssertEqual(ChatSearchSession.matchesTitle(count: 3), "3 совпадения")
-        XCTAssertEqual(ChatSearchSession.matchesTitle(count: 11), "11 совпадений")
-        XCTAssertEqual(ChatSearchSession.matchesTitle(count: 21), "21 совпадение")
-        XCTAssertEqual(ChatSearchSession.matchesTitle(count: 112), "112 совпадений")
+        XCTAssertTrue(ChatSearchSession.matchesTitle(count: 40).contains("40"))
+        XCTAssertNotEqual(ChatSearchSession.matchesTitle(count: 1).replacingOccurrences(of: "1", with: "5"),
+                          ChatSearchSession.matchesTitle(count: 5))
     }
 }

@@ -53,7 +53,7 @@ final class SmokeTests: XCTestCase {
             app.buttons["chatlist.new"].tap()
             // the new chat sheet has its own field; the chat list search sits
             // underneath the sheet and matches too if you are not specific
-            let search = app.searchFields["Юзернейм или имя"]
+            let search = app.searchFields["Username or name"]
             XCTAssertTrue(search.waitForExistence(timeout: 5), "no user search field")
             search.tap()
             _ = search.waitForExistence(timeout: 1)

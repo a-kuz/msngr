@@ -45,6 +45,70 @@
         }
       }
     },
+    "%lld matches": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld match"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld matches"
+                }
+              }
+            }
+          }
+        },
+        "ru": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld совпадение"
+                }
+              },
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld совпадения"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld совпадений"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld совпадений"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld of %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld из %lld"
+          }
+        }
+      }
+    },
     "0 KB": {
       "extractionState": "manual",
       "localizations": {
@@ -261,6 +325,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Все участники"
+          }
+        }
+      }
+    },
+    "Allow contact access in Settings to find people you know": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешите доступ к контактам в Настройках, чтобы найти знакомых"
           }
         }
       }
@@ -549,6 +624,17 @@
         }
       }
     },
+    "Contacts": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Контакты"
+          }
+        }
+      }
+    },
     "Contacts: %lld": {
       "extractionState": "manual",
       "localizations": {
@@ -567,6 +653,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Скопировано!"
+          }
+        }
+      }
+    },
+    "Copy link": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Скопировать ссылку"
           }
         }
       }
@@ -628,6 +725,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Не удалось сохранить сессию на устройстве"
+          }
+        }
+      }
+    },
+    "Create": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Создать"
           }
         }
       }
@@ -795,6 +903,17 @@
         }
       }
     },
+    "Enter a username or a name.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Введите юзернейм или имя собеседника."
+          }
+        }
+      }
+    },
     "Enter the passcode": {
       "extractionState": "manual",
       "localizations": {
@@ -828,6 +947,39 @@
         }
       }
     },
+    "Files": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Файлы"
+          }
+        }
+      }
+    },
+    "Files of this chat collect here": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Файлы этого чата собираются здесь"
+          }
+        }
+      }
+    },
+    "Find someone": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Найдите собеседника"
+          }
+        }
+      }
+    },
     "Find someone by username\nor from your address book": {
       "extractionState": "manual",
       "localizations": {
@@ -835,6 +987,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Найдите собеседника по юзернейму\nили из адресной книги"
+          }
+        }
+      }
+    },
+    "Find via contacts": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Найти по контактам"
           }
         }
       }
@@ -868,6 +1031,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Папки"
+          }
+        }
+      }
+    },
+    "Forward to…": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Переслать в…"
+          }
+        }
+      }
+    },
+    "Global search": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Глобальный поиск"
           }
         }
       }
@@ -981,6 +1166,28 @@
         }
       }
     },
+    "Links": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ссылки"
+          }
+        }
+      }
+    },
+    "Links from the conversation collect here": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ссылки из переписки собираются здесь"
+          }
+        }
+      }
+    },
     "List unavailable": {
       "extractionState": "manual",
       "localizations": {
@@ -1062,6 +1269,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Сделать админом"
+          }
+        }
+      }
+    },
+    "Media": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Медиа"
           }
         }
       }
@@ -1185,6 +1403,17 @@
         }
       }
     },
+    "New chat": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Новый чат"
+          }
+        }
+      }
+    },
     "New device": {
       "extractionState": "manual",
       "localizations": {
@@ -1203,6 +1432,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Новая папка"
+          }
+        }
+      }
+    },
+    "New group": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Новая группа"
+          }
+        }
+      }
+    },
+    "Newer": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Позже"
           }
         }
       }
@@ -1239,6 +1490,17 @@
         }
       }
     },
+    "No messages in this chat match that text": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В этом чате нет сообщений с таким текстом"
+          }
+        }
+      }
+    },
     "Nothing found": {
       "extractionState": "manual",
       "localizations": {
@@ -1268,6 +1530,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Выкл"
+          }
+        }
+      }
+    },
+    "Older": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Раньше"
           }
         }
       }
@@ -1315,6 +1588,17 @@
         }
       }
     },
+    "Peer": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Собеседник"
+          }
+        }
+      }
+    },
     "People": {
       "extractionState": "manual",
       "localizations": {
@@ -1333,6 +1617,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Фото"
+          }
+        }
+      }
+    },
+    "Photos and videos of this chat collect here": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Фото и видео этого чата собираются здесь"
           }
         }
       }
@@ -1502,6 +1797,17 @@
         }
       }
     },
+    "Search this chat": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Поиск по чату"
+          }
+        }
+      }
+    },
     "Searching messages…": {
       "extractionState": "manual",
       "localizations": {
@@ -1596,6 +1902,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Настройки"
+          }
+        }
+      }
+    },
+    "Show in chat": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показать в чате"
           }
         }
       }
@@ -2044,6 +2361,17 @@
         }
       }
     },
+    "Username or name": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Юзернейм или имя"
+          }
+        }
+      }
+    },
     "Username — %1$lld to %2$lld characters: latin letters, digits and _": {
       "localizations": {
         "ru": {
@@ -2065,6 +2393,17 @@
         }
       }
     },
+    "Voice": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Голосовые"
+          }
+        }
+      }
+    },
     "Voice message": {
       "extractionState": "manual",
       "localizations": {
@@ -2072,6 +2411,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Голосовое сообщение"
+          }
+        }
+      }
+    },
+    "Voice messages of this chat collect here": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Голосовые сообщения этого чата собираются здесь"
           }
         }
       }
@@ -2136,6 +2486,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Кто может писать"
+          }
+        }
+      }
+    },
+    "You": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вы"
           }
         }
       }

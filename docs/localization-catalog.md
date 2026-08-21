@@ -95,6 +95,13 @@ buys nothing while there is one translation to maintain.
 Steps 1 and 2 are safe on their own. Step 3 is where the UI tests break if the
 identifiers from step 1 were missed, which is why it comes after.
 
+A unit test never asserts a user-visible string as a literal: the simulators on
+this host inherit the Mac's Russian language, so `String(localized:)` resolves
+the ru translation there and the en literal fails. The test compares against
+`String(localized:)` with the same key — it then asserts which string the code
+chose, in whatever language the host runs (`ChatSearchSessionTests` is the
+pattern).
+
 ## Done means
 
 `rg '[А-Яа-яЁё]' -g '*.swift' ios/` returns only `"рф"` in

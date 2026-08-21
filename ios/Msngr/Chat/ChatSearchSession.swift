@@ -71,14 +71,16 @@ final class ChatSearchSession: ObservableObject {
     /// What the bar under the feed says: the search runs, found nothing, found
     /// this many, or the reader is on the n-th of them.
     var status: String {
-        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Поиск по этому чату" }
+        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return String(localized: "Search this chat")
+        }
         if let currentIndex, currentIndex < results.hits.count {
-            if let total { return "\((currentIndex + 1).formatted()) из \(total.formatted())" }
-            guard !counting else { return "Ищем в переписке…" }
+            if let total { return String(localized: "\(currentIndex + 1) of \(total)") }
+            guard !counting else { return String(localized: "Searching messages…") }
             return Self.matchesTitle(count: results.hits.count)
         }
-        if searching || counting { return "Ищем в переписке…" }
-        if results.hits.isEmpty { return "Ничего не нашлось" }
+        if searching || counting { return String(localized: "Searching messages…") }
+        if results.hits.isEmpty { return String(localized: "Nothing found") }
         return Self.matchesTitle(count: total ?? results.hits.count)
     }
 
@@ -141,22 +143,9 @@ final class ChatSearchSession: ObservableObject {
         }
     }
 
-    /// Russian plural forms of "N matches", for counts ending in 1, in 2 to 4, and
-    /// in the rest.
+    /// "N matches" through the catalog's plural rule.
     static func matchesTitle(count: Int) -> String {
-        let mod100 = count % 100
-        let mod10 = count % 10
-        let noun: String
-        if mod100 / 10 == 1 {
-            noun = "совпадений"
-        } else if mod10 == 1 {
-            noun = "совпадение"
-        } else if (2...4).contains(mod10) {
-            noun = "совпадения"
-        } else {
-            noun = "совпадений"
-        }
-        return "\(count.formatted()) \(noun)"
+        String(localized: "\(count) matches")
     }
 
     static func databaseCount(query: String, chatId: String) async -> Int? {
