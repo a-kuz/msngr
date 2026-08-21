@@ -82,6 +82,7 @@ struct ChatFolderBar: View {
                         .matchedGeometryEffect(id: "folderTab", in: indicator)
                 }
             }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .id(id ?? "")
@@ -102,6 +103,7 @@ struct ChatFolderBar: View {
             .foregroundStyle(Theme.accent)
             .padding(.horizontal, 12)
             .frame(height: tabHeight)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("chatlist.folders.manage")

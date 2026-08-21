@@ -251,6 +251,8 @@ struct ForwardPickerView: View {
                             .frame(width: 40, height: 40)
                         Text(item.title).foregroundStyle(.primary)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
