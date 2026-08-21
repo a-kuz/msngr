@@ -78,9 +78,10 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ swipes: archive, mute, pin, delete (qa/runs/2026-08-16-chatlist)
   - ✅ the archive section and the archive screen (qa/runs/2026-08-16-chatlist)
   - ✅ the requests section with «Принять» / «Заблокировать» swipes (qa/runs/2026-08-16-chatlist)
-  - 🟡 folders and tabs: a rule plus chats put in and taken out by hand, a chat in
-    any number of folders, the tab switched by a long horizontal swipe over the
-    list (built and unit-covered, the live run is still open)
+  - ✅ folders and tabs: a rule plus chats put in and taken out by hand, the
+    manual exclusion winning over the rule, the tab with its own unread badge
+    switched by a long horizontal swipe, and deletion leaving every chat in
+    place (qa/runs/2026-08-21-folders; unit-covered in ChatFolderTests)
   - ✅ animated reordering on a new message: the row glides to the top through
     the rows above it instead of teleporting (qa/runs/2026-08-21-chatlist-reorder)
   - ⬜ a chat with yourself for saved messages, first in the list and never a
