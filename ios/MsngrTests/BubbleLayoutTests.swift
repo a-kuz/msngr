@@ -124,11 +124,11 @@ final class BubbleLayoutTests: XCTestCase {
     /// insets from the bubble's right and bottom edges as it does without reactions.
     func testReactionKeepsStatusInsetsOfPlainBubble() {
         let cases: [(name: String, text: String, reactions: [String: [String]])] = [
-            ("short text, one reaction", "Ок", ["👍": ["u1"]]),
+            ("short text, one reaction", "OK", ["👍": ["u1"]]),
             ("multiline text, two reactions",
-             "Довольно длинное сообщение, которое точно занимает несколько строк подряд",
+             "A fairly long message that is certain to take up several lines in a row",
              ["😂": ["u1", "u2"], "🔥": ["u3"]]),
-            ("reactions over several rows", "Текст",
+            ("reactions over several rows", "Text",
              ["😂": ["u1"], "🔥": ["u2"], "❤️": ["u3"], "👍": ["u4"], "😮": ["u5"],
               "😢": ["u6"], "🎉": ["u7"], "🙏": ["u8"], "👏": ["u9"], "💯": ["u10"]]),
         ]
@@ -359,8 +359,8 @@ final class BubbleLayoutTests: XCTestCase {
     /// Replying to your own message: the quote is attributed to you.
     func testReplyAuthorShowsYouForOwnMessage() {
         let reply = ReplyPreview(msgId: "m1", authorId: "me", text: "my message", kind: "text")
-        let p = replyPlan(replyTo: reply, replyAuthorName: "Вы")
-        XCTAssertEqual(p.replyAuthor, "Вы")
+        let p = replyPlan(replyTo: reply, replyAuthorName: "You")
+        XCTAssertEqual(p.replyAuthor, "You")
     }
 
     /// Without a quote replyAuthor stays nil, even when a name is available.
@@ -371,36 +371,42 @@ final class BubbleLayoutTests: XCTestCase {
         XCTAssertNil(p.replyAuthor)
     }
 
+    /// Comparisons go through the same catalog key the product reads, so the
+    /// test holds in whatever language the simulator runs.
+    private func s(_ key: String.LocalizationValue) -> String {
+        String(localized: key)
+    }
+
     /// A quote of a non-text message previews as an icon plus a caption.
     func testReplyPreviewTextForEachKind() {
         XCTAssertEqual(BubbleLayout.replyPreviewText(
-            ReplyPreview(msgId: "1", authorId: "u", text: "Фото", kind: "photo")), "📷 Фото")
+            ReplyPreview(msgId: "1", authorId: "u", text: "Photo", kind: "photo")), s("📷 Photo"))
         XCTAssertEqual(BubbleLayout.replyPreviewText(
-            ReplyPreview(msgId: "1", authorId: "u", text: "Видео", kind: "video")), "🎥 Видео")
+            ReplyPreview(msgId: "1", authorId: "u", text: "Video", kind: "video")), s("🎥 Video"))
         XCTAssertEqual(BubbleLayout.replyPreviewText(
-            ReplyPreview(msgId: "1", authorId: "u", text: "Голосовое сообщение", kind: "voice")),
-            "🎤 Голосовое сообщение")
+            ReplyPreview(msgId: "1", authorId: "u", text: "Voice message", kind: "voice")),
+            s("🎤 Voice message"))
         XCTAssertEqual(BubbleLayout.replyPreviewText(
             ReplyPreview(msgId: "1", authorId: "u", text: "Contract.pdf", kind: "file")), "📎 Contract.pdf")
         XCTAssertEqual(BubbleLayout.replyPreviewText(
-            ReplyPreview(msgId: "1", authorId: "u", text: "", kind: "album")), "🖼 Альбом")
+            ReplyPreview(msgId: "1", authorId: "u", text: "", kind: "album")), s("🖼 Album"))
     }
 
     /// When the stored text is empty (a file without a name, a missing preview)
     /// the quote falls back to a placeholder instead of an empty line.
     func testReplyPreviewTextFallsBackWhenEmpty() {
         XCTAssertEqual(BubbleLayout.replyPreviewText(
-            ReplyPreview(msgId: "1", authorId: "u", text: "", kind: "file")), "📎 Файл")
+            ReplyPreview(msgId: "1", authorId: "u", text: "", kind: "file")), "📎 " + s("File"))
         XCTAssertEqual(BubbleLayout.replyPreviewText(
-            ReplyPreview(msgId: "1", authorId: "u", text: "", kind: "text")), "Сообщение")
+            ReplyPreview(msgId: "1", authorId: "u", text: "", kind: "text")), s("Message"))
     }
 
     /// The plan builds its preview line through replyPreviewText rather than
     /// copying replyTo.text.
     func testPlanReplyTextUsesPreviewMapping() {
-        let reply = ReplyPreview(msgId: "1", authorId: "peer", text: "Видео", kind: "video")
+        let reply = ReplyPreview(msgId: "1", authorId: "peer", text: "Video", kind: "video")
         let p = replyPlan(replyTo: reply, replyAuthorName: "Pete")
-        XCTAssertEqual(p.replyText, "🎥 Видео")
+        XCTAssertEqual(p.replyText, s("🎥 Video"))
     }
 
     /// A file bubble with reactions: same guarantees as voice.
@@ -469,13 +475,12 @@ final class BubbleLayoutTests: XCTestCase {
                         sentAt: 1_700_000_000, kind: kind, text: nil,
                         status: .sent, isOutgoing: false)
         m.seq = 1
-        m.forward = ForwardInfo(fromUserId: "orig", fromName: "Боб")
+        m.forward = ForwardInfo(fromUserId: "orig", fromName: "Bob")
         let item = MediaInfo(type: "photo", mediaId: "b", key: "k", hash: "h", size: 1, mime: "image/jpeg")
         if kind == .album { m.album = [item, item, item] } else { m.media = item }
         return m
     }
 
-    /// A forwarded photo keeps its «Переслано от …» line: the media is pushed
     /// down instead of bleeding over the header.
     func testForwardedPhotoMediaBelowForwardLine() {
         let p = BubbleLayout.plan(for: forwarded(.photo), width: width, tightGap: false,

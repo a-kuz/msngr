@@ -8,7 +8,7 @@ final class AccountValidatorTests: XCTestCase {
     func testNameValid() {
         XCTAssertTrue(AccountValidator.isValidName("Ann"))
         XCTAssertTrue(AccountValidator.isValidName("  Li On  ")) // surrounding whitespace is trimmed
-        XCTAssertTrue(AccountValidator.isValidName("Ян")) // two letters is a name
+        XCTAssertTrue(AccountValidator.isValidName("Ian")) // two letters is a name
         XCTAssertTrue(AccountValidator.isValidName("Q"))
         XCTAssertTrue(AccountValidator.isValidName(String(repeating: "a", count: 64)))
     }
@@ -21,7 +21,7 @@ final class AccountValidatorTests: XCTestCase {
 
     func testNameHintOnlyOnceSomethingIsWrong() {
         XCTAssertNil(AccountValidator.nameHint(""))
-        XCTAssertNil(AccountValidator.nameHint("Ян"))
+        XCTAssertNil(AccountValidator.nameHint("Ian"))
         XCTAssertNotNil(AccountValidator.nameHint(String(repeating: "a", count: 65)))
     }
 
@@ -43,7 +43,7 @@ final class AccountValidatorTests: XCTestCase {
         XCTAssertFalse(AccountValidator.isValidUsername(""))
         XCTAssertFalse(AccountValidator.isValidUsername("ab")) // shorter than 3
         XCTAssertFalse(AccountValidator.isValidUsername(String(repeating: "a", count: 33)))
-        XCTAssertFalse(AccountValidator.isValidUsername("боб")) // cyrillic
+        XCTAssertFalse(AccountValidator.isValidUsername("böb")) // non-ascii letter
         XCTAssertFalse(AccountValidator.isValidUsername("bob smith")) // space
         XCTAssertFalse(AccountValidator.isValidUsername("bob-1")) // hyphen
         XCTAssertFalse(AccountValidator.isValidUsername("bob!"))
@@ -53,6 +53,6 @@ final class AccountValidatorTests: XCTestCase {
         XCTAssertNil(AccountValidator.usernameHint(""))
         XCTAssertNil(AccountValidator.usernameHint("bob"))
         XCTAssertNotNil(AccountValidator.usernameHint("ab"))
-        XCTAssertNotNil(AccountValidator.usernameHint("боб"))
+        XCTAssertNotNil(AccountValidator.usernameHint("böb"))
     }
 }

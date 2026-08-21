@@ -37,20 +37,20 @@ final class ChatSearchModelTests: XCTestCase {
     func testLateAnswerOfAnOlderQueryIsDropped() async throws {
         let model = ChatSearchModel(pages: { query, _ in
             // the first query is the slow one: it answers after the second is done
-            if query == "ир" { await Self.stall(0.6) }
+            if query == "ir" { await Self.stall(0.6) }
             return MessageSearchPage(hits: [MessageSearchHit(id: query, chatId: "c1", messageId: query,
                                                              fromUserId: "peer", kind: .text, sortedAt: 1,
                                                              snippet: MessageSearchSnippet(text: query, matches: []))],
                                      cursor: nil, reachedEnd: true)
         }, people: { _ in [] })
 
-        model.update("ир")
+        model.update("ir")
         // past the debounce: the older query is in flight, not waiting to start
         try await Task.sleep(for: .milliseconds(300))
-        model.update("ирина")
+        model.update("irina")
         try await Task.sleep(for: .milliseconds(1_200))
 
-        XCTAssertEqual(model.hits.map(\.id), ["ирина"])
+        XCTAssertEqual(model.hits.map(\.id), ["irina"])
         XCTAssertFalse(model.searchingMessages)
         XCTAssertTrue(model.messagesReady)
     }
@@ -58,22 +58,22 @@ final class ChatSearchModelTests: XCTestCase {
     /// The same for people: the server answering about an older prefix does not
     /// replace the people already on screen.
     func testLatePeopleOfAnOlderQueryAreDropped() async throws {
-        let older = try person("ир")
-        let newer = try person("ирина")
+        let older = try person("ir")
+        let newer = try person("irina")
         let model = ChatSearchModel(pages: { _, _ in nil }, people: { query in
-            if query == "ир" {
+            if query == "ir" {
                 await Self.stall(0.6)
                 return [older]
             }
             return [newer]
         })
 
-        model.update("ир")
+        model.update("ir")
         try await Task.sleep(for: .milliseconds(300))
-        model.update("ирина")
+        model.update("irina")
         try await Task.sleep(for: .milliseconds(1_200))
 
-        XCTAssertEqual(model.people.map(\.username), ["ирина"])
+        XCTAssertEqual(model.people.map(\.username), ["irina"])
         XCTAssertFalse(model.searchingPeople)
     }
 
@@ -86,14 +86,14 @@ final class ChatSearchModelTests: XCTestCase {
             return MessageSearchPage(hits: [], cursor: nil, reachedEnd: true)
         }, people: { _ in [] })
 
-        for prefix in ["и", "ир", "ири", "ирин", "ирина"] {
+        for prefix in ["i", "ir", "iri", "irin", "irina"] {
             model.update(prefix)
             try await Task.sleep(for: .milliseconds(30))
         }
         try await Task.sleep(for: .milliseconds(600))
 
         let queries = await asked.queries
-        XCTAssertEqual(queries, ["ирина"])
+        XCTAssertEqual(queries, ["irina"])
     }
 
     /// Until the first page is read an empty list means "still searching", and the
@@ -104,7 +104,7 @@ final class ChatSearchModelTests: XCTestCase {
             return MessageSearchPage(hits: [], cursor: nil, reachedEnd: true)
         }, people: { _ in [] })
 
-        model.update("ирина")
+        model.update("irina")
         XCTAssertTrue(model.searchingMessages)
         XCTAssertFalse(model.messagesReady)
 
