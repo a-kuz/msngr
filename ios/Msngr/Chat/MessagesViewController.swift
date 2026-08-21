@@ -28,6 +28,9 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     var onToggleSelection: ((Message) -> Void)?
     var onScrollToStart: (() -> Void)?
     var onSwipeBack: (() -> Void)?
+    /// Tap on a date separator or on the floating day capsule: the calendar
+    /// over the history.
+    var onDateTap: (() -> Void)?
 
     var ownUserId = ""
 
@@ -115,6 +118,11 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         collectionView.register(UnreadMarkerCell.self, forCellWithReuseIdentifier: "unread")
         view.addSubview(collectionView)
         view.addSubview(stickyDate)
+        // the floating capsule opens the calendar too; while it is faded out
+        // its alpha keeps it out of hit-testing, so scrolling is untouched
+        stickyDate.isUserInteractionEnabled = true
+        stickyDate.addGestureRecognizer(UITapGestureRecognizer(target: self,
+                                                               action: #selector(stickyDateTapped)))
         backSwipe.addTarget(self, action: #selector(handleBackSwipe(_:)))
         backSwipe.delegate = self
         view.addGestureRecognizer(backSwipe)
@@ -554,6 +562,8 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
 
     // MARK: - The floating day capsule
 
+    @objc private func stickyDateTapped() { onDateTap?() }
+
     /// Renames the capsule after every geometry change. The text is compared
     /// inside the overlay, so an update that lands on the same day is a no-op
     /// and a pointwise insert cannot make the capsule blink.
@@ -705,6 +715,12 @@ enum MessageContextAction {
 extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
     func collectionView(_ cv: UICollectionView, numberOfItemsInSection section: Int) -> Int {
         items.count
+    }
+
+    func collectionView(_ cv: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        guard indexPath.item < items.count,
+              case .dateSeparator = items[indexPath.item] else { return }
+        onDateTap?()
     }
 
     func collectionView(_ cv: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {

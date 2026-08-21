@@ -144,8 +144,9 @@ A ✅ goes in only together with a link to the evidence.
     behind the newest (pin-depth-run)
   - ⬜ several pinned messages at once: the bar counts them, tapping walks
     through them, and a list opens all of them
-  - ⬜ a jump to a date: the calendar over the history and the feed landing on
-    that day
+  - ✅ a jump to a date: a tap on a date separator or the floating day capsule
+    opens the calendar over the local history, and picking a day lands the
+    feed on its first message (qa/runs/2026-08-21-date-jump)
 - Input
   - ✅ a growing field, the attachment menu «Фото или видео» / «Файл» (design-review 04, 05a)
   - ✅ a draft survives leaving the chat and a kill (offline-run 5)
