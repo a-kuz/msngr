@@ -15,9 +15,9 @@ final class ServiceFrameTests: XCTestCase {
                           ownUserId: "me", ownDeviceId: "dev")
     }
 
-    private func msgFrame(seq: Int, msgId: String, service: Bool) throws -> WSIncoming {
+    private func msgFrame(seq: Int, service: Bool) throws -> WSIncoming {
         let json = """
-        {"t":"msg","chatId":"c1","seq":\(seq),"msgId":"\(msgId)","from":"peer","fromDevice":"d1",
+        {"t":"msg","chatId":"c1","seq":\(seq),"from":"peer","fromDevice":"d1",
         "sentAt":1,"ts":1,"body":{"v":1,"mode":"skm","c":"AA==","keyId":"k1","iteration":0,"sig":"AA=="}
         \(service ? #","service":true"# : "")}
         """
@@ -33,7 +33,7 @@ final class ServiceFrameTests: XCTestCase {
             try dbc.execute(sql: "INSERT INTO chat (id, kind, createdBy, createdAt) VALUES ('c1','group','peer',0)")
         }
 
-        await engine.apply(try msgFrame(seq: 1, msgId: "m1", service: true))
+        await engine.apply(try msgFrame(seq: 1, service: true))
         var row = try await db.read { dbc in
             try Row.fetchOne(dbc, sql: "SELECT lastSeq, syncedSeq, unreadCount, myReadUpTo FROM chat WHERE id = 'c1'")!
         }
@@ -43,7 +43,7 @@ final class ServiceFrameTests: XCTestCase {
         XCTAssertEqual(row["myReadUpTo"] as Int, 1) // a fully read chat absorbs the service seq
 
         // an ordinary message after a service one: only it counts as unread
-        await engine.apply(try msgFrame(seq: 2, msgId: "m2", service: false))
+        await engine.apply(try msgFrame(seq: 2, service: false))
         row = try await db.read { dbc in
             try Row.fetchOne(dbc, sql: "SELECT lastSeq, unreadCount FROM chat WHERE id = 'c1'")!
         }
@@ -59,29 +59,29 @@ final class ServiceFrameTests: XCTestCase {
         let engine = try makeEngine(db: db)
 
         var reaction = ContentPayload(kind: "reaction")
-        reaction.targetMsgId = "m1"
+        reaction.targetSeq = 1
         reaction.emoji = "👍"
-        await engine.applyContent(reaction, chatId: "c1", msgId: "r1", seq: 2,
+        await engine.applyContent(reaction, chatId: "c1", seq: 2,
                                   from: "peer", sentAt: 1, ts: 1)
         var edit = ContentPayload(kind: "edit")
-        edit.targetMsgId = "m1"
+        edit.targetSeq = 1
         edit.text = "corrected"
-        await engine.applyContent(edit, chatId: "c1", msgId: "e1", seq: 3,
+        await engine.applyContent(edit, chatId: "c1", seq: 3,
                                   from: "peer", sentAt: 1, ts: 1)
 
         let buffered = try await db.read { dbc in
-            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingApply WHERE targetMsgId = 'm1'")!
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingApply WHERE targetSeq = 1")!
         }
         XCTAssertEqual(buffered, 2)
 
         // the original decrypted and was inserted: the buffer is applied and cleared
         var original = ContentPayload(kind: "text")
         original.text = "the original"
-        await engine.applyContent(original, chatId: "c1", msgId: "m1", seq: 1,
+        await engine.applyContent(original, chatId: "c1", seq: 1,
                                   from: "peer", sentAt: 1, ts: 1)
 
         let row = try await db.read { dbc in
-            try Row.fetchOne(dbc, sql: "SELECT text, edited, reactions FROM message WHERE msgId = 'm1'")!
+            try Row.fetchOne(dbc, sql: "SELECT text, edited, reactions FROM message WHERE chatId = 'c1' AND seq = 1")!
         }
         XCTAssertEqual(row["text"] as String, "corrected")
         XCTAssertEqual(row["edited"] as Bool, true)
@@ -95,21 +95,21 @@ final class ServiceFrameTests: XCTestCase {
     }
 
     /// A reaction to our own message placed before the ack: while the target has no
-    /// server msgId there is nothing to send, otherwise the peer would receive a local
-    /// id they will never have.
+    /// seq there is nothing to send, otherwise the peer would receive a reference
+    /// they can never resolve.
     func testReactionToUnackedTargetResolvesAtSendTime() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
         try await db.write { dbc in
             try dbc.execute(sql: "INSERT INTO chat (id, kind, createdBy, createdAt) VALUES ('c1','direct','me',0)")
-            // our own message, the ack has not arrived: msgId is empty, the id is local
+            // our own message, the ack has not arrived: no seq yet, the id is local
             try dbc.execute(sql: """
                 INSERT INTO message (id, chatId, clientMsgId, fromUserId, sentAt, kind, status, isOutgoing)
                 VALUES ('local-1','c1','local-1','me',1,'text',0,1)
                 """)
         }
         var reaction = ContentPayload(kind: "reaction")
-        reaction.targetMsgId = "local-1"
+        reaction.targetLocalId = "local-1"
         reaction.emoji = "👍"
 
         do {
@@ -119,25 +119,26 @@ final class ServiceFrameTests: XCTestCase {
             XCTAssertFalse(e.gone, "the target may still go out: wait for the ack instead of dropping it")
         }
 
-        // the ack arrived, the target is substituted with the server id
+        // the ack arrived, the target is substituted with its seq
         let ack = try JSONDecoder().decode(WSIncoming.self, from: Data("""
-        {"t":"sent","chatId":"c1","clientMsgId":"local-1","msgId":"srv-1","seq":1,"ts":2}
+        {"t":"sent","chatId":"c1","clientMsgId":"local-1","seq":1,"ts":2}
         """.utf8))
         await engine.apply(ack)
         let resolved = try await engine.resolveTarget(reaction, chatId: "c1")
-        XCTAssertEqual(resolved.targetMsgId, "srv-1")
+        XCTAssertEqual(resolved.targetSeq, 1)
+        XCTAssertNil(resolved.targetLocalId)
     }
 
-    /// A target from the peer: its id is already a server one, substitution changes
-    /// nothing. A target that never went out: the service frame is dropped.
+    /// A target from the peer already has a seq, so it resolves at once. A target
+    /// that never went out: the service frame is dropped.
     func testTargetFromPeerPassesThroughAndFailedTargetIsDropped() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
         try await db.write { dbc in
             try dbc.execute(sql: "INSERT INTO chat (id, kind, createdBy, createdAt) VALUES ('c1','direct','me',0)")
             try dbc.execute(sql: """
-                INSERT INTO message (id, chatId, msgId, fromUserId, sentAt, kind, status, isOutgoing)
-                VALUES ('srv-9','c1','srv-9','peer',1,'text',1,0)
+                INSERT INTO message (id, chatId, seq, fromUserId, sentAt, kind, status, isOutgoing)
+                VALUES ('srv-9','c1',9,'peer',1,'text',1,0)
                 """)
             try dbc.execute(sql: """
                 INSERT INTO message (id, chatId, clientMsgId, fromUserId, sentAt, kind, status, isOutgoing)
@@ -145,12 +146,12 @@ final class ServiceFrameTests: XCTestCase {
                 """)
         }
         var edit = ContentPayload(kind: "edit")
-        edit.targetMsgId = "srv-9"
+        edit.targetLocalId = "srv-9"
         edit.text = "corrected"
         let fromPeer = try await engine.resolveTarget(edit, chatId: "c1")
-        XCTAssertEqual(fromPeer.targetMsgId, "srv-9")
+        XCTAssertEqual(fromPeer.targetSeq, 9)
 
-        edit.targetMsgId = "local-2"
+        edit.targetLocalId = "local-2"
         do {
             _ = try await engine.resolveTarget(edit, chatId: "c1")
             XCTFail("an edit of a message that never went out must not be sent")
@@ -159,7 +160,7 @@ final class ServiceFrameTests: XCTestCase {
         }
     }
 
-    /// The ack releases the service frames that waited for their target's server id.
+    /// The ack releases the service frames that waited for their target's seq.
     func testAckReleasesWaitingOutboxRows() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
@@ -169,7 +170,7 @@ final class ServiceFrameTests: XCTestCase {
                            payload: Data("{}".utf8), state: "waiting").save(dbc)
         }
         let ack = try JSONDecoder().decode(WSIncoming.self, from: Data("""
-        {"t":"sent","chatId":"c1","clientMsgId":"local-1","msgId":"srv-1","seq":1,"ts":2}
+        {"t":"sent","chatId":"c1","clientMsgId":"local-1","seq":1,"ts":2}
         """.utf8))
         await engine.apply(ack)
 
@@ -185,18 +186,18 @@ final class ServiceFrameTests: XCTestCase {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
         let deleted = try JSONDecoder().decode(WSIncoming.self, from: Data("""
-        {"t":"deleted","chatId":"c1","msgIds":["m1"],"forAll":true,"by":"peer"}
+        {"t":"deleted","chatId":"c1","seqs":[1],"forAll":true,"by":"peer"}
         """.utf8))
 
         await engine.apply(deleted)
         var original = ContentPayload(kind: "text")
         original.text = "a secret"
-        await engine.applyContent(original, chatId: "c1", msgId: "m1", seq: 1,
+        await engine.applyContent(original, chatId: "c1", seq: 1,
                                   from: "peer", sentAt: 1, ts: 1)
         await engine.apply(deleted) // replay once the row exists
 
         let row = try await db.read { dbc in
-            try Row.fetchOne(dbc, sql: "SELECT deletedForAll, text FROM message WHERE msgId = 'm1'")!
+            try Row.fetchOne(dbc, sql: "SELECT deletedForAll, text FROM message WHERE chatId = 'c1' AND seq = 1")!
         }
         XCTAssertEqual(row["deletedForAll"] as Bool, true)
         XCTAssertNil(row["text"] as String?)

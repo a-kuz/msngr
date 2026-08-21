@@ -79,8 +79,9 @@ public struct PushMessageWriter: Sendable {
     public func write(_ dbc: GRDB.Database, item: BurstItem, envelope: PushEnvelope,
                       now: Double = Date().timeIntervalSince1970) -> PushStoreOutcome {
         guard let chat = try? Chat.fetchOne(dbc, key: item.chatId) else { return .unknownChat }
-        let known = (try? Bool.fetchOne(dbc, sql: "SELECT EXISTS(SELECT 1 FROM message WHERE msgId = ?)",
-                                        arguments: [item.msgId])) ?? false
+        let known = (try? Bool.fetchOne(
+            dbc, sql: "SELECT EXISTS(SELECT 1 FROM message WHERE chatId = ? AND seq = ?)",
+            arguments: [item.chatId, item.seq])) ?? false
         if known { return .duplicate }
 
         // A savepoint per envelope: the ratchet step inside it is undone with
@@ -105,7 +106,7 @@ public struct PushMessageWriter: Sendable {
                 // kept: the app replays it once the key it waits for arrives.
                 guard let data = try? JSONEncoder().encode(envelope.body) else { return .rollback }
                 try SyncEngine.deferEnvelope(dbc, reason: reason, chatId: item.chatId,
-                                             msgId: item.msgId, seq: item.seq,
+                                             seq: item.seq,
                                              from: envelope.fromUserId,
                                              fromDevice: envelope.fromDeviceId,
                                              sentAt: item.sentAt, ts: envelope.ts,
@@ -145,7 +146,7 @@ public struct PushMessageWriter: Sendable {
 
     private func apply(_ dbc: GRDB.Database, _ payload: ContentPayload, item: BurstItem,
                        envelope: PushEnvelope, chat: Chat) throws {
-        try SyncEngine.applyContent(dbc, payload, chatId: item.chatId, msgId: item.msgId,
+        try SyncEngine.applyContent(dbc, payload, chatId: item.chatId,
                                     seq: item.seq, from: envelope.fromUserId,
                                     sentAt: item.sentAt, ts: envelope.ts, ownUserId: ownUserId)
         // The cursors move exactly as they do for a message off the socket:
@@ -155,8 +156,8 @@ public struct PushMessageWriter: Sendable {
                                    isService: SyncEngine.serviceKinds.contains(payload.kind))
         // the seq is filled now: neither the envelope nor the hole it left is
         // waiting for anything
-        try dbc.execute(sql: "DELETE FROM pendingDecrypt WHERE chatId = ? AND msgId = ?",
-                        arguments: [item.chatId, item.msgId])
+        try dbc.execute(sql: "DELETE FROM pendingDecrypt WHERE chatId = ? AND seq = ?",
+                        arguments: [item.chatId, item.seq])
         try dbc.execute(sql: "DELETE FROM historyGap WHERE chatId = ? AND seq = ?",
                         arguments: [item.chatId, item.seq])
     }

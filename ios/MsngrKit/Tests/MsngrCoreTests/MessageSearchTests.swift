@@ -20,7 +20,6 @@ final class MessageSearchTests: XCTestCase {
                              deletedForAll: Bool = false) throws -> Message {
         var msg = Message(id: id, chatId: chatId, fromUserId: "peer", sentAt: at,
                           kind: kind, text: text, status: .sent, isOutgoing: false)
-        msg.msgId = id
         msg.serverTs = at
         msg.deletedForAll = deletedForAll
         try db.write { dbc in try msg.save(dbc) }
@@ -218,7 +217,6 @@ final class MessageSearchTests: XCTestCase {
                                   sentAt: Double(i), kind: .text,
                                   text: "ordinary chatter about the trip number \(i)",
                                   status: .sent, isOutgoing: false)
-                msg.msgId = "m\(i)"
                 msg.serverTs = Double(i)
                 try msg.save(dbc)
             }
@@ -306,15 +304,14 @@ final class MessageSearchTests: XCTestCase {
     func testHitCarriesFeedIdentity() throws {
         let db = try AppDatabase.openInMemory()
         try seedChat(db, id: "c1")
-        var pending = Message(id: "local-1", chatId: "c1", fromUserId: "me", sentAt: 20,
+        let pending = Message(id: "local-1", chatId: "c1", fromUserId: "me", sentAt: 20,
                               kind: .text, text: "draft sent", status: .sending,
                               isOutgoing: true)
-        pending.msgId = nil
         try db.write { dbc in try pending.save(dbc) }
         try seedMessage(db, id: "srv-1", chatId: "c1", text: "draft accepted", at: 10)
 
         let found = try hits(db, "draft").hits
-        XCTAssertEqual(found.map(\.messageId), ["local-1", "srv-1"])
+        XCTAssertEqual(found.map(\.id), ["local-1", "srv-1"])
         XCTAssertEqual(found.map(\.chatId), ["c1", "c1"])
     }
 }

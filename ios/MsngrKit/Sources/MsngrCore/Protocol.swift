@@ -39,7 +39,7 @@ public enum WSOutgoing {
     case recv(chatId: String, seqs: [Int])
     case read(chatId: String, upToSeq: Int)
     case typing(chatId: String, kind: String?)
-    case delete(chatId: String, msgIds: [String], forAll: Bool)
+    case delete(chatId: String, seqs: [Int], forAll: Bool)
     case ping
 
     public func encode() throws -> Data {
@@ -60,8 +60,8 @@ public enum WSOutgoing {
             obj = ["t": "read", "chatId": chatId, "upToSeq": upToSeq]
         case .typing(let chatId, let kind):
             obj = ["t": "typing", "chatId": chatId, "kind": kind as Any]
-        case .delete(let chatId, let msgIds, let forAll):
-            obj = ["t": "delete", "chatId": chatId, "msgIds": msgIds, "forAll": forAll]
+        case .delete(let chatId, let seqs, let forAll):
+            obj = ["t": "delete", "chatId": chatId, "seqs": seqs, "forAll": forAll]
         case .ping:
             obj = ["t": "ping"]
         }
@@ -110,7 +110,6 @@ public struct WSIncoming: Decodable {
     // Shared fields; which ones are present depends on the frame type.
     public let chatId: String?
     public let clientMsgId: String?
-    public let msgId: String?
     public let seq: Int?
     public let ts: Double?
     public let from: String?
@@ -128,7 +127,6 @@ public struct WSIncoming: Decodable {
     public let state: ChatStateDTO?
     /// profile: the whole card of whoever changed theirs
     public let user: APIClient.UserDTO?
-    public let msgIds: [String]?
     public let forAll: Bool?
     public let serverTime: Double?
     /// msg: a service frame (skd/reaction/edit)
@@ -164,7 +162,7 @@ public struct ChatStateDTO: Decodable {
     public let createdBy: String
     public let createdAt: Double
     public let members: [MemberDTO]
-    public let pinnedMsgId: String?
+    public let pinnedSeq: Int?
     public let lastSeq: Int
     public let readMarks: [String: Int]
     public let deliveredMarks: [String: Int]

@@ -38,7 +38,7 @@ public struct Chat: Codable, Identifiable, Equatable, FetchableRecord, Persistab
     public var invitePolicy: String = ChatPermissions.openPolicy
     public var createdBy: String
     public var createdAt: Double
-    public var pinnedMsgId: String?
+    public var pinnedSeq: Int?
     /// last seq on the server (from state) and the last one applied locally
     public var lastSeq: Int
     public var syncedSeq: Int
@@ -141,13 +141,15 @@ public struct MediaInfo: Codable, Equatable {
 }
 
 public struct ReplyPreview: Codable, Equatable {
-    public var msgId: String
+    /// seq of the quoted message; nil when it had none yet (an own message
+    /// quoted before its ack), in which case the quote shows but cannot jump.
+    public var seq: Int?
     public var authorId: String
     public var text: String     // short preview
     public var kind: String
 
-    public init(msgId: String, authorId: String, text: String, kind: String) {
-        self.msgId = msgId
+    public init(seq: Int?, authorId: String, text: String, kind: String) {
+        self.seq = seq
         self.authorId = authorId
         self.text = text
         self.kind = kind
@@ -177,9 +179,8 @@ public struct EditVersion: Codable, Equatable {
 
 public struct Message: Codable, Identifiable, Equatable, FetchableRecord, PersistableRecord {
     public static let databaseTableName = "message"
-    /// local id: clientMsgId for own messages, msgId for everyone else's
+    /// local id: clientMsgId for own messages, "<chatId>/<seq>" for everyone else's
     public var id: String
-    public var msgId: String?          // server id, null until ack
     public var chatId: String
     public var seq: Int?               // null until ack
     public var clientMsgId: String?
@@ -220,10 +221,16 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
 
     // JSON columns
     enum CodingKeys: String, CodingKey {
-        case id, msgId, chatId, seq, clientMsgId, fromUserId, sentAt, serverTs,
+        case id, chatId, seq, clientMsgId, fromUserId, sentAt, serverTs,
              kind, text, media, album, replyTo, forward, edited, editHistory,
              editedAt, deletedForAll, status, isOutgoing, reactions, expiresAt,
              failReason
+    }
+
+    /// Local row id of a message the server numbered: the identity every
+    /// incoming reference resolves through.
+    public static func feedId(chatId: String, seq: Int) -> String {
+        "\(chatId)/\(seq)"
     }
 }
 
@@ -255,7 +262,13 @@ public struct ContentPayload: Codable {
     public var album: [MediaInfo]?
     public var replyTo: ReplyPreview?
     public var fwd: ForwardInfo?
-    public var targetMsgId: String?   // edit / reaction / repairRequest
+    /// edit / reaction: seq of the message the event lands on. Filled at send
+    /// time from the local row (`targetLocalId`); the peer applies by it.
+    public var targetSeq: Int?
+    /// edit / reaction, local only: row id of the target while it may still be
+    /// waiting for its ack. Resolved into `targetSeq` and stripped before the
+    /// payload is encrypted.
+    public var targetLocalId: String?
     public var emoji: String?         // reaction (nil clears it)
     public var ttlSeconds: Int?       // disappearing setting
     /// Encrypt pairwise to this user alone, whatever kind the chat is. Repair
@@ -267,10 +280,9 @@ public struct ContentPayload: Codable {
     /// repairRequest / repair: which attempt this is. The id built from it keeps
     /// a repeated request from reaching the sender twice.
     public var attempt: Int?
-    /// repair: msgId the restored copy belongs to, when it was sent, and the
-    /// original content as JSON. The receiver stores it under that identity, so
-    /// a restored message takes its own place in the feed instead of a new one.
-    public var repairOf: String?
+    /// repair: when the restored copy was sent, and the original content as
+    /// JSON. `repairSeq` names the message; the receiver stores the copy under
+    /// (chatId, repairSeq), so it takes its own place in the feed.
     public var origSentAt: Double?
     public var orig: String?
     /// skdAck: the sender key chain the recipient stored.

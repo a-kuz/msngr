@@ -8,7 +8,6 @@ final class HistoryFeedTests: XCTestCase {
         var m = Message(id: "m\(seq)", chatId: "c", fromUserId: "peer",
                         sentAt: 1_700_000_000 + Double(seq), kind: .text, text: "m\(seq)",
                         status: .sent, isOutgoing: false)
-        m.msgId = "m\(seq)"
         m.seq = seq
         return m
     }

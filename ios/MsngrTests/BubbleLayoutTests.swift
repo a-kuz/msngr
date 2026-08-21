@@ -350,7 +350,7 @@ final class BubbleLayoutTests: XCTestCase {
     /// The quote shows the name the caller resolved from user/participants,
     /// never the raw userId in replyTo.authorId.
     func testReplyAuthorUsesResolvedName() {
-        let reply = ReplyPreview(msgId: "m1", authorId: "01KZXED9XMFKTKYDBVH30C", text: "hello", kind: "text")
+        let reply = ReplyPreview(seq: nil, authorId: "01KZXED9XMFKTKYDBVH30C", text: "hello", kind: "text")
         let p = replyPlan(replyTo: reply, replyAuthorName: "Anna")
         XCTAssertEqual(p.replyAuthor, "Anna")
         XCTAssertNotEqual(p.replyAuthor, reply.authorId, "a quote must never show a raw userId")
@@ -358,7 +358,7 @@ final class BubbleLayoutTests: XCTestCase {
 
     /// Replying to your own message: the quote is attributed to you.
     func testReplyAuthorShowsYouForOwnMessage() {
-        let reply = ReplyPreview(msgId: "m1", authorId: "me", text: "my message", kind: "text")
+        let reply = ReplyPreview(seq: nil, authorId: "me", text: "my message", kind: "text")
         let p = replyPlan(replyTo: reply, replyAuthorName: "You")
         XCTAssertEqual(p.replyAuthor, "You")
     }
@@ -380,31 +380,31 @@ final class BubbleLayoutTests: XCTestCase {
     /// A quote of a non-text message previews as an icon plus a caption.
     func testReplyPreviewTextForEachKind() {
         XCTAssertEqual(BubbleLayout.replyPreviewText(
-            ReplyPreview(msgId: "1", authorId: "u", text: "Photo", kind: "photo")), s("📷 Photo"))
+            ReplyPreview(seq: nil, authorId: "u", text: "Photo", kind: "photo")), s("📷 Photo"))
         XCTAssertEqual(BubbleLayout.replyPreviewText(
-            ReplyPreview(msgId: "1", authorId: "u", text: "Video", kind: "video")), s("🎥 Video"))
+            ReplyPreview(seq: nil, authorId: "u", text: "Video", kind: "video")), s("🎥 Video"))
         XCTAssertEqual(BubbleLayout.replyPreviewText(
-            ReplyPreview(msgId: "1", authorId: "u", text: "Voice message", kind: "voice")),
+            ReplyPreview(seq: nil, authorId: "u", text: "Voice message", kind: "voice")),
             s("🎤 Voice message"))
         XCTAssertEqual(BubbleLayout.replyPreviewText(
-            ReplyPreview(msgId: "1", authorId: "u", text: "Contract.pdf", kind: "file")), "📎 Contract.pdf")
+            ReplyPreview(seq: nil, authorId: "u", text: "Contract.pdf", kind: "file")), "📎 Contract.pdf")
         XCTAssertEqual(BubbleLayout.replyPreviewText(
-            ReplyPreview(msgId: "1", authorId: "u", text: "", kind: "album")), s("🖼 Album"))
+            ReplyPreview(seq: nil, authorId: "u", text: "", kind: "album")), s("🖼 Album"))
     }
 
     /// When the stored text is empty (a file without a name, a missing preview)
     /// the quote falls back to a placeholder instead of an empty line.
     func testReplyPreviewTextFallsBackWhenEmpty() {
         XCTAssertEqual(BubbleLayout.replyPreviewText(
-            ReplyPreview(msgId: "1", authorId: "u", text: "", kind: "file")), "📎 " + s("File"))
+            ReplyPreview(seq: nil, authorId: "u", text: "", kind: "file")), "📎 " + s("File"))
         XCTAssertEqual(BubbleLayout.replyPreviewText(
-            ReplyPreview(msgId: "1", authorId: "u", text: "", kind: "text")), s("Message"))
+            ReplyPreview(seq: nil, authorId: "u", text: "", kind: "text")), s("Message"))
     }
 
     /// The plan builds its preview line through replyPreviewText rather than
     /// copying replyTo.text.
     func testPlanReplyTextUsesPreviewMapping() {
-        let reply = ReplyPreview(msgId: "1", authorId: "peer", text: "Video", kind: "video")
+        let reply = ReplyPreview(seq: nil, authorId: "peer", text: "Video", kind: "video")
         let p = replyPlan(replyTo: reply, replyAuthorName: "Pete")
         XCTAssertEqual(p.replyText, s("🎥 Video"))
     }

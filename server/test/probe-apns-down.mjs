@@ -96,7 +96,7 @@ const apns = http.createServer((req, res) => {
   let raw = "";
   req.on("data", (c) => (raw += c));
   req.on("end", () => {
-    try { pushedMsgIds.push(JSON.parse(raw).msgId ?? "?"); } catch { pushedMsgIds.push("?"); }
+    try { pushedMsgIds.push(String(JSON.parse(raw).seq ?? "?")); } catch { pushedMsgIds.push("?"); }
     res.writeHead(200, { "apns-id": String(pushedMsgIds.length) });
     res.end();
   });
@@ -104,7 +104,7 @@ const apns = http.createServer((req, res) => {
 await new Promise((r) => apns.listen(PUSH_PORT, r));
 const upAt = Date.now();
 
-const sentMsgIds = new Set(landed.map((f) => f.msgId));
+const sentMsgIds = new Set(landed.map((f) => String(f.seq)));
 const catchupDeadline = Date.now() + CATCHUP_MS;
 while (Date.now() < catchupDeadline) {
   if (new Set(pushedMsgIds).size >= sentMsgIds.size) break;

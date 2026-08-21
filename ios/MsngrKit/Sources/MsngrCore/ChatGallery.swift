@@ -24,8 +24,7 @@ public enum GalleryTab: String, CaseIterable, Sendable {
 /// position inside the message while `messageId` stays the way back to the feed.
 public struct GalleryEntry: Identifiable, Equatable, Sendable {
     public var id: String
-    /// Identity the feed knows the message by: the server msgId, or the local
-    /// id while the message is still on its way out.
+    /// Local row id of the message: what a jump back into the feed scrolls to.
     public var messageId: String
     /// Position of the attachment or link inside its message.
     public var index: Int
@@ -158,7 +157,7 @@ public enum ChatGallery {
 
     /// Attachments of one message as gallery entries.
     static func entries(of message: Message) -> [GalleryEntry] {
-        let feedId = message.msgId ?? message.id
+        let feedId = message.id
         if let album = message.album, !album.isEmpty {
             return album.enumerated().map { i, media in
                 GalleryEntry(id: "\(message.id)#\(i)", messageId: feedId, index: i,
@@ -201,7 +200,7 @@ public enum ChatGallery {
 
     static func linkEntries(of message: Message) -> [GalleryEntry] {
         guard let text = message.text, !text.isEmpty else { return [] }
-        let feedId = message.msgId ?? message.id
+        let feedId = message.id
         let context = text.split(separator: "\n").first.map(String.init) ?? text
         return MessageMarkdown.links(in: text).enumerated().map { i, link in
             GalleryEntry(id: "\(message.id)#link\(i)", messageId: feedId, index: i, kind: .text,

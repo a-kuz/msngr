@@ -161,18 +161,17 @@ public enum HistoryWindow {
     /// pagination stops asking the server for it, and repair has the reason and
     /// the attempt count to work from.
     public static func recordGap(_ dbc: GRDB.Database, chatId: String, seq: Int, reason: String,
-                                 msgId: String? = nil, fromUserId: String? = nil,
+                                 fromUserId: String? = nil,
                                  sentAt: Double? = nil, now: Double = Date().timeIntervalSince1970) throws {
         try dbc.execute(sql: """
-            INSERT INTO historyGap (chatId, seq, msgId, fromUserId, sentAt, reason, attempts, lastTriedAt)
-            VALUES (?,?,?,?,?,?,1,?)
+            INSERT INTO historyGap (chatId, seq, fromUserId, sentAt, reason, attempts, lastTriedAt)
+            VALUES (?,?,?,?,?,1,?)
             ON CONFLICT(chatId, seq) DO UPDATE SET
               reason = excluded.reason, attempts = historyGap.attempts + 1,
               lastTriedAt = excluded.lastTriedAt,
-              msgId = COALESCE(excluded.msgId, historyGap.msgId),
               fromUserId = COALESCE(excluded.fromUserId, historyGap.fromUserId),
               sentAt = COALESCE(excluded.sentAt, historyGap.sentAt)
-            """, arguments: [chatId, seq, msgId, fromUserId, sentAt, reason, now])
+            """, arguments: [chatId, seq, fromUserId, sentAt, reason, now])
     }
 
     /// Seqs inside the window whose attempts are spent: the feed shows a

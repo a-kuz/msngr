@@ -348,7 +348,7 @@ struct ChatListView: View {
     /// A search hit: the chat opens and scrolls to the message rather than
     /// stopping at the bottom of the feed.
     private func openMessage(_ hit: MessageSearchHit) {
-        MessageJump.request(chatId: hit.chatId, msgId: hit.messageId)
+        MessageJump.request(chatId: hit.chatId, id: hit.id)
         path.append(hit.chatId)
     }
 

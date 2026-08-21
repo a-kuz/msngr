@@ -22,14 +22,13 @@ final class NotificationBurstStoreTests: XCTestCase {
             var msg = Message(id: "m\(seq)", chatId: chatId, fromUserId: from,
                               sentAt: Double(seq), kind: .text, text: text,
                               status: .sent, isOutgoing: false)
-            msg.msgId = "\(chatId)-\(seq)"
             msg.seq = seq
             try msg.save(dbc)
         }
     }
 
     private func item(_ seq: Int, chat chatId: String = "c1") -> BurstItem {
-        BurstItem(chatId: chatId, msgId: "\(chatId)-\(seq)", seq: seq, sentAt: Double(seq))
+        BurstItem(chatId: chatId, seq: seq, sentAt: Double(seq))
     }
 
     private func resolve(_ db: DatabaseQueue, _ items: [BurstItem]) throws -> BurstPlan {
@@ -41,8 +40,8 @@ final class NotificationBurstStoreTests: XCTestCase {
     func testClaimIsTakenOnce() throws {
         let db = try AppDatabase.openInMemory()
         let taken = try db.write { dbc in
-            [try NotificationBurstStore.claim(dbc, chatId: "c1", msgId: "m1", seq: 1),
-             try NotificationBurstStore.claim(dbc, chatId: "c1", msgId: "m1", seq: 1)]
+            [try NotificationBurstStore.claim(dbc, chatId: "c1", seq: 1),
+             try NotificationBurstStore.claim(dbc, chatId: "c1", seq: 1)]
         }
         XCTAssertEqual(taken, [true, false])
     }
