@@ -11,11 +11,11 @@ struct TextSelectionView: View {
         NavigationStack {
             SelectableText(text: text)
                 .padding(.horizontal, 16)
-                .navigationTitle("Выделение текста")
+                .navigationTitle("Select text")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Готово") { dismiss() }
+                        Button("Done") { dismiss() }
                     }
                 }
         }

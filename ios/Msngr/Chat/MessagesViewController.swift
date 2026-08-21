@@ -26,12 +26,9 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     var onTapReplyQuote: ((Message) -> Void)?
     /// Tap on a row while multi-select is on.
     var onToggleSelection: ((Message) -> Void)?
-    /// тап по статус-бару: экран ведёт ленту к началу чата
     var onScrollToStart: (() -> Void)?
-    /// свайп от левой кромки: возврат к списку чатов
     var onSwipeBack: (() -> Void)?
 
-    /// Whose feed this is: a group event about this member is worded as "вас".
     var ownUserId = ""
 
     private(set) var collectionView: UICollectionView!
@@ -47,20 +44,13 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     private var recomputingAtBottom = false
     /// The next feed comes from a window that was moved: it is shown from the bottom.
     private var showBottomOnUpdate = false
-    /// Счётчик своих отправок, уже отработанный лентой.
     private var seenSendTick = 0
-    /// Возврат свайпом: кромка своя, потому что системный жест на этом экране
-    /// не начинается.
     private let backSwipe = UIPanGestureRecognizer()
-    /// Отправка ждёт своего сообщения: оно обязано приехать в низ ленты
-    /// и появиться там с анимацией, из какого бы места истории его ни отправили.
     private var awaitingOwnSend = false
     /// The floating day capsule under the header. A plain subview over the feed,
     /// not a supplementary view: pointwise updates and cell reloads cannot move it.
     private let stickyDate = StickyDateOverlay()
 
-    /// Своя отправка: лента уезжает к концу сразу, не дожидаясь, пока сообщение
-    /// ляжет в базу и придёт из наблюдения.
     func noteSendTick(_ tick: Int) {
         guard tick != seenSendTick else { return }
         seenSendTick = tick
@@ -69,10 +59,6 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         scrollToBottom(animated: false)
     }
 
-    /// Пришло ли в этом обновлении своё только что отправленное сообщение.
-    /// Ждать приходится не только вставку в существующую ленту: окно, стоявшее
-    /// на прочитанной истории, снова цепляется за новейшие, и лента приезжает
-    /// другим набором сообщений целиком.
     private func ownSendLanded(newFirst: ChatFeedItem?, oldIds: Set<String>) -> Bool {
         guard awaitingOwnSend, case .message(let m, _, _, _, _, _, _)? = newFirst, m.isOutgoing,
               !oldIds.contains(m.id) else { return false }
@@ -80,7 +66,6 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         return true
     }
 
-    /// Ставит ленту на своё новое сообщение и играет его появление.
     private func landOwnMessage() {
         collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.contentInset.top), animated: false)
         collectionView.layoutIfNeeded()
@@ -133,8 +118,6 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         backSwipe.addTarget(self, action: #selector(handleBackSwipe(_:)))
         backSwipe.delegate = self
         view.addGestureRecognizer(backSwipe)
-        // лента ждёт отказа кромки: вне кромки жест не начинается вовсе,
-        // поэтому скролл остаётся мгновенным
         collectionView.panGestureRecognizer.require(toFail: backSwipe)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardChanged(_:)),
                                                name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
@@ -341,12 +324,10 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         // contentOffset stays put. Remember the top visible item and where it sits
         // on screen, then put it back after the update
         let anchor = readingAnchor()
-        // своё новое сообщение лежит первым элементом инвертированной ленты
         let ownAtBottom: Bool = {
             guard case .message(let m, _, _, _, _, _, _)? = newItems.first else { return false }
             return m.isOutgoing && oldIndex[newIds[0]] == nil
         }()
-        // вызывается всегда: он же снимает ожидание отправки
         let sendLanded = ownSendLanded(newFirst: newItems.first, oldIds: Set(oldIds))
         let ownLanded = ownAtBottom || sendLanded
 
@@ -1008,19 +989,7 @@ final class UnreadMarkerCell: UICollectionViewCell {
 
     /// Russian plural forms of "N unread messages", for counts ending in 1, in 2 to 4, and in the rest.
     static func title(count: Int) -> String {
-        let mod100 = count % 100
-        let mod10 = count % 10
-        let (adj, noun): (String, String)
-        if mod100 / 10 == 1 {
-            (adj, noun) = ("непрочитанных", "сообщений")
-        } else if mod10 == 1 {
-            (adj, noun) = ("непрочитанное", "сообщение")
-        } else if (2...4).contains(mod10) {
-            (adj, noun) = ("непрочитанных", "сообщения")
-        } else {
-            (adj, noun) = ("непрочитанных", "сообщений")
-        }
-        return "\(count) \(adj) \(noun)"
+        "\(count) " + (count == 1 ? "unread message" : "unread messages")
     }
 }
 
@@ -1039,15 +1008,15 @@ final class SystemCell: UICollectionViewCell {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    static let unreadableText = "Сообщение ещё не загружено"
-    static let historyStartText = "История начинается здесь"
+    static let unreadableText = String(localized: "Message not loaded yet")
+    static let historyStartText = String(localized: "History starts here")
 
     static func text(for msg: Message, ownUserId: String = "") -> String {
         let t = msg.text ?? ""
         if let event = GroupEvent.decode(t) {
             return event.sentence(isOwn: msg.isOutgoing, ownUserId: ownUserId)
         }
-        return t.hasPrefix("identity_changed:") ? "Код безопасности собеседника изменился" : t
+        return t.hasPrefix("identity_changed:") ? String(localized: "The peer's safety code has changed") : t
     }
 
     func configure(_ msg: Message, ownUserId: String = "") {

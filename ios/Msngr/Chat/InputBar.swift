@@ -35,10 +35,10 @@ struct InputBar: View {
     /// You do not write to someone you blocked: the composer gives way to a strip that unblocks them.
     private var blockedBar: some View {
         VStack(spacing: 6) {
-            Text("Вы заблокировали пользователя.")
+            Text("You blocked this user.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            Button("Разблокировать") {
+            Button("Unblock") {
                 guard let peerId = model.peer?.id else { return }
                 Task { try? await AppState.shared.engine.setBlocked(userId: peerId, blocked: false) }
             }
@@ -61,15 +61,15 @@ struct InputBar: View {
                 } else {
                     Menu {
                         Button { onAttachPhoto() } label: {
-                            Label("Фото или видео", systemImage: "photo.on.rectangle")
+                            Label("Photo or video", systemImage: "photo.on.rectangle")
                         }
                         .accessibilityIdentifier("chat.attach.photo")
                         Button { onAttachFile() } label: {
-                            Label("Файл", systemImage: "doc")
+                            Label("File", systemImage: "doc")
                         }
                         if pasteboardHasImage && text.isEmpty {
                             Button { pasteImages() } label: {
-                                Label("Вставить", systemImage: "doc.on.clipboard")
+                                Label("Paste", systemImage: "doc.on.clipboard")
                             }
                         }
                     } label: {
@@ -98,13 +98,13 @@ struct InputBar: View {
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             pasteboardHasImage = MessageClipboard.hasImages
         }
-        .alert("Микрофон выключен", isPresented: $micDenied) {
+        .alert(String(localized: "Microphone disabled"), isPresented: $micDenied) {
             if let url = URL(string: UIApplication.openSettingsURLString) {
-                Button("Настройки") { UIApplication.shared.open(url) }
+                Button(String(localized: "Settings")) { UIApplication.shared.open(url) }
             }
-            Button("Понятно", role: .cancel) { }
+            Button(String(localized: "Got it"), role: .cancel) { }
         } message: {
-            Text("Голосовые сообщения записываются с микрофона.")
+            Text(String(localized: "Voice messages are recorded from the microphone."))
         }
         // the hint about how recording works floats above the bar until recording is locked
         .overlay(alignment: .top) {
@@ -132,16 +132,15 @@ struct InputBar: View {
         .animation(Theme.springFast, value: gesture.isLocked)
     }
 
-    /// The hint "swipe left to cancel, up to lock": shown as soon as recording starts.
     private var recordingHint: some View {
         HStack(spacing: 10) {
             HStack(spacing: 3) {
                 Image(systemName: "chevron.left")
-                Text("влево — отмена")
+                Text("left to cancel")
             }
             HStack(spacing: 3) {
                 Image(systemName: "lock.fill")
-                Text("вверх — замок")
+                Text("up to lock")
             }
         }
         .font(.caption)
@@ -160,7 +159,7 @@ struct InputBar: View {
                 Image(systemName: model.editing != nil ? "pencil" : "arrowshape.turn.up.left")
                     .foregroundStyle(Theme.accent)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(model.editing != nil ? "Редактирование"
+                    Text(model.editing != nil ? String(localized: "Editing")
                          : (model.members.first { $0.id == target.fromUserId }?.displayName ?? ""))
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(Theme.accent)
@@ -310,8 +309,8 @@ struct InputBar: View {
             do {
                 try recorder.start()
             } catch {
-                MsngrLog.outbox.error("не удалось начать запись: \(error)")
-                model.sendFailure = "Голосовое не записано: микрофон занят другим приложением"
+                MsngrLog.outbox.error("failed to start recording: \(error)")
+                model.sendFailure = String(localized: "Voice not recorded: microphone is in use by another app")
                 handle(gesture.interrupted())
             }
         case .lock:
@@ -339,7 +338,7 @@ struct InputBar: View {
                 .frame(height: 26)
             Spacer()
             if gesture.isLocked {
-                Button("Отмена", role: .destructive) {
+                Button(String(localized: "Cancel"), role: .destructive) {
                     handle(gesture.discard())
                 }
                 .font(.callout)
@@ -347,7 +346,7 @@ struct InputBar: View {
             } else {
                 HStack(spacing: 2) {
                     Image(systemName: "chevron.left")
-                    Text("Отмена")
+                    Text(String(localized: "Cancel"))
                 }
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -442,8 +441,6 @@ struct GrowingTextView: UIViewRepresentable {
         tv.textContainer.lineFragmentPadding = 2
         tv.delegate = context.coordinator
         tv.isScrollEnabled = false
-        // тап по статус-бару принадлежит ленте: пока на экране два скролла,
-        // готовых его принять, система не отдаёт его никому
         tv.scrollsToTop = false
         tv.accessibilityIdentifier = "chat.input"
         tv.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
@@ -454,7 +451,7 @@ struct GrowingTextView: UIViewRepresentable {
 
         let placeholder = UILabel()
         placeholder.tag = 777
-        placeholder.text = "Сообщение"
+        placeholder.text = String(localized: "Message")
         placeholder.font = Theme.Text.input.uiFont
         placeholder.textColor = .placeholderText
         tv.addSubview(placeholder)

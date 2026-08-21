@@ -362,7 +362,7 @@ final class WaveformView: UIView {
         isAccessibilityElement = true
         accessibilityIdentifier = "voice.wave"
         accessibilityTraits = .adjustable
-        accessibilityLabel = "Позиция"
+        accessibilityLabel = String(localized: "Position")
         accessibilityValue = "0"
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handleSeek(_:)))
         addGestureRecognizer(pan)
@@ -497,10 +497,10 @@ final class VoiceMessageView: UIView {
                 let dur = Int(raw.rounded())
                 durationLabel.text = String(format: "%d:%02d", dur / 60, dur % 60)
             }
-            accessibilityLabel = "Голосовое сообщение, \(durationLabel.text ?? "")"
+            accessibilityLabel = String(localized: "Voice message, \(durationLabel.text ?? "")")
             apply(VoicePlayer.shared.state)
         } else {
-            fileName.text = msg.media?.name ?? "Файл"
+            fileName.text = msg.media?.name ?? String(localized: "File")
             let size = msg.media?.size ?? 0
             durationLabel.text = ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
         }
@@ -517,14 +517,14 @@ final class VoiceMessageView: UIView {
         if icon != playIcon {
             playIcon = icon
             playButton.setImage(UIImage(systemName: icon), for: .normal)
-            playButton.accessibilityLabel = running ? "Пауза" : "Воспроизвести"
+            playButton.accessibilityLabel = running ? String(localized: "Pause") : String(localized: "Play")
         }
         waveform.progress = mine ? state.progress : 0
         rateButton.isHidden = !mine
         let title = Self.rateTitle(state.rate)
         if rateButton.title(for: .normal) != title {
             rateButton.setTitle(title, for: .normal)
-            rateButton.accessibilityLabel = "Скорость \(title)"
+            rateButton.accessibilityLabel = String(localized: "Speed \(title)")
         }
     }
 
