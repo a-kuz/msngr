@@ -1,5 +1,5 @@
 import type { Env } from "../types";
-import { b64url } from "../util";
+import { b64url, sha256hex } from "../util";
 
 async function importP8(p8: string): Promise<CryptoKey> {
   const body = p8
@@ -42,7 +42,6 @@ async function apnsJwt(env: Env, force: boolean): Promise<string | null> {
 
 export interface PushPayload {
   chatId: string;
-  msgId?: string;
   seq?: number; // position of the message in its chat; the client shows a burst in this order
   sentAt?: number; // send time in ms, which orders messages across chats
   badge?: number; // the user's total unread over all chats
@@ -95,7 +94,6 @@ export function pushBody(payload: PushPayload): string {
         "thread-id": payload.chatId,
       },
       chatId: payload.chatId,
-      msgId: payload.msgId,
       // seq and sentAt let the extension order a burst of pushes: APNs delivers
       // them in an arbitrary order, and the banner order is the posting order.
       seq: payload.seq,
@@ -162,6 +160,13 @@ export async function sendPush(
   // extension replaces the text with what it decrypts (mutable-content).
   const body = pushBody(payload);
 
+  // collapse-id names the message, so redelivering it does not stack up
+  // banners. (chatId, seq) is the identity, but the header caps at 64 bytes
+  // and a direct chat id alone runs to 60, so the chat travels as a hash.
+  const collapseId = payload.seq === undefined
+    ? undefined
+    : `${(await sha256hex(payload.chatId)).slice(0, 16)}:${payload.seq}`;
+
   let forceJwt = false;
   for (let attempt = 0; ; attempt++) {
     const headers: Record<string, string> = {
@@ -170,8 +175,7 @@ export async function sendPush(
       "apns-priority": "10",
       "content-type": "application/json",
     };
-    // collapse-id = msgId, so redelivering the same message does not stack up banners
-    if (payload.msgId) headers["apns-collapse-id"] = payload.msgId;
+    if (collapseId) headers["apns-collapse-id"] = collapseId;
     if (isApple) {
       const jwt = await apnsJwt(env, forceJwt);
       if (!jwt) return { ok: false, status: 0, reason: "no_jwt" };

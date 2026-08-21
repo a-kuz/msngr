@@ -233,16 +233,15 @@ final class CoreIntegrationTests: XCTestCase {
         }
         XCTAssertTrue(sent, "no ack arrived")
         let addressed = try await alice.db.read { dbc in
-            try Row.fetchOne(dbc, sql: "SELECT msgId, seq FROM message WHERE chatId = ?",
+            try Row.fetchOne(dbc, sql: "SELECT seq FROM message WHERE chatId = ?",
                              arguments: [chatId])
         }
-        let msgId: String = addressed!["msgId"]
         let seq: Int = addressed!["seq"]
 
         // the extension's transaction: the message of the push goes in, the
         // receipt it owes goes into the queue with it
         _ = try NotificationBurstStore.resolve(
-            db: bob.db, items: [BurstItem(chatId: chatId, msgId: msgId, seq: seq, sentAt: 0)],
+            db: bob.db, items: [BurstItem(chatId: chatId, seq: seq, sentAt: 0)],
             showsMessageText: true)
         let queued = try await bob.db.read { dbc in try DeliveryReceipts.pending(dbc) }
         XCTAssertEqual(queued.first?.upToSeq, seq, "the receipt was not written down")
@@ -368,18 +367,22 @@ final class CoreIntegrationTests: XCTestCase {
         }
 
         // reaction: Carol puts a heart on Alice's message
-        let targetId = try await carol.db.read { dbc in
-            try String.fetchOne(dbc, sql: "SELECT msgId FROM message WHERE chatId = ? AND text = 'group message'",
+        let targetLocalId = try await carol.db.read { dbc in
+            try String.fetchOne(dbc, sql: "SELECT id FROM message WHERE chatId = ? AND text = 'group message'",
                                 arguments: [chatId])
         }
+        let targetSeq = try await carol.db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT seq FROM message WHERE chatId = ? AND text = 'group message'",
+                             arguments: [chatId])
+        }
         var reaction = ContentPayload(kind: "reaction")
-        reaction.targetMsgId = targetId
+        reaction.targetLocalId = targetLocalId
         reaction.emoji = "❤️"
         try await carol.engine.enqueue(content: reaction, chatId: chatId)
         let reacted = try await waitUntil {
             try await alice.db.read { dbc in
-                let r = try String.fetchOne(dbc, sql: "SELECT reactions FROM message WHERE chatId = ? AND msgId = ?",
-                                            arguments: [chatId, targetId]) ?? "{}"
+                let r = try String.fetchOne(dbc, sql: "SELECT reactions FROM message WHERE chatId = ? AND seq = ?",
+                                            arguments: [chatId, targetSeq]) ?? "{}"
                 return r.contains("❤️")
             }
         }
@@ -458,7 +461,7 @@ final class CoreIntegrationTests: XCTestCase {
 
     /// The recipient's session state is corrupted, so no envelope from the sender
     /// opens any more. The device repairs itself: it asks for a copy, rebuilds
-    /// the session and puts the message into the feed under the original msgId,
+    /// the session and puts the message into the feed under the original seq,
     /// without a duplicate.
     func testCorruptedSessionIsRepairedThroughSender() async throws {
         guard await Self.serverUp() else {

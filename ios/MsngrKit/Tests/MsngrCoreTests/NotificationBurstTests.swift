@@ -8,7 +8,7 @@ import GRDB
 /// again.
 final class NotificationBurstTests: XCTestCase {
     private func item(_ chatId: String, _ seq: Int, sentAt: Double? = nil) -> BurstItem {
-        BurstItem(chatId: chatId, msgId: "\(chatId)-\(seq)", seq: seq,
+        BurstItem(chatId: chatId, seq: seq,
                   sentAt: sentAt ?? Double(seq))
     }
 
@@ -61,7 +61,7 @@ final class NotificationBurstTests: XCTestCase {
     func testAlreadyShownMessageIsSkipped() {
         let items = [item("c1", 1), item("c1", 2)]
         let plan = NotificationBurstPlanner.plan(
-            items: items, state: ["c1-1": BurstItemState(alreadyShown: true)])
+            items: items, state: ["c1/1": BurstItemState(alreadyShown: true)])
         XCTAssertEqual(plan.shown.map(\.seq), [2])
         XCTAssertEqual(plan.steps.first { $0.item.seq == 1 }?.outcome, .skip(.duplicate))
     }
@@ -71,14 +71,14 @@ final class NotificationBurstTests: XCTestCase {
         let items = (1...3).map { item("c1", $0) }
         let plan = NotificationBurstPlanner.plan(
             items: items,
-            state: ["c1-1": BurstItemState(read: true), "c1-2": BurstItemState(read: true)])
+            state: ["c1/1": BurstItemState(read: true), "c1/2": BurstItemState(read: true)])
         XCTAssertEqual(plan.shown.map(\.seq), [3])
         XCTAssertEqual(plan.steps.first { $0.item.seq == 2 }?.outcome, .skip(.read))
     }
 
     func testMutedChatIsSkipped() {
         let plan = NotificationBurstPlanner.plan(
-            items: [item("c1", 1)], state: ["c1-1": BurstItemState(muted: true)])
+            items: [item("c1", 1)], state: ["c1/1": BurstItemState(muted: true)])
         XCTAssertTrue(plan.shown.isEmpty)
         XCTAssertEqual(plan.steps.first?.outcome, .skip(.muted))
     }

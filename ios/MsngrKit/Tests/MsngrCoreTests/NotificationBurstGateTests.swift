@@ -45,7 +45,7 @@ final class NotificationBurstGateTests: XCTestCase {
     }
 
     private func item(_ chatId: String, _ seq: Int) -> BurstItem {
-        BurstItem(chatId: chatId, msgId: "\(chatId)-\(seq)", seq: seq, sentAt: Double(seq))
+        BurstItem(chatId: chatId, seq: seq, sentAt: Double(seq))
     }
 
     private func gate(_ signal: WindowSignal) -> NotificationBurstGate {

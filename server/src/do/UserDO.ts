@@ -103,7 +103,6 @@ const STORAGE_BATCH = 128;
 
 interface PushJob {
   chatId: string;
-  msgId?: string;
   seq?: number;
   sentAt?: number;
   from?: string;
@@ -686,7 +685,7 @@ export class UserDO implements DurableObject {
   private async enqueuePush(frame: PushJob) {
     const id = (await this.state.storage.get<number>("pqNext")) ?? 1;
     const job: PushJob = {
-      chatId: frame.chatId, msgId: frame.msgId, seq: frame.seq, sentAt: frame.sentAt,
+      chatId: frame.chatId, seq: frame.seq, sentAt: frame.sentAt,
       from: frame.from, fromDevice: frame.fromDevice, ts: frame.ts, body: frame.body,
     };
     await this.state.storage.put({ [pushKey(id)]: job, pqNext: id + 1 });
@@ -755,7 +754,7 @@ export class UserDO implements DurableObject {
           return {
             deviceId,
             res: await sendPush(this.env, t.token, t.env, {
-              chatId: frame.chatId, msgId: frame.msgId, seq: frame.seq,
+              chatId: frame.chatId, seq: frame.seq,
               sentAt: frame.sentAt, badge, badgeStamp,
               from: frame.from, fromDevice: frame.fromDevice, ts: frame.ts,
               env: envelopeForDevice(frame.body, `${userId ?? ""}/${deviceId}`),
@@ -839,7 +838,7 @@ export class UserDO implements DurableObject {
         if (m.deleted) continue;
         this.send(ws, {
           t: "msg", chatId,
-          seq: m.seq as number, msgId: m.msgId as string,
+          seq: m.seq as number,
           from: m.from as string, fromDevice: m.fromDevice as string,
           sentAt: m.sentAt as number, ts: m.ts as number, body: m.body,
           ...(m.service ? { service: true } : {}),
@@ -870,7 +869,7 @@ export class UserDO implements DurableObject {
     const er = await this.convStub(chatId).fetch(`https://do/events?userId=${userId}`);
     const e = (await er.json()) as {
       ok: boolean;
-      deleted?: Array<{ msgId: string; by: string }>;
+      deleted?: Array<{ seq: number; by: string }>;
       readMarks?: Record<string, number>;
       deliveredMarks?: Record<string, number>;
       state?: unknown;
@@ -878,7 +877,7 @@ export class UserDO implements DurableObject {
     if (!e.ok) return;
     if (e.state) this.send(ws, { t: "chat", chatId, event: "sync", state: e.state } as ServerFrame);
     for (const d of e.deleted ?? []) {
-      this.send(ws, { t: "deleted", chatId, msgIds: [d.msgId], forAll: true, by: d.by });
+      this.send(ws, { t: "deleted", chatId, seqs: [d.seq], forAll: true, by: d.by });
     }
     for (const [by, upToSeq] of Object.entries(e.deliveredMarks ?? {})) {
       if (by !== userId) this.send(ws, { t: "receipt", chatId, kind: "delivered", upToSeq, by });
@@ -948,11 +947,11 @@ export class UserDO implements DurableObject {
             service: frame.service ?? false,
           }),
         });
-        const r = (await res.json()) as { ok: boolean; msgId?: string; seq?: number; ts?: number; error?: string };
-        if (r.ok && r.msgId) {
+        const r = (await res.json()) as { ok: boolean; seq?: number; ts?: number; error?: string };
+        if (r.ok && r.seq) {
           this.send(ws, {
             t: "sent", chatId: frame.chatId, clientMsgId: frame.clientMsgId,
-            msgId: r.msgId, seq: r.seq!, ts: r.ts!,
+            seq: r.seq, ts: r.ts!,
           });
         } else {
           this.send(ws, {
@@ -989,7 +988,7 @@ export class UserDO implements DurableObject {
       case "delete":
         await this.convStub(frame.chatId).fetch("https://do/delete", {
           method: "POST",
-          body: JSON.stringify({ userId, msgIds: frame.msgIds, forAll: frame.forAll }),
+          body: JSON.stringify({ userId, seqs: frame.seqs, forAll: frame.forAll }),
         });
         return;
 

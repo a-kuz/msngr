@@ -80,7 +80,7 @@ final class NotificationDecisionTests: XCTestCase {
 
     func testOwnLocalNotificationAlwaysPresents() {
         // the app posted this banner itself from a WS frame: the message is already in
-        // the DB and its msgId is already in alreadyShown, so the common dedupe would
+        // the DB and its key is already in alreadyShown, so the common dedupe would
         // swallow the app's own notification
         XCTAssertTrue(present(isLocal: true, alreadyShown: true, messageInDB: true))
     }

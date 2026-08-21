@@ -307,6 +307,39 @@ func answer(dir: URL, base: URL, name: String, text: String, seconds: Double) as
     print("· answered «\(text)»")
 }
 
+/// Sends one text into the existing direct chat with a named peer, so a
+/// one-simulator scenario can receive a message it did not ask for.
+func send(dir: URL, base: URL, name: String, peer: String, text: String) async throws {
+    guard let member = cast.first(where: { $0.name == name }) else {
+        throw FixtureError("unknown account \(name)")
+    }
+    let peerMetaURL = dir.appendingPathComponent(peer).appendingPathComponent("meta.json")
+    guard let data = try? Data(contentsOf: peerMetaURL),
+          let peerMeta = try? JSONDecoder().decode(Meta.self, from: data) else {
+        throw FixtureError("\(peer) is not seeded")
+    }
+    let p = try await openPerson(name: member.name, display: member.display, dir: dir, base: base)
+    let chatId = try await p.db.read { dbc in
+        try String.fetchOne(dbc, sql: """
+            SELECT c.id FROM chat c
+            JOIN member m ON m.chatId = c.id AND m.userId = ?
+            WHERE c.kind = 'direct'
+            """, arguments: [peerMeta.userId])
+    }
+    guard let chatId else { throw FixtureError("no direct chat between \(name) and \(peer)") }
+    await startEngine(p, base: base)
+    var content = ContentPayload(kind: "text")
+    content.text = text
+    try await p.engine.enqueue(content: content, chatId: chatId)
+    try await settle("the message to leave the outbox", seconds: 30) {
+        try await p.db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM outbox") ?? 0
+        } == 0
+    }
+    await p.engine.stop()
+    print("· sent «\(text)» to \(peer) in \(chatId)")
+}
+
 func show(dir: URL) throws {
     for (name, _) in cast {
         let metaURL = dir.appendingPathComponent(name).appendingPathComponent("meta.json")
@@ -334,6 +367,13 @@ do {
         try await seed(dir: dir, base: base)
     case "show":
         try show(dir: URL(fileURLWithPath: try arg("dir")))
+    case "send":
+        try await send(
+            dir: URL(fileURLWithPath: try arg("dir")),
+            base: URL(string: try arg("base", default: "http://localhost:8787"))!,
+            name: try arg("as", default: "bravo"),
+            peer: try arg("to", default: "alfa"),
+            text: try arg("text", default: "Checking in."))
     case "answer":
         try await answer(
             dir: URL(fileURLWithPath: try arg("dir")),
@@ -346,6 +386,7 @@ do {
         usage:
           msngrfixture seed --dir <fixtures> [--base http://localhost:8787] [--reset]
           msngrfixture show --dir <fixtures>
+          msngrfixture send --dir <fixtures> [--as bravo] [--to alfa] [--base …] [--text …]
           msngrfixture answer --dir <fixtures> [--as alfa] [--base …] [--text …] [--timeout 180]
         """)
     }

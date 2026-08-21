@@ -7,7 +7,7 @@ import MsngrCore
 /// The notification hub. The server pushes every content message over APNs
 /// while the live WS delivers the same message into the app, so:
 /// - with the app active the banner comes from the WS (in-app), and the system
-///   push that catches up is dropped in willPresent (dedup by msgId);
+///   push that catches up is dropped in willPresent (dedup by chatId and seq);
 /// - in the background the system push shows it (the NSE fills in the decrypted
 ///   preview); where push is unavailable (simulator, device without a token) the
 ///   app posts its own local notification off the WS frame;
@@ -23,8 +23,9 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
     /// posts its own local notification for as long as the WS lives in the background.
     var apnsAvailable = true
 
-    /// msgIds whose banner has already been shown (in-app or system): the WS↔APNs dedup
-    private var shownMsgIds: Set<String> = []
+    /// "<chatId>/<seq>" keys whose banner has already been shown (in-app or
+    /// system): the WS↔APNs dedup
+    private var shownKeys: Set<String> = []
     private var db: DatabaseQueue?
     private var incomingTask: Task<Void, Never>?
     private var badgeCancellable: AnyCancellable?
@@ -60,7 +61,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
             Task { try? await db.write { dbc in try BadgeStore.applyLocal(dbc, value: 0) } }
         }
         db = nil
-        shownMsgIds.removeAll()
+        shownKeys.removeAll()
         activeChatId = nil
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
         UNUserNotificationCenter.current().setBadgeCount(0)
@@ -70,22 +71,23 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
 
     private func handleIncomingWS(_ ev: SyncEngine.IncomingMessage) async {
         let appActive = UIApplication.shared.applicationState == .active
-        let info = await bannerInfo(chatId: ev.chatId, msgId: ev.msgId, from: ev.fromUserId)
+        let key = Message.feedId(chatId: ev.chatId, seq: ev.seq)
+        let info = await bannerInfo(chatId: ev.chatId, seq: ev.seq, from: ev.fromUserId)
         let action = NotificationDecision.forIncomingWS(
             appActive: appActive,
             chatOpen: activeChatId == ev.chatId,
             isOwn: ev.isOwn,
             isService: ev.isService,
             muted: info?.muted ?? false,
-            alreadyShown: shownMsgIds.contains(ev.msgId),
+            alreadyShown: shownKeys.contains(key),
             apnsAvailable: apnsAvailable)
         guard action != .none, let info, let content = info.content else { return }
         // the claim on the message is what stops the push about it from showing
         // a second banner; the extension takes the same one
-        guard let db, await NotificationBurstStore.claim(db, chatId: ev.chatId, msgId: ev.msgId,
-                                                         seq: info.seq) else { return }
-        shownMsgIds.insert(ev.msgId)
-        await show(action, content: content, info: info, chatId: ev.chatId, msgId: ev.msgId)
+        guard let db, await NotificationBurstStore.claim(db, chatId: ev.chatId,
+                                                         seq: ev.seq) else { return }
+        shownKeys.insert(key)
+        await show(action, content: content, info: info, chatId: ev.chatId, seq: ev.seq)
     }
 
     /// Shows prepared content. The avatar comes from the cache; a file that is
@@ -94,7 +96,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
                       content: NotificationContent,
                       info: BannerInfo,
                       chatId: String,
-                      msgId: String) async {
+                      seq: Int) async {
         let api = AppState.shared.api
         let avatar = await AvatarCache.shared.ensure(info.sender.avatarId, api: api)
         switch action {
@@ -113,9 +115,10 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
                 avatarFile: avatar,
                 groupMembers: info.groupMembers,
                 groupAvatarFile: groupAvatar,
-                userInfo: ["chatId": chatId, "msgId": msgId])
+                userInfo: ["chatId": chatId, "seq": seq])
             try? await UNUserNotificationCenter.current().add(
-                UNNotificationRequest(identifier: msgId, content: built, trigger: nil))
+                UNNotificationRequest(identifier: Message.feedId(chatId: chatId, seq: seq),
+                                      content: built, trigger: nil))
         case .none:
             break
         }
@@ -124,8 +127,6 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
     struct BannerInfo {
         /// nil when this message must not raise a notification at all
         var content: NotificationContent?
-        /// the message's place in the chat; 0 while it is not in the database yet
-        var seq: Int = 0
         var sender: NotificationContentBuilder.SenderInfo
         var isGroup: Bool
         var chatAvatarId: String?
@@ -135,7 +136,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
     }
 
     /// Assembles the notification content from the local database: chat, sender, message.
-    private func bannerInfo(chatId: String, msgId: String, from: String) async -> BannerInfo? {
+    private func bannerInfo(chatId: String, seq: Int, from: String) async -> BannerInfo? {
         guard let db else { return nil }
         let showsText = NotificationPreferences.showsMessageText(in: AppGroup.defaults)
         let ownUserId = AppState.shared.session?.userId ?? ""
@@ -161,9 +162,8 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
                     .map { NotificationContentBuilder.SenderInfo(userId: $0["id"],
                                                                  displayName: $0["name"] ?? "") }
             }
-            let message = try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE msgId = ?",
-                                               arguments: [msgId])
-            info.seq = message?.seq ?? 0
+            let message = try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE chatId = ? AND seq = ?",
+                                               arguments: [chatId, seq])
             // a request before it is accepted: the sender's name shows, the content does not
             if hidden {
                 info.content = NotificationContentBuilder.requestContent(
@@ -197,28 +197,32 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
     }
 
     /// Clears the shade of notifications whose messages are already read. The
-    /// check goes by msgId against the chat's myReadUpTo: the observer gets the
-    /// unread count as a snapshot, and going by that count would pull a
+    /// check goes by (chatId, seq) against the chat's myReadUpTo: the observer
+    /// gets the unread count as a snapshot, and going by that count would pull a
     /// just-shown notification before its message even reached the count.
     private func dropReadNotifications() {
         guard let db else { return }
         let center = UNUserNotificationCenter.current()
         center.getDeliveredNotifications { delivered in
-            let items = delivered.compactMap { n -> (id: String, msgId: String)? in
-                guard let msgId = n.request.content.userInfo["msgId"] as? String else { return nil }
-                return (n.request.identifier, msgId)
+            let items = delivered.compactMap { n -> (id: String, chatId: String, seq: Int)? in
+                guard let chatId = n.request.content.userInfo["chatId"] as? String,
+                      let seq = n.request.content.userInfo["seq"] as? Int else { return nil }
+                return (n.request.identifier, chatId, seq)
             }
             guard !items.isEmpty else { return }
             Task {
-                let msgIds = items.map(\.msgId)
-                let placeholders = databaseQuestionMarks(count: msgIds.count)
-                let read = (try? await db.read { dbc in
-                    try String.fetchSet(dbc, sql: """
-                        SELECT m.msgId FROM message m JOIN chat c ON c.id = m.chatId
-                        WHERE m.msgId IN (\(placeholders)) AND m.seq <= c.myReadUpTo
-                        """, arguments: StatementArguments(msgIds))
-                }) ?? []
-                let ids = items.filter { read.contains($0.msgId) }.map(\.id)
+                let chatIds = Set(items.map(\.chatId))
+                let placeholders = databaseQuestionMarks(count: chatIds.count)
+                let readUpTo: [String: Int] = (try? await db.read { dbc in
+                    var out: [String: Int] = [:]
+                    for row in try Row.fetchAll(dbc, sql: """
+                        SELECT id, myReadUpTo FROM chat WHERE id IN (\(placeholders))
+                        """, arguments: StatementArguments([String](chatIds))) {
+                        out[row["id"]] = row["myReadUpTo"]
+                    }
+                    return out
+                }) ?? [:]
+                let ids = items.filter { $0.seq <= (readUpTo[$0.chatId] ?? 0) }.map(\.id)
                 if !ids.isEmpty {
                     UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ids)
                 }
@@ -234,7 +238,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         let isLocal = notification.request.trigger == nil
         let userInfo = notification.request.content.userInfo
         guard let chatId = userInfo["chatId"] as? String else { return [.banner] }
-        let msgId = userInfo["msgId"] as? String
+        let seq = userInfo["seq"] as? Int
 
         // the message's state in the local database: already in over WS, already read
         var messageInDB = false
@@ -244,11 +248,12 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
             let state = try? await db.read { dbc -> (Bool, Bool, Bool) in
                 let muted = try Bool.fetchOne(dbc, sql: "SELECT muted FROM chat WHERE id = ?",
                                               arguments: [chatId]) ?? false
-                guard let msgId else { return (false, false, muted) }
+                guard let seq else { return (false, false, muted) }
                 let row = try Row.fetchOne(dbc, sql: """
                     SELECT m.seq AS seq, c.myReadUpTo AS readUpTo
-                    FROM message m JOIN chat c ON c.id = m.chatId WHERE m.msgId = ?
-                    """, arguments: [msgId])
+                    FROM message m JOIN chat c ON c.id = m.chatId
+                    WHERE m.chatId = ? AND m.seq = ?
+                    """, arguments: [chatId, seq])
                 let inDB = row != nil
                 let read = row.map { ($0["seq"] as? Int ?? Int.max) <= ($0["readUpTo"] as Int) } ?? false
                 return (inDB, read, muted)
@@ -256,15 +261,16 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
             (messageInDB, messageRead, muted) = state ?? (false, false, false)
         }
 
+        let key = seq.map { Message.feedId(chatId: chatId, seq: $0) }
         let show = NotificationDecision.shouldPresentSystemPush(
             isLocal: isLocal,
             chatOpen: activeChatId == chatId,
-            alreadyShown: msgId.map(shownMsgIds.contains) ?? false,
+            alreadyShown: key.map(shownKeys.contains) ?? false,
             messageInDB: messageInDB,
             messageRead: messageRead,
             muted: muted)
         guard show else { return [] } // the badge arrives as its own number in the push
-        if let msgId { shownMsgIds.insert(msgId) }
+        if let key { shownKeys.insert(key) }
         return [.banner, .list]
     }
 

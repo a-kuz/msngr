@@ -16,27 +16,27 @@ public enum NotificationBurstStore {
     /// socket. The insert is the whole decision, so parallel writers cannot
     /// both win.
     @discardableResult
-    public static func claim(_ dbc: GRDB.Database, chatId: String, msgId: String, seq: Int,
+    public static func claim(_ dbc: GRDB.Database, chatId: String, seq: Int,
                              now: Double = Date().timeIntervalSince1970) throws -> Bool {
         try dbc.execute(sql: """
-            INSERT OR IGNORE INTO notificationShown (msgId, chatId, seq, shownAt)
-            VALUES (?,?,?,?)
-            """, arguments: [msgId, chatId, seq, now])
+            INSERT OR IGNORE INTO notificationShown (chatId, seq, shownAt)
+            VALUES (?,?,?)
+            """, arguments: [chatId, seq, now])
         return dbc.changesCount > 0
     }
 
     /// Same claim from outside a transaction of its own.
     @discardableResult
-    public static func claim(_ db: DatabaseQueue, chatId: String, msgId: String, seq: Int,
+    public static func claim(_ db: DatabaseQueue, chatId: String, seq: Int,
                              now: Double = Date().timeIntervalSince1970) async -> Bool {
         (try? await db.write { dbc in
-            try claim(dbc, chatId: chatId, msgId: msgId, seq: seq, now: now)
+            try claim(dbc, chatId: chatId, seq: seq, now: now)
         }) ?? false
     }
 
-    public static func isShown(_ dbc: GRDB.Database, msgId: String) throws -> Bool {
-        try Bool.fetchOne(dbc, sql: "SELECT EXISTS(SELECT 1 FROM notificationShown WHERE msgId = ?)",
-                          arguments: [msgId]) ?? false
+    public static func isShown(_ dbc: GRDB.Database, chatId: String, seq: Int) throws -> Bool {
+        try Bool.fetchOne(dbc, sql: "SELECT EXISTS(SELECT 1 FROM notificationShown WHERE chatId = ? AND seq = ?)",
+                          arguments: [chatId, seq]) ?? false
     }
 
     // MARK: - Plan
@@ -59,9 +59,9 @@ public enum NotificationBurstStore {
             // produced, so an extension the system kills leaves neither behind.
             if let writer, !envelopes.isEmpty {
                 for item in items.sorted(by: { $0.seq < $1.seq }) {
-                    guard let envelope = envelopes[item.msgId] else { continue }
+                    guard let envelope = envelopes[item.key] else { continue }
                     let outcome = writer.write(dbc, item: item, envelope: envelope, now: now)
-                    journal?.record(.stored, msgId: item.msgId, seq: item.seq,
+                    journal?.record(.stored, chatId: item.chatId, seq: item.seq,
                                     detail: outcome.rawValue)
                 }
                 for chatId in Set(items.map(\.chatId)) {
@@ -85,8 +85,8 @@ public enum NotificationBurstStore {
 
             for item in items {
                 let chat = chats[item.chatId]
-                state[item.msgId] = BurstItemState(
-                    alreadyShown: try isShown(dbc, msgId: item.msgId),
+                state[item.key] = BurstItemState(
+                    alreadyShown: try isShown(dbc, chatId: item.chatId, seq: item.seq),
                     read: item.seq <= (chat?.myReadUpTo ?? 0),
                     muted: MuteState.isMuted(muted: chat?.muted ?? false,
                                              mutedUntil: chat?.mutedUntil, now: now))
@@ -119,7 +119,7 @@ public enum NotificationBurstStore {
             for i in plan.steps.indices {
                 guard plan.steps[i].outcome == .show else { continue }
                 let item = plan.steps[i].item
-                guard try claim(dbc, chatId: item.chatId, msgId: item.msgId, seq: item.seq, now: now) else {
+                guard try claim(dbc, chatId: item.chatId, seq: item.seq, now: now) else {
                     plan.steps[i].outcome = .skip(.duplicate)
                     continue
                 }
@@ -151,8 +151,8 @@ public enum NotificationBurstStore {
     static func content(_ dbc: GRDB.Database, item: BurstItem, chat: Chat?,
                         showsMessageText: Bool) throws -> BurstContent {
         guard let chat else { return .fromPush }
-        let message = try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE msgId = ?",
-                                           arguments: [item.msgId])
+        let message = try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE chatId = ? AND seq = ?",
+                                           arguments: [item.chatId, item.seq])
         let senderId = message?.fromUserId
         let sender = try senderId.flatMap { try User.fetchOne(dbc, key: $0) }
         let senderInfo = NotificationContentBuilder.SenderInfo(

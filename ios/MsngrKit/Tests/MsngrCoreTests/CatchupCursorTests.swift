@@ -88,7 +88,7 @@ final class CatchupCursorTests: XCTestCase {
                 var c = ContentPayload(kind: "text")
                 c.text = "msg \(seq)"
                 return c
-            }(), chatId: "c1", msgId: "m\(seq)", seq: seq, from: "peer",
+            }(), chatId: "c1", seq: seq, from: "peer",
                                       sentAt: Double(seq), ts: Double(seq))
         }
         await engine.apply(try frame(["t": "syncState", "chatId": "c1",

@@ -3,23 +3,20 @@ import GRDB
 
 /// One message found by full text, with the piece of text the match sits in.
 public struct MessageSearchHit: Identifiable, Equatable, Sendable {
-    /// Local message id, unique across chats — the list identity.
+    /// Local message id, unique across chats — the list identity and what a
+    /// jump into the feed scrolls to.
     public var id: String
     public var chatId: String
-    /// Identity the feed knows the message by: the server msgId, or the local id
-    /// while the message is still on its way out.
-    public var messageId: String
     public var fromUserId: String
     public var kind: MessageKind
     /// Ordering key of the hit: server time when the message has one.
     public var sortedAt: Double
     public var snippet: MessageSearchSnippet
 
-    public init(id: String, chatId: String, messageId: String, fromUserId: String,
+    public init(id: String, chatId: String, fromUserId: String,
                 kind: MessageKind, sortedAt: Double, snippet: MessageSearchSnippet) {
         self.id = id
         self.chatId = chatId
-        self.messageId = messageId
         self.fromUserId = fromUserId
         self.kind = kind
         self.sortedAt = sortedAt
@@ -109,7 +106,7 @@ public enum MessageSearch {
         // one row over the page tells whether anything older matches
         arguments.append(limit + 1)
         let rows = try Row.fetchAll(dbc, sql: """
-            SELECT message.id, message.msgId, message.chatId, message.fromUserId,
+            SELECT message.id, message.chatId, message.fromUserId,
                    message.kind,
                    COALESCE(message.serverTs, message.sentAt) AS sortedAt,
                    snippet(messageFts, ?, ?, '…', -1, 12) AS snip
@@ -156,10 +153,8 @@ public enum MessageSearch {
 
     private static func hit(from row: Row) -> MessageSearchHit {
         let id: String = row["id"]
-        let msgId: String? = row["msgId"]
         return MessageSearchHit(id: id,
                                 chatId: row["chatId"],
-                                messageId: msgId ?? id,
                                 fromUserId: row["fromUserId"],
                                 kind: MessageKind(rawValue: row["kind"]) ?? .text,
                                 sortedAt: row["sortedAt"],

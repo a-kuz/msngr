@@ -21,23 +21,23 @@ final class HistoricReplayTests: XCTestCase {
 
         var original = ContentPayload(kind: "text")
         original.text = "hello"
-        await engine.storeHistoric(content: original, chatId: "c1", msgId: "m1",
+        await engine.storeHistoric(content: original, chatId: "c1",
                                    seq: 1, from: "peer", sentAt: 1, ts: 1)
 
         var reaction = ContentPayload(kind: "reaction")
-        reaction.targetMsgId = "m1"
+        reaction.targetSeq = 1
         reaction.emoji = "👍"
-        await engine.storeHistoric(content: reaction, chatId: "c1", msgId: "r1",
+        await engine.storeHistoric(content: reaction, chatId: "c1",
                                    seq: 2, from: "peer", sentAt: 2, ts: 2)
 
         var edit = ContentPayload(kind: "edit")
-        edit.targetMsgId = "m1"
+        edit.targetSeq = 1
         edit.text = "hello!"
-        await engine.storeHistoric(content: edit, chatId: "c1", msgId: "e1",
+        await engine.storeHistoric(content: edit, chatId: "c1",
                                    seq: 3, from: "peer", sentAt: 3, ts: 3)
 
         let row = try await db.read { dbc in
-            try Row.fetchOne(dbc, sql: "SELECT text, edited, reactions FROM message WHERE msgId = 'm1'")!
+            try Row.fetchOne(dbc, sql: "SELECT text, edited, reactions FROM message WHERE chatId = 'c1' AND seq = 1")!
         }
         XCTAssertEqual(row["text"] as String, "hello!")
         XCTAssertEqual(row["edited"] as Bool, true)
@@ -58,23 +58,23 @@ final class HistoricReplayTests: XCTestCase {
         let engine = try makeEngine(db: db)
 
         var reaction = ContentPayload(kind: "reaction")
-        reaction.targetMsgId = "m1"
+        reaction.targetSeq = 1
         reaction.emoji = "❤️"
-        await engine.storeHistoric(content: reaction, chatId: "c1", msgId: "r1",
+        await engine.storeHistoric(content: reaction, chatId: "c1",
                                    seq: 2, from: "peer", sentAt: 2, ts: 2)
 
         let buffered = try await db.read { dbc in
-            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingApply WHERE targetMsgId = 'm1'")!
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingApply WHERE targetSeq = 1")!
         }
         XCTAssertEqual(buffered, 1)
 
         var original = ContentPayload(kind: "text")
         original.text = "the original"
-        await engine.storeHistoric(content: original, chatId: "c1", msgId: "m1",
+        await engine.storeHistoric(content: original, chatId: "c1",
                                    seq: 1, from: "peer", sentAt: 1, ts: 1)
 
         let row = try await db.read { dbc in
-            try Row.fetchOne(dbc, sql: "SELECT reactions FROM message WHERE msgId = 'm1'")!
+            try Row.fetchOne(dbc, sql: "SELECT reactions FROM message WHERE chatId = 'c1' AND seq = 1")!
         }
         let reactions = try JSONDecoder().decode([String: [String]].self,
                                                  from: Data((row["reactions"] as String).utf8))
@@ -85,15 +85,15 @@ final class HistoricReplayTests: XCTestCase {
         XCTAssertEqual(left, 0)
     }
 
-    /// Replaying the same range again is idempotent: rows are upserted by msgId.
+    /// Replaying the same range again is idempotent: rows are upserted by (chatId, seq).
     func testHistoricReplayIdempotent() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
         var original = ContentPayload(kind: "text")
         original.text = "one"
-        await engine.storeHistoric(content: original, chatId: "c1", msgId: "m1",
+        await engine.storeHistoric(content: original, chatId: "c1",
                                    seq: 1, from: "peer", sentAt: 1, ts: 1)
-        await engine.storeHistoric(content: original, chatId: "c1", msgId: "m1",
+        await engine.storeHistoric(content: original, chatId: "c1",
                                    seq: 1, from: "peer", sentAt: 1, ts: 1)
         let count = try await db.read { dbc in
             try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = 'c1'")!

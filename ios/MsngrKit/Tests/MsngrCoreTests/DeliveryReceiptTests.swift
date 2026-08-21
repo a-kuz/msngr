@@ -28,7 +28,6 @@ final class DeliveryReceiptTests: XCTestCase {
             for seq in seqs {
                 var msg = Message(id: "cm\(seq)", chatId: "c1", fromUserId: "me", sentAt: Double(seq),
                                   kind: .text, text: "hi", status: .sent, isOutgoing: true)
-                msg.msgId = "m\(seq)"
                 msg.clientMsgId = "cm\(seq)"
                 msg.seq = seq
                 try msg.save(dbc)
@@ -187,8 +186,8 @@ final class DeliveryReceiptTests: XCTestCase {
                             lastSeq: 0, syncedSeq: 0, lastActivityAt: 0)
             try chat.save(dbc)
         }
-        let items = [BurstItem(chatId: "c1", msgId: "m1", seq: 1, sentAt: 1),
-                     BurstItem(chatId: "c1", msgId: "m2", seq: 2, sentAt: 2)]
+        let items = [BurstItem(chatId: "c1", seq: 1, sentAt: 1),
+                     BurstItem(chatId: "c1", seq: 2, sentAt: 2)]
 
         _ = try NotificationBurstStore.resolve(db: db, items: items, showsMessageText: true)
 
@@ -208,7 +207,7 @@ final class DeliveryReceiptTests: XCTestCase {
                 .init(userId: "peer", role: "member", joinedAt: 1, accepted: true),
                 .init(userId: "me", role: "member", joinedAt: 1, accepted: accepted),
             ],
-            pinnedMsgId: nil, lastSeq: lastSeq, readMarks: read, deliveredMarks: delivered)
+            pinnedSeq: nil, lastSeq: lastSeq, readMarks: read, deliveredMarks: delivered)
     }
 
     /// The read went out on a socket that was already dying, so the server never
@@ -279,7 +278,7 @@ final class DeliveryReceiptTests: XCTestCase {
         }
 
         _ = try NotificationBurstStore.resolve(
-            db: db, items: [BurstItem(chatId: "c1", msgId: "m1", seq: 1, sentAt: 1)],
+            db: db, items: [BurstItem(chatId: "c1", seq: 1, sentAt: 1)],
             showsMessageText: true)
 
         let pending = try db.read { dbc in try DeliveryReceipts.pending(dbc) }

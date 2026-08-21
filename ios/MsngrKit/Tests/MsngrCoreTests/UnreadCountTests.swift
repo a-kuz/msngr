@@ -20,7 +20,6 @@ final class UnreadCountTests: XCTestCase {
                           from: String = "peer") throws {
         var msg = Message(id: "m\(seq)", chatId: "c1", fromUserId: from, sentAt: Double(seq),
                           kind: kind, text: "hi", status: .sent, isOutgoing: from == "me")
-        msg.msgId = "m\(seq)"
         msg.seq = seq
         try msg.save(dbc)
     }

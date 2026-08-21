@@ -44,8 +44,6 @@ final class MessageSelectionTests: XCTestCase {
         XCTAssertFalse(MessageSelection.canDeleteForAll([]), "an empty selection has nothing to delete")
     }
 
-    /// «Удалить» из меню сообщения открывает выбор с этим сообщением и
-    /// подтверждением внизу; снятие выбора подтверждать больше нечего.
     @MainActor
     func testDeleteFromMenuOpensSelectionWithConfirmation() {
         let model = ChatViewModel(chatId: "c")
@@ -57,7 +55,7 @@ final class MessageSelectionTests: XCTestCase {
         XCTAssertTrue(model.selection.contains(a))
 
         model.toggleSelection(a)
-        XCTAssertTrue(model.selecting, "режим выбора остаётся")
+        XCTAssertTrue(model.selecting, "selection mode remains")
         XCTAssertFalse(model.confirmingDelete)
 
         model.endSelection()
@@ -66,15 +64,15 @@ final class MessageSelectionTests: XCTestCase {
     }
 
     func testCounterTitle() {
-        XCTAssertEqual(MessageSelection.title(count: 1), "1 сообщение")
-        XCTAssertEqual(MessageSelection.title(count: 2), "2 сообщения")
-        XCTAssertEqual(MessageSelection.title(count: 4), "4 сообщения")
-        XCTAssertEqual(MessageSelection.title(count: 5), "5 сообщений")
-        XCTAssertEqual(MessageSelection.title(count: 11), "11 сообщений")
-        XCTAssertEqual(MessageSelection.title(count: 12), "12 сообщений")
-        XCTAssertEqual(MessageSelection.title(count: 21), "21 сообщение")
-        XCTAssertEqual(MessageSelection.title(count: 22), "22 сообщения")
-        XCTAssertEqual(MessageSelection.title(count: 25), "25 сообщений")
-        XCTAssertEqual(MessageSelection.title(count: 111), "111 сообщений")
+        XCTAssertEqual(MessageSelection.title(count: 1), NSString(format: String(localized: "%lld messages") as NSString, 1) as String)
+        XCTAssertEqual(MessageSelection.title(count: 2), NSString(format: String(localized: "%lld messages") as NSString, 2) as String)
+        XCTAssertEqual(MessageSelection.title(count: 4), NSString(format: String(localized: "%lld messages") as NSString, 4) as String)
+        XCTAssertEqual(MessageSelection.title(count: 5), NSString(format: String(localized: "%lld messages") as NSString, 5) as String)
+        XCTAssertEqual(MessageSelection.title(count: 11), NSString(format: String(localized: "%lld messages") as NSString, 11) as String)
+        XCTAssertEqual(MessageSelection.title(count: 12), NSString(format: String(localized: "%lld messages") as NSString, 12) as String)
+        XCTAssertEqual(MessageSelection.title(count: 21), NSString(format: String(localized: "%lld messages") as NSString, 21) as String)
+        XCTAssertEqual(MessageSelection.title(count: 22), NSString(format: String(localized: "%lld messages") as NSString, 22) as String)
+        XCTAssertEqual(MessageSelection.title(count: 25), NSString(format: String(localized: "%lld messages") as NSString, 25) as String)
+        XCTAssertEqual(MessageSelection.title(count: 111), NSString(format: String(localized: "%lld messages") as NSString, 111) as String)
     }
 }

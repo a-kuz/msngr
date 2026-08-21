@@ -35,7 +35,7 @@ final class PushMessageWriterTests: XCTestCase {
     }
 
     private func item(_ seq: Int) -> BurstItem {
-        BurstItem(chatId: "c1", msgId: "m\(seq)", seq: seq, sentAt: Double(seq))
+        BurstItem(chatId: "c1", seq: seq, sentAt: Double(seq))
     }
 
     /// The whole point: a message that arrived only as a push is in the chat,
@@ -48,12 +48,12 @@ final class PushMessageWriterTests: XCTestCase {
         let envelope = PushEnvelope(body: try peer.envelope(text: "see you at six"),
                                     fromUserId: "peer", fromDeviceId: "peerdev", ts: 100)
 
-        let plan = try resolve(device, items: [item(1)], envelopes: ["m1": envelope])
+        let plan = try resolve(device, items: [item(1)], envelopes: ["c1/1": envelope])
 
         XCTAssertEqual(plan.steps.first?.outcome, .show)
         XCTAssertEqual(plan.steps.first?.content?.body, "see you at six")
         let row = try device.db.read { dbc in
-            try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE msgId = ?", arguments: ["m1"])
+            try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE chatId = 'c1' AND seq = 1")
         }
         XCTAssertEqual(row?.text, "see you at six")
         XCTAssertEqual(row?.seq, 1)
@@ -65,7 +65,7 @@ final class PushMessageWriterTests: XCTestCase {
     }
 
     /// The same message over the socket and by push lands once: the row is
-    /// keyed by msgId, and the second arrival finds it there.
+    /// keyed by (chatId, seq), and the second arrival finds it there.
     func testMessageAlreadyStoredIsNotWrittenTwice() throws {
         let device = try makeDevice()
         defer { TestStorage.remove(device.location) }
@@ -77,15 +77,14 @@ final class PushMessageWriterTests: XCTestCase {
         try device.db.write { dbc in
             var msg = Message(id: "m1", chatId: "c1", fromUserId: "peer", sentAt: 1,
                               kind: .text, text: "hello", status: .sent, isOutgoing: false)
-            msg.msgId = "m1"
             msg.seq = 1
             try msg.save(dbc)
         }
 
-        _ = try resolve(device, items: [item(1)], envelopes: ["m1": envelope])
+        _ = try resolve(device, items: [item(1)], envelopes: ["c1/1": envelope])
 
         let rows = try device.db.read { dbc in
-            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE msgId = 'm1'")
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = 'c1' AND seq = 1")
         }
         XCTAssertEqual(rows, 1)
     }
@@ -100,8 +99,8 @@ final class PushMessageWriterTests: XCTestCase {
         let envelope = PushEnvelope(body: try peer.envelope(text: "twice"),
                                     fromUserId: "peer", fromDeviceId: "peerdev", ts: 100)
 
-        let first = try resolve(device, items: [item(1)], envelopes: ["m1": envelope])
-        let second = try resolve(device, items: [item(1)], envelopes: ["m1": envelope])
+        let first = try resolve(device, items: [item(1)], envelopes: ["c1/1": envelope])
+        let second = try resolve(device, items: [item(1)], envelopes: ["c1/1": envelope])
 
         XCTAssertEqual(first.steps.first?.outcome, .show)
         XCTAssertEqual(second.steps.first?.outcome, .skip(.duplicate))
@@ -110,7 +109,7 @@ final class PushMessageWriterTests: XCTestCase {
         }
         XCTAssertEqual(count, 1)
         let text = try device.db.read { dbc in
-            try String.fetchOne(dbc, sql: "SELECT text FROM message WHERE msgId = 'm1'")
+            try String.fetchOne(dbc, sql: "SELECT text FROM message WHERE chatId = 'c1' AND seq = 1")
         }
         XCTAssertEqual(text, "twice")
     }
@@ -130,13 +129,13 @@ final class PushMessageWriterTests: XCTestCase {
         let body = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(env))
         let envelope = PushEnvelope(body: body, fromUserId: "peer", fromDeviceId: "peerdev", ts: 100)
 
-        let plan = try resolve(device, items: [item(1)], envelopes: ["m1": envelope])
+        let plan = try resolve(device, items: [item(1)], envelopes: ["c1/1": envelope])
 
         // no message to show: the push keeps the neutral text it arrived with
         XCTAssertEqual(plan.steps.first?.outcome, .show)
         XCTAssertNil(plan.steps.first?.content)
         let pending = try device.db.read { dbc in
-            try Row.fetchOne(dbc, sql: "SELECT reason, attempts FROM pendingDecrypt WHERE msgId = 'm1'")
+            try Row.fetchOne(dbc, sql: "SELECT reason, attempts FROM pendingDecrypt WHERE chatId = 'c1' AND seq = 1")
         }
         XCTAssertEqual(pending?["reason"], "no_sender_key")
         XCTAssertEqual(pending?["attempts"], 1)
@@ -151,7 +150,7 @@ final class PushMessageWriterTests: XCTestCase {
         let envelope = PushEnvelope(body: try peer.envelope(text: "who is this"),
                                     fromUserId: "peer", fromDeviceId: "peerdev", ts: 100)
 
-        _ = try resolve(device, items: [item(1)], envelopes: ["m1": envelope])
+        _ = try resolve(device, items: [item(1)], envelopes: ["c1/1": envelope])
 
         let count = try device.db.read { dbc in
             try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message")
@@ -168,7 +167,7 @@ final class PushMessageWriterTests: XCTestCase {
         var peer = try RatchetPair(store: device.store)
         var envelopes: [String: PushEnvelope] = [:]
         for seq in 1...3 {
-            envelopes["m\(seq)"] = PushEnvelope(body: try peer.envelope(text: "line \(seq)"),
+            envelopes[Message.feedId(chatId: "c1", seq: seq)] = PushEnvelope(body: try peer.envelope(text: "line \(seq)"),
                                                 fromUserId: "peer", fromDeviceId: "peerdev",
                                                 ts: Double(seq))
         }
@@ -196,11 +195,11 @@ final class PushMessageWriterTests: XCTestCase {
                                     fromUserId: "peer", fromDeviceId: "peerdev", ts: 100)
         let journal = NotificationJournal(url: device.location.nseJournalURL)
 
-        _ = try resolve(device, items: [item(1)], envelopes: ["m1": envelope], journal: journal)
+        _ = try resolve(device, items: [item(1)], envelopes: ["c1/1": envelope], journal: journal)
 
         let entries = journal.entries().filter { $0.phase == .stored }
         XCTAssertEqual(entries.map(\.detail), [PushStoreOutcome.stored.rawValue])
-        XCTAssertEqual(entries.first?.msgId, "m1")
+        XCTAssertEqual(entries.first?.chatId, "c1")
     }
 
     /// A message written by the other process reaches the screens: an
@@ -235,7 +234,6 @@ final class PushMessageWriterTests: XCTestCase {
             var msg = Message(id: "m1", chatId: "c1", fromUserId: "peer", sentAt: 1,
                               kind: .text, text: "from the extension", status: .sent,
                               isOutgoing: false)
-            msg.msgId = "m1"
             msg.seq = 1
             try msg.save(dbc)
         }
@@ -260,10 +258,9 @@ final class PushMessageWriterTests: XCTestCase {
         try await device.db.write { dbc in
             var msg = Message(id: "m1", chatId: "c1", fromUserId: "peer", sentAt: 1,
                               kind: .text, text: "already here", status: .sent, isOutgoing: false)
-            msg.msgId = "m1"
             msg.seq = 1
             try msg.save(dbc)
-            try SyncEngine.deferEnvelope(dbc, reason: "no_session", chatId: "c1", msgId: "m1",
+            try SyncEngine.deferEnvelope(dbc, reason: "no_session", chatId: "c1",
                                          seq: 1, from: "peer", fromDevice: "peerdev", sentAt: 1,
                                          ts: 1, body: Data("{}".utf8), now: 0)
         }

@@ -1,5 +1,5 @@
 import type { Env, ChatState, ChatMember, ChatPolicy, StoredMsg, ServerFrame, PublicUser } from "../types";
-import { ulid, json, err, seqKey, nowSec, shouldArmAlarm } from "../util";
+import { json, err, seqKey, SEQ_PAD, nowSec, shouldArmAlarm } from "../util";
 import {
   newCounters, snapshot, diff, logPerf, wrapState, wrapDB, wrapStub, type PerfCounters,
 } from "../perf";
@@ -48,11 +48,15 @@ const FANOUT_WATCHDOG_MS = 2_000;
 /// keys per batch, so a larger page would be served by several reads anyway.
 const HISTORY_PAGE = 128;
 
-/// One record per message removed for everyone, so the chat tail is read
-/// without walking the journal: a client that reconnects asks for the
-/// tombstones of a chat, and there are as many of those as messages were
-/// actually deleted.
+/// One record per message removed for everyone, keyed by the padded seq so the
+/// chat tail is read without walking the journal: a client that reconnects asks
+/// for the tombstones of a chat, and there are as many of those as messages
+/// were actually deleted.
 const TOMB_PREFIX = "tomb:";
+
+function tombKey(seq: number): string {
+  return TOMB_PREFIX + String(seq).padStart(SEQ_PAD, "0");
+}
 
 /// A member's marks live one small key each (`mark:<kind>:<userId>`), so a
 /// receipt writes that member's pair instead of rewriting every member's
@@ -70,7 +74,7 @@ const CMID_MIN_AGE_SEC = 72 * 3600;
 const CMID_SWEEP_EVERY_SEC = 3600;
 
 interface Tombstone {
-  msgId: string;
+  seq: number;
   /// who removed it
   by: string;
   /// the member the message was withheld from: it never reached them, so its
@@ -112,7 +116,7 @@ interface Meta {
   invitePolicy?: ChatPolicy;
   createdBy: string;
   createdAt: number;
-  pinnedMsgId: string | null;
+  pinnedSeq: number | null;
   lastSeq: number;
   /// How many messages of the chat are content. A seq is spent on every frame,
   /// including the ones a client never shows — an edit, a reaction, a sender key
@@ -223,7 +227,7 @@ export class ConversationDO implements DurableObject {
     await this.state.storage.put("meta", meta);
     const dlvr = await this.markMap("dlvr");
     const doomed: string[] = [];
-    const listed = await this.state.storage.list<{ msgId: string; seq: number; ts: number }>(
+    const listed = await this.state.storage.list<{ seq: number; ts: number }>(
       { prefix: CMID_PREFIX });
     for (const [key, rec] of listed) {
       const from = key.slice(CMID_PREFIX.length).split("/", 1)[0];
@@ -569,7 +573,7 @@ export class ConversationDO implements DurableObject {
       createdBy: meta.createdBy,
       createdAt: meta.createdAt,
       members: [...members.values()],
-      pinnedMsgId: meta.pinnedMsgId,
+      pinnedSeq: meta.pinnedSeq,
       lastSeq: meta.lastSeq,
       readMarks,
       deliveredMarks,
@@ -639,7 +643,7 @@ export class ConversationDO implements DurableObject {
         chatId: b.chatId, kind: b.kind, title: b.title ?? null,
         avatarId: null, description: null,
         sendPolicy: "all", invitePolicy: "all", createdBy: b.createdBy,
-        createdAt: now, pinnedMsgId: null, lastSeq: 0, contentCount: 0,
+        createdAt: now, pinnedSeq: null, lastSeq: 0, contentCount: 0,
       };
       await this.state.storage.put("meta", this.meta);
       this.members = new Map();
@@ -715,10 +719,10 @@ export class ConversationDO implements DurableObject {
         // a member leaving would otherwise keep encrypting into a chain that member holds
         const viewer = url.searchParams.get("userId");
         if (!(await this.loadMembers()).has(viewer ?? "")) return err("not_member", 403);
-        const deleted: Array<{ msgId: string; by: string }> = [];
+        const deleted: Array<{ seq: number; by: string }> = [];
         for (const [, t] of await this.state.storage.list<Tombstone>({ prefix: TOMB_PREFIX })) {
           if (t.blockedFor === viewer) continue;
-          deleted.push({ msgId: t.msgId, by: t.by });
+          deleted.push({ seq: t.seq, by: t.by });
         }
         const readMarks = await this.markMap("read");
         const deliveredMarks = await this.markMap("dlvr");
@@ -761,7 +765,7 @@ export class ConversationDO implements DurableObject {
         const blockedFor = block?.byPeer ? block.peer : null;
 
         const dupeKey = `cmid:${b.from}/${b.clientMsgId}`;
-        const dupe = await this.state.storage.get<{ msgId: string; seq: number; ts: number }>(dupeKey);
+        const dupe = await this.state.storage.get<{ seq: number; ts: number }>(dupeKey);
         if (dupe) return json({ ok: true, ...dupe, dupe: true });
 
         const seq = meta.lastSeq + 1;
@@ -770,7 +774,7 @@ export class ConversationDO implements DurableObject {
         // question about how much of the chat a member has not seen
         const contentAt = (meta.contentCount ?? 0) + (b.service ? 0 : 1);
         const msg: StoredMsg = {
-          msgId: ulid(), seq, from: b.from, fromDevice: b.fromDevice,
+          seq, from: b.from, fromDevice: b.fromDevice,
           clientMsgId: b.clientMsgId, sentAt: b.sentAt, ts: nowSec(), body: b.body,
           contentAt,
           ...(b.service ? { service: true } : {}),
@@ -782,11 +786,11 @@ export class ConversationDO implements DurableObject {
         await this.state.storage.put({
           meta,
           [seqKey(seq)]: msg,
-          [dupeKey]: { msgId: msg.msgId, seq, ts: msg.ts },
+          [dupeKey]: { seq, ts: msg.ts },
         });
 
         const frame: ServerFrame = {
-          t: "msg", chatId: meta.chatId, seq, msgId: msg.msgId,
+          t: "msg", chatId: meta.chatId, seq,
           from: msg.from, fromDevice: msg.fromDevice,
           sentAt: msg.sentAt, ts: msg.ts, body: msg.body,
           ...(msg.service ? { service: true } : {}),
@@ -813,7 +817,7 @@ export class ConversationDO implements DurableObject {
         // (and the APNs call behind it) runs in the alarm queue afterwards.
         // Author's own devices are targets too: the echo goes through his UserDO.
         await this.fanout(frame, { skip: blocked });
-        return json({ ok: true, msgId: msg.msgId, seq, ts: msg.ts });
+        return json({ ok: true, seq, ts: msg.ts });
       }
 
       case "/recv": {
@@ -885,26 +889,26 @@ export class ConversationDO implements DurableObject {
       }
 
       case "/delete": {
-        const b = (await req.json()) as { userId: string; msgIds: string[]; forAll: boolean };
+        const b = (await req.json()) as { userId: string; seqs: number[]; forAll: boolean };
         if (b.forAll) {
           const members = await this.loadMembers();
           const actor = members.get(b.userId);
           if (!actor) return err("not_member", 403);
-          // tombstone the ciphertext, found by msgId in the journal
+          // tombstone the ciphertext: a seq is the storage key, one read each
           const updates: Record<string, StoredMsg> = {};
           const marks: Record<string, Tombstone> = {};
-          const tombstoned: string[] = [];
-          for (const [key, m] of await this.state.storage.list<StoredMsg>({ prefix: "msg:" })) {
-            if (b.msgIds.includes(m.msgId)) {
-              // only a group admin can remove someone else's message
-              if (m.from !== b.userId && actor.role !== "admin") continue;
-              updates[key] = { ...m, body: null, deleted: true, deletedBy: b.userId };
-              marks[TOMB_PREFIX + m.msgId] = {
-                msgId: m.msgId, by: b.userId,
-                ...(m.blockedFor ? { blockedFor: m.blockedFor } : {}),
-              };
-              tombstoned.push(m.msgId);
-            }
+          const tombstoned: number[] = [];
+          for (const seq of b.seqs) {
+            const m = await this.state.storage.get<StoredMsg>(seqKey(seq));
+            if (!m) continue;
+            // only a group admin can remove someone else's message
+            if (m.from !== b.userId && actor.role !== "admin") continue;
+            updates[seqKey(seq)] = { ...m, body: null, deleted: true, deletedBy: b.userId };
+            marks[tombKey(seq)] = {
+              seq, by: b.userId,
+              ...(m.blockedFor ? { blockedFor: m.blockedFor } : {}),
+            };
+            tombstoned.push(seq);
           }
           if (tombstoned.length) {
             await this.state.storage.put(updates);
@@ -912,7 +916,7 @@ export class ConversationDO implements DurableObject {
             // fan out only what was really removed: otherwise members would lose
             // messages locally that are still on the server
             await this.fanout({
-              t: "deleted", chatId: meta.chatId, msgIds: tombstoned, forAll: true, by: b.userId,
+              t: "deleted", chatId: meta.chatId, seqs: tombstoned, forAll: true, by: b.userId,
             });
           }
         }
@@ -1016,10 +1020,11 @@ export class ConversationDO implements DurableObject {
       }
 
       case "/pin-message": {
-        const b = (await req.json()) as { actor: string; msgId: string | null };
+        const b = (await req.json()) as { actor: string; seq?: number | null };
         const members = await this.loadMembers();
         if (!members.has(b.actor)) return err("not_member", 403);
-        meta.pinnedMsgId = b.msgId;
+        // an unpin arrives as an absent seq: JSON encoders drop null fields
+        meta.pinnedSeq = b.seq ?? null;
         this.meta = meta;
         await this.state.storage.put("meta", meta);
         await this.broadcastChat("pinned");

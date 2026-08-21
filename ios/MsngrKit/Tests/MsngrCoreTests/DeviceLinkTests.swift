@@ -11,7 +11,7 @@ final class DeviceLinkTests: XCTestCase {
     private func stateJSON(_ id: String, lastSeq: Int, peerRead: Int = 0) -> String {
         """
         {"chatId":"\(id)","kind":"direct","title":null,"avatarId":null,"description":null,
-         "createdBy":"peer","createdAt":1,"pinnedMsgId":null,"lastSeq":\(lastSeq),
+         "createdBy":"peer","createdAt":1,"pinnedSeq":null,"lastSeq":\(lastSeq),
          "members":[{"userId":"me","role":"member","joinedAt":1,"accepted":true},
                     {"userId":"peer","role":"member","joinedAt":1,"accepted":true}],
          "readMarks":{"peer":\(peerRead)},"deliveredMarks":{}}
@@ -86,7 +86,6 @@ final class DeviceLinkTests: XCTestCase {
             var msg = Message(id: "m41", chatId: "c1", fromUserId: "peer", sentAt: 41,
                               kind: .text, text: "first one this device sees",
                               status: .sent, isOutgoing: false)
-            msg.msgId = "m41"
             msg.seq = 41
             try msg.save(dbc)
         }

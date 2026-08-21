@@ -13,24 +13,26 @@ import Foundation
 /// One push accepted into a window.
 public struct BurstItem: Hashable, Sendable {
     public var chatId: String
-    public var msgId: String
-    /// Position of the message in its chat: the order inside a chat.
+    /// Position of the message in its chat: with the chat it is the message's
+    /// identity, and the order inside a chat.
     public var seq: Int
     /// Send time as the sender stamped it: only compared, never shown. Orders
     /// the chats of a burst between each other.
     public var sentAt: Double
 
-    public init(chatId: String, msgId: String, seq: Int, sentAt: Double) {
+    public init(chatId: String, seq: Int, sentAt: Double) {
         self.chatId = chatId
-        self.msgId = msgId
         self.seq = seq
         self.sentAt = sentAt
     }
+
+    /// Dictionary key of the message the push carries.
+    public var key: String { Message.feedId(chatId: chatId, seq: seq) }
 }
 
 /// What the local database knows about a message a push arrived for.
 public struct BurstItemState: Equatable, Sendable {
-    /// A banner for this msgId has already been presented on this device.
+    /// A banner for this message has already been presented on this device.
     public var alreadyShown: Bool
     /// `seq <= chat.myReadUpTo`: read here or on another device.
     public var read: Bool
@@ -120,7 +122,7 @@ public struct BurstPlan: Equatable, Sendable {
 
 public enum NotificationBurstPlanner {
     /// - Parameters:
-    ///   - state: by msgId; a missing entry means the database knows nothing.
+    ///   - state: by `BurstItem.key`; a missing entry means the database knows nothing.
     ///   - baseline: by chatId; a missing entry means the chat is unknown here.
     public static func plan(items: [BurstItem],
                             state: [String: BurstItemState] = [:],
@@ -130,9 +132,9 @@ public enum NotificationBurstPlanner {
         var steps: [BurstStep] = []
         steps.reserveCapacity(order.count)
         for entry in order {
-            let s = state[entry.item.msgId] ?? BurstItemState()
+            let s = state[entry.item.key] ?? BurstItemState()
             let outcome: BurstOutcome
-            if s.alreadyShown || !seenInWindow.insert(entry.item.msgId).inserted {
+            if s.alreadyShown || !seenInWindow.insert(entry.item.key).inserted {
                 outcome = .skip(.duplicate)
             } else if s.muted {
                 outcome = .skip(.muted)
@@ -156,7 +158,7 @@ public enum NotificationBurstPlanner {
         for entry in indexed { byChat[entry.item.chatId, default: []].append(entry) }
         let groups = byChat.map { chatId, entries -> (key: (Double, String), rows: [(index: Int, item: BurstItem)]) in
             let sorted = entries.sorted {
-                ($0.item.seq, $0.item.msgId, $0.index) < ($1.item.seq, $1.item.msgId, $1.index)
+                ($0.item.seq, $0.index) < ($1.item.seq, $1.index)
             }
             let newest = sorted.map(\.item.sentAt).max() ?? 0
             return (key: (newest, chatId), rows: sorted)

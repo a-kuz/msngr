@@ -134,7 +134,7 @@ final class FeedExtrasTests: XCTestCase {
     func testPlanAvatarInsetNarrowsWideBubble() {
         var m = incoming("m1", sentAt: 1_700_000_000, seq: 1)
         // unbreakable text pushes both bubbles to their exact width caps
-        m.text = String(repeating: "щ", count: 400)
+        m.text = String(repeating: "m", count: 400)
         let plain = BubbleLayout.plan(for: m, width: width, tightGap: false, showTail: true,
                                       showName: false, authorName: nil)
         let inset = BubbleLayout.plan(for: m, width: width, tightGap: false, showTail: true,
@@ -143,8 +143,11 @@ final class FeedExtrasTests: XCTestCase {
                                  floor(width * Theme.bubbleMaxWidthRatio) - BubbleLayout.avatarSpan,
                                  "the width cap gives the avatar span up")
         XCTAssertLessThan(inset.bubbleFrame.width, plain.bubbleFrame.width)
-        // shifted left edge plus narrowed width: the right edge does not move out
-        XCTAssertLessThanOrEqual(inset.bubbleFrame.maxX, plain.bubbleFrame.maxX + 0.5)
+        // shifted left edge plus narrowed width: the right edge stays inside the
+        // boundary any bubble may use. Comparing against the plain plan's own
+        // maxX would tie the test to where this text happens to wrap.
+        let rightBound = BubbleLayout.sideMargin + floor(width * Theme.bubbleMaxWidthRatio)
+        XCTAssertLessThanOrEqual(inset.bubbleFrame.maxX, rightBound)
     }
 
     // MARK: - The sticky day label
@@ -154,12 +157,12 @@ final class FeedExtrasTests: XCTestCase {
         return [
             .message(incoming("m3", sentAt: base + 86_400, seq: 3), tightGap: false,
                      showTail: true, showName: false, authorName: nil),
-            .dateSeparator(id: "date:m3", label: "Сегодня"),
+            .dateSeparator(id: "date:m3", label: "Today"),
             .message(incoming("m2", sentAt: base + 60, seq: 2), tightGap: false,
                      showTail: true, showName: false, authorName: nil),
             .message(incoming("m1", sentAt: base, seq: 1), tightGap: false,
                      showTail: true, showName: false, authorName: nil),
-            .dateSeparator(id: "date:m1", label: "Вчера"),
+            .dateSeparator(id: "date:m1", label: "Yesterday"),
         ]
     }
 
@@ -167,9 +170,9 @@ final class FeedExtrasTests: XCTestCase {
     /// above it, which in the inverted array lies at a later index.
     func testStickyLabelNamesTheDayOfTheTopMessage() {
         let items = stickyItems()
-        XCTAssertEqual(MessagesViewController.stickyLabel(items: items, topIndex: 0), "Сегодня")
-        XCTAssertEqual(MessagesViewController.stickyLabel(items: items, topIndex: 2), "Вчера")
-        XCTAssertEqual(MessagesViewController.stickyLabel(items: items, topIndex: 3), "Вчера")
+        XCTAssertEqual(MessagesViewController.stickyLabel(items: items, topIndex: 0), "Today")
+        XCTAssertEqual(MessagesViewController.stickyLabel(items: items, topIndex: 2), "Yesterday")
+        XCTAssertEqual(MessagesViewController.stickyLabel(items: items, topIndex: 3), "Yesterday")
     }
 
     /// The day's own separator at the top edge takes the spot: the floating

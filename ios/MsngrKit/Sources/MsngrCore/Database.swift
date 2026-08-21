@@ -58,7 +58,10 @@ public enum AppDatabase {
 
     static var migrator: DatabaseMigrator {
         var m = DatabaseMigrator()
-        m.registerMigration("v1") { db in
+        // "v1-seq" rather than "v1": a message is identified by (chatId, seq)
+        // and the schema has no msgId anywhere. A file written before that is
+        // refused instead of being misread (no compatibility; re-register).
+        m.registerMigration("v1-seq") { db in
             try db.create(table: "user") { t in
                 t.column("id", .text).primaryKey()
                 t.column("username", .text).notNull()
@@ -79,7 +82,7 @@ public enum AppDatabase {
                 t.column("chatDescription", .text)
                 t.column("createdBy", .text).notNull()
                 t.column("createdAt", .double).notNull()
-                t.column("pinnedMsgId", .text)
+                t.column("pinnedSeq", .integer)
                 t.column("lastSeq", .integer).notNull().defaults(to: 0)
                 t.column("syncedSeq", .integer).notNull().defaults(to: 0)
                 t.column("unreadCount", .integer).notNull().defaults(to: 0)
@@ -104,7 +107,6 @@ public enum AppDatabase {
             }
             try db.create(table: "message") { t in
                 t.column("id", .text).primaryKey()
-                t.column("msgId", .text).unique()
                 t.column("chatId", .text).notNull().indexed()
                 t.column("seq", .integer)
                 t.column("clientMsgId", .text)
@@ -124,7 +126,10 @@ public enum AppDatabase {
                 t.column("reactions", .text).notNull().defaults(to: "{}")
                 t.column("expiresAt", .double)
             }
-            try db.create(indexOn: "message", columns: ["chatId", "seq"])
+            // (chatId, seq) is the message's identity once the server numbered
+            // it; rows without a seq (own, unacknowledged) stay outside the
+            // constraint, NULLs being distinct to SQLite
+            try db.create(indexOn: "message", columns: ["chatId", "seq"], options: .unique)
             try db.create(indexOn: "message", columns: ["chatId", "sentAt"])
             try db.create(table: "outbox") { t in
                 t.column("clientMsgId", .text).primaryKey()
@@ -183,14 +188,13 @@ public enum AppDatabase {
             // sender key): kept raw and processed again once the key shows up
             try db.create(table: "pendingDecrypt") { t in
                 t.column("chatId", .text).notNull().indexed()
-                t.column("msgId", .text).notNull()
                 t.column("seq", .integer).notNull()
                 t.column("fromUserId", .text).notNull()
                 t.column("fromDevice", .text).notNull()
                 t.column("sentAt", .double).notNull()
                 t.column("ts", .double).notNull()
                 t.column("body", .blob).notNull()  // the envelope as JSON
-                t.primaryKey(["chatId", "msgId"])
+                t.primaryKey(["chatId", "seq"])
             }
         }
         m.registerMigration("v4-pendingAction") { db in
@@ -211,12 +215,12 @@ public enum AppDatabase {
             // applied once the message row appears
             try db.create(table: "pendingApply") { t in
                 t.column("chatId", .text).notNull()
-                t.column("targetMsgId", .text).notNull()
+                t.column("targetSeq", .integer).notNull()
                 t.column("kind", .text).notNull()    // edit | reaction | deleted
                 t.column("fromUserId", .text).notNull()
                 t.column("payload", .text).notNull() // ContentPayload as JSON; "{}" for deleted
                 t.column("seq", .integer)
-                t.primaryKey(["chatId", "targetMsgId", "kind", "fromUserId"])
+                t.primaryKey(["chatId", "targetSeq", "kind", "fromUserId"])
             }
         }
         m.registerMigration("v6-failReason") { db in
@@ -243,7 +247,6 @@ public enum AppDatabase {
             try db.create(table: "historyGap") { t in
                 t.column("chatId", .text).notNull().indexed()
                 t.column("seq", .integer).notNull()
-                t.column("msgId", .text)
                 t.column("fromUserId", .text)
                 t.column("sentAt", .double)
                 t.column("reason", .text).notNull()
@@ -282,10 +285,10 @@ public enum AppDatabase {
             // at once, or a push arriving after the app already showed the
             // message, therefore cannot produce a second banner.
             try db.create(table: "notificationShown") { t in
-                t.column("msgId", .text).primaryKey()
                 t.column("chatId", .text).notNull()
-                t.column("seq", .integer).notNull().defaults(to: 0)
+                t.column("seq", .integer).notNull()
                 t.column("shownAt", .double).notNull().indexed()
+                t.primaryKey(["chatId", "seq"])
             }
         }
         m.registerMigration("v11-syncCursor") { db in
@@ -474,7 +477,6 @@ extension Message {
     public init(row: Row) throws {
         let dec = JSONDecoder()
         id = row["id"]
-        msgId = row["msgId"]
         chatId = row["chatId"]
         seq = row["seq"]
         clientMsgId = row["clientMsgId"]
@@ -505,7 +507,6 @@ extension Message {
             return String(data: d, encoding: .utf8)
         }
         container["id"] = id
-        container["msgId"] = msgId
         container["chatId"] = chatId
         container["seq"] = seq
         container["clientMsgId"] = clientMsgId

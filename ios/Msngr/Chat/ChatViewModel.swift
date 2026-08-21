@@ -83,8 +83,8 @@ final class ChatViewModel: ObservableObject {
     private var lastMsgs: [Message] = []
     private var obscuredCancellable: AnyCancellable?
     private var pinCancellable: AnyCancellable?
-    /// The pinnedMsgId the pin observation is installed for.
-    private var observedPinId: String?
+    /// The pinnedSeq the pin observation is installed for.
+    private var observedPinSeq: Int?
 
     /// Seq of messages inside the window this device could not read.
     private var unreadableSeqs: [Int] = []
@@ -332,25 +332,25 @@ final class ChatViewModel: ObservableObject {
         markVisibleRead()
     }
 
-    /// The pinned message row on its own, looked up by the chat row's pinnedMsgId.
+    /// The pinned message row on its own, looked up by the chat row's pinnedSeq.
     /// The feed window plays no part here: a pin thousands of messages deep is one
-    /// read on the msgId unique index, and an edit or a deletion of that row
-    /// re-emits through the observation.
+    /// read on the (chatId, seq) unique index, and an edit or a deletion of that
+    /// row re-emits through the observation.
     private func observePinnedMessage() {
-        guard let pinId = chat?.pinnedMsgId, !contentHidden else {
-            observedPinId = nil
+        guard let pinSeq = chat?.pinnedSeq, !contentHidden else {
+            observedPinSeq = nil
             pinCancellable = nil
             pinnedMessage = nil
             return
         }
-        guard pinId != observedPinId, let db = app.db else { return }
-        observedPinId = pinId
+        guard pinSeq != observedPinSeq, let db = app.db else { return }
+        observedPinSeq = pinSeq
         let chatId = self.chatId
         pinCancellable = ValueObservation
             .tracking { dbc in
                 try Message.fetchOne(dbc, sql: """
-                    SELECT * FROM message WHERE chatId = ? AND (msgId = ? OR id = ?)
-                    """, arguments: [chatId, pinId, pinId])
+                    SELECT * FROM message WHERE chatId = ? AND seq = ?
+                    """, arguments: [chatId, pinSeq])
             }
             .publisher(in: db, scheduling: .async(onQueue: .main))
             .sink(receiveCompletion: { _ in }, receiveValue: { [weak self] msg in
@@ -363,7 +363,7 @@ final class ChatViewModel: ObservableObject {
         chatCancellable = nil
         obscuredCancellable = nil
         pinCancellable = nil
-        observedPinId = nil
+        observedPinSeq = nil
         typingTask?.cancel()
         typingTask = nil
         typingExpiryTask?.cancel()
@@ -582,15 +582,15 @@ final class ChatViewModel: ObservableObject {
     }
 
     static func membersText(_ count: Int) -> String {
-        "\(count) " + (count == 1 ? "participant" : "participants")
+        String(localized: "\(count) participants")
     }
 
     static func lastSeenText(_ lastSeen: TimeInterval, now: Date = Date()) -> String {
         let elapsed = now.timeIntervalSince1970 - lastSeen
         if elapsed < 60 { return String(localized: "last seen just now") }
-        let relTime = RelativeDateTimeFormatter.ruShort.localizedString(
+        let relTime = RelativeDateTimeFormatter.short.localizedString(
             for: Date(timeIntervalSince1970: lastSeen), relativeTo: now)
-        return String(localized: "last seen") + " " + relTime
+        return String(localized: "last seen \(relTime)")
     }
 
     // MARK: - Rights
@@ -676,7 +676,7 @@ final class ChatViewModel: ObservableObject {
         dismissUnreadMarker()
         if let editing {
             var c = ContentPayload(kind: "edit")
-            c.targetMsgId = editing.msgId ?? editing.id
+            c.targetLocalId = editing.id
             c.text = trimmed
             enqueue(c)
             self.editing = nil
@@ -685,7 +685,7 @@ final class ChatViewModel: ObservableObject {
         var c = ContentPayload(kind: "text")
         c.text = trimmed
         c.replyTo = replyingTo.map {
-            ReplyPreview(msgId: $0.msgId ?? $0.id, authorId: $0.fromUserId,
+            ReplyPreview(seq: $0.seq, authorId: $0.fromUserId,
                          text: Self.previewText($0), kind: $0.kind.rawValue)
         }
         replyingTo = nil
@@ -712,7 +712,7 @@ final class ChatViewModel: ObservableObject {
     func react(_ msg: Message, emoji: String) {
         dismissUnreadMarker()
         var c = ContentPayload(kind: "reaction")
-        c.targetMsgId = msg.msgId ?? msg.id
+        c.targetLocalId = msg.id
         // tapping the same reaction again removes it
         let mine = msg.reactions.first { $0.value.contains(ownUserId) }?.key
         c.emoji = (mine == emoji) ? nil : emoji
@@ -748,10 +748,10 @@ final class ChatViewModel: ObservableObject {
     }
 
     func deleteSelected(forAll: Bool) {
-        let ids = selectedMessages.map { $0.msgId ?? $0.id }
+        let ids = selectedMessages.map(\.id)
         guard !ids.isEmpty else { return }
         endSelection()
-        Task { await app.engine.deleteMessages(chatId: chatId, msgIds: ids, forAll: forAll) }
+        Task { await app.engine.deleteMessages(chatId: chatId, ids: ids, forAll: forAll) }
     }
 
     func copySelected() {
@@ -788,7 +788,7 @@ final class ChatViewModel: ObservableObject {
     /// the spot and the server is told through the action queue, so the bar is
     /// there before the answer comes back.
     func pin(_ msg: Message?) {
-        Task { [chatId] in await app.engine.pinMessage(chatId: chatId, msgId: msg?.msgId) }
+        Task { [chatId] in await app.engine.pinMessage(chatId: chatId, seq: msg?.seq) }
     }
 
     func acceptRequest() {
@@ -931,8 +931,8 @@ final class ChatViewModel: ObservableObject {
     func loadDeviceHistory() async {
         guard let db = app.db else { return }
         let oldest = try? await db.read { [chatId] dbc in
-            try String.fetchOne(dbc, sql: """
-                SELECT id FROM message
+            try Int.fetchOne(dbc, sql: """
+                SELECT seq FROM message
                 WHERE chatId = ? AND seq IS NOT NULL
                 ORDER BY seq ASC LIMIT 1
                 """, arguments: [chatId])
@@ -982,26 +982,49 @@ final class ChatViewModel: ObservableObject {
         return true
     }
 
-    /// The message is already in the feed, matched by server msgId or by local id.
-    func isLoaded(msgId: String) -> Bool {
-        lastMsgs.contains { $0.id == msgId || $0.msgId == msgId }
+    /// The message is already in the feed, matched by its local row id.
+    func isLoaded(id: String) -> Bool {
+        lastMsgs.contains { $0.id == id }
     }
 
-    /// Brings a message into the feed: jumping from a quote, from the gallery or
-    /// from search.
+    /// The message is already in the feed, matched by its seq.
+    func isLoaded(seq: Int) -> Bool {
+        lastMsgs.contains { $0.seq == seq }
+    }
+
+    /// Brings a message into the feed: jumping from the gallery or from search.
     ///
     /// A message that is already stored is reached by moving the window floor once,
     /// no matter how many thousands of messages sit between it and the end of the
     /// conversation. Paging is only needed when the move has nothing to aim at: the
     /// message has no seq, or its row is not on the device yet.
-    func ensureLoaded(msgId: String, maxPages: Int = 12) async -> Bool {
-        if isLoaded(msgId: msgId) { return true }
-        if await anchorWindow(to: msgId), await feedContains(msgId: msgId) { return true }
+    func ensureLoaded(id: String, maxPages: Int = 12) async -> Bool {
+        if isLoaded(id: id) { return true }
+        let seq = (try? await app.db?.read { [chatId] dbc in
+            try Int.fetchOne(dbc, sql: "SELECT seq FROM message WHERE chatId = ? AND id = ?",
+                             arguments: [chatId, id])
+        }) ?? nil
+        if let seq, await anchorWindow(to: seq), await feedContains(where: { $0.id == id }) {
+            return true
+        }
         for _ in 0..<maxPages {
             guard await expandWindow() else { break }
-            if await feedContains(msgId: msgId) { return true }
+            if await feedContains(where: { $0.id == id }) { return true }
         }
-        return isLoaded(msgId: msgId)
+        return isLoaded(id: id)
+    }
+
+    /// Same, for a reference that names the message by its seq (a quote, a pin).
+    func ensureLoaded(seq: Int, maxPages: Int = 12) async -> Bool {
+        if isLoaded(seq: seq) { return true }
+        if await anchorWindow(to: seq), await feedContains(where: { $0.seq == seq }) {
+            return true
+        }
+        for _ in 0..<maxPages {
+            guard await expandWindow() else { break }
+            if await feedContains(where: { $0.seq == seq }) { return true }
+        }
+        return isLoaded(seq: seq)
     }
 
     /// Puts the window on the message: the floor lands a page below it and the capacity
@@ -1009,14 +1032,13 @@ final class ChatViewModel: ObservableObject {
     /// thousands of messages the chat has piled up since — the way back down is the
     /// scroll-down button, which returns the window to the end of the chat.
     /// Returns false when there is nothing to aim at: the message is not on the
-    /// device, or it has no seq.
-    private func anchorWindow(to msgId: String) async -> Bool {
+    /// device.
+    private func anchorWindow(to seq: Int) async -> Bool {
         guard let db = app.db else { return false }
         let anchor = try? await db.read { [chatId] dbc -> Int? in
-            guard let seq = try Int.fetchOne(dbc, sql: """
-                SELECT seq FROM message
-                WHERE chatId = ? AND (msgId = ? OR id = ?) AND seq IS NOT NULL
-                """, arguments: [chatId, msgId, msgId]) else { return nil }
+            guard try Bool.fetchOne(dbc, sql: """
+                SELECT EXISTS(SELECT 1 FROM message WHERE chatId = ? AND seq = ?)
+                """, arguments: [chatId, seq]) == true else { return nil }
             return try HistoryWindow.floorBelow(dbc, chatId: chatId, floor: seq,
                                                 limit: FeedWindow.anchorBelow) ?? seq
         }
@@ -1028,9 +1050,9 @@ final class ChatViewModel: ObservableObject {
 
     /// The feed arrives from the database observation asynchronously, so wait for
     /// the message to show up.
-    private func feedContains(msgId: String, attempts: Int = 20) async -> Bool {
+    private func feedContains(where match: (Message) -> Bool, attempts: Int = 20) async -> Bool {
         for _ in 0..<attempts {
-            if isLoaded(msgId: msgId) { return true }
+            if lastMsgs.contains(where: match) { return true }
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
         return false
@@ -1043,9 +1065,8 @@ extension Notification.Name {
 }
 
 extension RelativeDateTimeFormatter {
-    static let ruShort: RelativeDateTimeFormatter = {
+    static let short: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
-        f.locale = Locale(identifier: "ru_RU")
         f.unitsStyle = .short
         return f
     }()
