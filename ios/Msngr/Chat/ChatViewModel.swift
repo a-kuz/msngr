@@ -582,15 +582,15 @@ final class ChatViewModel: ObservableObject {
     }
 
     static func membersText(_ count: Int) -> String {
-        "\(count) " + (count == 1 ? "participant" : "participants")
+        String(localized: "\(count) participants")
     }
 
     static func lastSeenText(_ lastSeen: TimeInterval, now: Date = Date()) -> String {
         let elapsed = now.timeIntervalSince1970 - lastSeen
         if elapsed < 60 { return String(localized: "last seen just now") }
-        let relTime = RelativeDateTimeFormatter.ruShort.localizedString(
+        let relTime = RelativeDateTimeFormatter.short.localizedString(
             for: Date(timeIntervalSince1970: lastSeen), relativeTo: now)
-        return String(localized: "last seen") + " " + relTime
+        return String(localized: "last seen \(relTime)")
     }
 
     // MARK: - Rights
@@ -1043,9 +1043,8 @@ extension Notification.Name {
 }
 
 extension RelativeDateTimeFormatter {
-    static let ruShort: RelativeDateTimeFormatter = {
+    static let short: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
-        f.locale = Locale(identifier: "ru_RU")
         f.unitsStyle = .short
         return f
     }()
