@@ -6,6 +6,8 @@ struct ChatRowView: View {
     let ownUserId: String
     @ObservedObject private var theme = ThemeStore.shared
     @Environment(\.dynamicTypeSize) private var typeSize
+    /// a beat of overshoot on the unread capsule while the count grows
+    @State private var badgePulse = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -52,12 +54,14 @@ struct ChatRowView: View {
                         Text("\(visibleUnread)")
                             .textRole(Theme.Text.rowBadge)
                             .foregroundStyle(.white)
+                            .contentTransition(.numericText(value: Double(visibleUnread)))
                             .padding(.horizontal, 7)
                             .frame(minWidth: badgeSide, minHeight: badgeSide)
                             .background(muted ? Color.gray : Theme.accent)
                             .clipShape(Capsule())
                             .fixedSize()
                             .layoutPriority(1)
+                            .scaleEffect(badgePulse ? 1.25 : 1)
                             .transition(.scale.combined(with: .opacity))
                     } else if item.chat.pinned {
                         Image(systemName: "pin.fill")
@@ -69,6 +73,16 @@ struct ChatRowView: View {
         }
         .padding(.vertical, 2)
         .animation(Theme.springFast, value: visibleUnread)
+        // a growing count rolls the digit and pops the capsule; appearing from
+        // zero is the scale transition's job, so the pulse skips it
+        .onChange(of: visibleUnread) { old, new in
+            guard new > old, old > 0 else { return }
+            withAnimation(.spring(duration: 0.18)) {
+                badgePulse = true
+            } completion: {
+                withAnimation(.spring(duration: 0.32)) { badgePulse = false }
+            }
+        }
     }
 
     /// The avatar grows with the row but slower than the text: at a large size

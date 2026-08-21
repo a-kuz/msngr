@@ -42,3 +42,16 @@ the preview's line count changes.
   arrivals after the fix: the neighbouring row does not move a pixel in either
   direction, the title and the time stay put, the preview cross-fades in
   place, the badge steps 8 → 9.
+
+## The unread capsule on an increment
+
+Asked by the owner during the run: play the growing count up instead of a
+plain swap.
+
+- The capsule now pops — a 0.18 s spring to 1.25× and a 0.32 s spring back —
+  and the digits roll through `.contentTransition(.numericText)`. Appearing
+  from zero keeps the existing scale transition; the pulse fires only while
+  the count grows.
+- `07-badge-roll-pulse.png` — consecutive frames of 9 → 10: the capsule
+  swells, the «1» holds while the «0» rolls in, the capsule widens for the
+  second digit and settles.
