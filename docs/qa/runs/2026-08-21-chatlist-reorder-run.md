@@ -25,3 +25,20 @@ real engine, so the message travels the whole E2EE path. Frame strips are in
   same transaction.
 - `03-after-settled.png` — the settle: the preview and the badge update after
   the move, the in-app banner arrives above the list, nothing shifts again.
+
+## The row height and the time label
+
+Reported by the owner while watching this run: the time in the row jumps when
+the preview's line count changes.
+
+- `04-time-jump-before.png` — an incoming one-line preview replacing a
+  two-line one: the row's content is centered in the cell, so while the height
+  animates the title line rides the resize, and the text cross-fade paints two
+  time labels a few points apart.
+- The fix reserves two preview lines whether the text fills them or not
+  (`minHeight` of two `rowPreview` line heights on the preview text), so a
+  preview that wraps or unwraps leaves the row's height alone.
+- `05-fixed-height-grow.png`, `06-fixed-height-shrink.png` — the same two
+  arrivals after the fix: the neighbouring row does not move a pixel in either
+  direction, the title and the time stay put, the preview cross-fades in
+  place, the badge steps 8 → 9.

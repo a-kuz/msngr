@@ -75,6 +75,16 @@ frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
 
+### The time in a chat list row jumps when the preview's line count changes
+Reported by the owner on 2026-08-21 while watching the reorder run: a preview
+that wraps to a second line (or unwraps back) resizes the row, the vertically
+centered content rides the resize, and the cross-fade paints two time labels a
+few points apart. Closed in this change: the preview reserves two lines
+whether the text fills them or not, so the row's height never depends on the
+line count. Verified live in both directions — the neighbouring row and the
+time label hold still, the preview cross-fades in place
+(qa/runs/2026-08-21-chatlist-reorder, strips 04–06).
+
 ### The block button on a request has no contrast in the dark appearance
 Seen in passing on 2026-08-20: on the request screen «Заблокировать» is a
 `.bordered` destructive button, but the app's accent tint painted it, so on
