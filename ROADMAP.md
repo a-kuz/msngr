@@ -208,7 +208,10 @@ A ✅ goes in only together with a link to the evidence.
     checked by SHA-256 over the whole ciphertext, so a range cannot be decrypted
     and cannot be verified. It needs block-wise encryption and an
     `AVAssetResourceLoaderDelegate`
-  - ⬜ muted autoplay in the feed
+  - ✅ muted autoplay in the feed: a video whose file is on the device loops
+    in place without sound and without stopping the user's music; one that
+    would need a download keeps the preview and the glyph
+    (qa/runs/2026-08-21-video-autoplay)
 - Voice messages
   - ✅ recording by holding, the waveform, sending (design-review 06, offline-run 3)
   - ✅ playback with progress along the wave (offline-run 3)

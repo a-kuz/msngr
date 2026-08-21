@@ -1,4 +1,5 @@
 import UIKit
+import AVFoundation
 import MsngrCore
 
 /// Message cell: manual layout driven by BubbleLayoutPlan, no Auto Layout at all.
@@ -26,6 +27,9 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private let tickView = UIImageView()
     private let statusBackdrop = UIView()
     private var mediaViews: [UIImageView] = []
+    /// Muted looping players over the video tiles whose files are already on
+    /// the device; torn down together with the media views.
+    private var autoplay: [(layer: AVPlayerLayer, looper: NSObjectProtocol)] = []
     /// One fingerprint per media view (blurhash + mediaId + local paths): a
     /// message's media is no longer immutable once picked — it fills in from
     /// a placeholder to a finished upload — so an in-place reconfigure has to
@@ -207,6 +211,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        teardownAutoplay()
         reactionViews.forEach { $0.removeFromSuperview() }
         reactionViews = []
         bubbleView.viewWithTag(Self.highlightTag)?.removeFromSuperview()
@@ -460,6 +465,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
         // configure also runs on a live cell (content updated in place), so the previous
         // media views are torn down here and not only in prepareForReuse
+        teardownAutoplay()
         mediaViews.forEach { $0.removeFromSuperview() }
         mediaViews = []
         mediaSignatures = signatures
@@ -488,7 +494,63 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
                 play.autoresizingMask = [.flexibleLeftMargin, .flexibleRightMargin,
                                          .flexibleTopMargin, .flexibleBottomMargin]
                 iv.addSubview(play)
+                startAutoplayIfLocal(on: iv, media: media, playGlyph: play)
             }
+        }
+    }
+
+    // MARK: - Muted autoplay
+
+    /// A video whose file is already on the device plays in place, muted and
+    /// looping, and the play glyph gives way — the tap still opens the viewer.
+    /// A video that would need a download keeps the preview frame and the
+    /// glyph: the feed does not start network transfers on its own.
+    private func startAutoplayIfLocal(on iv: UIImageView, media: MediaInfo, playGlyph: UIImageView) {
+        guard let mm = AppState.shared.media else { return }
+        let url: URL? = media.mediaId.isEmpty
+            ? media.localPath.flatMap { mm.pendingURL(for: $0) }
+            : mm.cachedURL(for: media.mediaId, mime: media.mime)
+        guard let url else { return }
+        // muted playback must not stop whatever the user is listening to; the
+        // voice paths set their own category right before they run
+        Self.claimAmbientAudioOnce
+        let player = AVPlayer(url: url)
+        player.isMuted = true
+        player.actionAtItemEnd = .none
+        let layer = AVPlayerLayer(player: player)
+        layer.frame = iv.bounds
+        layer.videoGravity = .resizeAspectFill
+        iv.layer.addSublayer(layer)
+        let looper = NotificationCenter.default.addObserver(
+            forName: AVPlayerItem.didPlayToEndTimeNotification,
+            object: player.currentItem, queue: .main) { [weak player] _ in
+            player?.seek(to: .zero)
+            player?.play()
+        }
+        autoplay.append((layer, looper))
+        playGlyph.isHidden = true
+        player.play()
+    }
+
+    private static let claimAmbientAudioOnce: Void = {
+        try? AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
+    }()
+
+    private func teardownAutoplay() {
+        for (layer, looper) in autoplay {
+            NotificationCenter.default.removeObserver(looper)
+            layer.player?.pause()
+            layer.player = nil
+            layer.removeFromSuperlayer()
+        }
+        autoplay = []
+    }
+
+    /// Off-screen cells stop their players; the collection view drives this
+    /// from willDisplay/didEndDisplaying.
+    func setAutoplayActive(_ active: Bool) {
+        for (layer, _) in autoplay {
+            if active { layer.player?.play() } else { layer.player?.pause() }
         }
     }
 

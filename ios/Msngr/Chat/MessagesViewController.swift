@@ -717,6 +717,18 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
         items.count
     }
 
+    // autoplaying video stops the moment its cell leaves the screen and picks
+    // up again when it comes back; the players themselves live in the cell
+    func collectionView(_ cv: UICollectionView, willDisplay cell: UICollectionViewCell,
+                        forItemAt indexPath: IndexPath) {
+        (cell as? MessageCell)?.setAutoplayActive(true)
+    }
+
+    func collectionView(_ cv: UICollectionView, didEndDisplaying cell: UICollectionViewCell,
+                        forItemAt indexPath: IndexPath) {
+        (cell as? MessageCell)?.setAutoplayActive(false)
+    }
+
     func collectionView(_ cv: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         guard indexPath.item < items.count,
               case .dateSeparator = items[indexPath.item] else { return }
