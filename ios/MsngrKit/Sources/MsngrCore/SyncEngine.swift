@@ -2048,7 +2048,7 @@ public actor SyncEngine {
     struct ReadActionPayload: Codable { var upToSeq: Int }
     struct DeleteActionPayload: Codable { var seqs: [Int]; var forAll: Bool }
     struct BlockActionPayload: Codable { var userId: String; var blocked: Bool }
-    struct PinActionPayload: Codable { var seq: Int? }
+    struct PinActionPayload: Codable { var seq: Int?; var pinned: Bool? }
 
     /// Read actions collapse per chat: one row per chatId, the larger upToSeq wins.
     static func upsertReadAction(_ dbc: GRDB.Database, chatId: String, upToSeq: Int) throws {
@@ -2102,7 +2102,7 @@ public actor SyncEngine {
                     try await api.setBlocked(p.userId, blocked: p.blocked)
                 case "pin":
                     let p = try JSONDecoder().decode(PinActionPayload.self, from: Data(a.payload.utf8))
-                    try await api.pinMessage(a.chatId ?? "", seq: p.seq)
+                    try await api.pinMessage(a.chatId ?? "", seq: p.seq, pinned: p.pinned ?? true)
                 default:
                     break // an unknown type is dropped below
                 }
@@ -2168,24 +2168,38 @@ public actor SyncEngine {
         actionWakeup.continuation.yield()
     }
 
-    /// Pinning a message, and unpinning with `seq` nil: the chat row takes it
-    /// at once and the server hears through the action queue, so the bar appears
-    /// on this device without waiting for the frame that comes back, and the pin
-    /// survives being offline. While the request is pending, `upsertChatState`
-    /// leaves the local value alone: a snapshot taken before it landed would
-    /// otherwise put the previous pin back.
-    public func pinMessage(chatId: String, seq: Int?) async {
+    /// Pinning and unpinning one message, or clearing every pin with `seq`
+    /// nil: the chat row takes it at once and the server hears through the
+    /// action queue, so the bar changes on this device without waiting for the
+    /// frame that comes back, and the pin survives being offline. Every seq
+    /// queues its own action — two quick pins must both reach the server.
+    /// While a request is pending, `upsertChatState` leaves the local set
+    /// alone: a snapshot taken before it landed would otherwise put the
+    /// previous pins back.
+    public func pinMessage(chatId: String, seq: Int?, pinned: Bool = true) async {
         try? await db.write { dbc in
-            try dbc.execute(sql: "UPDATE chat SET pinnedSeq = ? WHERE id = ?",
-                            arguments: [seq, chatId])
-            let payload = String(data: try JSONEncoder().encode(PinActionPayload(seq: seq)),
-                                 encoding: .utf8)!
+            let held = (try String.fetchOne(
+                dbc, sql: "SELECT pinnedSeqs FROM chat WHERE id = ?", arguments: [chatId]))
+                .flatMap { try? JSONDecoder().decode([Int].self, from: Data($0.utf8)) } ?? []
+            var next = held
+            if let seq {
+                next.removeAll { $0 == seq }
+                if pinned { next.append(seq) }
+            } else {
+                next = []
+            }
+            try dbc.execute(sql: "UPDATE chat SET pinnedSeqs = ? WHERE id = ?",
+                            arguments: [String(data: try JSONEncoder().encode(next), encoding: .utf8)!,
+                                        chatId])
+            let payload = String(data: try JSONEncoder().encode(
+                PinActionPayload(seq: seq, pinned: pinned)), encoding: .utf8)!
+            let actionId = seq.map { "pin:\(chatId):\($0)" } ?? "pin:\(chatId):all"
             try dbc.execute(
                 sql: """
                 INSERT INTO pendingAction (id, type, chatId, payload, createdAt) VALUES (?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, attempts = 0
                 """,
-                arguments: ["pin:\(chatId)", "pin", chatId, payload, Date().timeIntervalSince1970])
+                arguments: [actionId, "pin", chatId, payload, Date().timeIntervalSince1970])
         }
         actionWakeup.continuation.yield()
     }
@@ -2341,7 +2355,7 @@ public actor SyncEngine {
             sql: """
             INSERT INTO chat (id, kind, title, avatarId, chatDescription, sendPolicy, invitePolicy,
                               createdBy, createdAt,
-                              pinnedSeq, lastSeq, syncedSeq, syncCursor, myReadUpTo, peerReadUpTo,
+                              pinnedSeqs, lastSeq, syncedSeq, syncCursor, myReadUpTo, peerReadUpTo,
                               peerDeliveredUpTo, lastActivityAt, isRequest, iAccepted, pinned, muted,
                               archived, unreadCount)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -2351,10 +2365,10 @@ public actor SyncEngine {
               sendPolicy = excluded.sendPolicy, invitePolicy = excluded.invitePolicy,
               -- a pin this device made and the server has not confirmed yet is
               -- kept: a snapshot built before the request landed carries the
-              -- previous pin, and applying it would take the bar away again
-              pinnedSeq = CASE
+              -- previous pins, and applying it would take the bar away again
+              pinnedSeqs = CASE
                 WHEN EXISTS(SELECT 1 FROM pendingAction WHERE type = 'pin' AND chatId = chat.id)
-                THEN chat.pinnedSeq ELSE excluded.pinnedSeq END,
+                THEN chat.pinnedSeqs ELSE excluded.pinnedSeqs END,
               lastSeq = MAX(chat.lastSeq, excluded.lastSeq),
               myReadUpTo = MAX(chat.myReadUpTo, excluded.myReadUpTo),
               peerReadUpTo = MAX(chat.peerReadUpTo, excluded.peerReadUpTo),
@@ -2372,7 +2386,10 @@ public actor SyncEngine {
             arguments: [s.chatId, s.kind, s.title, s.avatarId, s.description,
                         s.sendPolicy ?? ChatPermissions.openPolicy,
                         s.invitePolicy ?? ChatPermissions.openPolicy, s.createdBy,
-                        s.createdAt, s.pinnedSeq, s.lastSeq, resume, resume,
+                        s.createdAt,
+                        String(data: (try? JSONEncoder().encode(s.pinnedSeqs ?? [])) ?? Data("[]".utf8),
+                               encoding: .utf8)!,
+                        s.lastSeq, resume, resume,
                         max(myRead, resume), 0, 0,
                         s.createdAt, isRequest, iAccepted,
                         flags?.pinned ?? false, flags?.muted ?? false, flags?.archived ?? false,

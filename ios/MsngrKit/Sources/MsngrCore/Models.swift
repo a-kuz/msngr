@@ -38,7 +38,8 @@ public struct Chat: Codable, Identifiable, Equatable, FetchableRecord, Persistab
     public var invitePolicy: String = ChatPermissions.openPolicy
     public var createdBy: String
     public var createdAt: Double
-    public var pinnedSeq: Int?
+    /// pinned messages by seq, the newest pin last
+    public var pinnedSeqs: [Int] = []
     /// last seq on the server (from state) and the last one applied locally
     public var lastSeq: Int
     public var syncedSeq: Int

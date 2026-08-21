@@ -143,8 +143,10 @@ A ✅ goes in only together with a link to the evidence.
     (header-run, two devices)
   - ✅ tapping the pinned message scrolls to it, including a message a thousand
     behind the newest (pin-depth-run)
-  - ⬜ several pinned messages at once: the bar counts them, tapping walks
-    through them, and a list opens all of them
+  - ✅ several pinned messages at once: the bar counts them with a segmented
+    rail, tapping walks through them with a wrap, and a list opens all of
+    them with per-pin unpinning (qa/runs/2026-08-21-multipin; smoke pin
+    checks, MultiPinTests units)
   - ✅ a jump to a date: a tap on a date separator or the floating day capsule
     opens the calendar over the local history, and picking a day lands the
     feed on its first message (qa/runs/2026-08-21-date-jump)

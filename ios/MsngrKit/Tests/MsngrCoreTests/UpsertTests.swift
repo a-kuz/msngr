@@ -10,7 +10,7 @@ final class UpsertTests: XCTestCase {
         "createdAt":1786480986373,"members":[
         {"userId":"A","role":"member","joinedAt":1786480986373,"accepted":true},
         {"userId":"B","role":"member","joinedAt":1786480986373,"accepted":false}],
-        "pinnedSeq":null,"lastSeq":0,"readMarks":{},"deliveredMarks":{}}}
+        "pinnedSeqs":[],"lastSeq":0,"readMarks":{},"deliveredMarks":{}}}
         """
         let frame = try JSONDecoder().decode(WSIncoming.self, from: Data(json.utf8))
         XCTAssertEqual(frame.t, "chat")
@@ -38,7 +38,7 @@ final class UpsertTests: XCTestCase {
                 .init(userId: "A", role: "member", joinedAt: 1, accepted: true),
                 .init(userId: "B", role: "member", joinedAt: 1, accepted: false),
             ],
-            pinnedSeq: nil, lastSeq: 3, readMarks: [:], deliveredMarks: [:])
+            pinnedSeqs: nil, lastSeq: 3, readMarks: [:], deliveredMarks: [:])
 
         let db = try AppDatabase.openInMemory()
         try db.write { dbc in

@@ -107,7 +107,8 @@ export interface ChatState {
   createdBy: string;
   createdAt: number;
   members: ChatMember[];
-  pinnedSeq: number | null;
+  /// pinned messages by seq, oldest pin first
+  pinnedSeqs: number[];
   lastSeq: number;
   readMarks: Record<string, number>;      // userId -> upToSeq
   deliveredMarks: Record<string, number>; // userId -> upToSeq

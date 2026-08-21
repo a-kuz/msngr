@@ -454,9 +454,10 @@ public final class APIClient: @unchecked Sendable {
         struct Body: Encodable { let userId: String; let admin: Bool }
         _ = try await request("api/chats/\(chatId)/admins", method: "POST", jsonBody: Body(userId: userId, admin: admin))
     }
-    public func pinMessage(_ chatId: String, seq: Int?) async throws {
-        struct Body: Encodable { let seq: Int? }
-        _ = try await request("api/chats/\(chatId)/pin-message", method: "POST", jsonBody: Body(seq: seq))
+    public func pinMessage(_ chatId: String, seq: Int?, pinned: Bool = true) async throws {
+        struct Body: Encodable { let seq: Int?; let pinned: Bool }
+        _ = try await request("api/chats/\(chatId)/pin-message", method: "POST",
+                              jsonBody: Body(seq: seq, pinned: pinned))
     }
     /// The server ignores `mutedUntil` without `muted`; `muted: true` with no expiry means forever.
     public func setChatFlags(_ chatId: String, pinned: Bool? = nil,
