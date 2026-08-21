@@ -15,10 +15,10 @@ public enum MuteOption: String, CaseIterable, Sendable {
 
     public var title: String {
         switch self {
-        case .hour: return "На час"
-        case .eightHours: return "На 8 часов"
-        case .week: return "На неделю"
-        case .forever: return "Навсегда"
+        case .hour: return CoreStrings.string("For an hour")
+        case .eightHours: return CoreStrings.string("For 8 hours")
+        case .week: return CoreStrings.string("For a week")
+        case .forever: return CoreStrings.string("Forever")
         }
     }
 
@@ -51,9 +51,12 @@ public enum MuteState {
         guard isMuted(muted: muted, mutedUntil: mutedUntil, now: now), let mutedUntil else { return nil }
         let date = Date(timeIntervalSince1970: mutedUntil)
         let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "ru_RU")
-        fmt.dateFormat = mutedUntil - now < 24 * 3600 ? "HH:mm" : "d MMMM, HH:mm"
-        return "до " + fmt.string(from: date)
+        if mutedUntil - now < 24 * 3600 {
+            fmt.dateFormat = "HH:mm"
+        } else {
+            fmt.setLocalizedDateFormatFromTemplate("dMMMMHHmm")
+        }
+        return CoreStrings.string("until \(fmt.string(from: date))")
     }
 }
 

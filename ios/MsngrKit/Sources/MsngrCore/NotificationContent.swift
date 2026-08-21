@@ -52,7 +52,7 @@ public enum NotificationContentBuilder {
     public static let textLimit = 200
 
     /// Notification body when the privacy setting hides message text.
-    public static let hiddenTextBody = "Новое сообщение"
+    public static let hiddenTextBody = CoreStrings.string("New message")
 
     /// Content kinds that raise no notification: an edit, a reaction, a timer change,
     /// a service row of the feed and a message already deleted.
@@ -71,10 +71,12 @@ public enum NotificationContentBuilder {
         guard !isDeleted, !silentKinds.contains(payload.kind) else { return nil }
         let name = sender.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let groupTitle = chat.title?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let title = name.isEmpty ? (chat.isGroup ? (groupTitle ?? "Группа") : "Msngr") : name
+        let title = name.isEmpty
+            ? (chat.isGroup ? (groupTitle ?? CoreStrings.string("Group")) : "Msngr") : name
         return NotificationContent(
             title: title,
-            subtitle: chat.isGroup ? (groupTitle?.isEmpty == false ? groupTitle : "Группа") : nil,
+            subtitle: chat.isGroup
+                ? (groupTitle?.isEmpty == false ? groupTitle : CoreStrings.string("Group")) : nil,
             body: showsMessageText ? preview(payload) : hiddenTextBody,
             threadIdentifier: chat.chatId)
     }
@@ -106,14 +108,14 @@ public enum NotificationContentBuilder {
     public static func preview(_ payload: ContentPayload) -> String {
         let caption = truncate(payload.text ?? "")
         switch payload.kind {
-        case "photo": return withCaption("📷 Фото", caption)
-        case "video": return withCaption("🎥 Видео", caption)
-        case "voice": return withCaption("🎤 Голосовое сообщение", caption)
-        case "album": return withCaption("🖼 Альбом", caption)
-        case "contact": return withCaption("👤 Контакт", caption)
+        case "photo": return withCaption(CoreStrings.string("📷 Photo"), caption)
+        case "video": return withCaption(CoreStrings.string("🎥 Video"), caption)
+        case "voice": return withCaption(CoreStrings.string("🎤 Voice message"), caption)
+        case "album": return withCaption(CoreStrings.string("🖼 Album"), caption)
+        case "contact": return withCaption(CoreStrings.string("👤 Contact"), caption)
         case "file":
             let name = payload.media?.name?.trimmingCharacters(in: .whitespacesAndNewlines)
-            return withCaption("📎 " + (name?.isEmpty == false ? name! : "Файл"), caption)
+            return withCaption("📎 " + (name?.isEmpty == false ? name! : CoreStrings.string("File")), caption)
         default:
             return caption.isEmpty ? hiddenTextBody : caption
         }
