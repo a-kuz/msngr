@@ -24,9 +24,7 @@ struct ChatScreen: View {
     @State private var showFilePicker = false
     @State private var forwardMessage: Message?
     @State private var forwardingSelection = false
-    /// Кто поставил реакции: капсула в группе открывает список.
     @State private var reactionRoster: ReactionRosterRequest?
-    /// История изменений сообщения из контекстного меню.
     @State private var editHistoryMessage: Message?
     @State private var messagesVC = MessagesViewController()
     @EnvironmentObject var app: AppState
@@ -128,7 +126,7 @@ struct ChatScreen: View {
                             Image(systemName: "magnifyingglass")
                                 .font(Theme.glyph(17, max: 24))
                         }
-                        .accessibilityLabel("Поиск по чату")
+                        .accessibilityLabel(String(localized: "Search this chat"))
                         .accessibilityIdentifier("chat.search.open")
                     }
                 }
@@ -229,8 +227,8 @@ struct ChatScreen: View {
             _ = MessageJump.take(chatId: chatId)
             jump(to: request.msgId)
         }
-        .alert("Не отправлено", isPresented: sendFailureBinding) {
-            Button("Понятно", role: .cancel) { model.sendFailure = nil }
+        .alert(String(localized: "Not sent"), isPresented: sendFailureBinding) {
+            Button(String(localized: "OK"), role: .cancel) { model.sendFailure = nil }
         } message: {
             Text(model.sendFailure ?? "")
         }
@@ -241,15 +239,13 @@ struct ChatScreen: View {
                 set: { if !$0 { model.sendFailure = nil } })
     }
 
-    /// Подтверждение удаления: два действия внизу, сами сообщения видны и
-    /// к выбору можно добавить ещё.
     private var deleteConfirmBar: some View {
         VStack(spacing: 8) {
-            Text("Удалить " + MessageSelection.title(count: model.selection.count) + "?")
+            Text(String(localized: "Delete") + " " + MessageSelection.title(count: model.selection.count) + "?")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             if model.canDeleteSelectedForAll {
-                Button("Удалить у всех", role: .destructive) {
+                Button(String(localized: "Delete all"), role: .destructive) {
                     withAnimation(Theme.springFast) { model.deleteSelected(forAll: true) }
                 }
                 .buttonStyle(.borderedProminent)
@@ -258,7 +254,7 @@ struct ChatScreen: View {
                 .frame(maxWidth: .infinity)
                 .accessibilityIdentifier("chat.delete.forAll")
             }
-            Button("Удалить у меня", role: .destructive) {
+            Button(String(localized: "Delete from me"), role: .destructive) {
                 withAnimation(Theme.springFast) { model.deleteSelected(forAll: false) }
             }
             .buttonStyle(.bordered)
@@ -275,16 +271,15 @@ struct ChatScreen: View {
         .transition(.move(edge: .bottom))
     }
 
-    /// Multi-select action bar shown in place of the composer.
     private var selectionActionBar: some View {
         HStack(spacing: 0) {
-            selectionAction("Удалить", icon: "trash", destructive: true) {
+            selectionAction(String(localized: "Delete"), icon: "trash", destructive: true) {
                 withAnimation(Theme.springFast) { model.confirmingDelete = true }
             }
-            selectionAction("Переслать", icon: "arrowshape.turn.up.right") {
+            selectionAction(String(localized: "Forward"), icon: "arrowshape.turn.up.right") {
                 forwardingSelection = true
             }
-            selectionAction("Копировать", icon: "doc.on.doc") {
+            selectionAction(String(localized: "Copy"), icon: "doc.on.doc") {
                 withAnimation(Theme.springFast) { model.copySelected() }
             }
         }
@@ -320,8 +315,6 @@ struct ChatScreen: View {
                      },
                      showScrollDown: $showScrollDown,
                      onSwipeBack: { dismiss() },
-                     // в группе капсула открывает список, в личном чате её тап
-                     // остаётся переключением своей реакции
                      onCapsuleTap: { msg, emoji in
                          if model.chat?.kind == .group {
                              reactionRoster = ReactionRosterRequest(message: msg, emoji: emoji)
@@ -338,10 +331,10 @@ struct ChatScreen: View {
                 .font(Theme.glyph(34, max: 48))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
-            Text("Напишите первое сообщение")
+            Text(String(localized: "Start a conversation"))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            Label("Сквозное шифрование", systemImage: "lock.fill")
+            Label(String(localized: "End-to-end encrypted"), systemImage: "lock.fill")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
@@ -377,8 +370,7 @@ struct ChatScreen: View {
                         .fixedSize(horizontal: true, vertical: false)
                     Text(Self.fitted(model.headerSubtitle, font: Theme.Text.headerSubtitle.uiFont))
                         .textRole(Theme.Text.headerSubtitle)
-                        .foregroundStyle(model.headerSubtitle.contains("печатает") || model.headerSubtitle == "в сети"
-                                         ? Theme.accent : .secondary)
+                        .foregroundStyle(model.headerSubtitleAccented ? Theme.accent : .secondary)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                         .animation(.easeInOut(duration: 0.15), value: model.headerSubtitle)
@@ -416,11 +408,10 @@ struct ChatScreen: View {
     // MARK: - Search inside the chat
 
     /// The header while the chat is being searched: the field takes the row it
-    /// can, with only «Отмена» beside it.
     private var searchHeader: some View {
         HStack(spacing: 8) {
             ChatSearchField(text: $search.query, focused: $searchFocused)
-            Button("Отмена") { closeSearch() }
+            Button(String(localized: "Cancel")) { closeSearch() }
                 .textRole(Theme.Text.body)
                 .tint(Theme.accent)
                 .accessibilityIdentifier("chat.search.cancel")
@@ -508,7 +499,7 @@ struct ChatScreen: View {
         HStack(spacing: 8) {
             RoundedRectangle(cornerRadius: 1.5).fill(Theme.accent).frame(width: 3, height: 30)
             VStack(alignment: .leading, spacing: 1) {
-                Text("Закреплённое сообщение")
+                Text(String(localized: "Pinned message"))
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(Theme.accent)
                 Text(ChatViewModel.previewText(msg))
@@ -541,7 +532,7 @@ struct ChatScreen: View {
                 AvatarView(name: model.headerTitle, avatarId: model.peer?.avatarId)
                     .frame(width: 96, height: 96)
                 VStack(spacing: 4) {
-                    Text(model.peer?.displayName ?? "Пользователь")
+                    Text(model.peer?.displayName ?? String(localized: "User"))
                         .font(.title3.weight(.semibold))
                     if let username = model.peer?.username, !username.isEmpty {
                         Text("@" + username)
@@ -549,10 +540,10 @@ struct ChatScreen: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                Text("хочет вам написать")
+                Text(String(localized: "wants to write to you"))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                Label("Сообщения откроются после принятия", systemImage: "eye.slash")
+                Label(String(localized: "Messages will be revealed after confirmation"), systemImage: "eye.slash")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .multilineTextAlignment(.center)
@@ -563,7 +554,7 @@ struct ChatScreen: View {
                 Button {
                     withAnimation(Theme.spring) { model.acceptRequest() }
                 } label: {
-                    Text("Принять").fontWeight(.semibold).frame(maxWidth: .infinity)
+                    Text(String(localized: "Accept")).fontWeight(.semibold).frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
@@ -572,9 +563,12 @@ struct ChatScreen: View {
                     model.blockRequest()
                     dismiss()
                 } label: {
-                    Text("Заблокировать").frame(maxWidth: .infinity)
+                    Text(String(localized: "Block")).frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
+                // a destructive action carries its own colour: the app accent
+                // painted it orange-on-brown in the dark appearance
+                .tint(.red)
                 .controlSize(.large)
                 .accessibilityIdentifier("request.block")
             }
@@ -584,20 +578,19 @@ struct ChatScreen: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// TOFU banner: the peer's key has changed, outgoing messages are blocked.
     private var keyChangeBanner: some View {
         HStack(spacing: 10) {
             Image(systemName: "exclamationmark.shield.fill")
                 .foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 1) {
-                Text("Код безопасности изменился")
+                Text(String(localized: "The safety code has changed"))
                     .font(.footnote.weight(.semibold))
-                Text("Сообщения не отправляются, пока вы не примете новый ключ")
+                Text(String(localized: "Message delivery has stopped until you accept the new key"))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button("Принять") {
+            Button(String(localized: "Accept")) {
                 withAnimation(Theme.springFast) { model.acceptKeyChange() }
             }
             .font(.footnote.weight(.semibold))
@@ -609,11 +602,8 @@ struct ChatScreen: View {
         .background(.bar)
     }
 
-    /// A group only its admins may write in. The note takes the place of the
-    /// input field: an empty field that refuses everything typed into it would
-    /// be worse than none.
     private var readOnlyNote: some View {
-        Text("Писать в этой группе могут только администраторы")
+        Text(String(localized: "Only admins can write to this group"))
             .font(.footnote)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
@@ -848,7 +838,7 @@ struct ChatScreen: View {
             return try app.media.stash(data, mime: mime)
         } catch {
             MsngrLog.outbox.error("failed to stash attachment: \(error)")
-            model.sendFailure = "Вложение не отправлено: не удалось сохранить его на устройстве"
+            model.sendFailure = String(localized: "Attachment not sent: could not save to device")
             return nil
         }
     }
@@ -916,9 +906,7 @@ struct MessagesView: UIViewControllerRepresentable {
     let selectedIds: Set<String>
     var onTapMedia: (Message, Int, UIView) -> Void
     @Binding var showScrollDown: Bool
-    /// свайп от левой кромки: возврат к списку чатов
     var onSwipeBack: () -> Void
-    /// тап по капсуле реакции: экран решает, список это или переключение
     var onCapsuleTap: (Message, String) -> Void
 
     func makeUIViewController(context: Context) -> MessagesViewController {
@@ -985,15 +973,12 @@ struct MessagesView: UIViewControllerRepresentable {
             case .forward: NotificationCenter.default.post(name: .forwardRequested, object: msg)
             case .select: withAnimation(Theme.springFast) { model.beginSelection(with: msg) }
             case .resend: model.resend(msg)
-            // удаление начинается с выбора: сообщение видно, к нему можно
-            // добавить ещё, подтверждение стоит внизу
             case .delete:
                 withAnimation(Theme.springFast) {
                     model.beginSelection(with: msg, confirmingDelete: true)
                 }
             }
         }
-        // замыкание с dismiss живёт не дольше тела body — переустанавливаем
         vc.onSwipeBack = onSwipeBack
         vc.onReactionCapsuleTap = onCapsuleTap
         vc.pinnedMsgId = model.chat?.pinnedMsgId
