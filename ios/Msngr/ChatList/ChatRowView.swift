@@ -38,10 +38,15 @@ struct ChatRowView: View {
                         .layoutPriority(1)
                 }
                 HStack(alignment: .top, spacing: 4) {
+                    // two lines are reserved whether the preview fills them or
+                    // not: a preview that wraps or unwraps must not change the
+                    // row's height, or the title and the time ride the resize
                     previewText
                         .textRole(Theme.Text.rowPreview)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
+                        .frame(minHeight: ceil(Theme.Text.rowPreview.lineHeight) * 2,
+                               alignment: .topLeading)
                     Spacer(minLength: 4)
                     if visibleUnread > 0 {
                         Text("\(visibleUnread)")
