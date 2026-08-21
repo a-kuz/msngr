@@ -3199,6 +3199,28 @@
         }
       }
     },
+    "Pinned message %lld of %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Закреплённое сообщение %1$lld из %2$lld"
+          }
+        }
+      }
+    },
+    "Pinned messages": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Закреплённые сообщения"
+          }
+        }
+      }
+    },
     "Search this chat": {
       "extractionState": "manual",
       "localizations": {

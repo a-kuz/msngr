@@ -162,7 +162,8 @@ public struct ChatStateDTO: Decodable {
     public let createdBy: String
     public let createdAt: Double
     public let members: [MemberDTO]
-    public let pinnedSeq: Int?
+    /// pinned messages by seq, the newest pin last
+    public let pinnedSeqs: [Int]?
     public let lastSeq: Int
     public let readMarks: [String: Int]
     public let deliveredMarks: [String: Int]

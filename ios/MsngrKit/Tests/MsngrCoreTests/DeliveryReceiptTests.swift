@@ -207,7 +207,7 @@ final class DeliveryReceiptTests: XCTestCase {
                 .init(userId: "peer", role: "member", joinedAt: 1, accepted: true),
                 .init(userId: "me", role: "member", joinedAt: 1, accepted: accepted),
             ],
-            pinnedSeq: nil, lastSeq: lastSeq, readMarks: read, deliveredMarks: delivered)
+            pinnedSeqs: nil, lastSeq: lastSeq, readMarks: read, deliveredMarks: delivered)
     }
 
     /// The read went out on a socket that was already dying, so the server never

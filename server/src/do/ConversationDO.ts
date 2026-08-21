@@ -116,7 +116,9 @@ interface Meta {
   invitePolicy?: ChatPolicy;
   createdBy: string;
   createdAt: number;
-  pinnedSeq: number | null;
+  /// Pinned messages by seq, in the order they were pinned; the newest pin is
+  /// the last element and the one the bar shows first.
+  pinnedSeqs?: number[];
   lastSeq: number;
   /// How many messages of the chat are content. A seq is spent on every frame,
   /// including the ones a client never shows — an edit, a reaction, a sender key
@@ -573,7 +575,7 @@ export class ConversationDO implements DurableObject {
       createdBy: meta.createdBy,
       createdAt: meta.createdAt,
       members: [...members.values()],
-      pinnedSeq: meta.pinnedSeq,
+      pinnedSeqs: meta.pinnedSeqs ?? [],
       lastSeq: meta.lastSeq,
       readMarks,
       deliveredMarks,
@@ -643,7 +645,7 @@ export class ConversationDO implements DurableObject {
         chatId: b.chatId, kind: b.kind, title: b.title ?? null,
         avatarId: null, description: null,
         sendPolicy: "all", invitePolicy: "all", createdBy: b.createdBy,
-        createdAt: now, pinnedSeq: null, lastSeq: 0, contentCount: 0,
+        createdAt: now, pinnedSeqs: [], lastSeq: 0, contentCount: 0,
       };
       await this.state.storage.put("meta", this.meta);
       this.members = new Map();
@@ -1020,11 +1022,19 @@ export class ConversationDO implements DurableObject {
       }
 
       case "/pin-message": {
-        const b = (await req.json()) as { actor: string; seq?: number | null };
+        const b = (await req.json()) as { actor: string; seq?: number | null; pinned?: boolean };
         const members = await this.loadMembers();
         if (!members.has(b.actor)) return err("not_member", 403);
-        // an unpin arrives as an absent seq: JSON encoders drop null fields
-        meta.pinnedSeq = b.seq ?? null;
+        const pins = meta.pinnedSeqs ?? [];
+        if (b.seq == null) {
+          // an absent seq clears the whole set: JSON encoders drop null fields
+          meta.pinnedSeqs = [];
+        } else if (b.pinned === false) {
+          meta.pinnedSeqs = pins.filter((s) => s !== b.seq);
+        } else {
+          // re-pinning moves the seq to the end: the newest pin leads the bar
+          meta.pinnedSeqs = [...pins.filter((s) => s !== b.seq), b.seq];
+        }
         this.meta = meta;
         await this.state.storage.put("meta", meta);
         await this.broadcastChat("pinned");

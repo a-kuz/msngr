@@ -6,6 +6,20 @@ with the commit that closed it.
 
 ## Open
 
+### A received PDF does not open for viewing
+Reported by the owner 2026-08-21, late evening, with a screenshot: a 98.9 MB
+«HISTORY.pdf» sent as a file shows the bubble, but tapping it does not open a
+preview. `FilePreview.swift` exists, so the first question is whether the
+path breaks on this file (size, download, decrypt) or the tap never reaches
+the preview at all. Investigation next; the ROADMAP's «previewing a file in
+the app» is open, so the fix may be the feature itself.
+
+### An animated GIF plays as a single frame
+Reported by the owner 2026-08-21, late evening: a GIF sent into a chat shows
+one static frame. The photo pipeline downscales through JPEG, which drops
+the animation on the sender's side. Needs its own path: a GIF travels as
+its original bytes and the feed animates it.
+
 ### An edit's envelope failed to open on the peer with no_session
 Seen in passing 2026-08-21 during the unread-recount run: alfa edited a
 message while charlie's headless engine was offline; on his next sync the

@@ -46,8 +46,8 @@ struct ChatScreen: View {
                     requestCard
                 } else {
                     if searching { searchHeader }
-                    if let pinned = model.pinnedMessage, !searching {
-                        pinnedBar(pinned)
+                    if !model.pinnedMessages.isEmpty, !searching {
+                        pinnedBar
                     }
                     messagesList
                         // the feed runs under the header: a message leaving it
@@ -211,6 +211,9 @@ struct ChatScreen: View {
                 jump(to: id)
             }
         }
+        .sheet(isPresented: $showPinList) {
+            pinListSheet
+        }
         .sheet(item: $forwardMessage) { msg in
             ForwardPickerView { targetChatId in
                 model.forward(msg, to: targetChatId)
@@ -317,6 +320,8 @@ struct ChatScreen: View {
     /// the calendar over the history, opened from a date separator or the
     /// floating day capsule
     @State private var showCalendar = false
+    /// the sheet with every pinned message, opened from the bar's list button
+    @State private var showPinList = false
 
     private var messagesList: MessagesView {
         MessagesView(vc: messagesVC, model: model, items: model.feed,
@@ -508,11 +513,27 @@ struct ChatScreen: View {
         }
     }
 
-    private func pinnedBar(_ msg: Message) -> some View {
-        HStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: 1.5).fill(Theme.accent).frame(width: 3, height: 30)
+    /// One bar for any number of pins: it shows the focused pin (the newest
+    /// after every change), a tap jumps to it and walks the focus to the
+    /// previous one, wrapping at the oldest. With several pins the segmented
+    /// rail counts them and the list button opens them all.
+    private var pinnedBar: some View {
+        let msgs = model.pinnedMessages
+        let idx = min(model.pinnedFocus, msgs.count - 1)
+        let msg = msgs[idx]
+        return HStack(spacing: 8) {
+            VStack(spacing: 2) {
+                ForEach(msgs.indices, id: \.self) { i in
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(i == idx ? Theme.accent : Theme.accent.opacity(0.3))
+                        .frame(width: 3)
+                }
+            }
+            .frame(width: 3, height: 30)
             VStack(alignment: .leading, spacing: 1) {
-                Text(String(localized: "Pinned message"))
+                Text(msgs.count > 1
+                     ? String(localized: "Pinned message \(idx + 1) of \(msgs.count)")
+                     : String(localized: "Pinned message"))
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(Theme.accent)
                 Text(ChatViewModel.previewText(msg))
@@ -520,20 +541,65 @@ struct ChatScreen: View {
                     .lineLimit(1)
             }
             Spacer()
-            Button {
-                model.pin(nil)
-            } label: {
-                Image(systemName: "xmark").font(.footnote).foregroundStyle(.secondary)
+            if msgs.count > 1 {
+                Button {
+                    showPinList = true
+                } label: {
+                    Image(systemName: "list.bullet").font(.footnote).foregroundStyle(.secondary)
+                }
+                .accessibilityIdentifier("chat.pins.list")
+            } else {
+                Button {
+                    model.unpin(msg)
+                } label: {
+                    Image(systemName: "xmark").font(.footnote).foregroundStyle(.secondary)
+                }
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(.bar)
+        .contentShape(Rectangle())
         .onTapGesture {
-            // the pin can sit deeper than the window: the jump loads history first
+            // the pin can sit deeper than the window: the jump loads history
+            // first; the next tap goes to the previous pin
             jump(to: msg.id)
+            model.pinnedFocus = idx > 0 ? idx - 1 : msgs.count - 1
         }
         .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
+    /// Every pinned message at once; a row jumps, its button unpins.
+    private var pinListSheet: some View {
+        NavigationStack {
+            List(model.pinnedMessages.reversed()) { msg in
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(ChatViewModel.previewText(msg))
+                            .font(.subheadline)
+                            .lineLimit(2)
+                        Text(Date(timeIntervalSince1970: msg.sentAt), style: .time)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button {
+                        model.unpin(msg)
+                    } label: {
+                        Image(systemName: "pin.slash").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    showPinList = false
+                    jump(to: msg.id)
+                }
+            }
+            .navigationTitle(String(localized: "Pinned messages"))
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.medium])
     }
 
     /// Pending request: the sender's profile and the decision instead of the feed.
@@ -983,7 +1049,7 @@ struct MessagesView: UIViewControllerRepresentable {
             case .edit: withAnimation(Theme.springFast) { model.editing = msg }
             case .editHistory: NotificationCenter.default.post(name: .editHistoryRequested, object: msg)
             case .pin: model.pin(msg)
-            case .unpin: model.pin(nil)
+            case .unpin: model.unpin(msg)
             case .forward: NotificationCenter.default.post(name: .forwardRequested, object: msg)
             case .select: withAnimation(Theme.springFast) { model.beginSelection(with: msg) }
             case .resend: model.resend(msg)
@@ -996,7 +1062,7 @@ struct MessagesView: UIViewControllerRepresentable {
         vc.onSwipeBack = onSwipeBack
         vc.onReactionCapsuleTap = onCapsuleTap
         vc.onDateTap = onDateTap
-        vc.pinnedSeq = model.chat?.pinnedSeq
+        vc.pinnedSeqs = Set(model.chat?.pinnedSeqs ?? [])
         vc.ownUserId = model.ownUserId
         vc.noteSendTick(sendTick)
         vc.apply(items)

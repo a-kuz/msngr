@@ -438,6 +438,25 @@ const fl = await api(`/api/chats/${chat.chatId}/flags`, { token: alice.token,
   body: { pinned: true, muted: true } });
 check("chat flags", fl.ok);
 
+// 12a. Pinned messages: several at once, by seq
+const pinState = async () => {
+  const s = await api("/api/chats", { token: alice.token });
+  const row = s.chats.find((x) => x.state.chatId === chat.chatId);
+  return row?.state.pinnedSeqs ?? [];
+};
+await api(`/api/chats/${chat.chatId}/pin-message`, { token: alice.token, body: { seq: 1 } });
+await api(`/api/chats/${chat.chatId}/pin-message`, { token: alice.token, body: { seq: 2 } });
+check("two messages pinned", JSON.stringify(await pinState()) === "[1,2]");
+const pinFrame = await cb2.waitFor((f) => f.t === "chat" && f.event === "pinned", 1500);
+check("pin fans the chat state out", !!pinFrame && Array.isArray(pinFrame.state.pinnedSeqs));
+await api(`/api/chats/${chat.chatId}/pin-message`, { token: alice.token,
+  body: { seq: 1, pinned: false } });
+check("one pin removed keeps the other", JSON.stringify(await pinState()) === "[2]");
+await api(`/api/chats/${chat.chatId}/pin-message`, { token: alice.token, body: { seq: 1 } });
+check("re-pin lands newest-last", JSON.stringify(await pinState()) === "[2,1]");
+await api(`/api/chats/${chat.chatId}/pin-message`, { token: alice.token, body: {} });
+check("absent seq clears all pins", JSON.stringify(await pinState()) === "[]");
+
 // 13. Blocking
 const bl = await api("/api/block", { token: bob.token, body: { userId: carol.userId, blocked: true } });
 const tryChat = await api("/api/chats", { token: carol.token,

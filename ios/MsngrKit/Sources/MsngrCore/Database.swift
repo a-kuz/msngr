@@ -457,6 +457,19 @@ public enum AppDatabase {
                 t.add(column: "sentAt", .double)
             }
         }
+        m.registerMigration("v23-multiPin") { db in
+            // a chat holds any number of pinned messages, ordered by when they
+            // were pinned with the newest last
+            try db.alter(table: "chat") { t in
+                t.add(column: "pinnedSeqs", .text).notNull().defaults(to: "[]")
+            }
+            try db.execute(sql: """
+                UPDATE chat SET pinnedSeqs = json_array(pinnedSeq) WHERE pinnedSeq IS NOT NULL
+                """)
+            try db.alter(table: "chat") { t in
+                t.drop(column: "pinnedSeq")
+            }
+        }
         return m
     }
 }

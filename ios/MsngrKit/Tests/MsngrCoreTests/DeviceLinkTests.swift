@@ -11,7 +11,7 @@ final class DeviceLinkTests: XCTestCase {
     private func stateJSON(_ id: String, lastSeq: Int, peerRead: Int = 0) -> String {
         """
         {"chatId":"\(id)","kind":"direct","title":null,"avatarId":null,"description":null,
-         "createdBy":"peer","createdAt":1,"pinnedSeq":null,"lastSeq":\(lastSeq),
+         "createdBy":"peer","createdAt":1,"pinnedSeqs":[],"lastSeq":\(lastSeq),
          "members":[{"userId":"me","role":"member","joinedAt":1,"accepted":true},
                     {"userId":"peer","role":"member","joinedAt":1,"accepted":true}],
          "readMarks":{"peer":\(peerRead)},"deliveredMarks":{}}

@@ -193,7 +193,7 @@ final class ChatCleanupTests: XCTestCase {
             sendPolicy: nil, invitePolicy: nil, createdBy: "peer", createdAt: 1,
             members: [.init(userId: "me", role: "member", joinedAt: 1, accepted: true),
                       .init(userId: "peer", role: "member", joinedAt: 1, accepted: true)],
-            pinnedSeq: nil, lastSeq: 121, readMarks: ["me": 100], deliveredMarks: [:])
+            pinnedSeqs: nil, lastSeq: 121, readMarks: ["me": 100], deliveredMarks: [:])
         try db.write { dbc in
             try SyncEngine.upsertChatState(dbc, state, ownUserId: "me", flags: nil)
         }
@@ -224,7 +224,7 @@ final class ChatCleanupTests: XCTestCase {
         "title":null,"avatarId":null,"description":null,"createdBy":"peer","createdAt":1,
         "members":[{"userId":"me","role":"member","joinedAt":1,"accepted":true},
         {"userId":"peer","role":"member","joinedAt":1,"accepted":true}],
-        "pinnedSeq":2,"lastSeq":4,"readMarks":{},"deliveredMarks":{}}}
+        "pinnedSeqs":[2],"lastSeq":4,"readMarks":{},"deliveredMarks":{}}}
         """
         await engine.apply(try JSONDecoder().decode(WSIncoming.self, from: Data(json.utf8)))
 
@@ -245,7 +245,7 @@ final class ChatCleanupTests: XCTestCase {
         "title":"Team","avatarId":null,"description":null,"createdBy":"peer","createdAt":1,
         "members":[{"userId":"me","role":"member","joinedAt":50,"accepted":true},
         {"userId":"peer","role":"admin","joinedAt":1,"accepted":true}],
-        "pinnedSeq":null,"lastSeq":30,"readMarks":{},"deliveredMarks":{}}}
+        "pinnedSeqs":[],"lastSeq":30,"readMarks":{},"deliveredMarks":{}}}
         """
         await engine.apply(try JSONDecoder().decode(WSIncoming.self, from: Data(json.utf8)))
 
@@ -270,7 +270,7 @@ final class ChatCleanupTests: XCTestCase {
             chatId: "fresh", kind: "direct", title: nil, avatarId: nil, description: nil,
             sendPolicy: nil, invitePolicy: nil, createdBy: "peer", createdAt: 1,
             members: [.init(userId: "me", role: "member", joinedAt: 1, accepted: true)],
-            pinnedSeq: nil, lastSeq: 4, readMarks: [:], deliveredMarks: [:])
+            pinnedSeqs: nil, lastSeq: 4, readMarks: [:], deliveredMarks: [:])
         try db.write { dbc in
             try SyncEngine.upsertChatState(dbc, state, ownUserId: "me", flags: nil)
         }
