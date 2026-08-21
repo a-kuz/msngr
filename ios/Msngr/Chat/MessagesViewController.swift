@@ -14,6 +14,9 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     var onNeedOlder: (() -> Void)?
     var onReply: ((Message) -> Void)?
     var onReact: ((Message, String) -> Void)?
+    /// Tap on a reaction capsule: in a group it opens who reacted, in a direct
+    /// chat it toggles your own reaction — the screen decides which.
+    var onReactionCapsuleTap: ((Message, String) -> Void)?
     var onContextAction: ((Message, MessageContextAction) -> Void)?
     /// The message the chat holds pinned, so the context menu of that one offers
     /// to take the pin off instead of putting it on again.
@@ -481,6 +484,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         cell.configure(msg: msg, plan: plan, avatar: avatar)
         cell.onReply = { [weak self] in self?.onReply?(msg) }
         cell.onReact = { [weak self] emoji in self?.onReact?(msg, emoji) }
+        cell.onCapsuleTap = { [weak self] emoji in self?.onReactionCapsuleTap?(msg, emoji) }
         cell.onContextAction = { [weak self] action in self?.onContextAction?(msg, action) }
         cell.onTapMedia = { [weak self] index, view in self?.onTapMedia?(msg, index, view) }
         cell.onTapLink = { [weak self] url in self?.open(url) }
@@ -699,7 +703,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
 }
 
 enum MessageContextAction {
-    case reply, copy, forward, select, edit, pin, unpin, delete, resend
+    case reply, copy, forward, select, edit, editHistory, pin, unpin, delete, resend
 }
 
 extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {

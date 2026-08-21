@@ -417,3 +417,11 @@ theme, the single tick the same glyph size as one of the pair.
 Reported 2026-08-18 (third time). Closed by 95c03a3: the custom button now
 draws the system chevron at the system size, kept only for the `chat.back`
 accessibility identifier; the header title sits on a capsule ground.
+
+### Deleted-for-all message keeps its forward line
+Found 2026-08-21 during the reactions/forward run, out of its scope. A
+forwarded message deleted for everyone renders «Переслано от …» above
+«Сообщение удалено»: deletion clears text and media but leaves the `forward`
+column, and the layout keeps drawing the header row. The tombstone should
+carry nothing but the deletion text. Seen live in the alfa–bravo direct chat
+(docs/qa/runs/2026-08-21-reactions-forward/, the deleted album).

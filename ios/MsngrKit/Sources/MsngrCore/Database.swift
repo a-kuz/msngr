@@ -441,6 +441,19 @@ public enum AppDatabase {
                 END;
                 """)
         }
+        m.registerMigration("v22-editHistory") { db in
+            // an edited message keeps its previous texts, each with the time it
+            // was authored; editedAt stamps the current text
+            try db.alter(table: "message") { t in
+                t.add(column: "editHistory", .text).notNull().defaults(to: "[]")
+                t.add(column: "editedAt", .double)
+            }
+            // an edit buffered before its original needs its own sentAt for the
+            // history entry it will leave once the original arrives
+            try db.alter(table: "pendingApply") { t in
+                t.add(column: "sentAt", .double)
+            }
+        }
         return m
     }
 }
@@ -475,6 +488,8 @@ extension Message {
         replyTo = (row["replyTo"] as String?).flatMap { try? dec.decode(ReplyPreview.self, from: Data($0.utf8)) }
         forward = (row["forward"] as String?).flatMap { try? dec.decode(ForwardInfo.self, from: Data($0.utf8)) }
         edited = row["edited"]
+        editHistory = (row["editHistory"] as String?).flatMap { try? dec.decode([EditVersion].self, from: Data($0.utf8)) } ?? []
+        editedAt = row["editedAt"]
         deletedForAll = row["deletedForAll"]
         status = MessageStatus(rawValue: row["status"]) ?? .sent
         isOutgoing = row["isOutgoing"]
@@ -504,6 +519,8 @@ extension Message {
         container["replyTo"] = js(replyTo)
         container["forward"] = js(forward)
         container["edited"] = edited
+        container["editHistory"] = js(editHistory) ?? "[]"
+        container["editedAt"] = editedAt
         container["deletedForAll"] = deletedForAll
         container["status"] = status.rawValue
         container["isOutgoing"] = isOutgoing
