@@ -57,6 +57,25 @@ strings moved to English keys (`fdb9c47`), and the unread-marker and
 participants counters that had been hardcoded in English on that path went
 through the catalog's plural forms.
 
+## Merged on 2026-08-21, night
+
+run-msgid (`229389b`): a message is identified by `(chatId, seq)` and the minted
+msgId ULID is gone — from the client's schema, from the frames and from the
+REST. `delete` carries seqs, and the pin, the reply preview, the reaction, the
+edit target, the search hit and the jump request all name a message the same
+way; "not acknowledged yet" is now the absence of a seq rather than a temporary
+id. The branch had to be finished by hand: the agent reported the work done
+with nothing committed, so the dispatcher committed it, merged main into it
+twice (main moved by fifteen commits under it), resolved sixteen conflicts, and
+found one red — `UnreadRecountTests` inserted into `pendingDecrypt` a `msgId`
+column the new schema does not have (`0c3f084`, the recount logic untouched).
+Checked before landing: `swift test` 382 with 0 failures, MsngrTests 205 with
+0, and the server smoke on a stand of its own through `scripts/smoke-stand.sh`
+— ALL PASS, 265 checks. The 22 failures an earlier smoke run showed were
+another session's APNs mock holding the shared push port, not the branch.
+The client schema changed in place, so the fixture trio was reseeded
+(`alfa3`, `bravo3`, `charlie3`).
+
 ## Merged on 2026-08-21
 
 run-reactions (`1482c31`): a tap on a group reaction capsule opens who reacted,
