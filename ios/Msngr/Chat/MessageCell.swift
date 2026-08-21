@@ -317,6 +317,9 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         if let ff = plan.forwardFrame {
             forwardLabel.isHidden = false
             forwardLabel.text = plan.forwardText
+            // the meta gray of the incoming bubble is unreadable on the dark
+            // outgoing one; the line follows the time's palette
+            forwardLabel.textColor = plan.isOutgoing ? UIColor(Theme.outgoingMeta) : .secondaryLabel
             forwardLabel.frame = ff
         } else {
             forwardLabel.isHidden = true
