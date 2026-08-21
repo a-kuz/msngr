@@ -83,30 +83,6 @@ app's own view of it, and only then look at the window geometry of the banner
 only as tall as the measured content, which would push the visible banner below
 the window's own bounds, where touches do not reach it).
 
-### List rows are tappable only on their letters and icons
-Reported 2026-08-19 from the device. In many lists the tap works only exactly on
-the text or the icon, not anywhere in the row — the hit area does not cover the
-whole cell. Sweep the lists (settings, folders, chat info, search results) and
-give every row a full-width content shape.
-
-Swept on 2026-08-21 (`152e106`): three more instances of the same disease found
-by reading every `buttonStyle(.plain)` in the app — the folder tabs
-(`ChatFolderBar`, transparent padding without a content shape), the forward
-picker rows (`ForwardPickerView`, content-hugging label), and the pin pad's
-del/face keys (`Color.clear` is not hit-testable, only the glyph answered; the
-empty face key with biometrics off is now disabled rather than a dead zone).
-Settings, folders, chat info and the chat-list search results go through List
-buttons and NavigationLinks or already state their shape. Stays open until the
-fixed spots are re-run live on a simulator.
-
-### A forwarded message deleted for everyone keeps its forward line
-Found 2026-08-21 during the reactions/forward run, out of its scope. A
-forwarded message deleted for everyone renders «Переслано от …» above
-«Сообщение удалено»: deletion clears text and media but leaves the `forward`
-column, and the layout keeps drawing the header row. The tombstone should
-carry nothing but the deletion text. Seen live in the alfa–bravo direct chat
-(docs/qa/runs/2026-08-21-reactions-forward/, the deleted album).
-
 ### Typing in the chat input misbehaves under load
 Reported 2026-08-19. Hard to catch: when the app stutters, letters appear with
 a delay, the input's resize lags behind, and sometimes the caret ends up not
@@ -131,6 +107,30 @@ not on a single fix. Measured so far (bubbleanim run, merged 14c3a0a): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### List rows are tappable only on their letters and icons
+Reported 2026-08-19 from the device: in many lists the tap worked only exactly
+on the text or the icon. The first pass (`324c4d2`) gave the chat-list and
+new-chat rows a content shape and was verified live the same day. The sweep of
+2026-08-21 (`152e106`) read every `buttonStyle(.plain)` in the app and found
+three more instances: the folder tabs and the manage chip (`ChatFolderBar`,
+transparent padding without a content shape), the forward picker rows
+(`ForwardPickerView`, content-hugging label), and the pin pad's del/face keys
+(`Color.clear` is not hit-testable; the empty face key with biometrics off is
+disabled now rather than a dead zone). Verified live on a fixture simulator:
+a tap on the manage chip's padding opens the folders screen, a tap on the far
+right of a forward-picker row picks the chat and the forward lands. Settings,
+folders, chat info and the search results go through List buttons and
+NavigationLinks or already state their shape.
+
+### A forwarded message deleted for everyone keeps its forward line
+Found 2026-08-21 during the reactions/forward run, out of its scope: deletion
+cleared text and media but left the `forward` column, and the layout kept
+drawing the header row above «Сообщение удалено» (seen live in the alfa–bravo
+direct chat, docs/qa/runs/2026-08-21-reactions-forward/, the deleted album).
+Closed by `cc00390`: a message deleted for everyone lays out neither the
+forward line nor the reply strip. Verified live the same day — a forward into
+the Standup group deleted for everyone renders as a bare one-line tombstone.
 
 ### The «ack precedes push» smoke check races within milliseconds
 Seen 2026-08-19 in a gate run on `run-longpress` (server code untouched by the
