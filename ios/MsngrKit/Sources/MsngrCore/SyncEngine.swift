@@ -419,9 +419,15 @@ public actor SyncEngine {
     /// break in the middle of a catch-up costs one portion, not the history.
     private func applySyncState(_ f: WSIncoming) async {
         guard let chatId = f.chatId, let cursor = f.cursor else { return }
-        try? await db.write { dbc in
+        let caughtUp = f.more != true
+        try? await db.write { [ownUserId] dbc in
             try dbc.execute(sql: "UPDATE chat SET syncCursor = MAX(syncCursor, ?) WHERE id = ?",
                             arguments: [cursor, chatId])
+            // the gap is closed: the unread estimate that counted seqs across
+            // it settles onto the rows that actually arrived
+            if caughtUp {
+                try Self.recountUnread(dbc, chatId: chatId, ownUserId: ownUserId)
+            }
         }
         if f.more == true { catchupPending.insert(chatId) } else { catchupPending.remove(chatId) }
     }
@@ -2370,6 +2376,28 @@ public actor SyncEngine {
         }
         try applyPeerMarks(dbc, chatId: s.chatId, ownUserId: ownUserId)
         try requeueOwnMarks(dbc, s, ownUserId: ownUserId, isRequest: isRequest)
+        try recountUnread(dbc, chatId: s.chatId, ownUserId: ownUserId)
+    }
+
+    /// The seq arithmetic above is an estimate for the time a chat has frames
+    /// this device has not seen: it counts every seq, and an edit, a delete or
+    /// a sender key handout behind one of them is not a message to read. Once
+    /// the contiguous prefix is complete the rows are the truth, and the number
+    /// goes back to messages: incoming, not system, not deleted — plus the
+    /// envelopes still waiting for a key, which are messages whatever they
+    /// decrypt to. A chat that is still behind is left with the estimate.
+    static func recountUnread(_ dbc: GRDB.Database, chatId: String, ownUserId: String) throws {
+        try dbc.execute(
+            sql: """
+            UPDATE chat SET unreadCount =
+                (SELECT COUNT(*) FROM message m
+                 WHERE m.chatId = chat.id AND m.seq > chat.myReadUpTo
+                   AND m.isOutgoing = 0 AND m.kind != 'system' AND m.deletedForAll = 0)
+              + (SELECT COUNT(*) FROM pendingDecrypt p
+                 WHERE p.chatId = chat.id AND p.seq > chat.myReadUpTo AND p.fromUserId != ?)
+            WHERE id = ? AND syncedSeq >= lastSeq
+            """,
+            arguments: [ownUserId, chatId])
     }
 
     /// The snapshot also says where the server thinks this device stands, and a
