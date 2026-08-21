@@ -52,9 +52,12 @@ final class SmokeTests: XCTestCase {
         } else {
             app.buttons["chatlist.new"].tap()
             // the new chat sheet has its own field; the chat list search sits
-            // underneath the sheet and matches too if you are not specific
-            let search = app.searchFields["Username or name"]
-            XCTAssertTrue(search.waitForExistence(timeout: 5), "no user search field")
+            // underneath the sheet and takes no touch, which is what tells the two
+            // apart — the placeholder is localised and would tie the run to a language
+            let fields = app.searchFields
+            _ = fields.firstMatch.waitForExistence(timeout: 5)
+            let search = fields.allElementsBoundByIndex.first { $0.isHittable } ?? fields.firstMatch
+            XCTAssertTrue(search.exists, "no user search field")
             search.tap()
             _ = search.waitForExistence(timeout: 1)
             search.typeText("akuz")

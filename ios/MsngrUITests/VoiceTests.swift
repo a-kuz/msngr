@@ -80,13 +80,22 @@ final class VoiceTests: XCTestCase {
             existing.tap()
         } else {
             app.buttons["chatlist.new"].tap()
-            let search = app.searchFields["Username or name"]
+            let search = userSearchField()
             XCTAssertTrue(search.waitForExistence(timeout: 10), "no user search field")
             type(peer, into: search)
             let row = app.staticTexts["@\(peer)"]
             XCTAssertTrue(row.waitForExistence(timeout: 15), "search did not find the user \(peer)")
             row.tap()
         }
+    }
+
+    /// The search field of the new chat sheet. Its placeholder is localised, so naming
+    /// it would tie the run to the host's language; the list's own field is behind the
+    /// sheet and takes no touch, which is what tells the two apart.
+    private func userSearchField() -> XCUIElement {
+        let fields = app.searchFields
+        _ = fields.firstMatch.waitForExistence(timeout: 10)
+        return fields.allElementsBoundByIndex.first { $0.isHittable } ?? fields.firstMatch
     }
 
     /// A sheet that has just come up takes the first tap to settle and only then the
