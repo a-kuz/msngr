@@ -95,8 +95,10 @@ struct PinPad: View {
                                    height: TypeScale.scaled(74, relativeTo: .title2, max: 88))
                             .background(key == "face" || key == "del" ? Color.clear : Color.primary.opacity(0.06))
                             .clipShape(Circle())
+                            .contentShape(Circle())
                         }
                         .buttonStyle(.plain)
+                        .disabled(key == "face" && !PinStore.biometricsEnabled())
                     }
                 }
             }
