@@ -6,12 +6,6 @@ with the commit that closed it.
 
 ## Open
 
-### An animated GIF plays as a single frame
-Reported by the owner 2026-08-21, late evening: a GIF sent into a chat shows
-one static frame. The photo pipeline downscales through JPEG, which drops
-the animation on the sender's side. Needs its own path: a GIF travels as
-its original bytes and the feed animates it.
-
 ### An edit's envelope failed to open on the peer with no_session
 Seen in passing 2026-08-21 during the unread-recount run: alfa edited a
 message while charlie's headless engine was offline; on his next sync the
@@ -77,6 +71,19 @@ not on a single fix. Measured so far (bubbleanim run, merged 14c3a0a): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### An animated GIF plays as a single frame
+Reported by the owner 2026-08-21, late evening: a GIF sent into a chat showed
+one static frame. The animation was lost on the way out — every picked image
+went through the JPEG pass, and JPEG holds one frame.
+Closed by 27daed3: a multi-frame GIF is sent as its own bytes with `image/gif`
+as the mime, the feed plays it in the tile a still would have filled (frame
+delays read from the file, one decoded frame at a time, stopped with the cell
+and paused off-screen through the same switch the video autoplay uses), and the
+full-screen viewer plays it too instead of showing the first frame. Verified
+live on a simulator of its own: the feed strip differs across frames 0.6 s
+apart and the viewer differs across four frames 0.5 s apart
+(`docs/qa/runs/2026-08-21-gif-run.md`).
 
 ### A received PDF does not open for viewing
 Reported by the owner 2026-08-21, late evening, with a screenshot: tapping the
