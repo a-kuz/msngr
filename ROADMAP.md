@@ -88,11 +88,11 @@ A ✅ goes in only together with a link to the evidence.
 - Search and empty states
   - ✅ local search over the chat title and the username (design-review 02c)
   - ✅ an empty list with a «Начать переписку» button (palettes/chatlist-empty)
-  - ⬜ everything searched from one field: chats instantly, messages after in the
-    background, people from the server; going from a result straight to the
-    message in the feed. The specification is
-    `docs/audits/2026-08-16-search.md`. The FTS table is in the schema and is
-    filled, but nothing queries it yet
+  - ✅ everything searched from one field: chats instantly, messages over the
+    FTS table with the match highlighted, people from the server, and a hit
+    landing the feed on the message mid-history
+    (qa/runs/2026-08-21-unified-search; the specification is
+    `docs/audits/2026-08-16-search.md`)
 
 ## Chat and feed
 
