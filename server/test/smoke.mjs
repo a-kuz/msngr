@@ -1097,7 +1097,7 @@ const push3 = await waitPush(pushFor("eve-sim-udid", p3.msgId));
 check("push badge after read", push3 && push3.body.aps.badge === 1,
   `badge=${push3?.body.aps.badge}`);
 // badgeStamp is how the client tells a fresh counter from an older one that
-// overtook it: UserSessionDO issues the number and it strictly grows
+// overtook it: UserDO issues the number and it strictly grows
 check("badge stamps grow", push1 && push2 && push3
   && push1.body.badgeStamp < push2.body.badgeStamp
   && push2.body.badgeStamp < push3.body.badgeStamp,

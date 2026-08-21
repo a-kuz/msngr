@@ -15,8 +15,8 @@ docs/             protocol, crypto flows, UI, process, audits, QA
 ## Backend
 
 - **Worker (the router)** — the whole HTTP API and the `/ws` upgrade. It
-  authorises the socket and hands it to the user's `UserSessionDO`.
-- **UserSessionDO** — one per user. It holds the WS of every device they have
+  authorises the socket and hands it to the user's `UserDO`.
+- **UserDO** — one per user. It holds the WS of every device they have
   (WebSocket Hibernation API), the chat list with its local flags (pinned,
   muted, archived), presence, APNs tokens, and the unread cache behind the
   badge. Everything addressed to a user passes through their DO, which is the
@@ -26,7 +26,7 @@ docs/             protocol, crypto flows, UI, process, audits, QA
   metadata), read and delivered marks, the pinned message and the settings. It
   assigns monotonic `seq`, deduplicates sends by `clientMsgId`, and after
   writing puts the frame into an alarm queue for fan-out over the participants'
-  `UserSessionDO`.
+  `UserDO`.
 - **D1** — users, devices with token hashes, identity keys and prekey bundles,
   blocks, invites, the media registry.
 - **R2** — media blobs, encrypted on the client.

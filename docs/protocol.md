@@ -9,7 +9,7 @@ The source of truth is the code: `server/src/index.ts` (the router),
 - HTTP `/api/*` — registration, keys, profiles, chats, media, contacts, blocks.
 - WS `/ws?token=…&v=…` — one socket per device, JSON frames `{t, ...}`.
   The upgrade is authorized in the Worker, the socket itself is held by
-  `UserSessionDO`.
+  `UserDO`.
   `v` is the client's protocol version, read before auth: below the server's
   floor the upgrade answers `426 client_too_old` with both numbers, and the
   client stops reconnecting instead of retrying into silence.
@@ -235,7 +235,7 @@ twice (a retried fanout pass), so the client dedupes by `msgId`.
 
 ## Presence
 
-`UserSessionDO` counts a user as online while at least one socket has sent a
+`UserDO` counts a user as online while at least one socket has sent a
 `ping` no more than 35 seconds ago (`PRESENCE_TTL_MS`); the client pings every
 12 s. An open but silent socket does not count as online — iOS holds the
 connection for minutes after the app is backgrounded. A status change is
@@ -452,7 +452,7 @@ ever move back.
 APNs is called immediately for every content `msg` — regardless of presence and
 live sockets. The exceptions: `service:true`, the author's own echo, a muted
 chat, a block. A mute with an expiry (`mutedUntil`) runs out on its own:
-`UserSessionDO` clears the flag at the first check after the deadline — on a push
+`UserDO` clears the flag at the first check after the deadline — on a push
 and in the `/api/chats` snapshot. Dedup on the client: `willPresent` suppresses
 the banner if the message has already been shown over WS (matched by
 chatId/msgId, see `NotificationDecision`).
@@ -493,7 +493,7 @@ chats, and a request that has not been accepted is not part of it. The client
 does not recount the number, it only reports its own when it has moved its read
 mark itself.
 
-`badgeStamp` is the sequence number of the counter that `UserSessionDO` issues
+`badgeStamp` is the sequence number of the counter that `UserDO` issues
 for every push it sends. APNs delivers an avalanche in arbitrary order, and
 `badgeStamp` is how a device tells a fresh counter from an older one that
 overtook it: a smaller number does not reach the icon (`BadgeStore`).
@@ -501,7 +501,7 @@ overtook it: a smaller number does not reach the icon (`BadgeStore`).
 The APNs answer is parsed:
 
 - `410` — the device token is dead: the record is deleted both from
-  `UserSessionDO` storage and from `devices.apns_token` in D1;
+  `UserDO` storage and from `devices.apns_token` in D1;
 - `429` and `5xx` — up to two retries, after 500 ms and 1500 ms;
 - `403 ExpiredProviderToken` — a forced JWT re-issue and one more attempt;
 - `400` and everything else — the code and `reason` go to the log, no retry.
@@ -512,10 +512,10 @@ send to the rest.
 The provider JWT (ES256, p8) belongs to the singleton object `ApnsTokenDO` (named
 `apns-jwt`): the cache sits in its storage and lives 3000 seconds. There is a
 single owner because Apple limits how often the token may be generated, while
-there can be many isolates holding `UserSessionDO`s. A forced re-issue happens at
+there can be many isolates holding `UserDO`s. A forced re-issue happens at
 most once a minute.
 
-Badge: `UserSessionDO` keeps a per-chat unread cache in storage (`unreadCache`),
+Badge: `UserDO` keeps a per-chat unread cache in storage (`unreadCache`),
 invalidates it on an incoming `msg` and on its own `read`, and at the moment of
 sending a push lazily recounts the invalidated chats with a `GET
 /unread-count?userId=` request to `ConversationDO` (`lastSeq` minus the read

@@ -82,7 +82,7 @@ interface PushJob {
 }
 
 // One object per user: the sockets of all their devices, the chat list, presence, pushes.
-export class UserSessionDO implements DurableObject {
+export class UserDO implements DurableObject {
   private userId: string | null = null;
   /// Dev test hook (/dev-fault): how many frame deliveries to reject next.
   private devFailEvents = 0;
