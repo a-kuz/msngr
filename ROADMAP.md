@@ -420,7 +420,8 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - Trust
   - 🟡 TOFU over all of the peer's devices (not verified live)
   - 🟡 outgoing messages blocked on a key change and a banner to accept it (not verified live)
-  - 🟡 the 60-digit safety number in the chat info (not verified live)
+  - ✅ the 60-digit safety number in the chat info, matching the number an
+    independent side computes for the same pair (qa/runs/2026-08-21-safety-number)
   - ⬜ comparing by QR
   - ⬜ a "verified" mark after the comparison
 - Privacy
