@@ -61,6 +61,20 @@ app.post("/api/register", async (c) => {
   const token = newToken();
   const tokenHash = await sha256hex(token);
 
+  // The keys go into the user's object first: if the username loses the race
+  // below, storage under a never-issued userId is unreachable, while the
+  // reverse order would burn the username on a failed keys write.
+  const kw = await userStub(c.env, userId).fetch("https://do/keys-register", {
+    method: "POST",
+    body: JSON.stringify({
+      userId, deviceId,
+      identityKey: b.identityKey, identitySignKey: b.identitySignKey,
+      identityKeySig: b.identityKeySig, signedPrekey: b.signedPrekey,
+      oneTimePrekeys: b.oneTimePrekeys,
+    }),
+  });
+  if (!kw.ok) return err("keys_write_failed", 500);
+
   try {
     await c.env.DB.batch([
       c.env.DB.prepare(
@@ -69,15 +83,6 @@ app.post("/api/register", async (c) => {
       c.env.DB.prepare(
         "INSERT INTO devices (id, user_id, name, token_hash, created_at) VALUES (?,?,?,?,?)"
       ).bind(deviceId, userId, b.device?.name ?? null, tokenHash, now),
-      c.env.DB.prepare(
-        "INSERT INTO identity_keys (device_id, user_id, identity_key, identity_sign_key, identity_key_sig, signed_prekey_id, signed_prekey, signed_prekey_sig) VALUES (?,?,?,?,?,?,?,?)"
-      ).bind(deviceId, userId, b.identityKey, b.identitySignKey, b.identityKeySig,
-             b.signedPrekey.id, b.signedPrekey.key, b.signedPrekey.sig),
-      ...b.oneTimePrekeys.slice(0, 200).map((k) =>
-        c.env.DB.prepare(
-          "INSERT INTO one_time_prekeys (device_id, key_id, key) VALUES (?,?,?)"
-        ).bind(deviceId, k.id, k.key)
-      ),
     ]);
   } catch (e) {
     const msg = String(e);
@@ -185,39 +190,40 @@ app.post("/api/provision/:id/claim", async (c) => {
   const userId = s.row.approved_by;
   // The identity belongs to the account, not to the device: a device that does
   // not present the account's own keys is not one this account authorised.
-  const known = await c.env.DB.prepare(
-    "SELECT identity_key, identity_sign_key FROM identity_keys WHERE user_id = ?"
-  ).bind(userId).all<{ identity_key: string; identity_sign_key: string }>();
-  if (!known.results.length) return err("account_has_no_devices", 409);
-  const matches = known.results.every(
-    (k) => k.identity_key === b.identityKey && k.identity_sign_key === b.identitySignKey
+  const kd = await userStub(c.env, userId).fetch("https://do/keys-devices");
+  const known = (await kd.json()) as {
+    devices: Array<{ identityKey: string; identitySignKey: string }>;
+  };
+  if (!known.devices.length) return err("account_has_no_devices", 409);
+  const matches = known.devices.every(
+    (k) => k.identityKey === b.identityKey && k.identitySignKey === b.identitySignKey
   );
   if (!matches) return err("identity_mismatch", 409);
 
   const now = Date.now();
   const deviceId = ulid(now);
   const token = newToken();
+  // Keys first, the device row second: a failed D1 write leaves the session
+  // unclaimed and a retry repeats both, while the reverse order would mint a
+  // device whose own /api/identity could never heal it.
+  const kw = await userStub(c.env, userId).fetch("https://do/keys-register", {
+    method: "POST",
+    body: JSON.stringify({
+      userId, deviceId,
+      identityKey: b.identityKey, identitySignKey: b.identitySignKey,
+      identityKeySig: b.identityKeySig, signedPrekey: b.signedPrekey,
+      oneTimePrekeys: b.oneTimePrekeys ?? [], bump: true,
+    }),
+  });
+  if (!kw.ok) return err("keys_write_failed", 500);
   await c.env.DB.batch([
     c.env.DB.prepare(
       "INSERT INTO devices (id, user_id, name, token_hash, created_at) VALUES (?,?,?,?,?)"
     ).bind(deviceId, userId, b.device?.name ?? s.row.device_name, await sha256hex(token), now),
     c.env.DB.prepare(
-      "INSERT INTO identity_keys (device_id, user_id, identity_key, identity_sign_key, identity_key_sig, signed_prekey_id, signed_prekey, signed_prekey_sig) VALUES (?,?,?,?,?,?,?,?)"
-    ).bind(deviceId, userId, b.identityKey, b.identitySignKey, b.identityKeySig,
-           b.signedPrekey.id, b.signedPrekey.key, b.signedPrekey.sig),
-    ...(b.oneTimePrekeys ?? []).slice(0, 200).map((k) =>
-      c.env.DB.prepare(
-        "INSERT INTO one_time_prekeys (device_id, key_id, key) VALUES (?,?,?)"
-      ).bind(deviceId, k.id, k.key)
-    ),
-    c.env.DB.prepare(
       "UPDATE provision_sessions SET claimed_at = ?, envelope = NULL WHERE id = ? AND claimed_at IS NULL"
     ).bind(now, s.row.id),
-    c.env.DB.prepare(
-      "UPDATE users SET devices_version = devices_version + 1 WHERE id = ?"
-    ).bind(userId),
   ]);
-  await broadcastDevices(c.env, userId);
   return json({ ok: true, userId, deviceId, token });
 });
 
@@ -249,39 +255,19 @@ app.get("/api/me", async (c) => {
 // Revoking a device also closes its sockets and forgets its APNs token.
 //
 // Its keys go with it. Senders hold the device list in a cache invalidated by
-// the `devices` frame, so dropping the identity row and broadcasting the change
-// is what actually stops the traffic: the peer's next send no longer builds a
-// box for this device, and its prekeys stop being handed out for sessions
-// nobody will ever open.
+// the `devices` frame, so dropping the identity record and broadcasting the
+// change is what actually stops the traffic: the peer's next send no longer
+// builds a box for this device, and its prekeys stop being handed out for
+// sessions nobody will ever open.
 async function revokeDevice(env: Env, userId: string, deviceId: string) {
-  await env.DB.batch([
-    env.DB.prepare(
-      "UPDATE devices SET revoked_at = ?, apns_token = NULL, apns_env = NULL WHERE id = ? AND user_id = ?"
-    ).bind(Date.now(), deviceId, userId),
-    env.DB.prepare("DELETE FROM identity_keys WHERE device_id = ? AND user_id = ?")
-      .bind(deviceId, userId),
-    env.DB.prepare("DELETE FROM one_time_prekeys WHERE device_id = ?").bind(deviceId),
-    env.DB.prepare("UPDATE users SET devices_version = devices_version + 1 WHERE id = ?")
-      .bind(userId),
-  ]);
+  // the token dies in D1, where auth reads it; the sockets, the keys, the
+  // version bump and the fan-out all happen inside the user's object
+  await env.DB.prepare(
+    "UPDATE devices SET revoked_at = ?, apns_token = NULL, apns_env = NULL WHERE id = ? AND user_id = ?"
+  ).bind(Date.now(), deviceId, userId).run();
   await userStub(env, userId).fetch("https://do/revoke-device", {
     method: "POST",
-    body: JSON.stringify({ deviceId }),
-  });
-  await broadcastDevices(env, userId);
-}
-
-/// Tells everyone this user shares a chat with, and their own other devices,
-/// that the device set changed. The frame carries the new devices_version:
-/// a receiver whose cache already holds it keeps the cache, anyone behind
-/// re-reads GET /api/devices.
-async function broadcastDevices(env: Env, userId: string) {
-  const row = await env.DB.prepare(
-    "SELECT devices_version FROM users WHERE id = ?"
-  ).bind(userId).first<{ devices_version: number }>();
-  await userStub(env, userId).fetch("https://do/devices-changed", {
-    method: "POST",
-    body: JSON.stringify({ userId, version: row?.devices_version ?? 0 }),
+    body: JSON.stringify({ deviceId, userId }),
   });
 }
 
@@ -419,78 +405,44 @@ async function presenceVisible(env: Env, viewerId: string, targetId: string): Pr
 app.get("/api/devices", async (c) => {
   const ids = [...new Set((c.req.query("ids") ?? "").split(",").filter(Boolean))].slice(0, 100);
   if (!ids.length) return json({ ok: true, devices: [], versions: {} });
-  const placeholders = ids.map(() => "?").join(",");
-  // one batch, so the lists and the versions stamped on them are one snapshot
-  const [versionRows, rows] = await c.env.DB.batch([
-    c.env.DB.prepare(
-      `SELECT id, devices_version FROM users WHERE id IN (${placeholders})`
-    ).bind(...ids),
-    c.env.DB.prepare(
-      `SELECT user_id, device_id, identity_key, identity_sign_key, identity_key_sig
-       FROM identity_keys WHERE user_id IN (${placeholders})`
-    ).bind(...ids),
-  ]);
+  // each user's list and the version stamped on it come from that user's
+  // object in one answer, so per user they are one snapshot
+  const perUser = await Promise.all(ids.map(async (id) => {
+    const r = await userStub(c.env, id).fetch("https://do/keys-devices");
+    const j = (await r.json()) as {
+      devices?: Array<{
+        deviceId: string; identityKey: string; identitySignKey: string; identityKeySig: string;
+      }>;
+      version?: number | null;
+    };
+    return { id, devices: j.devices ?? [], version: j.version ?? null };
+  }));
   const versions: Record<string, number> = {};
-  for (const r of versionRows.results as Array<{ id: string; devices_version: number }>) {
-    versions[r.id] = r.devices_version;
+  const devices: unknown[] = [];
+  for (const u of perUser) {
+    // a user whose object was never written to is unknown, not at version zero
+    if (u.version !== null) versions[u.id] = u.version;
+    for (const d of u.devices) devices.push({ userId: u.id, ...d });
   }
-  return json({
-    ok: true,
-    devices: (rows.results as Array<{
-      user_id: string; device_id: string; identity_key: string;
-      identity_sign_key: string; identity_key_sig: string;
-    }>).map((r) => ({
-      userId: r.user_id,
-      deviceId: r.device_id,
-      identityKey: r.identity_key,
-      identitySignKey: r.identity_sign_key,
-      identityKeySig: r.identity_key_sig,
-    })),
-    versions,
-  });
+  return json({ ok: true, devices, versions });
 });
 
 // How many one-time prekeys this device has left; the client tops up below 20
 app.get("/api/prekeys/count", async (c) => {
-  const { deviceId } = c.get("auth");
-  const row = await c.env.DB.prepare(
-    "SELECT COUNT(*) AS n FROM one_time_prekeys WHERE device_id = ?"
-  ).bind(deviceId).first<{ n: number }>();
-  return json({ ok: true, count: row?.n ?? 0 });
+  const { userId, deviceId } = c.get("auth");
+  const r = await userStub(c.env, userId).fetch(`https://do/keys-count?deviceId=${deviceId}`);
+  const j = (await r.json()) as { count?: number };
+  return json({ ok: true, count: j.count ?? 0 });
 });
 
-// X3DH prekey bundles for every device of a user; a one-time prekey is handed out and deleted
+// X3DH prekey bundles for every device of a user; a one-time prekey is handed
+// out and deleted, and the object serializes the handout: two senders asking at
+// once never draw the same key
 app.get("/api/users/:id/prekeys", async (c) => {
   const targetId = c.req.param("id");
-  const devices = await c.env.DB.prepare(
-    `SELECT ik.device_id, ik.identity_key, ik.identity_sign_key, ik.identity_key_sig,
-            ik.signed_prekey_id, ik.signed_prekey, ik.signed_prekey_sig
-     FROM identity_keys ik WHERE ik.user_id = ?`
-  ).bind(targetId).all<{
-    device_id: string; identity_key: string; identity_sign_key: string; identity_key_sig: string;
-    signed_prekey_id: number; signed_prekey: string; signed_prekey_sig: string;
-  }>();
-
-  const bundles = [];
-  for (const d of devices.results) {
-    const otp = await c.env.DB.prepare(
-      "SELECT key_id, key FROM one_time_prekeys WHERE device_id = ? LIMIT 1"
-    ).bind(d.device_id).first<{ key_id: number; key: string }>();
-    if (otp) {
-      await c.env.DB.prepare(
-        "DELETE FROM one_time_prekeys WHERE device_id = ? AND key_id = ?"
-      ).bind(d.device_id, otp.key_id).run();
-    }
-    bundles.push({
-      deviceId: d.device_id,
-      identityKey: d.identity_key,
-      identitySignKey: d.identity_sign_key,
-      identityKeySig: d.identity_key_sig,
-      signedPrekey: { id: d.signed_prekey_id, key: d.signed_prekey, sig: d.signed_prekey_sig },
-      oneTimePrekey: otp ? { id: otp.key_id, key: otp.key } : null,
-    });
-  }
-  return json({ ok: true, userId: targetId, bundles });
+  const r = await userStub(c.env, targetId).fetch("https://do/keys-prekeys", { method: "POST" });
+  const j = (await r.json()) as { bundles?: unknown[] };
+  return json({ ok: true, userId: targetId, bundles: j.bundles ?? [] });
 });
 
 // The device publishes the identity it encrypts under: the X25519 key, the
@@ -498,29 +450,28 @@ app.get("/api/users/:id/prekeys", async (c) => {
 // the signature was part of registration has nothing a peer accepts, and this is
 // how it heals itself instead of the person being told to register again.
 app.post("/api/identity", async (c) => {
-  const { deviceId } = c.get("auth");
+  const { userId, deviceId } = c.get("auth");
   const b = await c.req.json<{
     identityKey?: string; identitySignKey?: string; identityKeySig?: string;
   }>();
   if (!b.identityKey || !b.identitySignKey || !b.identityKeySig) return err("bad_keys");
-  const res = await c.env.DB.prepare(
-    `UPDATE identity_keys SET identity_key = ?, identity_sign_key = ?, identity_key_sig = ?
-     WHERE device_id = ?`
-  ).bind(b.identityKey, b.identitySignKey, b.identityKeySig, deviceId).run();
-  if (!res.meta.changes) return err("not_found", 404);
-  return json({ ok: true });
+  const r = await userStub(c.env, userId).fetch("https://do/keys-update", {
+    method: "POST",
+    body: JSON.stringify({
+      deviceId, identityKey: b.identityKey,
+      identitySignKey: b.identitySignKey, identityKeySig: b.identityKeySig,
+    }),
+  });
+  return new Response(r.body, r);
 });
 
 app.post("/api/prekeys", async (c) => {
-  const { deviceId } = c.get("auth");
+  const { userId, deviceId } = c.get("auth");
   const b = await c.req.json<{ oneTimePrekeys: Array<{ id: number; key: string }> }>();
-  await c.env.DB.batch(
-    b.oneTimePrekeys.slice(0, 200).map((k) =>
-      c.env.DB.prepare(
-        "INSERT OR IGNORE INTO one_time_prekeys (device_id, key_id, key) VALUES (?,?,?)"
-      ).bind(deviceId, k.id, k.key)
-    )
-  );
+  await userStub(c.env, userId).fetch("https://do/keys-topup", {
+    method: "POST",
+    body: JSON.stringify({ deviceId, oneTimePrekeys: b.oneTimePrekeys }),
+  });
   return json({ ok: true });
 });
 
