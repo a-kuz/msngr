@@ -206,6 +206,11 @@ struct ChatScreen: View {
         .sheet(item: $editHistoryMessage) { msg in
             EditHistorySheet(message: msg)
         }
+        .sheet(isPresented: $showCalendar) {
+            ChatCalendarSheet(chatId: chatId) { id in
+                jump(to: id)
+            }
+        }
         .sheet(item: $forwardMessage) { msg in
             ForwardPickerView { targetChatId in
                 model.forward(msg, to: targetChatId)
@@ -309,6 +314,9 @@ struct ChatScreen: View {
 
     @State private var photoPickerPresented = false
     @State private var showChatInfo = false
+    /// the calendar over the history, opened from a date separator or the
+    /// floating day capsule
+    @State private var showCalendar = false
 
     private var messagesList: MessagesView {
         MessagesView(vc: messagesVC, model: model, items: model.feed,
@@ -325,7 +333,8 @@ struct ChatScreen: View {
                          } else {
                              model.react(msg, emoji: emoji)
                          }
-                     })
+                     },
+                     onDateTap: { showCalendar = true })
     }
 
     /// Empty chat: a centred hint instead of a bare background.
@@ -912,6 +921,7 @@ struct MessagesView: UIViewControllerRepresentable {
     @Binding var showScrollDown: Bool
     var onSwipeBack: () -> Void
     var onCapsuleTap: (Message, String) -> Void
+    var onDateTap: () -> Void
 
     func makeUIViewController(context: Context) -> MessagesViewController {
         vc.onAtBottomChanged = { [weak model] atBottom in
@@ -985,6 +995,7 @@ struct MessagesView: UIViewControllerRepresentable {
         }
         vc.onSwipeBack = onSwipeBack
         vc.onReactionCapsuleTap = onCapsuleTap
+        vc.onDateTap = onDateTap
         vc.pinnedSeq = model.chat?.pinnedSeq
         vc.ownUserId = model.ownUserId
         vc.noteSendTick(sendTick)
