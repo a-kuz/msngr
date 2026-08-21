@@ -286,7 +286,6 @@ struct ChatListView: View {
                 }.tint(.orange)
             }
         }
-        .animation(Theme.springFast, value: items.map(\.id))
     }
 
     /// Sorts the chat into folders without opening the settings; the checkmark

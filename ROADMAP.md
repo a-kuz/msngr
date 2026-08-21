@@ -81,7 +81,8 @@ A ✅ goes in only together with a link to the evidence.
   - 🟡 folders and tabs: a rule plus chats put in and taken out by hand, a chat in
     any number of folders, the tab switched by a long horizontal swipe over the
     list (built and unit-covered, the live run is still open)
-  - ⬜ animated reordering on a new message
+  - ✅ animated reordering on a new message: the row glides to the top through
+    the rows above it instead of teleporting (qa/runs/2026-08-21-chatlist-reorder)
   - ⬜ a chat with yourself for saved messages, first in the list and never a
     push; forwarding into it from any chat
 - Search and empty states
@@ -99,7 +100,8 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ an inverted list, opening at the newest messages (design-review 03-chat-full)
   - ✅ date separators «Сегодня» / «Вчера» / the date (unread-run)
   - ✅ grouping into runs: a 2/8 pt gap, a tail only on the last one (bubble-grouping, before/after screenshots)
-  - 🟡 the author's name on the first message of a run in a group (not verified live)
+  - ✅ the author's name on the first message of a run in a group, in per-name
+    colours (qa/runs/2026-08-21-presence-names)
   - ✅ pagination upwards over the local database in windows of 60; the server is
     asked only about seq gaps that are still open (pagination-run: 70 messages,
     scrolled to the very start, not a single `/history` request; HistoryWindowTests units)
@@ -149,7 +151,10 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ a draft survives leaving the chat and a kill (offline-run 5)
   - ✅ the reply strip and the edit mode above the field, cancel returning the
     draft (header-run)
-  - ⬜ pasting an image from the clipboard
+  - ✅ pasting an image from the clipboard: the attachment menu offers «Вставить»
+    when the pasteboard holds one, the system paste gesture lands it as an
+    attachment, and it goes out as a photo message
+    (qa/runs/2026-08-15-reply-file-clipboard)
   - ⬜ mentions and autocomplete
   - ⬜ sending at a chosen time: the message waits in the outbox, the chat shows
     what is queued for when, and it can be edited or cancelled before it leaves
@@ -294,10 +299,14 @@ A ✅ goes in only together with a link to the evidence.
 
 - Reply
   - ✅ creating one from the context menu (design-review 05)
-  - 🟡 creating one by a swipe right with resistance and haptics (not verified live)
-  - 🟡 rendering the quote: text on text (not verified live as a separate case)
-  - 🟡 rendering the quote on a photo, video, album, voice message, file (not verified live)
-  - 🟡 a quote of a deleted message: the preview is kept in the payload, the original is gone (not verified live)
+  - ✅ creating one by a swipe right: the bubble follows with a capped offset
+    and the reply arrow, releasing arms the strip; haptics are not observable
+    on the simulator (qa/runs/2026-08-21-swipe-reply)
+  - ✅ rendering the quote: text on text (qa/runs/2026-08-21-swipe-reply)
+  - 🟡 rendering the quote on media: the album case is live
+    (qa/runs/2026-08-21-swipe-reply); photo, video, voice message and file are not
+  - ✅ a quote of a deleted message: the preview is kept in the payload while
+    the original shows the tombstone (qa/runs/2026-08-21-swipe-reply)
   - ✅ tapping the quote → jumping to the original with a highlight, loading more of the history window
     (qa/runs/2026-08-15-reply-file-clipboard)
   - ✅ the author's name in the quote instead of the identifier, previews for media (ChatFeedTests units)
@@ -318,7 +327,9 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ delete for everyone: a tombstone on the server and a `deleted` frame (smoke `delete for all`, `tombstoned on server`)
   - ✅ confirmation before deleting; «у всех» only for your own messages (qa/runs/2026-08-15-multiselect, 03–04)
   - ✅ someone else's message is not removed for anyone by «у всех» (smoke `no fanout deleting someone else's message`)
-  - 🟡 delete for me (not verified live)
+  - ✅ delete for me: gone from the feed and the database, surviving a
+    relaunch with no repair pulling it back, the peer's copy untouched
+    (qa/runs/2026-08-21-delete-for-me)
   - ✅ «Сообщение удалено» in the feed for the author and for the peer (qa/runs/2026-08-15-multiselect, 05–06)
   - 🟡 a delete that arrived before the original is applied later (ServiceFrameTests units)
   - ✅ deleting several messages at once (qa/runs/2026-08-15-multiselect, 02–05)
@@ -357,14 +368,15 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ entering through the «Выбрать» item, leaving by the cross (qa/runs/2026-08-15-multiselect, 02)
   - ✅ checkboxes next to the bubbles, the selected counter and the action bar (qa/runs/2026-08-15-multiselect, 02)
   - ✅ bulk delete and forward (qa/runs/2026-08-15-multiselect, 05, 10)
-  - 🟡 bulk copy (no units, not captured live)
+  - ✅ bulk copy: one line per message, oldest on top, read back off the
+    simulator's pasteboard (MessageClipboardTests units, qa/runs/2026-08-21-bulk-copy)
 
 ## The media viewer
 
 - ✅ fullscreen above the header, opened from the bubble (media-run)
 - 🟡 pinch zoom and a double tap 1 ↔ 2.5 (not verified live)
-- 🟡 closing by a swipe down with dimming (not verified live)
-- 🟡 paging through the album (not verified live)
+- ✅ closing by a swipe down with dimming (qa/runs/2026-08-21-media-viewer)
+- ✅ paging through the album, both directions (qa/runs/2026-08-21-media-viewer)
 - 🟡 sharing a file from the viewer (not verified live)
 - ✅ video in the viewer (media-close-out)
 - ⬜ a hero transition bubble ↔ viewer
@@ -423,7 +435,7 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   - ✅ receipts and typing towards the blocker are not sent (smoke
     `block: no receipt to blocker`, `block: no typing to blocker`)
   - ✅ the blocker gets the `blocked` code on a send (smoke `block: blocker gets error code`)
-  - 🟡 unblocking from the blocked list (not verified live)
+  - ✅ unblocking from the blocked list (qa/runs/2026-08-21-block)
   - ✅ after unblocking delivery resumes and what was hidden stays hidden
     (smoke `block: delivery resumes after unblock`)
   - ⬜ who sees «был(а) в сети» and «в сети»: everyone, my contacts, or nobody,
@@ -459,9 +471,12 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ✅ delivered receipts on recv (smoke `delivered receipt`)
 - ✅ typing reaches the peer (smoke `typing`)
 - 🟡 presence by ping freshness with a TTL of 35 s (not verified live)
-- 🟡 «в сети» / «был(а) …» in the chat header (not verified live)
-- 🟡 the typing indicator in the header and in the chat list (not verified live)
-- 🟡 read on returning from the background (the code is there, no separate run)
+- ✅ «в сети» / «был(а) …» in the chat header, flipping live with the peer's
+  socket (qa/runs/2026-08-21-presence-names)
+- ✅ the typing indicator in the header and in the chat list
+  (qa/runs/2026-08-21-presence-names)
+- ✅ read on returning from the background: the receipt goes out on the
+  foreground return with the reader at the message (qa/runs/2026-08-21-read-on-return)
 - ⬜ aggregated read receipts in a group ("N read it")
 
 ## Notifications
@@ -536,7 +551,7 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ✅ creating a group from the interface, picking members and a title (qa/runs/2026-08-17-groups-run)
 - ✅ the info screen: the member list, the row's swipe actions, leaving a group (qa/runs/2026-08-17-groups-run)
 - 🟡 adding a member and the invite link from the info screen (not verified live)
-- 🟡 the author's name in group bubbles (not verified live)
+- ✅ the author's name in group bubbles (qa/runs/2026-08-21-presence-names)
 - ✅ granting and revoking the admin role from the interface, live on all three
   devices (qa/runs/2026-08-17-groups-run)
 - ✅ changing a group's title, avatar and description from the interface (qa/runs/2026-08-17-groups-run)
@@ -601,11 +616,17 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ✅ picking a palette from cards with instant application (palettes/live-*, settings-appearance)
 - ⬜ a background for the feed: a set to pick from and a picture of your own, set
   everywhere or for one chat
-- 🟡 the PIN: setting it, repeating it, checking it (not verified live)
-- 🟡 Face ID and auto-lock after 30 s (not verified live)
+- ✅ the PIN: setting it, repeating it, a mismatch resetting the setup, a wrong
+  code rejected at the lock, auto-lock after 30 s in the background
+  (qa/runs/2026-08-21-pin)
+- 🟡 Face ID (auto-lock is verified in qa/runs/2026-08-21-pin; biometry
+  matching needs the Simulator.app menu and was not driven)
 - 🟡 the blur in the app switcher (not verified live)
-- 🟡 the blocked list and unblocking (not verified live)
-- 🟡 clearing the media cache with its size shown (not verified live)
+- ✅ the blocked list and unblocking, delivery resuming after
+  (qa/runs/2026-08-21-block)
+- ✅ clearing the media cache with its size shown: the label follows the clear
+  in place (qa/runs/2026-08-21-media-viewer, the run also caught and fixed the
+  stale label)
 - ⬜ notification settings: previews on the banner, the default sound, and the
   per-chat and per-person exceptions listed under Notifications → Sounds
 - ⬜ a privacy screen gathering what E2EE, trust, privacy lists: last seen,
@@ -663,7 +684,8 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ✅ the outgoing bubble flying out of the input field (anim-review, frames after the fix)
 - ✅ the incoming bubble rising (anim-review, frames after the fix)
 - ✅ the context menu animation: the blur, the emoji cascade, the dismissal (anim-review)
-- 🟡 swipe-to-reply with resistance and haptics (not verified live)
+- ✅ swipe-to-reply: the drag, the capped offset and the arrow are live
+  (qa/runs/2026-08-21-swipe-reply); haptics are not observable on the simulator
 - 🟡 the reaction capsule appearing on a spring (not verified live)
 - 🟡 a pointwise feed diff instead of reloadData, the layout plan cache (indirectly in the runs)
 - ✅ the feed window is bounded by count while the reader is at the bottom:
@@ -673,8 +695,29 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     no covering index, and a key change was read synchronously from the main
     thread; after the fix the chat list's cost fell by a factor of 81
 - ⬜ measured 60/120 fps on a chat of tens of thousands of messages
-- ⬜ animated reordering in the chat list
+- ✅ animated reordering in the chat list (qa/runs/2026-08-21-chatlist-reorder)
 - ⬜ preloading and prefetching images along the scroll direction
+
+## The backend rework: a DO per user
+
+Decided in `docs/research/2026-08-19-per-user-do.md`; the queue orders the steps.
+
+- ✅ the fanout as an outbox: a delivery record per recipient until acknowledged,
+  independent chains, the push in its own persisted queue (run-delivery,
+  `runs/2026-08-19-delivery-run.md`)
+- ✅ a receipt writes one per-member mark key; the cmid idempotency records are
+  swept behind the sender's delivered mark (`01d12ff`, smoke holds the rule)
+- ✅ identity keys, one-time prekeys and the device list live in `UserDO`; a
+  first message costs 2 D1 statements instead of 7 (run-userdo,
+  `runs/2026-08-21-userdo-run.md`)
+- ⬜ the message's identity is `(chatId, seq)`, the msgId ULID goes away
+  (run-msgid, in flight)
+- ⬜ `HandleDO`: the username claim and quarantine, designed together with the
+  people-search index
+- ⬜ subscriptions between objects: a snapshot on subscribe, deltas after, the
+  source deciding what a subscriber may see
+- ⬜ what is left in D1 follows into the user's object; the leftover tables are
+  dropped with the schema version bumped
 
 ## Versioning and compatibility
 

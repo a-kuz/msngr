@@ -340,6 +340,37 @@ func send(dir: URL, base: URL, name: String, peer: String, text: String) async t
     print("· sent «\(text)» to \(peer) in \(chatId)")
 }
 
+/// Holds a typing indicator up in the direct chat with a named peer for a few
+/// seconds, so its rendering can be watched on a screen.
+func typing(dir: URL, base: URL, name: String, peer: String, seconds: Double) async throws {
+    guard let member = cast.first(where: { $0.name == name }) else {
+        throw FixtureError("unknown account \(name)")
+    }
+    let peerMetaURL = dir.appendingPathComponent(peer).appendingPathComponent("meta.json")
+    guard let data = try? Data(contentsOf: peerMetaURL),
+          let peerMeta = try? JSONDecoder().decode(Meta.self, from: data) else {
+        throw FixtureError("\(peer) is not seeded")
+    }
+    let p = try await openPerson(name: member.name, display: member.display, dir: dir, base: base)
+    let chatId = try await p.db.read { dbc in
+        try String.fetchOne(dbc, sql: """
+            SELECT c.id FROM chat c
+            JOIN member m ON m.chatId = c.id AND m.userId = ?
+            WHERE c.kind = 'direct'
+            """, arguments: [peerMeta.userId])
+    }
+    guard let chatId else { throw FixtureError("no direct chat between \(name) and \(peer)") }
+    await startEngine(p, base: base)
+    let deadline = Date().addingTimeInterval(seconds)
+    while Date() < deadline {
+        await p.engine.sendTyping(chatId: chatId, kind: "text")
+        try await Task.sleep(nanoseconds: 3_000_000_000)
+    }
+    await p.engine.sendTyping(chatId: chatId, kind: nil)
+    await p.engine.stop()
+    print("· typed for \(Int(seconds)) s in \(chatId)")
+}
+
 func show(dir: URL) throws {
     for (name, _) in cast {
         let metaURL = dir.appendingPathComponent(name).appendingPathComponent("meta.json")
@@ -374,6 +405,13 @@ do {
             name: try arg("as", default: "bravo"),
             peer: try arg("to", default: "alfa"),
             text: try arg("text", default: "Checking in."))
+    case "typing":
+        try await typing(
+            dir: URL(fileURLWithPath: try arg("dir")),
+            base: URL(string: try arg("base", default: "http://localhost:8787"))!,
+            name: try arg("as", default: "charlie"),
+            peer: try arg("to", default: "alfa"),
+            seconds: Double(try arg("seconds", default: "10")) ?? 10)
     case "answer":
         try await answer(
             dir: URL(fileURLWithPath: try arg("dir")),
@@ -387,6 +425,7 @@ do {
           msngrfixture seed --dir <fixtures> [--base http://localhost:8787] [--reset]
           msngrfixture show --dir <fixtures>
           msngrfixture send --dir <fixtures> [--as bravo] [--to alfa] [--base …] [--text …]
+          msngrfixture typing --dir <fixtures> [--as charlie] [--to alfa] [--base …] [--seconds 10]
           msngrfixture answer --dir <fixtures> [--as alfa] [--base …] [--text …] [--timeout 180]
         """)
     }

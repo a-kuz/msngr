@@ -518,6 +518,10 @@ final class VoiceMessageView: UIView {
             playIcon = icon
             playButton.setImage(UIImage(systemName: icon), for: .normal)
             playButton.accessibilityLabel = running ? String(localized: "Pause") : String(localized: "Play")
+            // the label is what a reader hears and is translated with the rest of the
+            // interface; which of the two states the button is in is told by the
+            // identifier, so a run does not depend on the language of the host
+            playButton.accessibilityIdentifier = running ? "voice.pause" : "voice.play"
         }
         waveform.progress = mine ? state.progress : 0
         rateButton.isHidden = !mine
@@ -525,6 +529,9 @@ final class VoiceMessageView: UIView {
         if rateButton.title(for: .normal) != title {
             rateButton.setTitle(title, for: .normal)
             rateButton.accessibilityLabel = String(localized: "Speed \(title)")
+            // the label is translated; the speed itself is carried as the value, which
+            // is the same in every language
+            rateButton.accessibilityValue = title
         }
     }
 
