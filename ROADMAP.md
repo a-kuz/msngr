@@ -298,9 +298,12 @@ A ✅ goes in only together with a link to the evidence.
 
 - Reply
   - ✅ creating one from the context menu (design-review 05)
-  - 🟡 creating one by a swipe right with resistance and haptics (not verified live)
-  - 🟡 rendering the quote: text on text (not verified live as a separate case)
-  - 🟡 rendering the quote on a photo, video, album, voice message, file (not verified live)
+  - ✅ creating one by a swipe right: the bubble follows with a capped offset
+    and the reply arrow, releasing arms the strip; haptics are not observable
+    on the simulator (qa/runs/2026-08-21-swipe-reply)
+  - ✅ rendering the quote: text on text (qa/runs/2026-08-21-swipe-reply)
+  - 🟡 rendering the quote on media: the album case is live
+    (qa/runs/2026-08-21-swipe-reply); photo, video, voice message and file are not
   - 🟡 a quote of a deleted message: the preview is kept in the payload, the original is gone (not verified live)
   - ✅ tapping the quote → jumping to the original with a highlight, loading more of the history window
     (qa/runs/2026-08-15-reply-file-clipboard)
@@ -676,7 +679,8 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ✅ the outgoing bubble flying out of the input field (anim-review, frames after the fix)
 - ✅ the incoming bubble rising (anim-review, frames after the fix)
 - ✅ the context menu animation: the blur, the emoji cascade, the dismissal (anim-review)
-- 🟡 swipe-to-reply with resistance and haptics (not verified live)
+- ✅ swipe-to-reply: the drag, the capped offset and the arrow are live
+  (qa/runs/2026-08-21-swipe-reply); haptics are not observable on the simulator
 - 🟡 the reaction capsule appearing on a spring (not verified live)
 - 🟡 a pointwise feed diff instead of reloadData, the layout plan cache (indirectly in the runs)
 - ✅ the feed window is bounded by count while the reader is at the bottom:
