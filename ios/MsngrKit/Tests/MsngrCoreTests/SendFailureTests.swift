@@ -169,10 +169,14 @@ final class SendFailureTests: XCTestCase {
     // MARK: - Texts
 
     func testExplanationPerCode() {
-        XCTAssertTrue(SendFailure.explanation(SendFailure.blocked).contains("заблокировали"))
-        XCTAssertTrue(SendFailure.explanation(SendFailure.notMember).contains("участник"))
-        XCTAssertTrue(SendFailure.explanation(SendFailure.identityChanged).contains("Ключ"))
-        XCTAssertTrue(SendFailure.explanation(SendFailure.tooManyAttempts).contains("соединение"))
+        XCTAssertEqual(SendFailure.explanation(SendFailure.blocked),
+                       CoreStrings.string("You blocked this user. Unblock them to write."))
+        XCTAssertEqual(SendFailure.explanation(SendFailure.notMember),
+                       CoreStrings.string("You are no longer a member of this chat."))
+        XCTAssertEqual(SendFailure.explanation(SendFailure.identityChanged),
+                       CoreStrings.string("The peer's key has changed. Confirm the new key to send the message."))
+        XCTAssertEqual(SendFailure.explanation(SendFailure.tooManyAttempts),
+                       CoreStrings.string("Could not reach the server. Check the connection and send the message again."))
     }
 
     /// An unknown code and a missing one both give the generic text, never an empty string.

@@ -1,7 +1,479 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-
+    "%@ added you" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ добавил(а) вас"
+          }
+        }
+      }
+    },
+    "%@ added: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ добавил(а): %@"
+          }
+        }
+      }
+    },
+    "%@ changed the group description" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ изменил(а) описание группы"
+          }
+        }
+      }
+    },
+    "%@ left the group" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ покинул(а) группу"
+          }
+        }
+      }
+    },
+    "%@ made an admin of: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ назначил(а) администратором: %@"
+          }
+        }
+      }
+    },
+    "%@ made you an admin" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ назначил(а) вас администратором"
+          }
+        }
+      }
+    },
+    "%@ removed the group description" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ удалил(а) описание группы"
+          }
+        }
+      }
+    },
+    "%@ removed you" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ удалил(а) вас"
+          }
+        }
+      }
+    },
+    "%@ removed: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ удалил(а): %@"
+          }
+        }
+      }
+    },
+    "%@ renamed the group to “%@”" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ изменил(а) название на «%@»"
+          }
+        }
+      }
+    },
+    "%@ revoked admin rights from: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ снял(а) права администратора: %@"
+          }
+        }
+      }
+    },
+    "%@ revoked your admin rights" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ снял(а) с вас права администратора"
+          }
+        }
+      }
+    },
+    "%@ updated the group photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ обновил(а) фото группы"
+          }
+        }
+      }
+    },
+    "👤 Contact" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "👤 Контакт"
+          }
+        }
+      }
+    },
+    "🎤 Voice message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "🎤 Голосовое сообщение"
+          }
+        }
+      }
+    },
+    "🎥 Video" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "🎥 Видео"
+          }
+        }
+      }
+    },
+    "🖼 Album" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "🖼 Альбом"
+          }
+        }
+      }
+    },
+    "📷 Photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "📷 Фото"
+          }
+        }
+      }
+    },
+    "Could not reach the server. Check the connection and send the message again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось связаться с сервером. Проверьте соединение и отправьте сообщение заново."
+          }
+        }
+      }
+    },
+    "File" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл"
+          }
+        }
+      }
+    },
+    "For 8 hours" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На 8 часов"
+          }
+        }
+      }
+    },
+    "For a week" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На неделю"
+          }
+        }
+      }
+    },
+    "For an hour" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На час"
+          }
+        }
+      }
+    },
+    "Forever" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Навсегда"
+          }
+        }
+      }
+    },
+    "Group" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Группа"
+          }
+        }
+      }
+    },
+    "Message not delivered" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщение не доставлено"
+          }
+        }
+      }
+    },
+    "New message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новое сообщение"
+          }
+        }
+      }
+    },
+    "New message request" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новая заявка"
+          }
+        }
+      }
+    },
+    "The peer's key has changed. Confirm the new key to send the message." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ключ собеседника сменился. Подтвердите новый ключ, чтобы отправить сообщение."
+          }
+        }
+      }
+    },
+    "The server rejected the message. Send it again or delete it." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер отклонил сообщение. Отправьте его заново или удалите."
+          }
+        }
+      }
+    },
+    "until %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "до %@"
+          }
+        }
+      }
+    },
+    "You" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вы"
+          }
+        }
+      }
+    },
+    "You added: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вы добавили: %@"
+          }
+        }
+      }
+    },
+    "You are no longer a member of this chat." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вы больше не участник этого чата."
+          }
+        }
+      }
+    },
+    "You blocked this user. Unblock them to write." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вы заблокировали этого пользователя. Снимите блокировку, чтобы писать ему."
+          }
+        }
+      }
+    },
+    "You changed the group description" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вы изменили описание группы"
+          }
+        }
+      }
+    },
+    "You left the group" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вы покинули группу"
+          }
+        }
+      }
+    },
+    "You made an admin of: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вы назначили администратором: %@"
+          }
+        }
+      }
+    },
+    "You removed the group description" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вы удалили описание группы"
+          }
+        }
+      }
+    },
+    "You removed: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вы удалили: %@"
+          }
+        }
+      }
+    },
+    "You renamed the group to “%@”" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вы изменили название на «%@»"
+          }
+        }
+      }
+    },
+    "You revoked admin rights from: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вы сняли права администратора: %@"
+          }
+        }
+      }
+    },
+    "You updated the group photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вы обновили фото группы"
+          }
+        }
+      }
+    }
   },
   "version" : "1.0"
 }

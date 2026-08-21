@@ -29,7 +29,7 @@ public struct GroupEvent: Codable, Equatable, Sendable {
     public var actor: String
     /// display name of the member the event concerns
     public var member: String?
-    /// that member's userId, so the one it happened to reads "вас"
+    /// that member's userId, so the one it happened to reads "you"
     public var memberId: String?
     /// the new title
     public var text: String?
@@ -62,40 +62,44 @@ public struct GroupEvent: Codable, Equatable, Sendable {
     }
 
     /// The event as a human sentence. `isOwn` is for the reader who performed
-    /// it and `ownUserId` for the one it happened to: "Вы" carries no gender,
-    /// while a name has to be spoken about in the same "(а)" form the rest of
-    /// the app uses for the third person.
+    /// it and `ownUserId` for the one it happened to.
     public func sentence(isOwn: Bool, ownUserId: String? = nil) -> String {
-        let who = isOwn ? "Вы" : actor
+        let who = isOwn ? CoreStrings.string("You") : actor
         let name = member ?? actor
         let aboutMe = memberId != nil && memberId == ownUserId
         switch verb {
         case .added:
-            if aboutMe { return "\(who) добавил(а) вас" }
-            return isOwn ? "Вы добавили: \(name)" : "\(who) добавил(а): \(name)"
+            if aboutMe { return CoreStrings.string("\(who) added you") }
+            return isOwn ? CoreStrings.string("You added: \(name)")
+                         : CoreStrings.string("\(who) added: \(name)")
         case .left:
-            return isOwn ? "Вы покинули группу" : "\(name) покинул(а) группу"
+            return isOwn ? CoreStrings.string("You left the group")
+                         : CoreStrings.string("\(name) left the group")
         case .removed:
-            if aboutMe { return "\(who) удалил(а) вас" }
-            return isOwn ? "Вы удалили: \(name)" : "\(who) удалил(а): \(name)"
+            if aboutMe { return CoreStrings.string("\(who) removed you") }
+            return isOwn ? CoreStrings.string("You removed: \(name)")
+                         : CoreStrings.string("\(who) removed: \(name)")
         case .adminGranted:
-            if aboutMe { return "\(who) назначил(а) вас администратором" }
-            return isOwn ? "Вы назначили администратором: \(name)"
-                         : "\(who) назначил(а) администратором: \(name)"
+            if aboutMe { return CoreStrings.string("\(who) made you an admin") }
+            return isOwn ? CoreStrings.string("You made an admin of: \(name)")
+                         : CoreStrings.string("\(who) made an admin of: \(name)")
         case .adminRevoked:
-            if aboutMe { return "\(who) снял(а) с вас права администратора" }
-            return isOwn ? "Вы сняли права администратора: \(name)"
-                         : "\(who) снял(а) права администратора: \(name)"
+            if aboutMe { return CoreStrings.string("\(who) revoked your admin rights") }
+            return isOwn ? CoreStrings.string("You revoked admin rights from: \(name)")
+                         : CoreStrings.string("\(who) revoked admin rights from: \(name)")
         case .title:
             let title = text ?? ""
-            return isOwn ? "Вы изменили название на «\(title)»"
-                         : "\(who) изменил(а) название на «\(title)»"
+            return isOwn ? CoreStrings.string("You renamed the group to “\(title)”")
+                         : CoreStrings.string("\(who) renamed the group to “\(title)”")
         case .avatar:
-            return isOwn ? "Вы обновили фото группы" : "\(who) обновил(а) фото группы"
+            return isOwn ? CoreStrings.string("You updated the group photo")
+                         : CoreStrings.string("\(who) updated the group photo")
         case .description:
-            return isOwn ? "Вы изменили описание группы" : "\(who) изменил(а) описание группы"
+            return isOwn ? CoreStrings.string("You changed the group description")
+                         : CoreStrings.string("\(who) changed the group description")
         case .descriptionCleared:
-            return isOwn ? "Вы удалили описание группы" : "\(who) удалил(а) описание группы"
+            return isOwn ? CoreStrings.string("You removed the group description")
+                         : CoreStrings.string("\(who) removed the group description")
         }
     }
 }

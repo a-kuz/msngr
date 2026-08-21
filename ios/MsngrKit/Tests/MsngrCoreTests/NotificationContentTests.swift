@@ -3,6 +3,10 @@ import XCTest
 
 /// Notification content matrix: content kind x chat type x privacy setting.
 final class NotificationContentTests: XCTestCase {
+    /// Bodies are compared through the module's catalog, in whatever language
+    /// the host runs.
+    private func s(_ key: String.LocalizationValue) -> String { CoreStrings.string(key) }
+
 
     private let direct = NotificationContentBuilder.ChatInfo(chatId: "c1", isGroup: false, title: nil)
     private let group = NotificationContentBuilder.ChatInfo(chatId: "c2", isGroup: true, title: "Team")
@@ -36,8 +40,8 @@ final class NotificationContentTests: XCTestCase {
     }
 
     func testEmptyTextFallsBackToPlaceholder() {
-        XCTAssertEqual(build(payload("text", text: nil))?.body, "Новое сообщение")
-        XCTAssertEqual(build(payload("text", text: "   "))?.body, "Новое сообщение")
+        XCTAssertEqual(build(payload("text", text: nil))?.body, NotificationContentBuilder.hiddenTextBody)
+        XCTAssertEqual(build(payload("text", text: "   "))?.body, NotificationContentBuilder.hiddenTextBody)
     }
 
     func testSenderWithoutNameFallsBackToAppName() {
@@ -58,18 +62,18 @@ final class NotificationContentTests: XCTestCase {
 
     func testGroupWithoutTitleGetsFallbackSubtitle() {
         let noName = NotificationContentBuilder.ChatInfo(chatId: "c3", isGroup: true, title: nil)
-        XCTAssertEqual(build(payload("text", text: "x"), chat: noName)?.subtitle, "Группа")
+        XCTAssertEqual(build(payload("text", text: "x"), chat: noName)?.subtitle, s("Group"))
     }
 
     // MARK: - Media
 
     func testMediaPlaceholders() {
-        XCTAssertEqual(build(payload("photo"))?.body, "📷 Фото")
-        XCTAssertEqual(build(payload("video"))?.body, "🎥 Видео")
-        XCTAssertEqual(build(payload("voice"))?.body, "🎤 Голосовое сообщение")
-        XCTAssertEqual(build(payload("album"))?.body, "🖼 Альбом")
-        XCTAssertEqual(build(payload("contact"))?.body, "👤 Контакт")
-        XCTAssertEqual(build(payload("file"))?.body, "📎 Файл")
+        XCTAssertEqual(build(payload("photo"))?.body, s("📷 Photo"))
+        XCTAssertEqual(build(payload("video"))?.body, s("🎥 Video"))
+        XCTAssertEqual(build(payload("voice"))?.body, s("🎤 Voice message"))
+        XCTAssertEqual(build(payload("album"))?.body, s("🖼 Album"))
+        XCTAssertEqual(build(payload("contact"))?.body, s("👤 Contact"))
+        XCTAssertEqual(build(payload("file"))?.body, "📎 " + s("File"))
     }
 
     func testFileUsesItsName() {
@@ -77,13 +81,13 @@ final class NotificationContentTests: XCTestCase {
     }
 
     func testMediaCaptionIsAppended() {
-        XCTAssertEqual(build(payload("photo", text: "sunset"))?.body, "📷 Фото: sunset")
-        XCTAssertEqual(build(payload("video", text: "from the sea"))?.body, "🎥 Видео: from the sea")
+        XCTAssertEqual(build(payload("photo", text: "sunset"))?.body, s("📷 Photo") + ": sunset")
+        XCTAssertEqual(build(payload("video", text: "from the sea"))?.body, s("🎥 Video") + ": from the sea")
     }
 
     func testUnknownKindFallsBackToTextOrPlaceholder() {
         XCTAssertEqual(build(payload("sticker", text: "y"))?.body, "y")
-        XCTAssertEqual(build(payload("sticker"))?.body, "Новое сообщение")
+        XCTAssertEqual(build(payload("sticker"))?.body, NotificationContentBuilder.hiddenTextBody)
     }
 
     // MARK: - Silent kinds
@@ -104,11 +108,12 @@ final class NotificationContentTests: XCTestCase {
         let c = build(payload("text", text: "a secret"), chat: group, showsText: false)
         XCTAssertEqual(c?.title, "Anna")
         XCTAssertEqual(c?.subtitle, "Team")
-        XCTAssertEqual(c?.body, "Новое сообщение")
+        XCTAssertEqual(c?.body, NotificationContentBuilder.hiddenTextBody)
     }
 
     func testHiddenTextHidesMediaPlaceholderToo() {
-        XCTAssertEqual(build(payload("photo", text: "sunset"), showsText: false)?.body, "Новое сообщение")
+        XCTAssertEqual(build(payload("photo", text: "sunset"), showsText: false)?.body,
+                       NotificationContentBuilder.hiddenTextBody)
     }
 
     func testPreferenceDefaultsToShowingText() {

@@ -6,7 +6,7 @@ import Foundation
 /// Accepting reveals the content; the messages are already in the local database.
 public enum ChatPrivacy {
     /// Stand-in text wherever the preview is hidden.
-    public static let requestPlaceholder = "Новая заявка"
+    public static let requestPlaceholder = CoreStrings.string("New message request")
 
     /// Whether the chat's content is hidden from the current user.
     public static func hidesContent(isRequest: Bool, iAccepted: Bool) -> Bool {

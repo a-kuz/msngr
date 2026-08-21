@@ -19,22 +19,22 @@ public enum SendFailure {
     public static let tooManyAttempts = "too_many_attempts"
 
     /// One title for every reason; what matters to the user is the fact, not the code.
-    public static let title = "Сообщение не доставлено"
+    public static let title = CoreStrings.string("Message not delivered")
 
     /// The explanation shown to the user. An unknown code (a server running ahead of us)
     /// still gets wording rather than an empty string.
     public static func explanation(_ code: String?) -> String {
         switch code {
         case blocked:
-            return "Вы заблокировали этого пользователя. Снимите блокировку, чтобы писать ему."
+            return CoreStrings.string("You blocked this user. Unblock them to write.")
         case notMember:
-            return "Вы больше не участник этого чата."
+            return CoreStrings.string("You are no longer a member of this chat.")
         case identityChanged:
-            return "Ключ собеседника сменился. Подтвердите новый ключ, чтобы отправить сообщение."
+            return CoreStrings.string("The peer's key has changed. Confirm the new key to send the message.")
         case tooManyAttempts:
-            return "Не удалось связаться с сервером. Проверьте соединение и отправьте сообщение заново."
+            return CoreStrings.string("Could not reach the server. Check the connection and send the message again.")
         default:
-            return "Сервер отклонил сообщение. Отправьте его заново или удалите."
+            return CoreStrings.string("The server rejected the message. Send it again or delete it.")
         }
     }
 }
