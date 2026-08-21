@@ -100,7 +100,8 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ an inverted list, opening at the newest messages (design-review 03-chat-full)
   - ✅ date separators «Сегодня» / «Вчера» / the date (unread-run)
   - ✅ grouping into runs: a 2/8 pt gap, a tail only on the last one (bubble-grouping, before/after screenshots)
-  - 🟡 the author's name on the first message of a run in a group (not verified live)
+  - ✅ the author's name on the first message of a run in a group, in per-name
+    colours (qa/runs/2026-08-21-presence-names)
   - ✅ pagination upwards over the local database in windows of 60; the server is
     asked only about seq gaps that are still open (pagination-run: 70 messages,
     scrolled to the very start, not a single `/history` request; HistoryWindowTests units)
@@ -469,7 +470,8 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ✅ delivered receipts on recv (smoke `delivered receipt`)
 - ✅ typing reaches the peer (smoke `typing`)
 - 🟡 presence by ping freshness with a TTL of 35 s (not verified live)
-- 🟡 «в сети» / «был(а) …» in the chat header (not verified live)
+- ✅ «в сети» / «был(а) …» in the chat header, flipping live with the peer's
+  socket (qa/runs/2026-08-21-presence-names)
 - 🟡 the typing indicator in the header and in the chat list (not verified live)
 - 🟡 read on returning from the background (the code is there, no separate run)
 - ⬜ aggregated read receipts in a group ("N read it")
@@ -546,7 +548,7 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ✅ creating a group from the interface, picking members and a title (qa/runs/2026-08-17-groups-run)
 - ✅ the info screen: the member list, the row's swipe actions, leaving a group (qa/runs/2026-08-17-groups-run)
 - 🟡 adding a member and the invite link from the info screen (not verified live)
-- 🟡 the author's name in group bubbles (not verified live)
+- ✅ the author's name in group bubbles (qa/runs/2026-08-21-presence-names)
 - ✅ granting and revoking the admin role from the interface, live on all three
   devices (qa/runs/2026-08-17-groups-run)
 - ✅ changing a group's title, avatar and description from the interface (qa/runs/2026-08-17-groups-run)
