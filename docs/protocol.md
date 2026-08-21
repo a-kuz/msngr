@@ -9,7 +9,7 @@ The source of truth is the code: `server/src/index.ts` (the router),
 - HTTP `/api/*` — registration, keys, profiles, chats, media, contacts, blocks.
 - WS `/ws?token=…&v=…` — one socket per device, JSON frames `{t, ...}`.
   The upgrade is authorized in the Worker, the socket itself is held by
-  `UserSessionDO`.
+  `UserDO`.
   `v` is the client's protocol version, read before auth: below the server's
   floor the upgrade answers `426 client_too_old` with both numbers, and the
   client stops reconnecting instead of retrying into silence.
@@ -22,9 +22,9 @@ The source of truth is the code: `server/src/index.ts` (the router),
 - Token revocation: `devices.revoked_at`. It is checked in the authorization
   middleware, so a revoked token gives 401 both on `/api/*` and on the `/ws`
   upgrade. Revocation cuts that device's live sockets (close code 4401), erases
-  its APNs token, deletes its `identity_keys` and `one_time_prekeys` and
-  broadcasts a `devices` frame: peers drop their cached device list, so the next
-  send no longer addresses the revoked device. A token has no lifetime: it works
+  its APNs token, deletes its identity record and one-time prekeys from the
+  user's `UserDO` and broadcasts a `devices` frame: peers drop their cached
+  device list, so the next send no longer addresses the revoked device. A token has no lifetime: it works
   until it is revoked.
 - Every client-visible timestamp is in seconds (`nowSec()` on the server,
   `timeIntervalSince1970` on the client).
@@ -67,7 +67,8 @@ POST /api/provision/:id/cancel    (x-provision-token)
 GET  /api/users?q=                search by username/displayName (LOWER LIKE, limit 20)
 GET  /api/users/:id               → {user, presence:{online,lastSeen}}
 GET  /api/devices?ids=a,b,c       devices and identity keys, plus versions:{userId:
-                                  devices_version} stamped in the same snapshot; spends nothing
+                                  version}; each user's list and version are one
+                                  snapshot from that user's object; spends nothing
 GET  /api/users/:id/prekeys       X3DH bundles of every device; a one-time prekey is handed out and deleted
 GET  /api/prekeys/count           how many of your own one-time prekeys are left
 POST /api/prekeys                 {oneTimePrekeys:[{id,key}]} — a top-up (up to 200 at a time)
@@ -207,8 +208,9 @@ instead of `sent`, with the same `clientMsgId`.
 
 `devices` says the user's device set changed — a device was linked or revoked.
 It goes to the user's own other devices and to everyone they share a chat with.
-`version` is the user's `devices_version` after the change: every link and
-revocation bumps it in the same D1 batch. A sender caches device lists between
+`version` is the user's device-set version after the change: every link and
+revocation bumps it inside the user's `UserDO`, which owns the identity keys,
+the one-time prekeys and the device list. A sender caches device lists between
 sends, stamped with the version `GET /api/devices` read them under; a frame
 naming a version the cache already holds confirms the entry, anything newer
 drops it, and the next envelope re-reads the list.
@@ -235,7 +237,7 @@ twice (a retried fanout pass), so the client dedupes by `msgId`.
 
 ## Presence
 
-`UserSessionDO` counts a user as online while at least one socket has sent a
+`UserDO` counts a user as online while at least one socket has sent a
 `ping` no more than 35 seconds ago (`PRESENCE_TTL_MS`); the client pings every
 12 s. An open but silent socket does not count as online — iOS holds the
 connection for minutes after the app is backgrounded. A status change is
@@ -452,7 +454,7 @@ ever move back.
 APNs is called immediately for every content `msg` — regardless of presence and
 live sockets. The exceptions: `service:true`, the author's own echo, a muted
 chat, a block. A mute with an expiry (`mutedUntil`) runs out on its own:
-`UserSessionDO` clears the flag at the first check after the deadline — on a push
+`UserDO` clears the flag at the first check after the deadline — on a push
 and in the `/api/chats` snapshot. Dedup on the client: `willPresent` suppresses
 the banner if the message has already been shown over WS (matched by
 chatId/msgId, see `NotificationDecision`).
@@ -493,7 +495,7 @@ chats, and a request that has not been accepted is not part of it. The client
 does not recount the number, it only reports its own when it has moved its read
 mark itself.
 
-`badgeStamp` is the sequence number of the counter that `UserSessionDO` issues
+`badgeStamp` is the sequence number of the counter that `UserDO` issues
 for every push it sends. APNs delivers an avalanche in arbitrary order, and
 `badgeStamp` is how a device tells a fresh counter from an older one that
 overtook it: a smaller number does not reach the icon (`BadgeStore`).
@@ -501,7 +503,7 @@ overtook it: a smaller number does not reach the icon (`BadgeStore`).
 The APNs answer is parsed:
 
 - `410` — the device token is dead: the record is deleted both from
-  `UserSessionDO` storage and from `devices.apns_token` in D1;
+  `UserDO` storage and from `devices.apns_token` in D1;
 - `429` and `5xx` — up to two retries, after 500 ms and 1500 ms;
 - `403 ExpiredProviderToken` — a forced JWT re-issue and one more attempt;
 - `400` and everything else — the code and `reason` go to the log, no retry.
@@ -512,10 +514,10 @@ send to the rest.
 The provider JWT (ES256, p8) belongs to the singleton object `ApnsTokenDO` (named
 `apns-jwt`): the cache sits in its storage and lives 3000 seconds. There is a
 single owner because Apple limits how often the token may be generated, while
-there can be many isolates holding `UserSessionDO`s. A forced re-issue happens at
+there can be many isolates holding `UserDO`s. A forced re-issue happens at
 most once a minute.
 
-Badge: `UserSessionDO` keeps a per-chat unread cache in storage (`unreadCache`),
+Badge: `UserDO` keeps a per-chat unread cache in storage (`unreadCache`),
 invalidates it on an incoming `msg` and on its own `read`, and at the moment of
 sending a push lazily recounts the invalidated chats with a `GET
 /unread-count?userId=` request to `ConversationDO` (`lastSeq` minus the read

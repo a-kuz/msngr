@@ -13,7 +13,7 @@ interface CachedJwt {
 }
 
 // Sole owner of the APNs JWT, addressed by the name "apns-jwt". The cache lives in
-// object storage rather than a module variable: UserSessionDO can be spread over many
+// object storage rather than a module variable: UserDO can be spread over many
 // isolates, and Apple rate-limits how often a token may be generated.
 export class ApnsTokenDO implements DurableObject {
   constructor(private state: DurableObjectState, private env: Env) {}

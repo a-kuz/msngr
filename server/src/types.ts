@@ -140,4 +140,4 @@ export interface AuthCtx {
 }
 
 // Internal DO RPC payloads (Worker <-> DO, DO <-> DO)
-export type UserEvent = ServerFrame; // events pushed into UserSessionDO for fan-out
+export type UserEvent = ServerFrame; // events pushed into UserDO for fan-out

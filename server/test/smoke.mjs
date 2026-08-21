@@ -964,6 +964,8 @@ check("a peer sees both devices under one identity key",
   lk_devices.devices.length === 2
   && new Set(lk_devices.devices.map((d) => d.identitySignKey)).size === 1,
   JSON.stringify(lk_devices));
+check("linking bumped the device-set version",
+  lk_devices.versions[lk_owner.userId] === 2, JSON.stringify(lk_devices.versions));
 check("a spent session cannot be claimed twice",
   (await provisionPost(lk_start.provisionId, "claim", lk_start.provisionToken,
     { ...lk_ownerKeys })).error === "provision_claimed");
@@ -985,6 +987,8 @@ check("a revoked device leaves the peer's device list",
   lk_devicesAfter.devices.length === 1
   && lk_devicesAfter.devices[0].deviceId === lk_owner.deviceId,
   JSON.stringify(lk_devicesAfter));
+check("revocation bumped the version again",
+  lk_devicesAfter.versions[lk_owner.userId] === 3, JSON.stringify(lk_devicesAfter.versions));
 const lk_bundlesAfter = await api(`/api/users/${lk_owner.userId}/prekeys`, { token: alice.token });
 check("a revoked device hands out no more prekey bundles",
   lk_bundlesAfter.bundles.length === 1
@@ -994,6 +998,19 @@ check("the revoked device's token is dead",
   (await apiRaw("/api/me", { token: lk_claim.token })).status === 401);
 check("the remaining device is untouched",
   (await api("/api/me", { token: lk_owner.token })).ok);
+
+// the reconnect reconciliation: a version the client held is answered with the
+// current one, and a user nobody ever registered is left out of the answer
+const cver = new Client("alice-ver", alice.token);
+await cver.connect();
+cver.send({ t: "sync", cursors: {},
+  deviceVersions: { [lk_owner.userId]: 1, "01NOBODYEVERHADTHISUSERID0": 4 } });
+const verFrame = await cver.waitFor((f) => f.t === "deviceVersions");
+check("sync answers the current device-set version",
+  verFrame?.versions?.[lk_owner.userId] === 3, JSON.stringify(verFrame));
+check("an unknown user is absent from the versions answer",
+  !!verFrame && !("01NOBODYEVERHADTHISUSERID0" in verFrame.versions), JSON.stringify(verFrame));
+cver.ws.close();
 
 // 22. Push path: a tiny receiver instead of APNs (port from PUSH_PORT, where APNS_HOST points)
 const pushes = [];
@@ -1097,7 +1114,7 @@ const push3 = await waitPush(pushFor("eve-sim-udid", p3.msgId));
 check("push badge after read", push3 && push3.body.aps.badge === 1,
   `badge=${push3?.body.aps.badge}`);
 // badgeStamp is how the client tells a fresh counter from an older one that
-// overtook it: UserSessionDO issues the number and it strictly grows
+// overtook it: UserDO issues the number and it strictly grows
 check("badge stamps grow", push1 && push2 && push3
   && push1.body.badgeStamp < push2.body.badgeStamp
   && push2.body.badgeStamp < push3.body.badgeStamp,
