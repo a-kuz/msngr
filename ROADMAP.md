@@ -302,14 +302,18 @@ A ✅ goes in only together with a link to the evidence.
     (qa/runs/2026-08-15-reply-file-clipboard)
   - ✅ the author's name in the quote instead of the identifier, previews for media (ChatFeedTests units)
 - Forward
-  - 🟡 picking a chat and sending with the «Переслано от …» mark (not verified live)
-  - 🟡 forwarding media and albums (not verified live)
+  - ✅ picking a chat and sending with the «Переслано от …» mark (2026-08-21-reactions-forward run, 06)
+  - ✅ forwarding media and albums (2026-08-21-reactions-forward run, 07; the mark
+    used to vanish under full-bleed media and read as bubble gray on own bubbles —
+    both fixed in the run, BubbleLayoutTests forward cases)
   - ✅ forwarding several messages at once (qa/runs/2026-08-15-multiselect)
-  - ⬜ forwarding while keeping the quote and the reactions
+  - ✅ forwarding keeps the quote preview; reactions stay behind by decision
+    (docs/protocol.md, ForwardPayloadTests units, run 12)
 - Editing
-  - 🟡 editing your own text message, the «изм.» mark (not verified live)
+  - ✅ editing your own text message, the «изм.» mark (2026-08-21-reactions-forward run, 08–09)
   - 🟡 an edit does not grow the peer's unread count (ServiceFrameTests units, smoke `service flag delivered`)
-  - ⬜ edit history
+  - ✅ edit history: every text kept with its time, a context-menu item shows them
+    on both sides (EditHistoryTests units, run 10–11)
 - Deleting
   - ✅ delete for everyone: a tombstone on the server and a `deleted` frame (smoke `delete for all`, `tombstoned on server`)
   - ✅ confirmation before deleting; «у всех» only for your own messages (qa/runs/2026-08-15-multiselect, 03–04)
@@ -335,10 +339,11 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ setting one from the emoji row in the menu (unread-run, rule 3)
   - ✅ a capsule with the emoji and a counter under the bubble (design-review 03-chat-full)
   - ✅ a reaction made offline arrives after a reconnect (offline-run 6)
-  - 🟡 removing it by tapping again and replacing your own reaction (not verified live)
-  - 🟡 a double tap on the bubble = ❤️ (not verified live)
+  - ✅ removing it by tapping again and replacing your own reaction (2026-08-21-reactions-forward run, 01–03)
+  - ✅ a double tap on the bubble = ❤️ (2026-08-21-reactions-forward run, 04–05)
   - 🟡 capsules widen the bubble and wrap into rows (BubbleLayoutTests units)
-  - ⬜ a list of who reacted
+  - ✅ a list of who reacted: a capsule tap in a group opens the sheet, in a direct
+    chat it keeps toggling (ReactionRosterTests units, run 13)
   - ⬜ particles when a reaction appears
 - The context menu
   - ✅ opening on a long press: the blur, the bubble snapshot, the emoji cascade (anim-review, scenario 2)
