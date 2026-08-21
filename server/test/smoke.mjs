@@ -3,6 +3,7 @@
 // The push checks need wrangler dev to point APNS_HOST at the smoke's own
 // receiver: http://localhost:9871 by default (.dev.vars), otherwise PUSH_PORT=<port>.
 import http from "node:http";
+import { createHash } from "node:crypto";
 import WebSocket from "ws";
 import { shouldArmAlarm } from "../src/util.ts";
 
@@ -206,13 +207,14 @@ const sent = await ca.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-1")
 check("sent ack", !!sent && sent.seq === 1, JSON.stringify(sent));
 const gotMsg = await cb.waitFor((f) => f.t === "msg" && f.chatId === chat.chatId);
 check("bob receives msg", !!gotMsg && gotMsg.from === alice.userId);
-const aliceEcho = await ca.waitFor((f) => f.t === "msg" && f.msgId === sent.msgId);
+const aliceEcho = await ca.waitFor((f) =>
+  f.t === "msg" && f.chatId === sent.chatId && f.seq === sent.seq);
 check("alice gets own echo", !!aliceEcho);
 
 // idempotency
 ca.send({ t: "send", chatId: chat.chatId, clientMsgId: "cm-1", sentAt: Date.now(), body: {} });
 const sent2 = await ca.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-1" && f !== sent);
-check("idempotent resend same seq", !!sent2 && sent2.seq === 1 && sent2.msgId === sent.msgId);
+check("idempotent resend same seq", !!sent2 && sent2.seq === 1 && sent2.seq === sent.seq);
 
 // 6. Message request: Bob has not accepted the chat yet → no read receipt goes out
 const st0 = await api(`/api/chats/${chat.chatId}/history?fromSeq=0`, { token: bob.token });
@@ -412,22 +414,22 @@ check("removed member gets no history",
 ccR.ws.close();
 
 // 11. delete for all
-ca.send({ t: "delete", chatId: chat.chatId, msgIds: [sent.msgId], forAll: true });
+ca.send({ t: "delete", chatId: chat.chatId, seqs: [sent.seq], forAll: true });
 const del = await cb2.waitFor((f) => f.t === "deleted");
-check("delete for all", !!del && del.msgIds.includes(sent.msgId));
+check("delete for all", !!del && del.seqs.includes(sent.seq));
 const hist = await api(`/api/chats/${chat.chatId}/history?fromSeq=0`, { token: bob.token });
-const tomb = hist.msgs.find((m) => m.msgId === sent.msgId);
+const tomb = hist.msgs.find((m) => m.seq === sent.seq);
 check("tombstoned on server", tomb && tomb.deleted === true && tomb.body === null);
 
 // 11a. Delete for all does not touch someone else's message: no tombstone, no fanout
 cb2.send({ t: "send", chatId: chat.chatId, clientMsgId: "cm-bob-own", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const bobOwn = await cb2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-bob-own");
-ca.send({ t: "delete", chatId: chat.chatId, msgIds: [bobOwn.msgId], forAll: true });
-const foreignDel = await cb2.waitFor((f) => f.t === "deleted" && f.msgIds.includes(bobOwn.msgId), 1500);
+ca.send({ t: "delete", chatId: chat.chatId, seqs: [bobOwn.seq], forAll: true });
+const foreignDel = await cb2.waitFor((f) => f.t === "deleted" && f.seqs.includes(bobOwn.seq), 1500);
 check("no fanout deleting someone else's message", foreignDel === null);
 const hist2 = await api(`/api/chats/${chat.chatId}/history?fromSeq=0`, { token: bob.token });
-const keptMsg = hist2.msgs.find((m) => m.msgId === bobOwn.msgId);
+const keptMsg = hist2.msgs.find((m) => m.seq === bobOwn.seq);
 check("someone else's message survives delete for all",
   keptMsg && !keptMsg.deleted && keptMsg.body !== null);
 
@@ -465,7 +467,7 @@ cg.send({ t: "send", chatId: fgChat.chatId, clientMsgId: "cm-fg2", sentAt: Date.
 const fg2 = await cg.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-fg2");
 check("blocked sender still gets ack", !!fg2);
 check("blocked message not delivered",
-  !(await cf.waitFor((f) => f.t === "msg" && f.msgId === fg2?.msgId, 1200)));
+  !(await cf.waitFor((f) => f.t === "msg" && f.chatId === fgChat.chatId && f.seq === fg2?.seq, 1200)));
 
 // the other direction: the blocker cannot write into this chat and gets told so,
 // the server answers with an explicit error instead of a silent "sent"
@@ -488,7 +490,7 @@ cg.send({ t: "send", chatId: fgChat.chatId, clientMsgId: "cm-fg4", sentAt: Date.
   body: { v: 1, mode: "pw", msgs: {} } });
 const fg4 = await cg.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-fg4");
 check("delivery resumes after unblock",
-  !!(await cf.waitFor((f) => f.t === "msg" && f.msgId === fg4?.msgId)));
+  !!(await cf.waitFor((f) => f.t === "msg" && f.chatId === fgChat.chatId && f.seq === fg4?.seq)));
 
 // 14. Media: upload/download with range
 const blob = new Uint8Array(1024 * 64).fill(7);
@@ -680,8 +682,7 @@ ca.send({ t: "send", chatId: chat.chatId, clientMsgId: "cm-skd-1", sentAt: Date.
   service: true, body: { v: 1, mode: "skd", c: "c2tk" } });
 const svcAck2 = await ca.waitFor((f) =>
   f.t === "sent" && f.clientMsgId === "cm-skd-1" && f !== svcAck1);
-check("service dedupe by clientMsgId", !!svcAck2 && svcAck2.seq === svcAck1.seq
-  && svcAck2.msgId === svcAck1.msgId);
+check("service dedupe by clientMsgId", !!svcAck2 && svcAck2.seq === svcAck1.seq);
 
 // 18. Sync replays tombstones and read marks
 ca.send({ t: "read", chatId: chat.chatId, upToSeq: 2 });
@@ -689,7 +690,7 @@ await new Promise((r) => setTimeout(r, 300));
 const cb3 = new Client("bob3", bob.token);
 await cb3.connect();
 cb3.send({ t: "sync", cursors: { [chat.chatId]: svc.seq } });
-const syncTomb = await cb3.waitFor((f) => f.t === "deleted" && f.msgIds.includes(sent.msgId));
+const syncTomb = await cb3.waitFor((f) => f.t === "deleted" && f.seqs.includes(sent.seq));
 check("sync replays tombstone", !!syncTomb);
 const syncRead = await cb3.waitFor((f) =>
   f.t === "receipt" && f.kind === "read" && f.by === alice.userId && f.upToSeq === 2);
@@ -770,7 +771,7 @@ ch.send({ t: "send", chatId: bchat.chatId, clientMsgId: "cm-b0", sentAt: Date.no
   body: { v: 1, mode: "pw", msgs: {} } });
 const b0 = await ch.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-b0");
 check("block: msg before block delivered",
-  !!(await ci.waitFor((f) => f.t === "msg" && f.msgId === b0.msgId)));
+  !!(await ci.waitFor((f) => f.t === "msg" && f.chatId === bchat.chatId && f.seq === b0.seq)));
 
 // Iris blocks Henry
 check("block: applied", (await api("/api/block", { token: iris.token,
@@ -784,27 +785,27 @@ check("block: sender still gets sent ack", !!b1 && b1.seq === b0.seq + 1, JSON.s
 check("block: no error frame to sender",
   !ch.frames.some((f) => f.t === "error" && f.clientMsgId === "cm-b1"));
 check("block: msg not delivered",
-  !(await ci.waitFor((f) => f.t === "msg" && f.msgId === b1.msgId, 1200)));
+  !(await ci.waitFor((f) => f.t === "msg" && f.chatId === bchat.chatId && f.seq === b1.seq, 1200)));
 check("block: own echo still delivered",
-  !!(await ch.waitFor((f) => f.t === "msg" && f.msgId === b1.msgId)));
+  !!(await ch.waitFor((f) => f.t === "msg" && f.chatId === bchat.chatId && f.seq === b1.seq)));
 
 // (b) the blocked message is absent from the blocker's history and present in the sender's
 const irisHist = await api(`/api/chats/${bchat.chatId}/history?fromSeq=0`, { token: iris.token });
 check("block: hidden from blocker history",
-  !irisHist.msgs.some((m) => m.msgId === b1.msgId)
-  && irisHist.msgs.some((m) => m.msgId === b0.msgId), JSON.stringify(irisHist.msgs.length));
+  !irisHist.msgs.some((m) => m.seq === b1.seq)
+  && irisHist.msgs.some((m) => m.seq === b0.seq), JSON.stringify(irisHist.msgs.length));
 const henryHist = await api(`/api/chats/${bchat.chatId}/history?fromSeq=0`, { token: henry.token });
 check("block: visible in sender history",
-  henryHist.msgs.some((m) => m.msgId === b1.msgId));
+  henryHist.msgs.some((m) => m.seq === b1.seq));
 
 // (c) the blocker's sync does not replay the blocked message
 const ci2 = new Client("iris2", iris.token);
 await ci2.connect();
 ci2.send({ t: "sync", cursors: { [bchat.chatId]: 0 } });
-await ci2.waitFor((f) => f.t === "msg" && f.msgId === b0.msgId);
+await ci2.waitFor((f) => f.t === "msg" && f.chatId === bchat.chatId && f.seq === b0.seq);
 await new Promise((r) => setTimeout(r, 500));
 check("block: sync skips blocked msg",
-  !ci2.frames.some((f) => f.t === "msg" && f.msgId === b1.msgId));
+  !ci2.frames.some((f) => f.t === "msg" && f.chatId === bchat.chatId && f.seq === b1.seq));
 
 // (d) receipts and typing from the blocked user never reach the blocker
 ch.send({ t: "read", chatId: bchat.chatId, upToSeq: b1.seq });
@@ -830,11 +831,11 @@ ch.send({ t: "send", chatId: bchat.chatId, clientMsgId: "cm-b3", sentAt: Date.no
   body: { v: 1, mode: "pw", msgs: {} } });
 const b3 = await ch.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-b3");
 check("block: delivery resumes after unblock",
-  !!(await ci.waitFor((f) => f.t === "msg" && f.msgId === b3.msgId)));
+  !!(await ci.waitFor((f) => f.t === "msg" && f.chatId === bchat.chatId && f.seq === b3.seq)));
 const irisHist2 = await api(`/api/chats/${bchat.chatId}/history?fromSeq=0`, { token: iris.token });
 check("block: blocked msg stays hidden after unblock",
-  !irisHist2.msgs.some((m) => m.msgId === b1.msgId)
-  && irisHist2.msgs.some((m) => m.msgId === b3.msgId));
+  !irisHist2.msgs.some((m) => m.seq === b1.seq)
+  && irisHist2.msgs.some((m) => m.seq === b3.seq));
 ch.ws.close(); ci.ws.close(); ci2.ws.close();
 
 // 21. Logout and device revocation
@@ -1050,8 +1051,8 @@ async function waitPush(pred, ms = 4000) {
   }
   return null;
 }
-const pushFor = (token, msgId) => (p) =>
-  p.url === `/3/device/${token}` && p.body.msgId === msgId;
+const pushFor = (token, ack) => (p) =>
+  p.url === `/3/device/${token}` && p.body.chatId === ack.chatId && p.body.seq === ack.seq;
 
 const eve = await api("/api/register", { body: {
   username: "eve_" + suffix, displayName: "Eve", ...fakeKeys("e") } });
@@ -1072,7 +1073,7 @@ await ca2.connect();
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p1", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const p1 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p1");
-const push1 = await waitPush(pushFor("eve-sim-udid", p1.msgId));
+const push1 = await waitPush(pushFor("eve-sim-udid", p1));
 check("push delivered offline", !!push1, JSON.stringify(pushes));
 if (push1) {
   check("push chatId", push1.body.chatId === echat.chatId);
@@ -1084,7 +1085,12 @@ if (push1) {
   check("push badge=0 before accept", push1.body.aps.badge === 0, `badge=${push1.body.aps.badge}`);
   check("push alert w/o plaintext", push1.body.aps.alert.body === "Новое сообщение"
     && push1.body.aps["mutable-content"] === 1 && push1.body.aps.sound === "default");
-  check("push collapse-id=msgId", push1.headers["apns-collapse-id"] === p1.msgId);
+  // (chatId, seq) is the identity; the chat travels hashed to fit the 64-byte header
+  const expectCollapse =
+    createHash("sha256").update(echat.chatId).digest("hex").slice(0, 16) + ":" + p1.seq;
+  check("push collapse-id names (chatId, seq)",
+    push1.headers["apns-collapse-id"] === expectCollapse,
+    push1.headers["apns-collapse-id"]);
   check("push topic", push1.headers["apns-topic"] === "ai.enface.Msngr"
     && push1.headers["apns-push-type"] === "alert");
   check("dev push unsigned", push1.headers.authorization === undefined);
@@ -1096,8 +1102,9 @@ await ce.connect();
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p2", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const p2 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p2");
-check("eve got ws msg", !!(await ce.waitFor((f) => f.t === "msg" && f.msgId === p2.msgId)));
-const push2 = await waitPush(pushFor("eve-sim-udid", p2.msgId));
+check("eve got ws msg", !!(await ce.waitFor((f) =>
+  f.t === "msg" && f.chatId === echat.chatId && f.seq === p2.seq)));
+const push2 = await waitPush(pushFor("eve-sim-udid", p2));
 check("push delivered despite live ws", !!push2);
 check("push badge stays 0 before accept", push2 && push2.body.aps.badge === 0,
   `badge=${push2?.body.aps.badge}`);
@@ -1110,7 +1117,7 @@ await ca2.waitFor((f) => f.t === "receipt" && f.kind === "read" && f.by === eve.
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p3", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const p3 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p3");
-const push3 = await waitPush(pushFor("eve-sim-udid", p3.msgId));
+const push3 = await waitPush(pushFor("eve-sim-udid", p3));
 check("push badge after read", push3 && push3.body.aps.badge === 1,
   `badge=${push3?.body.aps.badge}`);
 // badgeStamp is how the client tells a fresh counter from an older one that
@@ -1124,7 +1131,7 @@ check("badge stamps grow", push1 && push2 && push3
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p4", sentAt: Date.now(),
   service: true, body: { v: 1, mode: "skd", c: "c2tk" } });
 const p4 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p4");
-check("no push for service", !(await waitPush(pushFor("eve-sim-udid", p4.msgId), 1200)));
+check("no push for service", !(await waitPush(pushFor("eve-sim-udid", p4), 1200)));
 
 // (c1) A service frame takes a seq but does not grow the badge: in a read chat the read
 // mark absorbs it, exactly the way the client moves the cursor. The server counts the
@@ -1138,7 +1145,7 @@ await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-svc-1");
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-svc-2", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const psvc = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-svc-2");
-const pushSvc = await waitPush(pushFor("eve-sim-udid", psvc.msgId));
+const pushSvc = await waitPush(pushFor("eve-sim-udid", psvc));
 check("service frame does not grow the badge", pushSvc?.body.aps.badge === 1,
   `badge=${pushSvc?.body.aps.badge}`);
 
@@ -1168,16 +1175,16 @@ check("service frame does not grow the badge", pushSvc?.body.aps.badge === 1,
   };
 
   const u1 = await gsend("cm-u1");
-  const badge1 = (await waitPush(pushFor("olga-sim-udid", u1.msgId)))?.body.aps.badge;
+  const badge1 = (await waitPush(pushFor("olga-sim-udid", u1)))?.body.aps.badge;
   check("group badge counts the first message", badge1 === 1, `badge=${badge1}`);
 
   // nothing is read here: this is where the number used to grow on its own
   const s1 = await gsend("cm-u2", true);
   check("no push for the group's service frame",
-    !(await waitPush(pushFor("olga-sim-udid", s1.msgId), 1500)));
+    !(await waitPush(pushFor("olga-sim-udid", s1), 1500)));
 
   const u3 = await gsend("cm-u3");
-  const badge2 = (await waitPush(pushFor("olga-sim-udid", u3.msgId)))?.body.aps.badge;
+  const badge2 = (await waitPush(pushFor("olga-sim-udid", u3)))?.body.aps.badge;
   check("a service frame does not grow an unread badge", badge2 === 2, `badge=${badge2}`);
   cni.ws.close();
 }
@@ -1192,7 +1199,7 @@ ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p8", sentAt: Date.n
     "someone/else": { type: "dr", c: "Zm9yLXNvbWVvbmUtZWxzZQ==" },
   } } });
 const p8 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p8");
-const push8 = await waitPush(pushFor("eve-sim-udid", p8.msgId));
+const push8 = await waitPush(pushFor("eve-sim-udid", p8));
 check("push carries the envelope", !!push8?.body.env, JSON.stringify(push8?.body));
 if (push8?.body.env) {
   const env = JSON.parse(push8.body.env);
@@ -1208,16 +1215,16 @@ if (push8?.body.env) {
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p9", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: { [eveAddr]: { type: "dr", c: "A".repeat(5000) } } } });
 const p9 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p9");
-const push9 = await waitPush(pushFor("eve-sim-udid", p9.msgId));
+const push9 = await waitPush(pushFor("eve-sim-udid", p9));
 check("oversized envelope is dropped from the push",
-  !!push9 && push9.body.env === undefined && push9.body.msgId === p9.msgId);
+  !!push9 && push9.body.env === undefined);
 
 // (d) a muted chat produces no push
 await api(`/api/chats/${echat.chatId}/flags`, { token: eve.token, body: { muted: true } });
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p5", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const p5 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p5");
-check("no push for muted chat", !(await waitPush(pushFor("eve-sim-udid", p5.msgId), 1200)));
+check("no push for muted chat", !(await waitPush(pushFor("eve-sim-udid", p5), 1200)));
 
 // (e) mute with an expiry: no push while it has not expired
 const nowS = Math.floor(Date.now() / 1000);
@@ -1226,7 +1233,7 @@ await api(`/api/chats/${echat.chatId}/flags`, { token: eve.token,
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p6", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const p6 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p6");
-check("no push while mute not expired", !(await waitPush(pushFor("eve-sim-udid", p6.msgId), 1200)));
+check("no push while mute not expired", !(await waitPush(pushFor("eve-sim-udid", p6), 1200)));
 
 // (f) once it has expired the push goes out and the flag clears itself
 await api(`/api/chats/${echat.chatId}/flags`, { token: eve.token,
@@ -1234,7 +1241,7 @@ await api(`/api/chats/${echat.chatId}/flags`, { token: eve.token,
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p7", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const p7 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p7");
-check("push after mute expired", !!(await waitPush(pushFor("eve-sim-udid", p7.msgId))));
+check("push after mute expired", !!(await waitPush(pushFor("eve-sim-udid", p7))));
 const eveChats = await api("/api/chats", { token: eve.token });
 const eveEntry = eveChats.chats.find((e) => e.state.chatId === echat.chatId);
 check("expired mute cleared in flags",
@@ -1251,7 +1258,7 @@ ce.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-e1", sentAt: Date.no
   body: { v: 1, mode: "pw", msgs: {} } });
 const e1 = await ce.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-e1");
 check("author's badge counts the peer's message",
-  (await waitPush(pushFor("alice-sim-udid", e1.msgId)))?.body.aps.badge === 1);
+  (await waitPush(pushFor("alice-sim-udid", e1)))?.body.aps.badge === 1);
 for (const id of ["cm-p11", "cm-p12", "cm-p13"]) {
   ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: id, sentAt: Date.now(),
     body: { v: 1, mode: "pw", msgs: {} } });
@@ -1260,7 +1267,7 @@ for (const id of ["cm-p11", "cm-p12", "cm-p13"]) {
 ce.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-e2", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const e2 = await ce.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-e2");
-const badgeAfter = (await waitPush(pushFor("alice-sim-udid", e2.msgId)))?.body.aps.badge;
+const badgeAfter = (await waitPush(pushFor("alice-sim-udid", e2)))?.body.aps.badge;
 check("own messages do not grow the author's badge", badgeAfter === 1,
   `badge=${badgeAfter}`);
 
@@ -1273,7 +1280,7 @@ hold = { token: "eve-sim-udid", ms: 1500 };
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-h1", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const h1 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-h1");
-const hp1 = await waitPush(pushFor("eve-sim-udid", h1.msgId));
+const hp1 = await waitPush(pushFor("eve-sim-udid", h1));
 check("ack does not wait for apns", !!h1 && !!hp1 && h1.at - hp1.at < 1000,
   `ack ${h1?.at} push ${hp1?.at}`);
 
@@ -1284,7 +1291,7 @@ ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-h2", sentAt: Date.n
 const h2 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-h2", 3000);
 check("ack while apns still hanging", !!h2 && h2.at - holdT0 < 600,
   `${h2 ? h2.at - holdT0 : "no ack"}ms`);
-const hp2 = await waitPush(pushFor("eve-sim-udid", h2.msgId), 8000);
+const hp2 = await waitPush(pushFor("eve-sim-udid", h2), 8000);
 check("push follows its ack", !!hp2 && h2.at < hp2.at, `ack ${h2?.at} push ${hp2?.at}`);
 hold = { token: null, ms: 0 };
 
@@ -1298,7 +1305,7 @@ const jchat = await api("/api/chats", { token: alice.token,
 ca2.send({ t: "send", chatId: jchat.chatId, clientMsgId: "cm-dead1", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const d1 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-dead1");
-check("dead token: push attempted", !!(await waitPush(pushFor("dead-token", d1.msgId))));
+check("dead token: push attempted", !!(await waitPush(pushFor("dead-token", d1))));
 
 await new Promise((r) => setTimeout(r, 600));
 const jackSess = await api("/api/sessions", { token: jack.token });
@@ -1309,7 +1316,7 @@ ca2.send({ t: "send", chatId: jchat.chatId, clientMsgId: "cm-dead2", sentAt: Dat
   body: { v: 1, mode: "pw", msgs: {} } });
 const d2 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-dead2");
 check("dead token: no push after drop",
-  !(await waitPush(pushFor("dead-token", d2.msgId), 1500)));
+  !(await waitPush(pushFor("dead-token", d2), 1500)));
 
 const kate = await api("/api/register", { body: {
   username: "kate_" + suffix, displayName: "Kate", ...fakeKeys("k") } });
@@ -1322,7 +1329,7 @@ ca2.send({ t: "send", chatId: kchat.chatId, clientMsgId: "cm-flaky", sentAt: Dat
 const fk = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-flaky");
 await new Promise((r) => setTimeout(r, 2500));
 const flakyTries = pushes.filter((p) =>
-  p.url === "/3/device/flaky-token" && p.body.msgId === fk.msgId);
+  p.url === "/3/device/flaky-token" && p.body.chatId === kchat.chatId && p.body.seq === fk.seq);
 check("429 retried once and succeeded", flakyTries.length === 2, `tries=${flakyTries.length}`);
 const kateSess = await api("/api/sessions", { token: kate.token });
 check("retried token kept", kateSess.sessions[0].hasPushToken === true);
@@ -1355,9 +1362,9 @@ sendTo("cm-f1");
 const f1 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-f1");
 check("sender acked while recipient fails", !!f1);
 check("healthy recipient unaffected",
-  !!(await ctre.waitFor((f) => f.t === "msg" && f.msgId === f1.msgId)));
+  !!(await ctre.waitFor((f) => f.t === "msg" && f.chatId === f1.chatId && f.seq === f1.seq)));
 check("failed recipient gets retry",
-  !!(await cmal.waitFor((f) => f.t === "msg" && f.msgId === f1.msgId, 4000)));
+  !!(await cmal.waitFor((f) => f.t === "msg" && f.chatId === f1.chatId && f.seq === f1.seq, 4000)));
 
 // typing is not retried: it goes stale faster than a retry would arrive
 await fault(1);
@@ -1372,11 +1379,11 @@ await fault(99);
 sendTo("cm-f2");
 const f2 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-f2");
 check("delivery survives a broken recipient",
-  !!(await ctre.waitFor((f) => f.t === "msg" && f.msgId === f2.msgId, 8000)));
+  !!(await ctre.waitFor((f) => f.t === "msg" && f.chatId === f2.chatId && f.seq === f2.seq, 8000)));
 sendTo("cm-f3");
 const f3 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-f3");
 check("queue keeps moving after dropped recipient",
-  !!(await ctre.waitFor((f) => f.t === "msg" && f.msgId === f3.msgId, 8000)));
+  !!(await ctre.waitFor((f) => f.t === "msg" && f.chatId === f3.chatId && f.seq === f3.seq, 8000)));
 await fault(0);
 
 // 23. Fanout queue: a burst is queued and replayed to the end
@@ -1395,9 +1402,11 @@ check("a queued job reports its wait", typeof qState.oldestMs === "number", JSON
 
 const qLast = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === `cm-q${Q - 1}`, 10000);
 check("burst acked", !!qLast);
-const qGotT = await ctre.waitFor((f) => f.t === "msg" && f.msgId === qLast.msgId, 20000);
+const qGotT = await ctre.waitFor((f) =>
+  f.t === "msg" && f.chatId === qLast.chatId && f.seq === qLast.seq, 20000);
 check("queue replays the whole burst", !!qGotT);
-const qGotM = await cmal.waitFor((f) => f.t === "msg" && f.msgId === qLast.msgId, 20000);
+const qGotM = await cmal.waitFor((f) =>
+  f.t === "msg" && f.chatId === qLast.chatId && f.seq === qLast.seq, 20000);
 check("stalled recipient catches up after retries", !!qGotM);
 const qSeqs = ctre.frames.filter((f) => f.t === "msg" && f.chatId === fgrp.chatId)
   .map((f) => f.seq);
@@ -1592,8 +1601,8 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
   await civ.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-w2");
   civ.send({ t: "send", chatId: schat.chatId, clientMsgId: "cm-w1", sentAt: Date.now(), body: {} });
   const w1again = await civ.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-w1" && f !== w1);
-  check("cmid survives sweeps until the sender acks", w1again.seq === w1.seq
-    && w1again.msgId === w1.msgId, JSON.stringify(w1again));
+  check("cmid survives sweeps until the sender acks", w1again.seq === w1.seq,
+    JSON.stringify(w1again));
 
   // acked: the next send sweeps it, and a late resend lands as a fresh message
   civ.send({ t: "recv", chatId: schat.chatId, seqs: [w1.seq] });
@@ -1603,7 +1612,7 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
   await civ.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-w3");
   civ.send({ t: "send", chatId: schat.chatId, clientMsgId: "cm-w1", sentAt: Date.now(), body: {} });
   const w1fresh = await civ.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-w1"
-    && f.msgId !== w1.msgId);
+    && f.seq !== w1.seq);
   check("cmid swept behind the sender's ack", !!w1fresh && w1fresh.seq > w1.seq,
     JSON.stringify(w1fresh));
   civ.ws.close();

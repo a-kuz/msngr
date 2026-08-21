@@ -14,13 +14,13 @@ final class NotificationJournalTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: url) }
         let journal = NotificationJournal(url: url)
 
-        journal.record(.received, msgId: "m1", seq: 7, at: 100)
-        journal.record(.answered, msgId: "m1", seq: 7, detail: "show", at: 101.5)
-        journal.record(.expired, msgId: "m2", seq: 8, at: 130)
+        journal.record(.received, chatId: "c1", seq: 7, at: 100)
+        journal.record(.answered, chatId: "c1", seq: 7, detail: "show", at: 101.5)
+        journal.record(.expired, chatId: "c2", seq: 8, at: 130)
 
         let entries = journal.entries()
         XCTAssertEqual(entries.map(\.phase), [.received, .answered, .expired])
-        XCTAssertEqual(entries[0].msgId, "m1")
+        XCTAssertEqual(entries[0].chatId, "c1")
         XCTAssertEqual(entries[0].seq, 7)
         XCTAssertEqual(entries[1].detail, "show")
         XCTAssertEqual(entries[2].at, 130, accuracy: 0.001)
@@ -33,7 +33,7 @@ final class NotificationJournalTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: url) }
         let journal = NotificationJournal(url: url)
         for seq in 1...25 {
-            journal.record(.received, msgId: "m\(seq)", seq: seq, at: Double(seq))
+            journal.record(.received, chatId: "c\(seq)", seq: seq, at: Double(seq))
         }
         XCTAssertEqual(journal.entries().filter { $0.phase == .received }.count, 25)
     }
@@ -45,14 +45,14 @@ final class NotificationJournalTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: url) }
         let journal = NotificationJournal(url: url, limit: 2048)
         for seq in 1...500 {
-            journal.record(.received, msgId: "message-\(seq)", seq: seq, at: Double(seq))
+            journal.record(.received, chatId: "chat-\(seq)", seq: seq, at: Double(seq))
         }
         let entries = journal.entries()
         XCTAssertFalse(entries.isEmpty)
         XCTAssertLessThan(entries.count, 500)
         XCTAssertEqual(entries.last?.seq, 500)
         // no half-written first line survives the cut
-        XCTAssertTrue(entries.allSatisfy { $0.msgId.hasPrefix("message-") })
+        XCTAssertTrue(entries.allSatisfy { $0.chatId.hasPrefix("chat-") })
     }
 
     func testMalformedLinesAreIgnored() {

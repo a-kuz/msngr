@@ -7,7 +7,7 @@ import MsngrCore
 @MainActor
 final class ChatSearchModelTests: XCTestCase {
     private func hit(_ id: String) -> MessageSearchHit {
-        MessageSearchHit(id: id, chatId: "c1", messageId: id, fromUserId: "peer",
+        MessageSearchHit(id: id, chatId: "c1", fromUserId: "peer",
                          kind: .text, sortedAt: 1,
                          snippet: MessageSearchSnippet(text: id, matches: []))
     }
@@ -38,7 +38,7 @@ final class ChatSearchModelTests: XCTestCase {
         let model = ChatSearchModel(pages: { query, _ in
             // the first query is the slow one: it answers after the second is done
             if query == "ir" { await Self.stall(0.6) }
-            return MessageSearchPage(hits: [MessageSearchHit(id: query, chatId: "c1", messageId: query,
+            return MessageSearchPage(hits: [MessageSearchHit(id: query, chatId: "c1",
                                                              fromUserId: "peer", kind: .text, sortedAt: 1,
                                                              snippet: MessageSearchSnippet(text: query, matches: []))],
                                      cursor: nil, reachedEnd: true)
@@ -118,7 +118,7 @@ final class ChatSearchModelTests: XCTestCase {
     func testClearingTheFieldClearsTheResult() async throws {
         let found = try person("irina")
         let model = ChatSearchModel(pages: { query, _ in
-            MessageSearchPage(hits: [MessageSearchHit(id: query, chatId: "c1", messageId: query,
+            MessageSearchPage(hits: [MessageSearchHit(id: query, chatId: "c1",
                                                       fromUserId: "peer", kind: .text, sortedAt: 1,
                                                       snippet: MessageSearchSnippet(text: query, matches: []))],
                               cursor: nil, reachedEnd: true)

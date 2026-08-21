@@ -7,12 +7,13 @@ import Foundation
 /// notification, so the request is also parked here and the screen takes it on appearing.
 struct MessageJump {
     let chatId: String
-    let msgId: String
+    /// Local row id of the message to show.
+    let id: String
 
     private(set) static var pending: MessageJump?
 
-    static func request(chatId: String, msgId: String) {
-        let jump = MessageJump(chatId: chatId, msgId: msgId)
+    static func request(chatId: String, id: String) {
+        let jump = MessageJump(chatId: chatId, id: id)
         pending = jump
         NotificationCenter.default.post(name: .showMessageInChat, object: jump)
     }

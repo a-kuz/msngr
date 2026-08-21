@@ -108,10 +108,10 @@ final class FeedWindowTests: XCTestCase {
                 """)
             for seq in 1...5_000 {
                 try dbc.execute(sql: """
-                    INSERT INTO message (id, msgId, chatId, seq, fromUserId, sentAt, kind, text,
+                    INSERT INTO message (id, chatId, seq, fromUserId, sentAt, kind, text,
                                          edited, deletedForAll, status, isOutgoing)
-                    VALUES (?,?,?,?,?,?,?,?,0,0,2,0)
-                    """, arguments: ["m\(seq)", "m\(seq)", "c", seq, "peer",
+                    VALUES (?,?,?,?,?,?,?,0,0,2,0)
+                    """, arguments: ["m\(seq)", "c", seq, "peer",
                                      1_700_000_000 + Double(seq), "text", "m\(seq)"])
             }
         }
@@ -136,10 +136,10 @@ final class FeedWindowTests: XCTestCase {
                 """)
             for seq in 1...5_000 {
                 try dbc.execute(sql: """
-                    INSERT INTO message (id, msgId, chatId, seq, fromUserId, sentAt, kind, text,
+                    INSERT INTO message (id, chatId, seq, fromUserId, sentAt, kind, text,
                                          edited, deletedForAll, status, isOutgoing)
-                    VALUES (?,?,?,?,?,?,?,?,0,0,2,0)
-                    """, arguments: ["m\(seq)", "m\(seq)", "c", seq, "peer",
+                    VALUES (?,?,?,?,?,?,?,0,0,2,0)
+                    """, arguments: ["m\(seq)", "c", seq, "peer",
                                      1_700_000_000 + Double(seq), "text", "m\(seq)"])
             }
         }
@@ -189,10 +189,10 @@ final class FeedWindowTests: XCTestCase {
                 """)
             for seq in 1...5_000 {
                 try dbc.execute(sql: """
-                    INSERT INTO message (id, msgId, chatId, seq, fromUserId, sentAt, kind, text,
+                    INSERT INTO message (id, chatId, seq, fromUserId, sentAt, kind, text,
                                          edited, deletedForAll, status, isOutgoing)
-                    VALUES (?,?,?,?,?,?,?,?,0,0,2,0)
-                    """, arguments: ["m\(seq)", "m\(seq)", "c", seq, "peer",
+                    VALUES (?,?,?,?,?,?,?,0,0,2,0)
+                    """, arguments: ["m\(seq)", "c", seq, "peer",
                                      1_700_000_000 + Double(seq), "text", "m\(seq)"])
             }
         }

@@ -40,7 +40,7 @@ final class DisappearingTests: XCTestCase {
         XCTAssertNil(expires, "an unsent message has no clock to run from")
 
         await engine.apply(try JSONDecoder().decode(WSIncoming.self, from: Data("""
-        {"t":"sent","chatId":"c1","clientMsgId":"local-1","msgId":"srv-1","seq":1,"ts":2}
+        {"t":"sent","chatId":"c1","clientMsgId":"local-1","seq":1,"ts":2}
         """.utf8)))
         expires = try await db.read { dbc in
             try Double.fetchOne(dbc, sql: "SELECT expiresAt FROM message WHERE id = 'local-1'")
@@ -58,11 +58,11 @@ final class DisappearingTests: XCTestCase {
 
         var content = ContentPayload(kind: "text")
         content.text = "an old one"
-        await engine.storeHistoric(content: content, chatId: "c1", msgId: "srv-9", seq: 9,
+        await engine.storeHistoric(content: content, chatId: "c1", seq: 9,
                                    from: "peer", sentAt: 1, ts: 1)
 
         let expires = try await db.read { dbc in
-            try Double.fetchOne(dbc, sql: "SELECT expiresAt FROM message WHERE msgId = 'srv-9'")
+            try Double.fetchOne(dbc, sql: "SELECT expiresAt FROM message WHERE chatId = 'c1' AND seq = 9")
         }
         XCTAssertNotNil(expires)
     }
@@ -77,16 +77,16 @@ final class DisappearingTests: XCTestCase {
         let now = Date().timeIntervalSince1970
         try await db.write { dbc in
             try dbc.execute(sql: """
-                INSERT INTO message (id, chatId, msgId, seq, fromUserId, sentAt, kind, status, isOutgoing, expiresAt)
-                VALUES ('m1','c1','m1',5,'peer',1,'text',1,0,?)
+                INSERT INTO message (id, chatId, seq, fromUserId, sentAt, kind, status, isOutgoing, expiresAt)
+                VALUES ('m1','c1',5,'peer',1,'text',1,0,?)
                 """, arguments: [now - 1])
             try dbc.execute(sql: """
-                INSERT INTO message (id, chatId, msgId, seq, fromUserId, sentAt, kind, status, isOutgoing, expiresAt)
-                VALUES ('m2','c1','m2',6,'peer',1,'text',1,0,?)
+                INSERT INTO message (id, chatId, seq, fromUserId, sentAt, kind, status, isOutgoing, expiresAt)
+                VALUES ('m2','c1',6,'peer',1,'text',1,0,?)
                 """, arguments: [now + 600])
             try dbc.execute(sql: """
-                INSERT INTO message (id, chatId, msgId, seq, fromUserId, sentAt, kind, status, isOutgoing)
-                VALUES ('m3','c1','m3',7,'peer',1,'text',1,0)
+                INSERT INTO message (id, chatId, seq, fromUserId, sentAt, kind, status, isOutgoing)
+                VALUES ('m3','c1',7,'peer',1,'text',1,0)
                 """)
         }
 
@@ -108,7 +108,7 @@ final class DisappearingTests: XCTestCase {
 
         var content = ContentPayload(kind: "text")
         content.text = "stays put"
-        await engine.applyContent(content, chatId: "c1", msgId: "srv-1", seq: 1,
+        await engine.applyContent(content, chatId: "c1", seq: 1,
                                   from: "peer", sentAt: 1, ts: 1)
         await engine.sweepExpiredMessages()
 

@@ -2,44 +2,44 @@ import XCTest
 @testable import Msngr
 import MsngrCore
 
-/// Finding the original when jumping from a quote: the quote points at the server
-/// msgId, while your own message sits in the feed under its clientMsgId.
+/// Finding the original when jumping from a quote: the quote points at the
+/// seq, while your own message sits in the feed under its local row id.
 final class ReplyJumpTests: XCTestCase {
-    private func item(id: String, msgId: String?, outgoing: Bool) -> ChatFeedItem {
+    private func item(id: String, seq: Int?, outgoing: Bool) -> ChatFeedItem {
         var m = Message(id: id, chatId: "c", fromUserId: outgoing ? "me" : "peer",
                         sentAt: 1_700_000_000, kind: .text, text: id,
                         status: .sent, isOutgoing: outgoing)
-        m.msgId = msgId
+        m.seq = seq
         m.clientMsgId = outgoing ? id : nil
         return .message(m, tightGap: false, showTail: true, showName: false, authorName: nil)
     }
 
     private var feed: [ChatFeedItem] {
         [
-            item(id: "local-1", msgId: "srv-9", outgoing: true),
+            item(id: "local-1", seq: 9, outgoing: true),
             .dateSeparator(id: "date:x", label: "Today"),
-            item(id: "srv-4", msgId: "srv-4", outgoing: false),
+            item(id: "srv-4", seq: 4, outgoing: false),
         ]
     }
 
-    func testFindsOwnMessageByServerId() {
-        XCTAssertEqual(MessagesViewController.index(ofMsgId: "srv-9", in: feed), 0)
+    func testFindsOwnMessageBySeq() {
+        XCTAssertEqual(MessagesViewController.index(ofSeq: 9, in: feed), 0)
     }
 
     func testFindsOwnMessageByLocalId() {
-        XCTAssertEqual(MessagesViewController.index(ofMsgId: "local-1", in: feed), 0)
+        XCTAssertEqual(MessagesViewController.index(ofId: "local-1", in: feed), 0)
     }
 
     func testFindsIncomingMessage() {
-        XCTAssertEqual(MessagesViewController.index(ofMsgId: "srv-4", in: feed), 2)
+        XCTAssertEqual(MessagesViewController.index(ofSeq: 4, in: feed), 2)
     }
 
     func testMissingMessageMeansHistoryNotLoaded() {
-        XCTAssertNil(MessagesViewController.index(ofMsgId: "srv-100", in: feed))
+        XCTAssertNil(MessagesViewController.index(ofSeq: 100, in: feed))
     }
 
     func testSeparatorIdIsNotAMessage() {
-        XCTAssertNil(MessagesViewController.index(ofMsgId: "date:x", in: feed))
+        XCTAssertNil(MessagesViewController.index(ofId: "date:x", in: feed))
     }
 }
 

@@ -65,8 +65,8 @@ final class ChatGalleryModel: ObservableObject {
         guard let db = AppState.shared.db else { return nil }
         return try? await db.read { [chatId] dbc in
             try Message.fetchOne(dbc, sql: """
-                SELECT * FROM message WHERE chatId = ? AND (msgId = ? OR id = ?) LIMIT 1
-                """, arguments: [chatId, entry.messageId, entry.messageId])
+                SELECT * FROM message WHERE chatId = ? AND id = ? LIMIT 1
+                """, arguments: [chatId, entry.messageId])
         }
     }
 }
@@ -282,7 +282,7 @@ struct ChatGalleryView: View {
     /// scrolls to the bubble, loading history if it sits deeper than the window.
     private func showInChat(_ entry: GalleryEntry) {
         Haptics.light()
-        MessageJump.request(chatId: chatId, msgId: entry.messageId)
+        MessageJump.request(chatId: chatId, id: entry.messageId)
     }
 
     // MARK: - Empty tabs

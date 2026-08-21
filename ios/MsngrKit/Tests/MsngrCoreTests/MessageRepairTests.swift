@@ -26,9 +26,9 @@ final class MessageRepairTests: XCTestCase {
     }
 
     /// An envelope this session will never open: the mode is unknown.
-    private func brokenFrame(seq: Int, msgId: String) throws -> WSIncoming {
+    private func brokenFrame(seq: Int) throws -> WSIncoming {
         let json = """
-        {"t":"msg","chatId":"c1","seq":\(seq),"msgId":"\(msgId)","from":"peer","fromDevice":"d1",
+        {"t":"msg","chatId":"c1","seq":\(seq),"from":"peer","fromDevice":"d1",
         "sentAt":1,"ts":1,"body":{"v":1,"mode":"zz"}}
         """
         return try JSONDecoder().decode(WSIncoming.self, from: Data(json.utf8))
@@ -55,10 +55,10 @@ final class MessageRepairTests: XCTestCase {
         try await makeDirectChat(db)
         let engine = try makeEngine(db: db)
 
-        await engine.apply(try brokenFrame(seq: 1, msgId: "m1"))
+        await engine.apply(try brokenFrame(seq: 1))
 
         let pending = try await db.read { dbc in
-            try Row.fetchOne(dbc, sql: "SELECT * FROM pendingDecrypt WHERE chatId = 'c1' AND msgId = 'm1'")
+            try Row.fetchOne(dbc, sql: "SELECT * FROM pendingDecrypt WHERE chatId = 'c1' AND seq = 1")
         }
         let row = try XCTUnwrap(pending, "the envelope was not kept, nothing left to retry")
         XCTAssertFalse((row["body"] as Data).isEmpty)
@@ -72,10 +72,9 @@ final class MessageRepairTests: XCTestCase {
 
         let outbox = try await outboxContents(db)
         XCTAssertEqual(outbox.count, 1)
-        XCTAssertEqual(outbox[0].id, MessageRepair.requestId(msgId: "m1", attempt: 1))
+        XCTAssertEqual(outbox[0].id, MessageRepair.requestId(chatId: "c1", seq: 1, attempt: 1))
         XCTAssertEqual(outbox[0].content.kind, "repairRequest")
         XCTAssertEqual(outbox[0].content.to, "peer")
-        XCTAssertEqual(outbox[0].content.targetMsgId, "m1")
         XCTAssertEqual(outbox[0].content.repairSeq, 1)
         XCTAssertEqual(outbox[0].content.attempt, 1)
     }
@@ -88,13 +87,13 @@ final class MessageRepairTests: XCTestCase {
         let engine = try makeEngine(db: db)
 
         let json = """
-        {"t":"msg","chatId":"c1","seq":1,"msgId":"m1","from":"peer","fromDevice":"d1",
+        {"t":"msg","chatId":"c1","seq":1,"from":"peer","fromDevice":"d1",
         "sentAt":1,"ts":1,"body":{"v":1,"mode":"skm","c":"AA==","keyId":"k1","iteration":0,"sig":"AA=="}}
         """
         await engine.apply(try JSONDecoder().decode(WSIncoming.self, from: Data(json.utf8)))
 
         let row = try await db.read { dbc in
-            try Row.fetchOne(dbc, sql: "SELECT * FROM pendingDecrypt WHERE chatId = 'c1' AND msgId = 'm1'")
+            try Row.fetchOne(dbc, sql: "SELECT * FROM pendingDecrypt WHERE chatId = 'c1' AND seq = 1")
         }
         XCTAssertEqual(try XCTUnwrap(row)["reason"] as String?, "no_sender_key")
         XCTAssertEqual(try XCTUnwrap(row)["repairAttempts"] as Int, 0)
@@ -111,9 +110,9 @@ final class MessageRepairTests: XCTestCase {
         try await db.write { dbc in
             try dbc.execute(
                 sql: """
-                INSERT INTO pendingDecrypt (chatId, msgId, seq, fromUserId, fromDevice, sentAt, ts,
+                INSERT INTO pendingDecrypt (chatId, seq, fromUserId, fromDevice, sentAt, ts,
                                             body, reason, attempts, firstSeenAt, lastTriedAt)
-                VALUES ('c1','m1',1,'peer','d1',1,1,?,'no_session',1,?,?)
+                VALUES ('c1',1,'peer','d1',1,1,?,'no_session',1,?,?)
                 """,
                 arguments: [Data(#"{"v":1,"mode":"zz"}"#.utf8), old, old])
         }
@@ -125,7 +124,7 @@ final class MessageRepairTests: XCTestCase {
         var attempts = 0
         for _ in 0..<50 {
             attempts = try await db.read { dbc in
-                try Int.fetchOne(dbc, sql: "SELECT attempts FROM pendingDecrypt WHERE msgId = 'm1'") ?? 0
+                try Int.fetchOne(dbc, sql: "SELECT attempts FROM pendingDecrypt WHERE chatId = 'c1' AND seq = 1") ?? 0
             }
             if attempts > 1 { break }
             try await Task.sleep(nanoseconds: 40_000_000)
@@ -147,20 +146,20 @@ final class MessageRepairTests: XCTestCase {
         try await makeDirectChat(db)
         let engine = try makeEngine(db: db)
 
-        await engine.apply(try brokenFrame(seq: 1, msgId: "m1"))
+        await engine.apply(try brokenFrame(seq: 1))
         // every sweep finds the backoff elapsed and the envelope not yet expired
         for _ in 0..<(MessageRepair.maxAttempts + 3) {
             try await db.write { dbc in
                 try dbc.execute(sql: """
                     UPDATE pendingDecrypt SET lastTriedAt = 0, repairAskedAt = 0,
-                      firstSeenAt = ? WHERE msgId = 'm1'
+                      firstSeenAt = ? WHERE chatId = 'c1' AND seq = 1
                     """, arguments: [Date().timeIntervalSince1970])
             }
             await engine.sweepUnreadable()
         }
 
         let row = try await db.read { dbc in
-            try Row.fetchOne(dbc, sql: "SELECT * FROM pendingDecrypt WHERE msgId = 'm1'")
+            try Row.fetchOne(dbc, sql: "SELECT * FROM pendingDecrypt WHERE chatId = 'c1' AND seq = 1")
         }
         let pending = try XCTUnwrap(row)
         XCTAssertEqual(pending["repairAttempts"] as Int, MessageRepair.maxAttempts)
@@ -185,10 +184,10 @@ final class MessageRepairTests: XCTestCase {
         try await makeDirectChat(db)
         let engine = try makeEngine(db: db)
 
-        await engine.apply(try brokenFrame(seq: 1, msgId: "m1"))
+        await engine.apply(try brokenFrame(seq: 1))
         try await db.write { dbc in
             try dbc.execute(sql: """
-                UPDATE pendingDecrypt SET repairAttempts = ?, firstSeenAt = ? WHERE msgId = 'm1'
+                UPDATE pendingDecrypt SET repairAttempts = ?, firstSeenAt = ? WHERE chatId = 'c1' AND seq = 1
                 """, arguments: [MessageRepair.maxAttempts,
                                  Date().timeIntervalSince1970 - MessageRepair.envelopeTTL - 1])
         }
@@ -207,7 +206,7 @@ final class MessageRepairTests: XCTestCase {
     // MARK: - Sender side
 
     /// A request for a copy where the sender still has the message locally: it
-    /// goes back to the asker under the original msgId.
+    /// goes back to the asker under the original seq.
     func testSenderAnswersWithOriginalContent() async throws {
         let db = try AppDatabase.openInMemory()
         try await makeDirectChat(db)
@@ -215,13 +214,11 @@ final class MessageRepairTests: XCTestCase {
         try await db.write { dbc in
             var msg = Message(id: "local1", chatId: "c1", fromUserId: "me", sentAt: 42,
                               kind: .text, text: "hello", status: .sent, isOutgoing: true)
-            msg.msgId = "m1"
             msg.seq = 7
             try msg.save(dbc)
         }
 
         var request = ContentPayload(kind: "repairRequest")
-        request.targetMsgId = "m1"
         request.repairSeq = 7
         request.reason = "no_session"
         request.attempt = 1
@@ -229,11 +226,10 @@ final class MessageRepairTests: XCTestCase {
 
         let outbox = try await outboxContents(db)
         XCTAssertEqual(outbox.count, 1)
-        XCTAssertEqual(outbox[0].id, MessageRepair.replyId(msgId: "m1", attempt: 1))
+        XCTAssertEqual(outbox[0].id, MessageRepair.replyId(chatId: "c1", seq: 7, attempt: 1))
         let reply = outbox[0].content
         XCTAssertEqual(reply.kind, "repair")
         XCTAssertEqual(reply.to, "peer")
-        XCTAssertEqual(reply.repairOf, "m1")
         XCTAssertEqual(reply.repairSeq, 7)
         XCTAssertEqual(reply.origSentAt, 42)
         let original = try JSONDecoder().decode(ContentPayload.self,
@@ -250,7 +246,7 @@ final class MessageRepairTests: XCTestCase {
         let engine = try makeEngine(db: db)
 
         var request = ContentPayload(kind: "repairRequest")
-        request.targetMsgId = "unknown"
+        request.repairSeq = 99
         request.attempt = 1
         await engine.handleRepairContent(request, chatId: "c1", from: "peer", fromDevice: "d1")
 
@@ -260,19 +256,18 @@ final class MessageRepairTests: XCTestCase {
 
     // MARK: - Recipient side
 
-    /// The copy lands under the original msgId, so the feed shows one message;
+    /// The copy lands under the original (chatId, seq), so the feed shows one message;
     /// a second copy does not create a duplicate either.
     func testRepairedCopyReplacesGapWithoutDuplicate() async throws {
         let db = try AppDatabase.openInMemory()
         try await makeDirectChat(db)
         let engine = try makeEngine(db: db)
 
-        await engine.apply(try brokenFrame(seq: 1, msgId: "m1"))
+        await engine.apply(try brokenFrame(seq: 1))
 
         var original = ContentPayload(kind: "text")
         original.text = "hello"
         var repair = ContentPayload(kind: "repair")
-        repair.repairOf = "m1"
         repair.repairSeq = 1
         repair.origSentAt = 42
         repair.orig = SyncEngine.payloadJSON(original)
@@ -284,7 +279,6 @@ final class MessageRepairTests: XCTestCase {
             try Message.fetchAll(dbc, sql: "SELECT * FROM message WHERE chatId = 'c1'")
         }
         XCTAssertEqual(rows.count, 1, "the repeated copy created a duplicate in the feed")
-        XCTAssertEqual(rows[0].msgId, "m1")
         XCTAssertEqual(rows[0].seq, 1)
         XCTAssertEqual(rows[0].text, "hello")
         XCTAssertEqual(rows[0].sentAt, 42)
@@ -307,7 +301,7 @@ final class MessageRepairTests: XCTestCase {
         }
         let engine = try makeEngine(db: db)
 
-        await engine.apply(try brokenFrame(seq: 1, msgId: "m1"))
+        await engine.apply(try brokenFrame(seq: 1))
         let queued = try await outboxContents(db)
         XCTAssertTrue(queued.isEmpty, "a request went out from a chat request that was never accepted")
 
@@ -333,12 +327,11 @@ final class MessageRepairTests: XCTestCase {
         try await makeDirectChat(db)
         let engine = try makeEngine(db: db)
 
-        await engine.apply(try brokenFrame(seq: 1, msgId: "m1"))
+        await engine.apply(try brokenFrame(seq: 1))
 
         var forged = ContentPayload(kind: "text")
         forged.text = "a substitute"
         var repair = ContentPayload(kind: "repair")
-        repair.repairOf = "m1"
         repair.repairSeq = 1
         repair.orig = SyncEngine.payloadJSON(forged)
         await engine.handleRepairContent(repair, chatId: "c1", from: "stranger", fromDevice: "d9")
@@ -360,13 +353,11 @@ final class MessageRepairTests: XCTestCase {
             try dbc.execute(sql: "INSERT INTO member (chatId, userId, role, joinedAt) VALUES ('g1','late','member',100)")
             var msg = Message(id: "local1", chatId: "g1", fromUserId: "me", sentAt: 42,
                               kind: .text, text: "before they joined", status: .sent, isOutgoing: true)
-            msg.msgId = "m1"
             msg.seq = 7
             try msg.save(dbc)
         }
 
         var request = ContentPayload(kind: "repairRequest")
-        request.targetMsgId = "m1"
         request.repairSeq = 7
         request.attempt = 1
         await engine.handleRepairContent(request, chatId: "g1", from: "late", fromDevice: "d1")

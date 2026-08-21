@@ -8,7 +8,7 @@ final class ForwardPayloadTests: XCTestCase {
     private func message() -> Message {
         var msg = Message(id: "m1", chatId: "c1", fromUserId: "author", sentAt: 100,
                           kind: .text, text: "hello", status: .sent, isOutgoing: false)
-        msg.msgId = "m1"
+        msg.seq = 1
         msg.reactions = ["❤️": ["author", "me"]]
         return msg
     }
@@ -24,7 +24,7 @@ final class ForwardPayloadTests: XCTestCase {
     /// exist in the target chat, and the preview needs nothing from it.
     func testCarriesTheQuotePreview() {
         var msg = message()
-        msg.replyTo = ReplyPreview(msgId: "q1", authorId: "peer", text: "quoted", kind: "text")
+        msg.replyTo = ReplyPreview(seq: 5, authorId: "peer", text: "quoted", kind: "text")
         let c = ChatViewModel.forwardPayload(msg, authorName: "Alice")
         XCTAssertEqual(c.replyTo, msg.replyTo)
     }

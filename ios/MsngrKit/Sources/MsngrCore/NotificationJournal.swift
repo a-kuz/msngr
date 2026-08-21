@@ -25,15 +25,15 @@ public final class NotificationJournal: @unchecked Sendable {
     public struct Entry: Equatable, Sendable {
         public var at: Double
         public var phase: Phase
-        public var msgId: String
+        public var chatId: String
         public var seq: Int
         /// Outcome of an answer, or whatever the phase has to add.
         public var detail: String
 
-        public init(at: Double, phase: Phase, msgId: String, seq: Int, detail: String = "") {
+        public init(at: Double, phase: Phase, chatId: String, seq: Int, detail: String = "") {
             self.at = at
             self.phase = phase
-            self.msgId = msgId
+            self.chatId = chatId
             self.seq = seq
             self.detail = detail
         }
@@ -57,9 +57,9 @@ public final class NotificationJournal: @unchecked Sendable {
         AppContainer.groupLocation().map { NotificationJournal(url: $0.nseJournalURL) }
     }
 
-    public func record(_ phase: Phase, msgId: String, seq: Int, detail: String = "",
+    public func record(_ phase: Phase, chatId: String, seq: Int, detail: String = "",
                        at: Double = Date().timeIntervalSince1970) {
-        let line = Self.line(Entry(at: at, phase: phase, msgId: msgId, seq: seq, detail: detail))
+        let line = Self.line(Entry(at: at, phase: phase, chatId: chatId, seq: seq, detail: detail))
         lock.lock()
         defer { lock.unlock() }
         append(line)
@@ -84,7 +84,7 @@ public final class NotificationJournal: @unchecked Sendable {
 
     static func line(_ entry: Entry) -> String {
         let fields = [String(format: "%.3f", entry.at), entry.phase.rawValue,
-                      entry.msgId, String(entry.seq), entry.detail]
+                      entry.chatId, String(entry.seq), entry.detail]
         return fields.joined(separator: "\t") + "\n"
     }
 
@@ -93,7 +93,7 @@ public final class NotificationJournal: @unchecked Sendable {
             let f = row.split(separator: "\t", omittingEmptySubsequences: false)
             guard f.count >= 4, let at = Double(f[0]), let phase = Phase(rawValue: String(f[1])),
                   let seq = Int(f[3]) else { return nil }
-            return Entry(at: at, phase: phase, msgId: String(f[2]), seq: seq,
+            return Entry(at: at, phase: phase, chatId: String(f[2]), seq: seq,
                          detail: f.count > 4 ? String(f[4]) : "")
         }
     }

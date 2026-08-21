@@ -81,7 +81,7 @@ enum BubbleLayout {
     /// Horizontal room the avatar column takes: the picture plus its gap.
     static var avatarSpan: CGFloat { avatarSize + 6 }
 
-    /// Plan cache: (msgId|width|version) → plan.
+    /// Plan cache: (message id|width|version) → plan.
     private static let cache = NSCache<NSString, Box>()
     final class Box {
         let plan: BubbleLayoutPlan

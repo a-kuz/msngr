@@ -71,9 +71,9 @@ final class UnreadRecountTests: XCTestCase {
         try msg(db, seq: 23)
         try db.write { dbc in
             try dbc.execute(sql: """
-                INSERT INTO pendingDecrypt (chatId, msgId, seq, fromUserId, fromDevice,
+                INSERT INTO pendingDecrypt (chatId, seq, fromUserId, fromDevice,
                                             sentAt, ts, body)
-                VALUES ('c1', 'mx', 24, 'peer', 'd1', 0, 0, x'7b7d')
+                VALUES ('c1', 24, 'peer', 'd1', 0, 0, x'7b7d')
                 """)
         }
 

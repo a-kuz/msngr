@@ -19,7 +19,6 @@ final class HistoryWindowTests: XCTestCase {
                 var msg = Message(id: "m\(seq)", chatId: chatId, fromUserId: "peer",
                                   sentAt: Double(seq), kind: .text, text: "msg \(seq)",
                                   status: .sent, isOutgoing: false)
-                msg.msgId = "m\(seq)"
                 msg.seq = seq
                 try msg.save(dbc)
             }
@@ -136,7 +135,7 @@ final class HistoryWindowTests: XCTestCase {
         try db.write { dbc in
             for seq in 4...5 {
                 try HistoryWindow.recordGap(dbc, chatId: "c1", seq: seq, reason: "bad_box",
-                                            msgId: "srv\(seq)", fromUserId: "peer", sentAt: Double(seq))
+                                            fromUserId: "peer", sentAt: Double(seq))
             }
         }
         let after = try db.read { dbc in try HistoryWindow.openGaps(dbc, chatId: "c1") }

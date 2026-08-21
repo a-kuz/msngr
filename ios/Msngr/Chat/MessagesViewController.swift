@@ -20,7 +20,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     var onContextAction: ((Message, MessageContextAction) -> Void)?
     /// The message the chat holds pinned, so the context menu of that one offers
     /// to take the pin off instead of putting it on again.
-    var pinnedMsgId: String?
+    var pinnedSeq: Int?
     var onTapMedia: ((Message, Int, UIView) -> Void)?
     /// Tap on the quote inside a reply bubble, which jumps to the original.
     var onTapReplyQuote: ((Message) -> Void)?
@@ -473,7 +473,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         cell.onToggleSelection = { [weak self] in self?.onToggleSelection?(msg) }
         // asked when the menu opens, not when the cell is filled: pinning changes
         // the chat, not the message, so no cell is reconfigured for it
-        cell.isPinned = { [weak self] in self?.pinnedMsgId == msg.msgId }
+        cell.isPinned = { [weak self] in msg.seq != nil && self?.pinnedSeq == msg.seq }
         cell.setSelection(mode: selectionMode, selected: selectedIds.contains(msg.id), animated: false)
     }
 
@@ -641,20 +641,20 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
                   case .message(let msg, _, _, _, _, _, _) = items[path.item],
                   let attrs = collectionView.layoutAttributesForItem(at: path),
                   attrs.frame.intersects(visibleRect) else { return nil }
-            return (msg.msgId ?? msg.id, attrs.frame.maxY)
+            return (msg.id, attrs.frame.maxY)
         }.max { $0.1 < $1.1 }
         return top?.0
     }
 
-    /// Scrolls to a message by its server msgId or its local id.
+    /// Scrolls to a message by its local row id.
     /// Returns false when the message is not in the loaded feed and history has to be fetched.
     @discardableResult
-    func scrollTo(msgId: String, highlight: Bool = false, animated: Bool = true) -> Bool {
-        guard let idx = index(ofMsgId: msgId) else { return false }
+    func scrollTo(id: String, highlight: Bool = false, animated: Bool = true) -> Bool {
+        guard let idx = index(ofId: id) else { return false }
         collectionView.scrollToItem(at: IndexPath(item: idx, section: 0), at: .centeredVertically,
                                     animated: animated)
         if highlight {
-            pendingHighlightId = msgId
+            pendingHighlightId = id
             // if the cell is already on screen the flash runs alongside the scroll settling;
             // otherwise it fires once the cell materialises or the scroll arrives
             flushPendingHighlight()
@@ -662,21 +662,36 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         return true
     }
 
-    private func index(ofMsgId msgId: String) -> Int? {
-        Self.index(ofMsgId: msgId, in: items)
+    /// Scrolls to a message a reference names by seq (a quote, a pin).
+    @discardableResult
+    func scrollTo(seq: Int, highlight: Bool = false, animated: Bool = true) -> Bool {
+        guard let idx = Self.index(ofSeq: seq, in: items),
+              case .message(let msg, _, _, _, _, _, _) = items[idx] else { return false }
+        return scrollTo(id: msg.id, highlight: highlight, animated: animated)
     }
 
-    /// Position of a message in the feed: own messages live under their clientMsgId, while
-    /// references to them (a quote, a pin) use the server msgId.
-    static func index(ofMsgId msgId: String, in items: [ChatFeedItem]) -> Int? {
+    private func index(ofId id: String) -> Int? {
+        Self.index(ofId: id, in: items)
+    }
+
+    /// Position of a message in the feed by its local row id.
+    static func index(ofId id: String, in items: [ChatFeedItem]) -> Int? {
         items.firstIndex { item in
             guard case .message(let m, _, _, _, _, _, _) = item else { return false }
-            return m.id == msgId || m.msgId == msgId
+            return m.id == id
+        }
+    }
+
+    /// Position of a message in the feed by its seq: how a quote or a pin names it.
+    static func index(ofSeq seq: Int, in items: [ChatFeedItem]) -> Int? {
+        items.firstIndex { item in
+            guard case .message(let m, _, _, _, _, _, _) = item else { return false }
+            return m.seq == seq
         }
     }
 
     private func flushPendingHighlight() {
-        guard let id = pendingHighlightId, let idx = index(ofMsgId: id),
+        guard let id = pendingHighlightId, let idx = index(ofId: id),
               let cell = collectionView.cellForItem(at: IndexPath(item: idx, section: 0)) as? MessageCell else { return }
         pendingHighlightId = nil
         cell.flashHighlight()
@@ -723,7 +738,7 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
                                          replyAuthorName: replyAuthorName, avatarInset: avatar != nil)
             configureMessageCell(cell, msg: msg, plan: plan, avatar: avatar)
             // the original's cell is created while the scroll to it is under way, and the flash was waiting
-            if let id = pendingHighlightId, id == msg.id || id == msg.msgId {
+            if let id = pendingHighlightId, id == msg.id {
                 pendingHighlightId = nil
                 DispatchQueue.main.async { cell.flashHighlight() }
             }

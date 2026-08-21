@@ -98,12 +98,12 @@ public enum MessageRepair {
     /// Deterministic id of a repair request, so a request repeated within the
     /// same attempt is deduplicated by the server instead of reaching the sender
     /// twice, while the next attempt still gets through.
-    public static func requestId(msgId: String, attempt: Int) -> String {
-        "rq:\(msgId):\(attempt)"
+    public static func requestId(chatId: String, seq: Int, attempt: Int) -> String {
+        "rq:\(chatId):\(seq):\(attempt)"
     }
 
     /// Deterministic id of the sender's answer, same reasoning.
-    public static func replyId(msgId: String, attempt: Int) -> String {
-        "rp:\(msgId):\(attempt)"
+    public static func replyId(chatId: String, seq: Int, attempt: Int) -> String {
+        "rp:\(chatId):\(seq):\(attempt)"
     }
 }

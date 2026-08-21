@@ -84,7 +84,7 @@ final class SendFailureTests: XCTestCase {
         try await seedOutgoing(db, clientMsgId: "cm1")
         await engine.apply(try errorFrame(SendFailure.sendFailed, clientMsgId: "cm1"))
 
-        await engine.deleteMessages(chatId: "c1", msgIds: ["cm1"], forAll: false)
+        await engine.deleteMessages(chatId: "c1", ids: ["cm1"], forAll: false)
 
         let left = try await db.read { dbc in
             try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM outbox WHERE clientMsgId = 'cm1'")
@@ -156,7 +156,7 @@ final class SendFailureTests: XCTestCase {
         try await seedOutgoing(db, clientMsgId: "cm1")
         await engine.apply(try errorFrame(SendFailure.sendFailed, clientMsgId: "cm1"))
 
-        let ack = #"{"t":"sent","chatId":"c1","clientMsgId":"cm1","msgId":"m1","seq":1,"ts":5}"#
+        let ack = #"{"t":"sent","chatId":"c1","clientMsgId":"cm1","seq":1,"ts":5}"#
         await engine.apply(try JSONDecoder().decode(WSIncoming.self, from: Data(ack.utf8)))
 
         let msg = try await db.read { dbc in

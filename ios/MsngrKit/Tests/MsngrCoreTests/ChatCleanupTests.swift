@@ -23,7 +23,6 @@ final class ChatCleanupTests: XCTestCase {
             for seq in seqs {
                 var msg = Message(id: "m\(seq)", chatId: chatId, fromUserId: "peer", sentAt: Double(seq),
                                   kind: .text, text: "message \(seq)", status: .sent, isOutgoing: false)
-                msg.msgId = "m\(seq)"
                 msg.seq = seq
                 try msg.save(dbc)
             }
@@ -102,10 +101,10 @@ final class ChatCleanupTests: XCTestCase {
             try OutboxItem(clientMsgId: "o1", chatId: "c1", createdAt: 1, payload: Data("{}".utf8)).save(dbc)
             try OutboxItem(clientMsgId: "o2", chatId: "c2", createdAt: 1, payload: Data("{}".utf8)).save(dbc)
             try dbc.execute(sql: """
-                INSERT INTO pendingDecrypt (chatId, msgId, seq, fromUserId, fromDevice, sentAt, ts, body)
-                VALUES ('c1','m9',9,'peer','d1',0,0,X'7B7D')
+                INSERT INTO pendingDecrypt (chatId, seq, fromUserId, fromDevice, sentAt, ts, body)
+                VALUES ('c1',9,'peer','d1',0,0,X'7B7D')
                 """)
-            try SyncEngine.bufferPendingApply(dbc, chatId: "c1", targetMsgId: "m9", kind: "edit",
+            try SyncEngine.bufferPendingApply(dbc, chatId: "c1", targetSeq: 9, kind: "edit",
                                               fromUserId: "peer", payload: "{}", seq: 9)
         }
 
@@ -194,7 +193,7 @@ final class ChatCleanupTests: XCTestCase {
             sendPolicy: nil, invitePolicy: nil, createdBy: "peer", createdAt: 1,
             members: [.init(userId: "me", role: "member", joinedAt: 1, accepted: true),
                       .init(userId: "peer", role: "member", joinedAt: 1, accepted: true)],
-            pinnedMsgId: nil, lastSeq: 121, readMarks: ["me": 100], deliveredMarks: [:])
+            pinnedSeq: nil, lastSeq: 121, readMarks: ["me": 100], deliveredMarks: [:])
         try db.write { dbc in
             try SyncEngine.upsertChatState(dbc, state, ownUserId: "me", flags: nil)
         }
@@ -225,7 +224,7 @@ final class ChatCleanupTests: XCTestCase {
         "title":null,"avatarId":null,"description":null,"createdBy":"peer","createdAt":1,
         "members":[{"userId":"me","role":"member","joinedAt":1,"accepted":true},
         {"userId":"peer","role":"member","joinedAt":1,"accepted":true}],
-        "pinnedMsgId":"m2","lastSeq":4,"readMarks":{},"deliveredMarks":{}}}
+        "pinnedSeq":2,"lastSeq":4,"readMarks":{},"deliveredMarks":{}}}
         """
         await engine.apply(try JSONDecoder().decode(WSIncoming.self, from: Data(json.utf8)))
 
@@ -246,7 +245,7 @@ final class ChatCleanupTests: XCTestCase {
         "title":"Team","avatarId":null,"description":null,"createdBy":"peer","createdAt":1,
         "members":[{"userId":"me","role":"member","joinedAt":50,"accepted":true},
         {"userId":"peer","role":"admin","joinedAt":1,"accepted":true}],
-        "pinnedMsgId":null,"lastSeq":30,"readMarks":{},"deliveredMarks":{}}}
+        "pinnedSeq":null,"lastSeq":30,"readMarks":{},"deliveredMarks":{}}}
         """
         await engine.apply(try JSONDecoder().decode(WSIncoming.self, from: Data(json.utf8)))
 
@@ -271,7 +270,7 @@ final class ChatCleanupTests: XCTestCase {
             chatId: "fresh", kind: "direct", title: nil, avatarId: nil, description: nil,
             sendPolicy: nil, invitePolicy: nil, createdBy: "peer", createdAt: 1,
             members: [.init(userId: "me", role: "member", joinedAt: 1, accepted: true)],
-            pinnedMsgId: nil, lastSeq: 4, readMarks: [:], deliveredMarks: [:])
+            pinnedSeq: nil, lastSeq: 4, readMarks: [:], deliveredMarks: [:])
         try db.write { dbc in
             try SyncEngine.upsertChatState(dbc, state, ownUserId: "me", flags: nil)
         }

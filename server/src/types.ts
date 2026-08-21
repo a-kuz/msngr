@@ -35,7 +35,7 @@ export type ClientFrame =
   | { t: "recv"; chatId: string; seqs: number[] }
   | { t: "read"; chatId: string; upToSeq: number }
   | { t: "typing"; chatId: string; kind: string | null }
-  | { t: "delete"; chatId: string; msgIds: string[]; forAll: boolean }
+  | { t: "delete"; chatId: string; seqs: number[]; forAll: boolean }
   | { t: "ping" }
   | { t: "bg" }   // app went to background: presence goes offline at once
   | { t: "fg" };  // app came back: presence goes online
@@ -52,8 +52,8 @@ export interface PublicUser {
 // --- WS frames: server -> client ---
 export type ServerFrame =
   | { t: "hello"; serverTime: number; protocol: number; minProtocol: number }
-  | { t: "sent"; chatId: string; clientMsgId: string; msgId: string; seq: number; ts: number }
-  | { t: "msg"; chatId: string; seq: number; msgId: string; from: string; fromDevice: string; sentAt: number; ts: number; body: unknown; service?: boolean }
+  | { t: "sent"; chatId: string; clientMsgId: string; seq: number; ts: number }
+  | { t: "msg"; chatId: string; seq: number; from: string; fromDevice: string; sentAt: number; ts: number; body: unknown; service?: boolean }
   | { t: "receipt"; chatId: string; kind: "delivered" | "read"; upToSeq?: number; seqs?: number[]; by: string }
   | { t: "typing"; chatId: string; from: string; kind: string | null }
   | { t: "presence"; userId: string; online: boolean; lastSeen: number }
@@ -72,7 +72,7 @@ export type ServerFrame =
   /// state is absent only for event "removed": the addressee is no longer a
   /// member, so the roster is not handed to them
   | { t: "chat"; chatId: string; event: string; state?: ChatState }
-  | { t: "deleted"; chatId: string; msgIds: string[]; forAll: boolean; by: string }
+  | { t: "deleted"; chatId: string; seqs: number[]; forAll: boolean; by: string }
   /// catch-up progress of one chat: cursor to resume from, more — whether the
   /// chat still has history beyond this portion
   | { t: "syncState"; chatId: string; cursor: number; more: boolean }
@@ -107,14 +107,13 @@ export interface ChatState {
   createdBy: string;
   createdAt: number;
   members: ChatMember[];
-  pinnedMsgId: string | null;
+  pinnedSeq: number | null;
   lastSeq: number;
   readMarks: Record<string, number>;      // userId -> upToSeq
   deliveredMarks: Record<string, number>; // userId -> upToSeq
 }
 
 export interface StoredMsg {
-  msgId: string;
   seq: number;
   from: string;
   fromDevice: string;

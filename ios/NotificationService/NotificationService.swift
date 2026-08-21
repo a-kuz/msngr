@@ -8,26 +8,27 @@ import MsngrCore
 /// batch by seq and answers them one by one.
 private let burstGate = NotificationBurstGate(resolve: { await burstPlan($0) })
 
-/// The envelopes of the pushes this process has seen, by msgId. A handler puts
-/// its envelope here and the window resolves them all in one transaction.
+/// The envelopes of the pushes this process has seen, by the message's
+/// "<chatId>/<seq>" key. A handler puts its envelope here and the window
+/// resolves them all in one transaction.
 private let envelopes = PushEnvelopeBox()
 
 private final class PushEnvelopeBox: @unchecked Sendable {
     private let lock = NSLock()
-    private var byMsgId: [String: PushEnvelope] = [:]
+    private var byKey: [String: PushEnvelope] = [:]
 
-    func put(_ envelope: PushEnvelope, msgId: String) {
+    func put(_ envelope: PushEnvelope, key: String) {
         lock.lock()
         defer { lock.unlock() }
-        byMsgId[msgId] = envelope
+        byKey[key] = envelope
     }
 
-    func take(_ msgIds: [String]) -> [String: PushEnvelope] {
+    func take(_ keys: [String]) -> [String: PushEnvelope] {
         lock.lock()
         defer { lock.unlock() }
         var out: [String: PushEnvelope] = [:]
-        for id in msgIds {
-            if let e = byMsgId.removeValue(forKey: id) { out[id] = e }
+        for key in keys {
+            if let e = byKey.removeValue(forKey: key) { out[key] = e }
         }
         return out
     }
@@ -102,7 +103,7 @@ private func burstPlan(_ items: [BurstItem]) async -> BurstPlan {
     guard let db = sharedDatabase else { return BurstPlan() }
     defer { sendDeliveryReceipts() }
     let showsText = NotificationPreferences.showsMessageText(in: AppGroup.defaults)
-    let carried = envelopes.take(items.map(\.msgId))
+    let carried = envelopes.take(items.map(\.key))
     guard let decryption, !carried.isEmpty else {
         return (try? NotificationBurstStore.resolve(db: db, items: items,
                                                     showsMessageText: showsText,
@@ -117,7 +118,7 @@ private func burstPlan(_ items: [BurstItem]) async -> BurstPlan {
                                                   journal: journal)
     }
     if plan == nil {
-        journal?.record(.stored, msgId: "", seq: 0, detail: "gate-busy")
+        journal?.record(.stored, chatId: "", seq: 0, detail: "gate-busy")
     }
     return plan ?? (try? NotificationBurstStore.resolve(db: db, items: items,
                                                         showsMessageText: showsText,
@@ -142,14 +143,14 @@ final class NotificationService: UNNotificationServiceExtension {
         applyBadge(to: content)
 
         guard let item = Self.item(from: request.content.userInfo) else {
-            journal?.record(.received, msgId: "", seq: 0, detail: "no-item")
+            journal?.record(.received, chatId: "", seq: 0, detail: "no-item")
             contentHandler(content)
             return
         }
         pushedItem = item
         let envelope = PushEnvelope.fromPush(request.content.userInfo)
-        if let envelope { envelopes.put(envelope, msgId: item.msgId) }
-        journal?.record(.received, msgId: item.msgId, seq: item.seq,
+        if let envelope { envelopes.put(envelope, key: item.key) }
+        journal?.record(.received, chatId: item.chatId, seq: item.seq,
                         detail: envelope == nil ? "no-envelope" : "envelope")
         let answer = PushAnswer(content: content, handler: contentHandler)
         Task {
@@ -158,7 +159,7 @@ final class NotificationService: UNNotificationServiceExtension {
     }
 
     override func serviceExtensionTimeWillExpire() {
-        journal?.record(.expired, msgId: pushedItem?.msgId ?? "", seq: pushedItem?.seq ?? 0)
+        journal?.record(.expired, chatId: pushedItem?.chatId ?? "", seq: pushedItem?.seq ?? 0)
         // out of time: close the window, and answer with what this handler has
         // — a push left unanswered is delivered by the system as it arrived
         Task { await burstGate.flushNow() }
@@ -184,12 +185,11 @@ final class NotificationService: UNNotificationServiceExtension {
         content.badge = NSNumber(value: resolved)
     }
 
-    /// The push carries the address of the message and its place in the chat.
+    /// The push carries the address of the message: the chat and its place in it.
     static func item(from userInfo: [AnyHashable: Any]) -> BurstItem? {
         guard let chatId = userInfo["chatId"] as? String,
-              let msgId = userInfo["msgId"] as? String,
               let seq = userInfo["seq"] as? Int else { return nil }
-        return BurstItem(chatId: chatId, msgId: msgId, seq: seq,
+        return BurstItem(chatId: chatId, seq: seq,
                          sentAt: userInfo["sentAt"] as? Double ?? 0)
     }
 }
@@ -208,7 +208,7 @@ private final class PushAnswer: @unchecked Sendable {
     func answer(_ step: BurstStep) {
         switch step.outcome {
         case .show:
-            journal?.record(.answered, msgId: step.item.msgId, seq: step.item.seq, detail: "show")
+            journal?.record(.answered, chatId: step.item.chatId, seq: step.item.seq, detail: "show")
             if let built = step.content {
                 content.title = built.title
                 content.subtitle = built.subtitle ?? ""
@@ -217,7 +217,7 @@ private final class PushAnswer: @unchecked Sendable {
             }
             handler(content)
         case .skip(let reason):
-            journal?.record(.answered, msgId: step.item.msgId, seq: step.item.seq,
+            journal?.record(.answered, chatId: step.item.chatId, seq: step.item.seq,
                             detail: "skip:" + reason.rawValue)
             // content without an alert is not presented: this message already
             // has its banner, or is not to be announced at all. The badge still

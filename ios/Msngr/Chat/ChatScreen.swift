@@ -145,7 +145,7 @@ struct ChatScreen: View {
             NotificationCoordinator.shared.activeChatId = chatId
             // search opens the chat for one particular message; the request has been
             // waiting for this screen to appear
-            if let request = MessageJump.take(chatId: chatId) { jump(to: request.msgId) }
+            if let request = MessageJump.take(chatId: chatId) { jump(to: request.id) }
         }
         // chat loads asynchronously and is still nil in onAppear, so the draft goes
         // in once the chat has actually arrived (and still only into an empty field)
@@ -229,7 +229,7 @@ struct ChatScreen: View {
         .onReceive(NotificationCenter.default.publisher(for: .showMessageInChat)) { note in
             guard let request = note.object as? MessageJump, request.chatId == chatId else { return }
             _ = MessageJump.take(chatId: chatId)
-            jump(to: request.msgId)
+            jump(to: request.id)
         }
         .alert(String(localized: "Not sent"), isPresented: sendFailureBinding) {
             Button(String(localized: "OK"), role: .cancel) { model.sendFailure = nil }
@@ -457,10 +457,10 @@ struct ChatScreen: View {
             messagesVC.scrollToBottom(animated: false)
             return
         }
-        if messagesVC.scrollTo(msgId: anchor, animated: false) { return }
+        if messagesVC.scrollTo(id: anchor, animated: false) { return }
         Task {
-            guard await model.ensureLoaded(msgId: anchor) else { return }
-            MessagesView.scrollWhenReady(vc: messagesVC, msgId: anchor, highlight: false)
+            guard await model.ensureLoaded(id: anchor) else { return }
+            MessagesView.scrollWhenReady(vc: messagesVC, id: anchor, highlight: false)
         }
     }
 
@@ -480,22 +480,22 @@ struct ChatScreen: View {
     /// nothing else; only one that sits deeper makes the feed load history.
     private func show(_ hit: MessageSearchHit) {
         searchMoved = true
-        if messagesVC.scrollTo(msgId: hit.messageId, highlight: true) { return }
-        jump(to: hit.messageId)
+        if messagesVC.scrollTo(id: hit.id, highlight: true) { return }
+        jump(to: hit.id)
     }
 
     /// Carries the feed to a message: the screens above it close and history is
     /// loaded if the message sits deeper than the window.
-    private func jump(to msgId: String) {
+    private func jump(to id: String) {
         showChatInfo = false
         PerfTrace.shared.mark("jump.begin")
         Task {
-            guard await model.ensureLoaded(msgId: msgId) else {
+            guard await model.ensureLoaded(id: id) else {
                 Haptics.rigid()
                 return
             }
             PerfTrace.shared.mark("jump.loaded")
-            MessagesView.scrollWhenReady(vc: messagesVC, msgId: msgId)
+            MessagesView.scrollWhenReady(vc: messagesVC, id: id)
         }
     }
 
@@ -522,7 +522,7 @@ struct ChatScreen: View {
         .background(.bar)
         .onTapGesture {
             // the pin can sit deeper than the window: the jump loads history first
-            jump(to: msg.msgId ?? msg.id)
+            jump(to: msg.id)
         }
         .transition(.move(edge: .top).combined(with: .opacity))
     }
@@ -929,15 +929,15 @@ struct MessagesView: UIViewControllerRepresentable {
         // tapping a quote jumps to the original; if it lies deeper than the loaded
         // page, history is fetched first
         vc.onTapReplyQuote = { [weak model, weak vc] msg in
-            guard let vc, let targetId = msg.replyTo?.msgId else { return }
-            if vc.scrollTo(msgId: targetId, highlight: true) { return }
+            guard let vc, let targetSeq = msg.replyTo?.seq else { return }
+            if vc.scrollTo(seq: targetSeq, highlight: true) { return }
             guard let model else { return }
             Task {
-                guard await model.ensureLoaded(msgId: targetId) else {
+                guard await model.ensureLoaded(seq: targetSeq) else {
                     Haptics.rigid()   // the original is out of reach
                     return
                 }
-                Self.scrollWhenReady(vc: vc, msgId: targetId)
+                Self.scrollWhenReady(vc: vc, seq: targetSeq)
             }
         }
         vc.onToggleSelection = { [weak model] msg in
@@ -985,7 +985,7 @@ struct MessagesView: UIViewControllerRepresentable {
         }
         vc.onSwipeBack = onSwipeBack
         vc.onReactionCapsuleTap = onCapsuleTap
-        vc.pinnedMsgId = model.chat?.pinnedMsgId
+        vc.pinnedSeq = model.chat?.pinnedSeq
         vc.ownUserId = model.ownUserId
         vc.noteSendTick(sendTick)
         vc.apply(items)
@@ -995,12 +995,22 @@ struct MessagesView: UIViewControllerRepresentable {
     /// Fetched history reaches the list through updateUIViewController, so the scroll
     /// happens as soon as the message shows up in the feed. The jump from the gallery
     /// arrives the same way, only there the screens on top have to close first.
-    static func scrollWhenReady(vc: MessagesViewController, msgId: String,
+    static func scrollWhenReady(vc: MessagesViewController, id: String,
                                 highlight: Bool = true, attempts: Int = 16) {
-        if vc.scrollTo(msgId: msgId, highlight: highlight) { return }
+        if vc.scrollTo(id: id, highlight: highlight) { return }
         guard attempts > 0 else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            scrollWhenReady(vc: vc, msgId: msgId, highlight: highlight, attempts: attempts - 1)
+            scrollWhenReady(vc: vc, id: id, highlight: highlight, attempts: attempts - 1)
+        }
+    }
+
+    /// Same, for a target a quote names by seq.
+    static func scrollWhenReady(vc: MessagesViewController, seq: Int,
+                                highlight: Bool = true, attempts: Int = 16) {
+        if vc.scrollTo(seq: seq, highlight: highlight) { return }
+        guard attempts > 0 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            scrollWhenReady(vc: vc, seq: seq, highlight: highlight, attempts: attempts - 1)
         }
     }
 }
