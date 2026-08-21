@@ -39,14 +39,6 @@ instead. `ComposerCaretTests` fails on the old rule (caret 0, order «231», a
 restored draft's caret at its start) and passes on the new one; MsngrTests green
 whole. Not re-run on the owner's device yet — the entry closes with that run.
 
-### The block button on a request has no contrast in the dark appearance
-Seen in passing on 2026-08-20 while reproducing the row hit areas: on the
-request screen «Заблокировать» is a `.bordered` button with a destructive role,
-but the app's accent tint paints it, so on the dark ground it reads as orange
-letters on dark brown. A destructive action normally carries its own colour
-rather than the accent; part of the dark-appearance pass, and a taste call for
-the owner if the accent is meant to stay.
-
 ### The in-app banner does not react to a tap
 Reported 2026-08-19 from the device. Tapping the in-app notification banner does
 nothing; it has to open the chat it announces. The tap-opens-chat path exists and
@@ -107,6 +99,16 @@ not on a single fix. Measured so far (bubbleanim run, merged 14c3a0a): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### The block button on a request has no contrast in the dark appearance
+Seen in passing on 2026-08-20: on the request screen «Заблокировать» is a
+`.bordered` destructive button, but the app's accent tint painted it, so on
+the dark ground it read as orange letters on dark brown. Closed by `48592cb`:
+the button carries its own `.tint(.red)`, and a destructive action no longer
+inherits the accent. Verified live on 2026-08-21 in the dark appearance — a
+fresh peer's message request shows the block button in red over its own dark
+red ground. If the owner prefers the accent there after all, the tint is one
+line to take back.
 
 ### List rows are tappable only on their letters and icons
 Reported 2026-08-19 from the device: in many lists the tap worked only exactly
