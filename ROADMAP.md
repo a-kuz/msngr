@@ -606,8 +606,11 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ✅ picking a palette from cards with instant application (palettes/live-*, settings-appearance)
 - ⬜ a background for the feed: a set to pick from and a picture of your own, set
   everywhere or for one chat
-- 🟡 the PIN: setting it, repeating it, checking it (not verified live)
-- 🟡 Face ID and auto-lock after 30 s (not verified live)
+- ✅ the PIN: setting it, repeating it, a mismatch resetting the setup, a wrong
+  code rejected at the lock, auto-lock after 30 s in the background
+  (qa/runs/2026-08-21-pin)
+- 🟡 Face ID (auto-lock is verified in qa/runs/2026-08-21-pin; biometry
+  matching needs the Simulator.app menu and was not driven)
 - 🟡 the blur in the app switcher (not verified live)
 - 🟡 the blocked list and unblocking (not verified live)
 - 🟡 clearing the media cache with its size shown (not verified live)
