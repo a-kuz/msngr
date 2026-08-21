@@ -269,6 +269,44 @@ func seed(dir: URL, base: URL) async throws {
     for p in people { print("  \(p.username) — \(p.userId) — \(p.home.path)") }
 }
 
+/// A headless conversational peer for one-simulator scenarios: opens a fixture
+/// account, waits for the next incoming text, accepts the chat if it arrived as
+/// a request, and answers in the same chat through the real engine.
+func answer(dir: URL, base: URL, name: String, text: String, seconds: Double) async throws {
+    guard let member = cast.first(where: { $0.name == name }) else {
+        throw FixtureError("unknown account \(name)")
+    }
+    let p = try await openPerson(name: member.name, display: member.display, dir: dir, base: base)
+    await startEngine(p, base: base)
+    // messages older than this run are history, not the thing to answer
+    let since = Date().timeIntervalSince1970 - 5
+    var found: (chatId: String, text: String)?
+    try await settle("an incoming message", seconds: seconds) {
+        found = try await p.db.read { dbc in
+            let row = try Row.fetchOne(dbc, sql: """
+                SELECT chatId, text FROM message
+                WHERE isOutgoing = 0 AND kind = 'text' AND sentAt >= ?
+                ORDER BY sentAt DESC LIMIT 1
+                """, arguments: [since])
+            return row.map { ($0["chatId"], $0["text"] ?? "") }
+        }
+        return found != nil
+    }
+    let msg = found!
+    print("· got «\(msg.text)» in \(msg.chatId)")
+    await p.engine.acceptChatRequest(chatId: msg.chatId)
+    var content = ContentPayload(kind: "text")
+    content.text = text
+    try await p.engine.enqueue(content: content, chatId: msg.chatId)
+    try await settle("the answer to leave the outbox", seconds: 30) {
+        try await p.db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM outbox") ?? 0
+        } == 0
+    }
+    await p.engine.stop()
+    print("· answered «\(text)»")
+}
+
 func show(dir: URL) throws {
     for (name, _) in cast {
         let metaURL = dir.appendingPathComponent(name).appendingPathComponent("meta.json")
@@ -296,11 +334,19 @@ do {
         try await seed(dir: dir, base: base)
     case "show":
         try show(dir: URL(fileURLWithPath: try arg("dir")))
+    case "answer":
+        try await answer(
+            dir: URL(fileURLWithPath: try arg("dir")),
+            base: URL(string: try arg("base", default: "http://localhost:8787"))!,
+            name: try arg("as", default: "alfa"),
+            text: try arg("text", default: "Loud and clear."),
+            seconds: Double(try arg("timeout", default: "180")) ?? 180)
     default:
         print("""
         usage:
           msngrfixture seed --dir <fixtures> [--base http://localhost:8787] [--reset]
           msngrfixture show --dir <fixtures>
+          msngrfixture answer --dir <fixtures> [--as alfa] [--base …] [--text …] [--timeout 180]
         """)
     }
 } catch {
