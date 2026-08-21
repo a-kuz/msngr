@@ -22,9 +22,9 @@ The source of truth is the code: `server/src/index.ts` (the router),
 - Token revocation: `devices.revoked_at`. It is checked in the authorization
   middleware, so a revoked token gives 401 both on `/api/*` and on the `/ws`
   upgrade. Revocation cuts that device's live sockets (close code 4401), erases
-  its APNs token, deletes its `identity_keys` and `one_time_prekeys` and
-  broadcasts a `devices` frame: peers drop their cached device list, so the next
-  send no longer addresses the revoked device. A token has no lifetime: it works
+  its APNs token, deletes its identity record and one-time prekeys from the
+  user's `UserDO` and broadcasts a `devices` frame: peers drop their cached
+  device list, so the next send no longer addresses the revoked device. A token has no lifetime: it works
   until it is revoked.
 - Every client-visible timestamp is in seconds (`nowSec()` on the server,
   `timeIntervalSince1970` on the client).
@@ -67,7 +67,8 @@ POST /api/provision/:id/cancel    (x-provision-token)
 GET  /api/users?q=                search by username/displayName (LOWER LIKE, limit 20)
 GET  /api/users/:id               → {user, presence:{online,lastSeen}}
 GET  /api/devices?ids=a,b,c       devices and identity keys, plus versions:{userId:
-                                  devices_version} stamped in the same snapshot; spends nothing
+                                  version}; each user's list and version are one
+                                  snapshot from that user's object; spends nothing
 GET  /api/users/:id/prekeys       X3DH bundles of every device; a one-time prekey is handed out and deleted
 GET  /api/prekeys/count           how many of your own one-time prekeys are left
 POST /api/prekeys                 {oneTimePrekeys:[{id,key}]} — a top-up (up to 200 at a time)
@@ -207,8 +208,9 @@ instead of `sent`, with the same `clientMsgId`.
 
 `devices` says the user's device set changed — a device was linked or revoked.
 It goes to the user's own other devices and to everyone they share a chat with.
-`version` is the user's `devices_version` after the change: every link and
-revocation bumps it in the same D1 batch. A sender caches device lists between
+`version` is the user's device-set version after the change: every link and
+revocation bumps it inside the user's `UserDO`, which owns the identity keys,
+the one-time prekeys and the device list. A sender caches device lists between
 sends, stamped with the version `GET /api/devices` read them under; a frame
 naming a version the cache already holds confirms the entry, anything newer
 drops it, and the next envelope re-reads the list.
