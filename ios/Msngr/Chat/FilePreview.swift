@@ -39,15 +39,46 @@ enum TopViewController {
 @MainActor
 enum FilePreviewPresenter {
     private static var source: PreviewItemSource?
+    /// The mediaId a fetch is already running for: a big file takes tens of
+    /// seconds to download and decrypt, and a second tap must join that wait
+    /// rather than start another one.
+    private static var fetching: String?
 
     static func present(message: Message) {
         guard let media = message.media, let mm = AppState.shared.media else { return }
+        guard fetching != media.mediaId else { return }
+        fetching = media.mediaId
+        // a 100 MB file is a long download and a long decrypt; the spinner is
+        // what tells the reader the tap landed
+        let hud = showHUD()
         Task {
+            defer {
+                fetching = nil
+                hud?.removeFromSuperview()
+            }
             guard let url = try? await mm.fetch(media) else { return }
             let name = FilePreviewName.previewFileName(name: media.name, mime: media.mime,
                                                        mediaId: media.mediaId)
             show(named(url, as: name))
         }
+    }
+
+    /// A small dimmed plate with a spinner in the middle of the screen. It does
+    /// not block touches: the reader can keep scrolling while the file comes.
+    private static func showHUD() -> UIView? {
+        guard let host = TopViewController.current()?.view else { return nil }
+        let plate = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+        plate.frame = CGRect(x: 0, y: 0, width: 72, height: 72)
+        plate.center = CGPoint(x: host.bounds.midX, y: host.bounds.midY)
+        plate.layer.cornerRadius = 16
+        plate.clipsToBounds = true
+        plate.isUserInteractionEnabled = false
+        let spinner = UIActivityIndicatorView(style: .large)
+        spinner.startAnimating()
+        spinner.center = CGPoint(x: 36, y: 36)
+        plate.contentView.addSubview(spinner)
+        host.addSubview(plate)
+        return plate
     }
 
     /// A copy under the original name, made as a hard link so the bytes are not duplicated on disk.

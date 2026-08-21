@@ -233,7 +233,9 @@ A ✅ goes in only together with a link to the evidence.
   - ⬜ playback continuing in a small circle while the reader scrolls away
 - Files
   - 🟡 sending up to 100 MB with the name (not verified live)
-  - ⬜ previewing a file in the app
+  - ✅ previewing a file in the app: QuickLook over the decrypted cache, a
+    spinner for the long fetch, unreadable types going to the share sheet
+    (qa/runs/2026-08-21-file-preview, a 98.9 MB PDF of 642 pages)
 - Polls
   - ⬜ creating one: the question, the options, single or multiple choice
   - ⬜ voting, the result as a share of the votes, retracting a vote

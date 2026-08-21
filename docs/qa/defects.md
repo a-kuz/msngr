@@ -6,14 +6,6 @@ with the commit that closed it.
 
 ## Open
 
-### A received PDF does not open for viewing
-Reported by the owner 2026-08-21, late evening, with a screenshot: a 98.9 MB
-«HISTORY.pdf» sent as a file shows the bubble, but tapping it does not open a
-preview. `FilePreview.swift` exists, so the first question is whether the
-path breaks on this file (size, download, decrypt) or the tap never reaches
-the preview at all. Investigation next; the ROADMAP's «previewing a file in
-the app» is open, so the fix may be the feature itself.
-
 ### An animated GIF plays as a single frame
 Reported by the owner 2026-08-21, late evening: a GIF sent into a chat shows
 one static frame. The photo pipeline downscales through JPEG, which drops
@@ -85,6 +77,17 @@ not on a single fix. Measured so far (bubbleanim run, merged 14c3a0a): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### A received PDF does not open for viewing
+Reported by the owner 2026-08-21, late evening, with a screenshot: tapping the
+98.9 MB «HISTORY.pdf» seemed to do nothing. Reproduced on the cold path while
+the host carried a parallel gate build: about sixty seconds of complete
+silence between the tap and the previewer — the download and decrypt of
+98.9 MB with no indicator of any kind — after which the PDF did open, all
+642 pages. On a quiet host the same cold open takes about two seconds. Closed
+in the same change: the tap shows a spinner plate for as long as the fetch
+runs, and a second tap joins the running fetch instead of starting another
+(qa/runs/2026-08-21-file-preview).
 
 ### The unread count inflates across an offline gap
 Found 2026-08-21 by a live check: a peer who was offline while the other side
