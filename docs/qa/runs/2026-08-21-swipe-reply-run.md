@@ -16,3 +16,7 @@ a 30 fps screen recording.
   quote block reads «Вы / Альбом» with a thumbnail glyph — a media quote with
   the author name instead of an identifier. Photo, video, voice and file
   quotes were not exercised in this run.
+- `04-quote-before-delete.png`, `05-quote-after-delete.png` — a reply quoting
+  «Original to vanish.», then the original deleted for everyone: the original
+  becomes the «Сообщение удалено» tombstone while the reply's quote keeps the
+  preview text — the quote lives in the reply's payload, not in the original.
