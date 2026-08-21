@@ -420,7 +420,8 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - Trust
   - 🟡 TOFU over all of the peer's devices (not verified live)
   - 🟡 outgoing messages blocked on a key change and a banner to accept it (not verified live)
-  - 🟡 the 60-digit safety number in the chat info (not verified live)
+  - ✅ the 60-digit safety number in the chat info, matching the number an
+    independent side computes for the same pair (qa/runs/2026-08-21-safety-number)
   - ⬜ comparing by QR
   - ⬜ a "verified" mark after the comparison
 - Privacy
@@ -619,9 +620,11 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ✅ the PIN: setting it, repeating it, a mismatch resetting the setup, a wrong
   code rejected at the lock, auto-lock after 30 s in the background
   (qa/runs/2026-08-21-pin)
-- 🟡 Face ID (auto-lock is verified in qa/runs/2026-08-21-pin; biometry
-  matching needs the Simulator.app menu and was not driven)
-- 🟡 the blur in the app switcher (not verified live)
+- ✅ Face ID: the lock invokes the scan itself, a matching face unlocks, a
+  non-matching one is refused with the pad as the fallback; auto-lock after
+  30 s (qa/runs/2026-08-21-pin)
+- ✅ the blur in the app switcher: the card is unreadable, the chat glyph over
+  it (qa/runs/2026-08-21-switcher-blur)
 - ✅ the blocked list and unblocking, delivery resuming after
   (qa/runs/2026-08-21-block)
 - ✅ clearing the media cache with its size shown: the label follows the clear

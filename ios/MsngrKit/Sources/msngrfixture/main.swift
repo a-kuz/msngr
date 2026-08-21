@@ -1,6 +1,7 @@
 import Foundation
 import GRDB
 import MsngrCore
+import MsngrCrypto
 
 // Three service accounts with a conversation already in them, so a scenario on a
 // simulator starts inside the product instead of starting at registration.
@@ -371,6 +372,42 @@ func typing(dir: URL, base: URL, name: String, peer: String, seconds: Double) as
     print("· typed for \(Int(seconds)) s in \(chatId)")
 }
 
+/// Prints the 60-digit safety number this account computes for a peer, so a
+/// screen showing the same pair can be checked against an independent side.
+func safety(dir: URL, base: URL, name: String, peer: String) async throws {
+    guard let member = cast.first(where: { $0.name == name }) else {
+        throw FixtureError("unknown account \(name)")
+    }
+    let peerMetaURL = dir.appendingPathComponent(peer).appendingPathComponent("meta.json")
+    guard let data = try? Data(contentsOf: peerMetaURL),
+          let peerMeta = try? JSONDecoder().decode(Meta.self, from: data) else {
+        throw FixtureError("\(peer) is not seeded")
+    }
+    let p = try await openPerson(name: member.name, display: member.display, dir: dir, base: base)
+    var keys = try await p.db.read { dbc -> (String, String)? in
+        let row = try Row.fetchOne(dbc, sql: "SELECT identitySigning, identityDH FROM user WHERE id = ?",
+                                   arguments: [peerMeta.userId])
+        guard let row, let s: String = row["identitySigning"], let d: String = row["identityDH"]
+        else { return nil }
+        return (s, d)
+    }
+    if keys == nil, let b = try await p.api.prekeys(userId: peerMeta.userId).bundles.first {
+        keys = (b.identitySignKey, b.identityKey)
+    }
+    guard let (signingB64, dhB64) = keys,
+          let signing = Data(base64urlEncoded: signingB64),
+          let dh = Data(base64urlEncoded: dhB64) else {
+        throw FixtureError("no identity keys for \(peer)")
+    }
+    let mine = try p.store.identity()
+    print(SafetyNumbers.generate(
+        ourIdentitySigning: mine.signing.publicKey.rawRepresentation,
+        ourIdentityDH: mine.dh.publicKey.rawRepresentation,
+        ourUserId: p.userId,
+        theirIdentitySigning: signing, theirIdentityDH: dh,
+        theirUserId: peerMeta.userId))
+}
+
 func show(dir: URL) throws {
     for (name, _) in cast {
         let metaURL = dir.appendingPathComponent(name).appendingPathComponent("meta.json")
@@ -412,6 +449,12 @@ do {
             name: try arg("as", default: "charlie"),
             peer: try arg("to", default: "alfa"),
             seconds: Double(try arg("seconds", default: "10")) ?? 10)
+    case "safety":
+        try await safety(
+            dir: URL(fileURLWithPath: try arg("dir")),
+            base: URL(string: try arg("base", default: "http://localhost:8787"))!,
+            name: try arg("as", default: "charlie"),
+            peer: try arg("with", default: "alfa"))
     case "answer":
         try await answer(
             dir: URL(fileURLWithPath: try arg("dir")),
