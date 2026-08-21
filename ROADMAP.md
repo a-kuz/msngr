@@ -305,7 +305,8 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ rendering the quote: text on text (qa/runs/2026-08-21-swipe-reply)
   - 🟡 rendering the quote on media: the album case is live
     (qa/runs/2026-08-21-swipe-reply); photo, video, voice message and file are not
-  - 🟡 a quote of a deleted message: the preview is kept in the payload, the original is gone (not verified live)
+  - ✅ a quote of a deleted message: the preview is kept in the payload while
+    the original shows the tombstone (qa/runs/2026-08-21-swipe-reply)
   - ✅ tapping the quote → jumping to the original with a highlight, loading more of the history window
     (qa/runs/2026-08-15-reply-file-clipboard)
   - ✅ the author's name in the quote instead of the identifier, previews for media (ChatFeedTests units)
