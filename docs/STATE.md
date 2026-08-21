@@ -6,16 +6,26 @@ work in it looks like clutter.
 
 Delete an entry when its branch is merged and gone.
 
-One slot is open by the owner's word and taken: `reactions` on
-**run-reactions** — the who-reacted list, forwarding that keeps the quote and
-the reactions, edit history, and the unwatched 🟡 claims of that ROADMAP
-block. The dispatcher itself runs the localization pass on main between ticks,
-screen by screen: the onboarding screens and the settings cluster (Settings,
-Sessions, Username, AddDevice) are in English with ru in the catalog, UI tests
-look elements up by identifier. `.claude/agents.tsv` holds only live work, so
-`scripts/agents.py` is the picture of the site.
+One slot is open by the owner's word and taken: `userdo` on **run-userdo** —
+step 3 of the backend rework: identity, prekeys and the device list move into
+the user's Durable Object. The dispatcher itself runs the localization pass on
+main between ticks — everything but the feed files is on English keys with ru
+in the catalog (~156 Russian lines left, all in the feed), and it also landed
+the safe half of rework step 2 on main (`01d12ff`): per-member mark keys and a
+window on the cmid idempotency records, smoke 261/261. `.claude/agents.tsv`
+holds only live work, so `scripts/agents.py` is the picture of the site.
 
 ## Merged on 2026-08-21
+
+run-reactions (`1482c31`): a tap on a group reaction capsule opens who reacted,
+grouped by emoji; a forward carries the quote preview and the original author
+(reactions deliberately do not travel — Telegram's choice, written into
+docs/protocol.md); an edited message keeps every text it has shown and the
+context menu opens the history. The run watched the block's five unwatched
+claims live over two fixture simulators and found and fixed two defects of its
+own — a forwarded album arriving with no «Переслано от…» line, and that line
+unreadable on own dark bubbles
+(`docs/qa/runs/2026-08-21-reactions-forward-run.md`).
 
 run-feedextras (`9d233b2`): group feeds show sender avatars — the column is
 reserved in the layout plan, the picture rides the last message of a run — and
