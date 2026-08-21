@@ -248,7 +248,9 @@ A ✅ goes in only together with a link to the evidence.
     (qa/runs/2026-08-17-groups-run)
 - Other
   - ⬜ contact and location
-  - ⬜ stickers and GIFs
+  - 🟡 GIFs: an animated one is sent unchanged and plays in the feed and the
+    viewer (qa/runs/2026-08-21-gif-run.md); a GIF picker and stickers are not
+    built
   - ⬜ shooting a photo or a video from the attachment sheet, without leaving the
     chat for the system camera
   - ⬜ receiving what other apps share: a photo, a file or a link arrives through
