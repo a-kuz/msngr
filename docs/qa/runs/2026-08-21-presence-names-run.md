@@ -14,3 +14,11 @@ The simulator `fable-solo` (iPhone 17 / iOS 26.5) as the fixture account
   avatars on the run's last bubble; own messages carry no name. The
   «Сообщение удалено» tombstone in the same shot is the forward deleted for
   everyone earlier this session.
+
+Typing, driven by `msngrfixture typing` (added in this change: the engine
+holds the indicator up for a given number of seconds):
+
+- `04-list-typing.png` — the chat list row shows «печатает…» in the accent
+  italic in place of the preview.
+- `05-header-typing.png` — the chat header's subtitle shows «печатает…» in
+  place of the presence line.

@@ -472,7 +472,8 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - 🟡 presence by ping freshness with a TTL of 35 s (not verified live)
 - ✅ «в сети» / «был(а) …» in the chat header, flipping live with the peer's
   socket (qa/runs/2026-08-21-presence-names)
-- 🟡 the typing indicator in the header and in the chat list (not verified live)
+- ✅ the typing indicator in the header and in the chat list
+  (qa/runs/2026-08-21-presence-names)
 - 🟡 read on returning from the background (the code is there, no separate run)
 - ⬜ aggregated read receipts in a group ("N read it")
 
