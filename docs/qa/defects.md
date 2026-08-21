@@ -6,6 +6,19 @@ with the commit that closed it.
 
 ## Open
 
+### An edit's envelope failed to open on the peer with no_session
+Seen in passing 2026-08-21 during the unread-recount run: alfa edited a
+message while charlie's headless engine was offline; on his next sync the
+edit's seq landed in `historyGap` with `no_session` and repair attempts
+counting up, while the edit itself HAD already applied to his row (edited=1,
+new text) — so the failing envelope is likely a replayed duplicate of a frame
+the live path had delivered, asked for again because the seq never joined the
+contiguous prefix. The session between the two accounts had been through a
+block/unblock round and repeated headless open/close cycles the same hour.
+Needs its own investigation: whether the duplicate replay of an
+already-applied service frame should be dropped by seq before it is treated
+as unreadable, and why the prefix stalls behind it.
+
 ### The in-app banner does not react to a tap
 Reported 2026-08-19 from the device. Tapping the in-app notification banner does
 nothing; it has to open the chat it announces. The tap-opens-chat path exists and
@@ -58,6 +71,18 @@ not on a single fix. Measured so far (bubbleanim run, merged 14c3a0a): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### The unread count inflates across an offline gap
+Found 2026-08-21 by a live check: a peer who was offline while the other side
+sent two messages, deleted one for everyone and edited the other came back to
+`unreadCount = 3` with exactly one readable new message — the snapshot
+estimates unread as `lastSeq − myReadUpTo`, and the service frames and the
+tombstone behind those seqs counted as messages. Closed in the same change:
+once a chat's contiguous prefix is complete the number is recounted from the
+rows — incoming, not system, not deleted, plus envelopes still waiting for a
+key (`SyncEngine.recountUnread`, called from the snapshot and at the end of a
+chat's catch-up; UnreadRecountTests hold the three shapes). A chat still
+behind keeps the estimate.
 
 ### An XCUITest tap on the locked-recording send button fires no action
 Found 2026-08-21 by the uicheck on main: `VoiceTests.testG_PlaybackSurvivesAnotherChat`
