@@ -676,6 +676,27 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ⬜ animated reordering in the chat list
 - ⬜ preloading and prefetching images along the scroll direction
 
+## The backend rework: a DO per user
+
+Decided in `docs/research/2026-08-19-per-user-do.md`; the queue orders the steps.
+
+- ✅ the fanout as an outbox: a delivery record per recipient until acknowledged,
+  independent chains, the push in its own persisted queue (run-delivery,
+  `runs/2026-08-19-delivery-run.md`)
+- ✅ a receipt writes one per-member mark key; the cmid idempotency records are
+  swept behind the sender's delivered mark (`01d12ff`, smoke holds the rule)
+- ✅ identity keys, one-time prekeys and the device list live in `UserDO`; a
+  first message costs 2 D1 statements instead of 7 (run-userdo,
+  `runs/2026-08-21-userdo-run.md`)
+- ⬜ the message's identity is `(chatId, seq)`, the msgId ULID goes away
+  (run-msgid, in flight)
+- ⬜ `HandleDO`: the username claim and quarantine, designed together with the
+  people-search index
+- ⬜ subscriptions between objects: a snapshot on subscribe, deltas after, the
+  source deciding what a subscriber may see
+- ⬜ what is left in D1 follows into the user's object; the leftover tables are
+  dropped with the schema version bumped
+
 ## Versioning and compatibility
 
 - ✅ the database schema version: the GRDB migrator (appgroup-run, units)
