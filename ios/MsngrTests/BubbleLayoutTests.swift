@@ -461,4 +461,39 @@ final class BubbleLayoutTests: XCTestCase {
             assertReactionsInsideBubble(p)
         }
     }
+
+    // MARK: - Forward line over media
+
+    private func forwarded(_ kind: MessageKind) -> Message {
+        var m = Message(id: UUID().uuidString, chatId: "c", fromUserId: "peer",
+                        sentAt: 1_700_000_000, kind: kind, text: nil,
+                        status: .sent, isOutgoing: false)
+        m.seq = 1
+        m.forward = ForwardInfo(fromUserId: "orig", fromName: "Боб")
+        let item = MediaInfo(type: "photo", mediaId: "b", key: "k", hash: "h", size: 1, mime: "image/jpeg")
+        if kind == .album { m.album = [item, item, item] } else { m.media = item }
+        return m
+    }
+
+    /// A forwarded photo keeps its «Переслано от …» line: the media is pushed
+    /// down instead of bleeding over the header.
+    func testForwardedPhotoMediaBelowForwardLine() {
+        let p = BubbleLayout.plan(for: forwarded(.photo), width: width, tightGap: false,
+                                  showTail: true, showName: false, authorName: nil)
+        let ff = try! XCTUnwrap(p.forwardFrame)
+        let mf = try! XCTUnwrap(p.mediaFrame)
+        XCTAssertGreaterThanOrEqual(mf.minY, ff.maxY,
+            "forwarded photo: the mosaic must start below the forward line, not cover it")
+    }
+
+    /// The same for an album: the mosaic starts below the forward line.
+    func testForwardedAlbumMediaBelowForwardLine() {
+        let p = BubbleLayout.plan(for: forwarded(.album), width: width, tightGap: false,
+                                  showTail: true, showName: false, authorName: nil)
+        let ff = try! XCTUnwrap(p.forwardFrame)
+        let mf = try! XCTUnwrap(p.mediaFrame)
+        XCTAssertGreaterThanOrEqual(mf.minY, ff.maxY)
+        // the status capsule sits on the media, and the cell ends with it
+        XCTAssertGreaterThanOrEqual(p.cellHeight, mf.maxY)
+    }
 }

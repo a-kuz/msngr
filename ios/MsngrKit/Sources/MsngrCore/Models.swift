@@ -163,6 +163,18 @@ public struct ForwardInfo: Codable, Equatable {
     }
 }
 
+/// One superseded text of an edited message: what it said and when that text
+/// was authored (the original's `sentAt`, or the `sentAt` of the edit that
+/// produced it).
+public struct EditVersion: Codable, Equatable {
+    public var text: String
+    public var ts: Double
+    public init(text: String, ts: Double) {
+        self.text = text
+        self.ts = ts
+    }
+}
+
 public struct Message: Codable, Identifiable, Equatable, FetchableRecord, PersistableRecord {
     public static let databaseTableName = "message"
     /// local id: clientMsgId for own messages, msgId for everyone else's
@@ -181,6 +193,10 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
     public var replyTo: ReplyPreview?
     public var forward: ForwardInfo?
     public var edited: Bool = false
+    /// Superseded texts, oldest first; the original text is [0] once edited.
+    public var editHistory: [EditVersion] = []
+    /// When the current text was authored; nil until the first edit.
+    public var editedAt: Double?
     public var deletedForAll: Bool = false
     public var status: MessageStatus
     public var isOutgoing: Bool
@@ -205,8 +221,9 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
     // JSON columns
     enum CodingKeys: String, CodingKey {
         case id, msgId, chatId, seq, clientMsgId, fromUserId, sentAt, serverTs,
-             kind, text, media, album, replyTo, forward, edited, deletedForAll,
-             status, isOutgoing, reactions, expiresAt, failReason
+             kind, text, media, album, replyTo, forward, edited, editHistory,
+             editedAt, deletedForAll, status, isOutgoing, reactions, expiresAt,
+             failReason
     }
 }
 

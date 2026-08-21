@@ -787,13 +787,22 @@ final class ChatViewModel: ObservableObject {
     }
 
     func forward(_ msg: Message, to targetChatId: String) {
+        let fromName = members.first { $0.id == msg.fromUserId }?.displayName ?? "?"
+        enqueue(Self.forwardPayload(msg, authorName: fromName), chatId: targetChatId)
+    }
+
+    /// What a forward carries: the content, the quote as the preview it already
+    /// is, and the original author — forwarding a forward keeps pointing at
+    /// whoever wrote the message, not at the middleman. Reactions stay behind:
+    /// they belong to the conversation they were made in (docs/protocol.md).
+    nonisolated static func forwardPayload(_ msg: Message, authorName: String) -> ContentPayload {
         var c = ContentPayload(kind: msg.kind.rawValue)
         c.text = msg.text
         c.media = msg.media
         c.album = msg.album
-        let fromName = members.first { $0.id == msg.fromUserId }?.displayName ?? "?"
-        c.fwd = ForwardInfo(fromUserId: msg.fromUserId, fromName: fromName)
-        enqueue(c, chatId: targetChatId)
+        c.replyTo = msg.replyTo
+        c.fwd = msg.forward ?? ForwardInfo(fromUserId: msg.fromUserId, fromName: authorName)
+        return c
     }
 
     /// Pins a message, or takes the pin off with nil. The chat row is written on

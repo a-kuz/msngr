@@ -24,6 +24,10 @@ struct ChatScreen: View {
     @State private var showFilePicker = false
     @State private var forwardMessage: Message?
     @State private var forwardingSelection = false
+    /// Кто поставил реакции: капсула в группе открывает список.
+    @State private var reactionRoster: ReactionRosterRequest?
+    /// История изменений сообщения из контекстного меню.
+    @State private var editHistoryMessage: Message?
     @State private var messagesVC = MessagesViewController()
     @EnvironmentObject var app: AppState
     @ObservedObject private var theme = ThemeStore.shared
@@ -192,6 +196,14 @@ struct ChatScreen: View {
             guard messagesVC.isViewLoaded else { return }
             messagesVC.collectionView.reloadData()
         }
+        .sheet(item: $reactionRoster) { request in
+            ReactionRosterSheet(sections: ReactionRoster.sections(
+                reactions: request.message.reactions, users: model.members,
+                tapped: request.emoji))
+        }
+        .sheet(item: $editHistoryMessage) { msg in
+            EditHistorySheet(message: msg)
+        }
         .sheet(item: $forwardMessage) { msg in
             ForwardPickerView { targetChatId in
                 model.forward(msg, to: targetChatId)
@@ -206,6 +218,9 @@ struct ChatScreen: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .forwardRequested)) { note in
             forwardMessage = note.object as? Message
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .editHistoryRequested)) { note in
+            editHistoryMessage = note.object as? Message
         }
         // from the attachment gallery: the screens above the feed close and the feed
         // travels to the message, loading history first if it sits deeper than the window
@@ -304,7 +319,16 @@ struct ChatScreen: View {
                          MediaViewerPresenter.present(message: msg, startIndex: idx)
                      },
                      showScrollDown: $showScrollDown,
-                     onSwipeBack: { dismiss() })
+                     onSwipeBack: { dismiss() },
+                     // в группе капсула открывает список, в личном чате её тап
+                     // остаётся переключением своей реакции
+                     onCapsuleTap: { msg, emoji in
+                         if model.chat?.kind == .group {
+                             reactionRoster = ReactionRosterRequest(message: msg, emoji: emoji)
+                         } else {
+                             model.react(msg, emoji: emoji)
+                         }
+                     })
     }
 
     /// Empty chat: a centred hint instead of a bare background.
@@ -894,6 +918,8 @@ struct MessagesView: UIViewControllerRepresentable {
     @Binding var showScrollDown: Bool
     /// свайп от левой кромки: возврат к списку чатов
     var onSwipeBack: () -> Void
+    /// тап по капсуле реакции: экран решает, список это или переключение
+    var onCapsuleTap: (Message, String) -> Void
 
     func makeUIViewController(context: Context) -> MessagesViewController {
         vc.onAtBottomChanged = { [weak model] atBottom in
@@ -953,6 +979,7 @@ struct MessagesView: UIViewControllerRepresentable {
             case .reply: withAnimation(Theme.springFast) { model.replyingTo = msg }
             case .copy: MessageClipboard.copy(msg)
             case .edit: withAnimation(Theme.springFast) { model.editing = msg }
+            case .editHistory: NotificationCenter.default.post(name: .editHistoryRequested, object: msg)
             case .pin: model.pin(msg)
             case .unpin: model.pin(nil)
             case .forward: NotificationCenter.default.post(name: .forwardRequested, object: msg)
@@ -968,6 +995,7 @@ struct MessagesView: UIViewControllerRepresentable {
         }
         // замыкание с dismiss живёт не дольше тела body — переустанавливаем
         vc.onSwipeBack = onSwipeBack
+        vc.onReactionCapsuleTap = onCapsuleTap
         vc.pinnedMsgId = model.chat?.pinnedMsgId
         vc.ownUserId = model.ownUserId
         vc.noteSendTick(sendTick)
@@ -990,4 +1018,5 @@ struct MessagesView: UIViewControllerRepresentable {
 
 extension Notification.Name {
     static let forwardRequested = Notification.Name("forwardRequested")
+    static let editHistoryRequested = Notification.Name("editHistoryRequested")
 }
