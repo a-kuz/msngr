@@ -81,7 +81,8 @@ A ✅ goes in only together with a link to the evidence.
   - 🟡 folders and tabs: a rule plus chats put in and taken out by hand, a chat in
     any number of folders, the tab switched by a long horizontal swipe over the
     list (built and unit-covered, the live run is still open)
-  - ⬜ animated reordering on a new message
+  - ✅ animated reordering on a new message: the row glides to the top through
+    the rows above it instead of teleporting (qa/runs/2026-08-21-chatlist-reorder)
   - ⬜ a chat with yourself for saved messages, first in the list and never a
     push; forwarding into it from any chat
 - Search and empty states
@@ -676,7 +677,7 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     no covering index, and a key change was read synchronously from the main
     thread; after the fix the chat list's cost fell by a factor of 81
 - ⬜ measured 60/120 fps on a chat of tens of thousands of messages
-- ⬜ animated reordering in the chat list
+- ✅ animated reordering in the chat list (qa/runs/2026-08-21-chatlist-reorder)
 - ⬜ preloading and prefetching images along the scroll direction
 
 ## The backend rework: a DO per user
