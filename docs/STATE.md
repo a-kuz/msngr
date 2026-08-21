@@ -15,7 +15,24 @@ catalog; the test-file tail is converted and being re-run before its commit.
 `.claude/agents.tsv` holds only live work, so `scripts/agents.py` is the
 picture of the site.
 
-## Merged on 2026-08-21, evening
+## On main, 2026-08-21 late evening — the solo roadmap run
+
+A single agent working the easiest open ROADMAP items straight on main, one
+commit each, live-run evidence in `docs/qa/runs/`: clipboard paste closed as
+already-done (34000af); the chat list reorder animated and the stale
+`.animation`-on-ForEach removed (ebb76d4); the row height held steady across
+preview line counts — an owner report fixed the same hour (19e6bc6); the
+unread capsule rolls and pops on an increment — an owner ask (6e8b32c); bulk
+copy closed with units and a pasteboard read-back (e21a843); the passcode
+block verified end to end (6f19bc8); blocking, the blocked list and the
+resume of delivery verified, with a missing ru string for the blocked strip
+added (23022c8); delete-for-me verified against a relaunch and the peer's
+copy (ae2f165); the viewer's album paging and swipe-close verified and the
+cache row's stale size fixed (48b2efa); swipe-to-reply and the text and album
+quotes (638b3ae); header presence and group author names (521a59e); the
+typing indicator in the header and the list (939a5eb). `msngrfixture` grew
+`send` and `typing` subcommands along the way (db7b052, 939a5eb). Gates ran
+green after each batch.
 
 run-userdo (`b94698c`): identity keys, one-time prekeys and the E2EE device
 list moved from D1 into the user's own Durable Object (`UserSessionDO` renamed
