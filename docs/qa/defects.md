@@ -6,42 +6,6 @@ with the commit that closed it.
 
 ## Open
 
-### An XCUITest tap on the locked-recording send button fires no action
-Found 2026-08-21 by the uicheck on main: `VoiceTests.testG_PlaybackSurvivesAnotherChat`
-failed twice in a row at `sendVoice` — the tap on `chat.sendVoice` after a 25 s
-locked take leaves the recording running. The synthesized event lands on the
-button's centre (375.3, 815.7 in the event plist, matching the button's frame),
-"Check for interrupting elements" passes, yet the screen recording shows the
-timer walking on past the tap (0:25,7 → 0:29,2) until teardown. The product
-path is fine: the same gesture driven by hand over idb — lock, 30 s, tap the
-same point — sends the take and drops the bar (screenshots in the session log,
-a 0:40 bubble landed). `testF1` (20 s) and `testH` (10 s) tap the same button
-through the same helper and pass in the same run, and a third isolated run of
-G passed — so the tap is lost intermittently, twice out of three here.
-Mechanism unknown — needs its own investigation before any test-side
-accommodation; until then a red G with the timer still walking in the
-recording is this defect, not the product.
-
-Investigated 2026-08-21 on a simulator of its own, three runs of G against the
-shared stand. The reported symptom did not come back; what did:
-
-- Run 1 died a step earlier — the press-and-drag never locked the take, so no
-  send button ever appeared. Same family: a synthesized gesture on the mic
-  lost while the recorder republishes its state twenty times a second, which
-  rebuilds the bar the gesture is attached to.
-- Runs 2 and 3 died later, at «the message stopped playing on the way out of
-  the chat». That claim was checked by hand and the product is right: a 62 s
-  take recorded and sent in the same session, played, then the walk out to the
-  list and back — the bubble comes back showing pause and the position keeps
-  advancing (frames 4 s apart). An earlier hand run that seemed to reproduce it
-  was a 20 s take that simply ended during the walk. The app stops the player
-  nowhere: instrumented, the only stops are the one inside `play` and the one
-  from `audioPlayerDidFinishPlaying` at the end of the take.
-
-So the send-button tap is still unexplained, and G now has a second red of its
-own whose cause is not the playback rule it asserts. What the runs did close is
-a locator: see the closed entry about the localized search field.
-
 ### The in-app banner does not react to a tap
 Reported 2026-08-19 from the device. Tapping the in-app notification banner does
 nothing; it has to open the chat it announces. The tap-opens-chat path exists and
@@ -94,6 +58,33 @@ not on a single fix. Measured so far (bubbleanim run, merged 14c3a0a): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### An XCUITest tap on the locked-recording send button fires no action
+Found 2026-08-21 by the uicheck on main: `VoiceTests.testG_PlaybackSurvivesAnotherChat`
+failed twice in a row at `sendVoice`, with the synthesized event landing on the
+button's centre and the recording timer walking on past it.
+Chased on 2026-08-21 over ten runs of G on a simulator of its own. The tap
+itself never went missing again; what the runs did find was two locators and
+one host gap, all of them reading as a lost tap from the outside:
+
+- The device had lost its microphone grant (an `uninstall` takes it with it), so
+  every frame of the press-and-drag asked for access again, got a refusal, and
+  put the gesture back to idle — the take never locked and no send button ever
+  appeared. `scripts/fixture.py grant` is what the run was missing.
+- The pause state was matched by the English label `label == 'Pause'`, and the
+  app translates it — «Пауза» on a ru host, so the run could never see a
+  message playing. The speed assertions compared «Speed 1,5×» the same way.
+- The new chat sheet's field was matched by its localised placeholder (its own
+  closed entry above).
+
+Closed by 878d6e5: the play button carries the state in its identifier
+(`voice.play` / `voice.pause`) and the speed rides in the element's value,
+while the translated labels stay for the reader. The product was right
+throughout — checked by hand with a 62 s and a 26 s take: after the walk out to
+the list and back the bubble shows pause and the position keeps advancing, and
+the only stops the player logs are its own `play` and the end of the take.
+VoiceTests green whole afterwards, 13 of 13, three consecutive runs of G before
+that.
 
 ### The time in a chat list row jumps when the preview's line count changes
 Reported by the owner on 2026-08-21 while watching the reorder run: a preview
