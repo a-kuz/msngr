@@ -322,7 +322,9 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ delete for everyone: a tombstone on the server and a `deleted` frame (smoke `delete for all`, `tombstoned on server`)
   - ✅ confirmation before deleting; «у всех» only for your own messages (qa/runs/2026-08-15-multiselect, 03–04)
   - ✅ someone else's message is not removed for anyone by «у всех» (smoke `no fanout deleting someone else's message`)
-  - 🟡 delete for me (not verified live)
+  - ✅ delete for me: gone from the feed and the database, surviving a
+    relaunch with no repair pulling it back, the peer's copy untouched
+    (qa/runs/2026-08-21-delete-for-me)
   - ✅ «Сообщение удалено» in the feed for the author and for the peer (qa/runs/2026-08-15-multiselect, 05–06)
   - 🟡 a delete that arrived before the original is applied later (ServiceFrameTests units)
   - ✅ deleting several messages at once (qa/runs/2026-08-15-multiselect, 02–05)
