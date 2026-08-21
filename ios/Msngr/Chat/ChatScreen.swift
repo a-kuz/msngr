@@ -123,8 +123,12 @@ struct ChatScreen: View {
                 if !model.contentHidden {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button { openSearch() } label: {
+                            // the same colour as the back chevron beside it: the two
+                            // header glyphs are one pair, and an accented one of them
+                            // reads as the active control
                             Image(systemName: "magnifyingglass")
                                 .font(Theme.glyph(17, max: 24))
+                                .foregroundStyle(Color.primary)
                         }
                         .accessibilityLabel(String(localized: "Search this chat"))
                         .accessibilityIdentifier("chat.search.open")
