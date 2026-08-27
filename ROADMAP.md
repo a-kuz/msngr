@@ -486,7 +486,9 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ✅ read receipts and counters going to zero (media-run, case 32)
 - ✅ delivered receipts on recv (smoke `delivered receipt`)
 - ✅ typing reaches the peer (smoke `typing`)
-- 🟡 presence by ping freshness with a TTL of 35 s (not verified live)
+- ✅ presence by ping freshness with a TTL of 35 s: a peer whose process is
+  frozen with its socket open reads «был(а) только что» 28 s after the freeze
+  (qa/runs/2026-08-27-presence-ttl)
 - ✅ «в сети» / «был(а) …» in the chat header, flipping live with the peer's
   socket (qa/runs/2026-08-21-presence-names)
 - ✅ the typing indicator in the header and in the chat list
