@@ -388,6 +388,89 @@ final class MessageRepairTests: XCTestCase {
         XCTAssertFalse(loaded.1.contains("peer/d1"))
     }
 
+    // MARK: - Service frames
+
+    /// An edit takes a seq but no message row of its own, so the sender can only
+    /// answer a repair request for it from the record of the sent frame: the
+    /// payload is kept when the ack assigns the seq, with the target resolved.
+    func testSenderAnswersRepairForAnEditFromItsSentFrameRecord() async throws {
+        let db = try AppDatabase.openInMemory()
+        try await makeDirectChat(db)
+        let engine = try makeEngine(db: db)
+        try await db.write { dbc in
+            var msg = Message(id: "orig1", chatId: "c1", fromUserId: "me", sentAt: 42,
+                              kind: .text, text: "hello", status: .sent, isOutgoing: true)
+            msg.seq = 7
+            try msg.save(dbc)
+        }
+        var edit = ContentPayload(kind: "edit")
+        edit.targetLocalId = "orig1"
+        edit.text = "hello, fixed"
+        try await engine.enqueue(content: edit, chatId: "c1", clientMsgId: "e1")
+        let ack = """
+        {"t":"sent","chatId":"c1","clientMsgId":"e1","seq":9,"ts":100}
+        """
+        await engine.apply(try JSONDecoder().decode(WSIncoming.self, from: Data(ack.utf8)))
+
+        var request = ContentPayload(kind: "repairRequest")
+        request.repairSeq = 9
+        request.reason = "no_session"
+        request.attempt = 1
+        await engine.handleRepairContent(request, chatId: "c1", from: "peer", fromDevice: "d1")
+
+        let outbox = try await outboxContents(db)
+        let answer = try XCTUnwrap(outbox.first, "no copy of the edit went out")
+        XCTAssertEqual(outbox.count, 1)
+        XCTAssertEqual(answer.id, MessageRepair.replyId(chatId: "c1", seq: 9, attempt: 1))
+        let reply = answer.content
+        XCTAssertEqual(reply.kind, "repair")
+        XCTAssertEqual(reply.repairSeq, 9)
+        let original = try JSONDecoder().decode(ContentPayload.self,
+                                                from: Data(try XCTUnwrap(reply.orig).utf8))
+        XCTAssertEqual(original.kind, "edit")
+        XCTAssertEqual(original.targetSeq, 7, "the copy carries the local row id, not the seq the peer applies by")
+        XCTAssertEqual(original.text, "hello, fixed")
+    }
+
+    /// The repaired copy of an edit applies to its target and settles the seq:
+    /// the envelope record goes, and the gap closes with the service reason so
+    /// pagination does not ask for it again.
+    func testRepairedEditAppliesAndSettlesTheSeq() async throws {
+        let db = try AppDatabase.openInMemory()
+        try await makeDirectChat(db)
+        let engine = try makeEngine(db: db)
+        try await db.write { dbc in
+            var msg = Message(id: Message.feedId(chatId: "c1", seq: 5), chatId: "c1",
+                              fromUserId: "peer", sentAt: 40,
+                              kind: .text, text: "old", status: .sent, isOutgoing: false)
+            msg.seq = 5
+            try msg.save(dbc)
+        }
+        await engine.apply(try brokenFrame(seq: 9))
+
+        var edit = ContentPayload(kind: "edit")
+        edit.targetSeq = 5
+        edit.text = "new"
+        var repair = ContentPayload(kind: "repair")
+        repair.repairSeq = 9
+        repair.origSentAt = 43
+        repair.orig = SyncEngine.payloadJSON(edit)
+        await engine.handleRepairContent(repair, chatId: "c1", from: "peer", fromDevice: "d1")
+
+        let row = try await db.read { dbc in
+            try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE chatId = 'c1' AND seq = 5")
+        }
+        XCTAssertEqual(try XCTUnwrap(row).text, "new", "the repaired edit did not apply")
+        let pending = try await db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingDecrypt")!
+        }
+        XCTAssertEqual(pending, 0, "the envelope record survived the repair")
+        let gap = try await db.read { dbc in
+            try String.fetchOne(dbc, sql: "SELECT reason FROM historyGap WHERE chatId = 'c1' AND seq = 9")
+        }
+        XCTAssertEqual(gap, "service")
+    }
+
     // MARK: - Schedule
 
     func testScheduleTerminalAsksAtOnceAndBacksOff() {

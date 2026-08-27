@@ -458,6 +458,10 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     the original msgId, up to 5 attempts with growing pauses; the pairwise
     session is rebuilt before the request (qa/runs/2026-08-16-repair;
     CoreIntegrationTests `testCorruptedSessionIsRepairedThroughSender`)
+  - ✅ a service frame is repairable too: the ack records its payload under the
+    assigned seq, and a request for a seq with no message row is answered from
+    that record (qa/runs/2026-08-27-service-frame-repair-run;
+    MessageRepairTests units)
   - ✅ a skipped-key window of 5000 in the pairwise chain and in the sender key
     chain, with the skipped-key store bounded on both sides (CryptoTests units)
 - Trust
