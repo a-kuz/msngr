@@ -430,7 +430,10 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - Cryptography
   - ✅ X3DH + Double Ratchet in a direct chat (CoreIntegrationTests, every live exchange in the runs)
   - ✅ media encryption: the key in the message, the blob in R2, the SHA-256 check (offline-run 2–3)
-  - 🟡 sender keys in groups and rotation when a member leaves (CryptoTests units, no live group run)
+  - ✅ sender keys in groups and rotation when a member leaves: a live trio
+    decrypted the group message on both peers, and the leave dropped the chain
+    — the next send handed a fresh key to the remaining member only
+    (qa/runs/2026-08-27-sender-keys-run.md; CryptoTests units)
   - ✅ a sender key handout is acknowledged by the recipient: an unacknowledged
     one is sent again, and a member can ask for a re-handout (MessageRepairTests
     units, CoreIntegrationTests `testGroupChatSenderKeys`)
