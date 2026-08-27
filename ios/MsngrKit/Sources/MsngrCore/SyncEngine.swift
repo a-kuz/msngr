@@ -1177,8 +1177,9 @@ public actor SyncEngine {
                 arguments: [chatId, target])
         }) ?? nil
         guard let row, !row.deletedForAll else {
-            MsngrLog.repair.notice(
-                "repair asked for a message we do not hold chat=\(chatId, privacy: .public) seq=\(target, privacy: .public)")
+            // no row of ours under that seq: an edit, a reaction or a timer
+            // change — the record of the sent frame answers for those
+            await answerServiceFrameRepair(request, chatId: chatId, from: from, target: target)
             return
         }
         // a copy is only given for what was addressed to the asker in the first
@@ -1203,6 +1204,46 @@ public actor SyncEngine {
         reply.to = from
         reply.repairSeq = target
         reply.origSentAt = row.sentAt
+        reply.attempt = request.attempt
+        reply.orig = SyncEngine.payloadJSON(original)
+        try? await enqueue(content: reply, chatId: chatId,
+                           clientMsgId: MessageRepair.replyId(chatId: chatId, seq: target,
+                                                              attempt: request.attempt ?? 1))
+        MsngrLog.repair.notice(
+            "repair sent chat=\(chatId, privacy: .public) seq=\(target, privacy: .public) attempt=\(request.attempt ?? 1, privacy: .public)")
+    }
+
+    /// Answers a repair request for a service frame — an edit, a reaction or a
+    /// timer change: it has no message row of its own, so the copy comes from
+    /// the record kept when the ack assigned the seq.
+    private func answerServiceFrameRepair(_ request: ContentPayload, chatId: String,
+                                          from: String, target: Int) async {
+        let stored = (try? await db.read { dbc in
+            try Row.fetchOne(dbc, sql: "SELECT payload, sentAt FROM sentServiceFrame WHERE chatId = ? AND seq = ?",
+                             arguments: [chatId, target])
+        }) ?? nil
+        guard let stored,
+              let original = try? JSONDecoder().decode(ContentPayload.self, from: stored["payload"] as Data) else {
+            MsngrLog.repair.notice(
+                "repair asked for a message we do not hold chat=\(chatId, privacy: .public) seq=\(target, privacy: .public)")
+            return
+        }
+        let sentAt: Double = stored["sentAt"]
+        // the same membership rule as for a feed message: a copy only goes to
+        // someone the frame was addressed to in the first place
+        let joinedAt = (try? await db.read { dbc in
+            try Double.fetchOne(dbc, sql: "SELECT joinedAt FROM member WHERE chatId = ? AND userId = ?",
+                                arguments: [chatId, from])
+        }) ?? nil
+        guard let joinedAt, sentAt >= joinedAt else {
+            MsngrLog.repair.notice(
+                "repair asked for a frame sent before the asker joined chat=\(chatId, privacy: .public) seq=\(target, privacy: .public)")
+            return
+        }
+        var reply = ContentPayload(kind: "repair")
+        reply.to = from
+        reply.repairSeq = target
+        reply.origSentAt = sentAt
         reply.attempt = request.attempt
         reply.orig = SyncEngine.payloadJSON(original)
         try? await enqueue(content: reply, chatId: chatId,
@@ -1521,6 +1562,34 @@ public actor SyncEngine {
                 arguments: [seq, f.ts,
                             ttl > 0 ? Date().timeIntervalSince1970 + Double(ttl) : nil,
                             clientMsgId])
+            // a service frame leaves no message row, so its payload is kept
+            // under the seq this ack assigned: a peer that could not open the
+            // frame is answered with a copy from this record. The target is
+            // resolved the way the wire frame carried it — by seq.
+            if var content = try Data.fetchOne(dbc, sql: "SELECT payload FROM outbox WHERE clientMsgId = ?",
+                                               arguments: [clientMsgId])
+                .flatMap({ try? JSONDecoder().decode(ContentPayload.self, from: $0) }),
+               SyncEngine.recordedServiceKinds.contains(content.kind) {
+                if let target = content.targetLocalId {
+                    content.targetSeq = try Int.fetchOne(
+                        dbc, sql: "SELECT seq FROM message WHERE chatId = ? AND id = ?",
+                        arguments: [chatId, target])
+                    content.targetLocalId = nil
+                }
+                let now = Date().timeIntervalSince1970
+                // an edit or a reaction whose target has no seq points at
+                // nothing the peer could apply, so there is nothing to keep
+                if content.targetSeq != nil || content.kind == "disappearing" {
+                    try dbc.execute(
+                        sql: """
+                        INSERT INTO sentServiceFrame (chatId, seq, payload, sentAt) VALUES (?,?,?,?)
+                        ON CONFLICT(chatId, seq) DO NOTHING
+                        """,
+                        arguments: [chatId, seq, try JSONEncoder().encode(content), now])
+                }
+                try dbc.execute(sql: "DELETE FROM sentServiceFrame WHERE sentAt < ?",
+                                arguments: [now - MessageRepair.envelopeTTL])
+            }
             try dbc.execute(sql: "DELETE FROM outbox WHERE clientMsgId = ?", arguments: [clientMsgId])
             MediaProgress.shared.clear(clientMsgId)
             // edits and reactions that waited for their target's seq: it is here now
@@ -1669,6 +1738,11 @@ public actor SyncEngine {
     /// Service content with no feed row of its own. A group event is the
     /// exception: it is service on the wire and a system message in the feed.
     public static let rowlessKinds: Set<String> = serviceKinds.subtracting([GroupEvent.kind])
+
+    /// Rowless kinds whose sent payload is kept under its seq
+    /// (`sentServiceFrame`): they leave no message row to rebuild a repair
+    /// answer from, so the copy a peer asks for comes from that record.
+    public static let recordedServiceKinds: Set<String> = ["edit", "reaction", "disappearing"]
 
     /// Publishes what just happened to the group, from whoever did it. The frame
     /// is service content: it takes a seq and reaches every member, raises no

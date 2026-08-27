@@ -470,6 +470,18 @@ public enum AppDatabase {
                 t.drop(column: "pinnedSeq")
             }
         }
+        m.registerMigration("v24-sentServiceFrame") { db in
+            // the payload of a sent service frame under the seq its ack
+            // assigned: the frame leaves no message row, so a peer's repair
+            // request for it can only be answered from here
+            try db.create(table: "sentServiceFrame") { t in
+                t.column("chatId", .text).notNull()
+                t.column("seq", .integer).notNull()
+                t.column("payload", .blob).notNull()
+                t.column("sentAt", .double).notNull()
+                t.primaryKey(["chatId", "seq"])
+            }
+        }
         return m
     }
 }

@@ -33,36 +33,6 @@ that recording looks smooth. A real finger differs in two ways the driver
 cannot fake, vertical jitter and touch-event cadence, so the next step is a
 screen recording from the device.
 
-### An edit's envelope failed to open on the peer with no_session
-Seen in passing 2026-08-21 during the unread-recount run: alfa edited a
-message while charlie's headless engine was offline; on his next sync the
-edit's seq landed in `historyGap` with `no_session` and repair attempts
-counting up, while the edit itself HAD already applied to his row (edited=1,
-new text) — so the failing envelope is likely a replayed duplicate of a frame
-the live path had delivered, asked for again because the seq never joined the
-contiguous prefix. The session between the two accounts had been through a
-block/unblock round and repeated headless open/close cycles the same hour.
-Needs its own investigation: whether the duplicate replay of an
-already-applied service frame should be dropped by seq before it is treated
-as unreadable, and why the prefix stalls behind it.
-
-Reproduced on demand 2026-08-27 on a private stand (`--persist-to` of its own
-on :8803, a fresh `msngrfixture seed` trio, the `alfa` home installed from
-that directory). With bravo's engine live through `msngrfixture typing`, alfa
-sent into the direct chat and drove several edits and reconnect cycles over
-it. Bravo ended with `syncedSeq=4`, `lastSeq=12`, `unreadCount=3`, seq 9 in
-both `pendingDecrypt` and `historyGap` as `no_session` at 3 attempts, while
-the content frames on either side (seq 8, 10) had rows. The server's journal
-addresses seq 9 to bravo's device as a `dr` box (`{…2H5GEZ: dr}`), so it is a
-Double-Ratchet frame bravo cannot place in any live or archived chain rather
-than a duplicate of something already applied. The stall is downstream: a seq
-that never decrypts never joins the contiguous prefix, so `syncedSeq` holds at
-4 and the seq-based unread estimate stays at 3. The likely cause is chain
-identity across a session reset — a frame sent under a sending chain bravo
-archived during the churn — which is why repair (which re-requests by msgId
-and rebuilds the pairwise session) does not recover it. A fix belongs in the
-crypto layer and wants its own change; not attempted here.
-
 ### The in-app banner does not react to a tap
 Reported 2026-08-19 from the device. Tapping the in-app notification banner does
 nothing; it has to open the chat it announces. The tap-opens-chat path exists and
@@ -115,6 +85,25 @@ not on a single fix. Measured so far (bubbleanim run, merged 14c3a0a): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### An edit's envelope failed to open on the peer with no_session
+Seen in passing 2026-08-21 during the unread-recount run and reproduced on
+demand 2026-08-27: an edit's seq sat in `pendingDecrypt` and `historyGap` as
+`no_session` with repair attempts counting up, the contiguous prefix stalled
+behind it. The repro pinned the failing frame as a `dr` box the peer could
+place in no live or archived chain; the repair protocol could not recover it
+because the sender rebuilt its answer from the `message` row under the asked
+seq, and an edit has no row of its own — every attempt ended in "we do not
+hold". Closed 2026-08-27: the ack of a service frame now records its payload
+under the assigned seq (`sentServiceFrame`, the target resolved to its seq),
+and a repair request for a seq with no message row is answered from that
+record. Live: with bravo's session to alfa deleted, seqs 18–20 (a message and
+two edits) went `no_session` and healed once the 60 s repair grace ran out — the
+message by its row, the edits by their records
+(qa/runs/2026-08-27-service-frame-repair-run; MessageRepairTests units on
+both sides). Frames acked by builds without the record stay unrecoverable
+(the repro's seqs 9 and 11); why the sending chain diverged during that churn
+was not established.
 
 ### The unread banner says 56 with a thousand unread
 Reported by the owner 2026-08-21 near midnight, with a screenshot from the
