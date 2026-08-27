@@ -532,7 +532,9 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     (`badgeStamp`); on the device it lives as a single row, the app and the
     extension write through a transaction, and an overtaken value is discarded
     (BadgeStoreTests, badge-run)
-  - 🟡 withdrawing delivered notifications when the chat is read (not verified live)
+  - ✅ withdrawing delivered notifications when the chat is read: a stack of
+    pushes and the badge left the shade on reading the chat
+    (qa/runs/2026-08-27-notification-withdraw-run.md)
   - ✅ tapping a system push opens the chat: the push delivered through the dev
     mock raised the system banner and the badge, and the tap was confirmed by
     the owner watching the run (qa/runs/2026-08-27-push-tap-run.md)

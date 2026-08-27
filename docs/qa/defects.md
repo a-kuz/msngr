@@ -6,6 +6,21 @@ with the commit that closed it.
 
 ## Open
 
+### A read message's own banner shows over the open chat and stays in the shade
+Found 2026-08-27 during the notification-withdraw run
+(qa/runs/2026-08-27-notification-withdraw-run.md). A message arrived over the
+socket while the app sat in the background with the chat open behind it; the
+app posted its local notification, as designed for the background. On
+returning to the foreground the banner presented over the very chat that
+already showed the message, and after the message was read the notification
+was still in the shade a minute later, alone — the pushed stack around it was
+withdrawn correctly. Unproven hypothesis for the second half:
+`dropReadNotifications` runs only on unread-count emissions, and this banner
+finished its async add (avatar fetch, `UNUserNotificationCenter.add`) after
+the read's emission had already swept, so nothing ever re-checks it. The
+presentation half needs `willPresent` to decline a banner whose chat is open
+and message visible on the local-notification path the way it does for pushes.
+
 ### A held swipe on a chat row stutters
 Reported by the owner 2026-08-27: swiping a row sideways in the chat list
 with the finger kept on the screen, the row's motion is badly jerky. The list
