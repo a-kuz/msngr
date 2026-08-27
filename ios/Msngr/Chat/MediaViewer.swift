@@ -224,16 +224,23 @@ private struct GIFPage: UIViewRepresentable {
 }
 
 /// Video: the decrypted file is played from the media cache.
-private struct VideoPlayerPage: View {
+/// The system player without picture-in-picture: its PiP glyph sits in the
+/// top-left corner, exactly under the viewer's close button, and took the tap.
+private struct VideoPlayerPage: UIViewControllerRepresentable {
     let url: URL
-    @State private var player: AVPlayer?
 
-    var body: some View {
-        VideoPlayer(player: player)
-            .onAppear {
-                player = AVPlayer(url: url)
-                player?.play()
-            }
-            .onDisappear { player?.pause() }
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        let vc = AVPlayerViewController()
+        vc.player = AVPlayer(url: url)
+        vc.allowsPictureInPicturePlayback = false
+        vc.view.backgroundColor = .clear
+        vc.player?.play()
+        return vc
+    }
+
+    func updateUIViewController(_ vc: AVPlayerViewController, context: Context) {}
+
+    static func dismantleUIViewController(_ vc: AVPlayerViewController, coordinator: ()) {
+        vc.player?.pause()
     }
 }
