@@ -6,6 +6,21 @@ with the commit that closed it.
 
 ## Open
 
+### A silent identity rotation is not re-checked by TOFU while a device list is cached
+Found 2026-08-27 in passing during the multi-device TOFU run
+(qa/runs/2026-08-27-multidevice-tofu-run.md). `/keys-update` (the identity
+heal endpoint) overwrites a device's `ik:` record but does not bump
+`devicesVersion` and broadcasts nothing. A peer that has already cached the
+device set holds the old signing key; the per-send TOFU check reads that
+cached key, finds it trusted, and never refetches. So a device that rotates
+its identity after a peer cached it is not caught until the cache drops for an
+unrelated reason (a genuine link/revoke, or a reconnect where the version did
+change). Reachability is behind preconditions — a warmed cache and an existing
+session, since a fresh session pulls a prekey bundle and would compare — so
+this is a gap to investigate, not a confirmed break. Two candidate fixes to
+weigh: bump `devicesVersion` on `keys-update`, or verify the identity binding
+against the cached key on each send.
+
 ### A read message's own banner shows over the open chat and stays in the shade
 Found 2026-08-27 during the notification-withdraw run
 (qa/runs/2026-08-27-notification-withdraw-run.md). A message arrived over the
@@ -77,6 +92,47 @@ three accounts named «Akuz» differ only by the small @handle in search — and
 renamed account's old username is up for grabs the same second, so whoever
 watches it inherits the searches for @oldname. Worth deciding: highlight the
 @handle in search, a cool-down before a freed name re-enters circulation.
+
+### A chat climbs the list with no new message in it
+Seen 2026-08-27 while recording the README demo on the simulator (alfa
+fixture). After a ❤️ reaction was put on a message in «Standup», the row moved
+from fifth to second place, above chats whose last message was hours newer;
+its own time label kept saying 21.08.26. Earlier the same session «Design»
+rose above «Bravo Service» while showing «Сообщение ещё не загружено» as its
+last row, again with no content message of its own. The list is ordered by
+`chat.lastActivityAt`; which write moved it in these two cases is not
+established.
+
+### A row moving up the chat list flies through the rows above it
+Seen 2026-08-27 in the README demo recording (simulator, alfa fixture). When a
+message from «Charlie Service» lifted its row from the bottom to second place,
+the row travelled over the others in about 170 ms with nothing clipping it:
+for four or five frames its title and preview were drawn on top of «Bravo
+Service» and «Standup», and the rows it passed shifted down under it while
+the move was still going. The owner's word for the result: crooked.
+
+### A new request appears in the list with no animation
+Seen 2026-08-27 in the same recording. When a stranger's first message
+arrived, the «Заявки на переписку» header and the row appeared in a single
+frame, with the rows below jumping down to make room; the avatar of the new
+row showed «…» for a frame before the initials came. The list model animated
+only a change in the visible chats, not in the requests; the same change now
+runs in the spring transaction as well (the re-run on 2026-08-27 shows the
+header and the row easing in). The «…» avatar frame is still open.
+
+### Accepting a request ends with no animation
+Asked for by the owner 2026-08-27 while reviewing the demo: after «Принять»
+on the request screen the closed-eye placeholder and the two buttons are
+replaced by the chat in a cut. The owner wants a transition here, a dissolve
+(«dust») or something of that kind.
+
+### A group shows «Сообщение ещё не загружено» that never resolves
+Seen 2026-08-27 on the alfa fixture in the «Design» group: a placeholder row
+under the system lines, still there a minute later with the socket up.
+Context that may matter: the stand's `bravo` and `alfa` had been re-registered
+by `msngrfixture` under new handles (`bravo3`, `alfa3`) shortly before, so a
+sender key handout from the old identity may be what the placeholder stands
+for. Not investigated further.
 
 ### Interaction smoothness below Telegram
 Reported 2026-08-18. Overall animation quality and frame pacing feel worse
