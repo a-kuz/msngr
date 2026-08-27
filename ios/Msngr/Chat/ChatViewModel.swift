@@ -567,9 +567,15 @@ final class ChatViewModel: ObservableObject {
     // MARK: - Header
 
     var headerTitle: String {
-        if chat?.kind == .direct { return peer?.displayName ?? "…" }
-        return chat?.title ?? String(localized: "Group")
+        switch chat?.kind {
+        case .direct: return peer?.displayName ?? "…"
+        case .saved: return String(localized: "Saved Messages")
+        case .group, nil: return chat?.title ?? String(localized: "Group")
+        }
     }
+
+    var isSavedChat: Bool { chat?.kind == .saved }
+    var avatarGlyph: String? { isSavedChat ? AvatarStyle.savedGlyph : nil }
 
     var headerSubtitle: String {
         if !connected { return String(localized: "connecting…") }

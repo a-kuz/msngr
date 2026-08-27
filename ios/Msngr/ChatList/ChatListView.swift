@@ -273,11 +273,14 @@ struct ChatListView: View {
                     Label(muted ? "Unmute" : "Mute",
                           systemImage: muted ? "bell.fill" : "bell.slash.fill")
                 }.tint(.indigo)
-                // delete comes last, further from the edge
-                Button(role: .destructive) { deleteCandidate = item } label: {
-                    Label("Delete", systemImage: "trash.fill")
+                // delete comes last, further from the edge; the chat with
+                // yourself stays, it is cleared from its info screen instead
+                if item.chat.kind != .saved {
+                    Button(role: .destructive) { deleteCandidate = item } label: {
+                        Label("Delete", systemImage: "trash.fill")
+                    }
+                    .accessibilityIdentifier("chatlist.delete")
                 }
-                .accessibilityIdentifier("chatlist.delete")
             }
             .swipeActions(edge: .leading, allowsFullSwipe: false) {
                 Button { model.togglePin(item) } label: {

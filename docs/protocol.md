@@ -75,7 +75,10 @@ POST /api/prekeys                 {oneTimePrekeys:[{id,key}]} — a top-up (up t
 POST /api/profile                 {displayName?, bio?, avatarId?}
 POST /api/avatar                  raw body (image/jpeg) → {avatarId};  GET /api/avatar/:id
                                   ?chatId=<id> — the chat's avatar instead of your own profile
-POST /api/chats                   {kind:"direct"|"group", memberIds[], title?} → {chatId}
+POST /api/chats                   {kind:"direct"|"group"|"self", memberIds[], title?} → {chatId}
+                                  "self" is the chat with yourself: memberIds is empty, the
+                                  id is `self:<userId>`, so the call is idempotent and every
+                                  user has exactly one; its messages raise no push
 GET  /api/chats                   snapshot: [{flags, state}] + the profiles of all members
 GET  /api/chats/:id/history       ?fromSeq=&toSeq=&limit=&dir=back
                                   → {msgs:[StoredMsg], scanned, lastScannedSeq}

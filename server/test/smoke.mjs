@@ -1290,6 +1290,25 @@ const badgeAfter = (await waitPush(pushFor("alice-sim-udid", e2)))?.body.aps.bad
 check("own messages do not grow the author's badge", badgeAfter === 1,
   `badge=${badgeAfter}`);
 
+// (h) Saved messages: a chat with yourself, one per user, never a push
+const selfChat = await api("/api/chats", { token: alice.token, body: { kind: "self", memberIds: [] } });
+check("self chat created", selfChat.ok && selfChat.chatId === "self:" + alice.userId,
+  JSON.stringify(selfChat));
+const selfAgain = await api("/api/chats", { token: alice.token, body: { kind: "self", memberIds: [] } });
+check("self chat is one per user", selfAgain.ok && selfAgain.chatId === selfChat.chatId);
+const pushMarkSelf = pushes.length;
+ca2.send({ t: "send", chatId: selfChat.chatId, clientMsgId: "cm-self1", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const selfSent = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-self1");
+check("send to yourself gets a seq", !!selfSent);
+await new Promise((r) => setTimeout(r, 600));
+check("saved messages raise no push",
+  !pushes.slice(pushMarkSelf).some((p) => p.url === "/3/device/alice-sim-udid"));
+const selfEntry = (await api("/api/chats", { token: alice.token }))
+  .chats.find((x) => x.state.chatId === selfChat.chatId);
+check("self chat lists its one member",
+  selfEntry?.state.kind === "self" && selfEntry.state.members.length === 1);
+
 // 21. The sender's confirmation does not wait for APNs: with the mock's answer
 // held for 1500 ms, the ack still lands next to the push's arrival instead of
 // after the hold. The push queue runs independently of the ack path, so the

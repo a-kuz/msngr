@@ -24,7 +24,11 @@ public struct User: Codable, Identifiable, Equatable, FetchableRecord, Persistab
     }
 }
 
-public enum ChatKind: String, Codable { case direct, group }
+public enum ChatKind: String, Codable {
+    case direct, group
+    /// The chat with yourself: one per user, its only member is the owner.
+    case saved = "self"
+}
 
 public struct Chat: Codable, Identifiable, Equatable, FetchableRecord, PersistableRecord {
     public static let databaseTableName = "chat"

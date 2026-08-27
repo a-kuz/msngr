@@ -96,7 +96,7 @@ export type ChatPolicy = "all" | "admins";
 
 export interface ChatState {
   chatId: string;
-  kind: "direct" | "group";
+  kind: "direct" | "group" | "self";
   title: string | null;
   avatarId: string | null;
   description: string | null;

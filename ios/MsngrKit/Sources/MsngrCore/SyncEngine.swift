@@ -372,7 +372,13 @@ public actor SyncEngine {
     // MARK: - Snapshot and sync
 
     public func refreshSnapshot() async throws {
-        let snap = try await api.chatsSnapshot()
+        var snap = try await api.chatsSnapshot()
+        if !snap.chats.contains(where: { $0.state.kind == ChatKind.saved.rawValue }) {
+            // the chat with yourself is part of every account: the server keeps
+            // one per user, so asking for it again returns the same chat
+            _ = try await api.createChat(kind: ChatKind.saved.rawValue, memberIds: [], title: nil)
+            snap = try await api.chatsSnapshot()
+        }
         try await applySnapshot(snap)
         await sendSyncCursors()
     }
@@ -875,14 +881,14 @@ public actor SyncEngine {
         guard await !stored(chatId: chatId, seq: seq) else { return }
         let reason: String
         if rawReason == "not_addressed" {
-            // in a direct chat the sender addresses every device on both sides,
-            // so a box missing for us is a defect and gets repaired; in a group
-            // an addressed frame (key distribution, repair) goes to one member
-            // by design
+            // in a direct chat (and in the chat with yourself) the sender
+            // addresses every device on both sides, so a box missing for us is
+            // a defect and gets repaired; in a group an addressed frame (key
+            // distribution, repair) goes to one member by design
             let kind = (try? await db.read { dbc in
                 try String.fetchOne(dbc, sql: "SELECT kind FROM chat WHERE id = ?", arguments: [chatId])
             }) ?? nil
-            guard kind == ChatKind.direct.rawValue else {
+            guard kind == ChatKind.direct.rawValue || kind == ChatKind.saved.rawValue else {
                 try? await db.write { dbc in
                     try HistoryWindow.recordGap(dbc, chatId: chatId, seq: seq, reason: rawReason,
                                                 fromUserId: from, sentAt: sentAt)
@@ -1919,7 +1925,9 @@ public actor SyncEngine {
                                                    toUserId: addressee)
             try await ws.send(.send(chatId: item.chatId, clientMsgId: item.clientMsgId,
                                     sentAt: item.createdAt, body: env, service: service))
-        } else if info.kind == "direct" {
+        } else if info.kind == ChatKind.direct.rawValue || info.kind == ChatKind.saved.rawValue {
+            // the chat with yourself has no peer: the envelope goes pairwise to
+            // this user's other devices alone
             let peer = info.members.first { $0 != ownUserId } ?? ownUserId
             let env = try await e2ee.encryptDirect(content: content, chatId: item.chatId,
                                                    toUserId: peer)

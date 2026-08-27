@@ -129,7 +129,7 @@ struct MessageHitRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            AvatarView(name: title, avatarId: avatarId)
+            AvatarView(name: title, avatarId: chat?.avatarId, glyph: chat?.avatarGlyph)
                 .frame(width: avatarSide, height: avatarSide)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 4) {
@@ -166,11 +166,6 @@ struct MessageHitRow: View {
     private var avatarSide: CGFloat { typeSize.scaled(44, relativeTo: .subheadline, max: 62) }
 
     private var title: String { chat?.title ?? String(localized: "Chat") }
-
-    private var avatarId: String? {
-        guard let chat else { return nil }
-        return chat.chat.kind == .direct ? chat.peer?.avatarId : chat.chat.avatarId
-    }
 
     static func kindIcon(_ kind: MessageKind) -> String? {
         switch kind {

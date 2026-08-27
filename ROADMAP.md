@@ -84,8 +84,9 @@ A ✅ goes in only together with a link to the evidence.
     place (qa/runs/2026-08-21-folders; unit-covered in ChatFolderTests)
   - ✅ animated reordering on a new message: the row glides to the top through
     the rows above it instead of teleporting (qa/runs/2026-08-21-chatlist-reorder)
-  - ⬜ a chat with yourself for saved messages, first in the list and never a
-    push; forwarding into it from any chat
+  - ✅ a chat with yourself for saved messages, first in the list and never a
+    push; forwarding into it from any chat (qa/runs/2026-08-27-saved-messages;
+    smoke `self chat created` … `self chat lists its one member`)
 - Search and empty states
   - ✅ local search over the chat title and the username (design-review 02c)
   - ✅ an empty list with a «Начать переписку» button (palettes/chatlist-empty)

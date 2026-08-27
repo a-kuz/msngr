@@ -52,6 +52,7 @@ struct ChatInfoView: View {
     #endif
 
     private var isGroup: Bool { model.chat?.kind == .group }
+    private var isSaved: Bool { model.chat?.kind == .saved }
     private var myRole: String? { rolesModel.roles[model.ownUserId] }
     private var kind: ChatKind { model.chat?.kind ?? .direct }
     /// Only an admin changes the group's name and avatar; the server checks the same.
@@ -84,10 +85,12 @@ struct ChatInfoView: View {
                     } else {
                         Text(model.headerTitle).font(.title2.bold())
                     }
-                    Text(isGroup ? ChatViewModel.membersText(model.members.count)
-                         : "@\(model.peer?.username ?? "")")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    if !isSaved {
+                        Text(isGroup ? ChatViewModel.membersText(model.members.count)
+                             : "@\(model.peer?.username ?? "")")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
                     if isGroup && canEditSettings && titleChanged {
                         Button("Save name", action: saveTitle)
                             .buttonStyle(.borderedProminent)
@@ -200,7 +203,7 @@ struct ChatInfoView: View {
             seedSection
             #endif
         }
-        .navigationTitle(isGroup ? "Group" : "Profile")
+        .navigationTitle(isGroup ? "Group" : isSaved ? "Saved Messages" : "Profile")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             ttl = model.chat?.ttlSeconds ?? 0
@@ -333,7 +336,8 @@ struct ChatInfoView: View {
     private var groupAvatar: some View {
         let avatar = AvatarView(name: model.headerTitle,
                                 avatarId: isGroup ? model.chat?.avatarId : model.peer?.avatarId,
-                                online: model.peer?.online ?? false)
+                                online: model.peer?.online ?? false,
+                                glyph: model.avatarGlyph)
             .frame(width: 90, height: 90)
         if isGroup && canEditSettings {
             PhotosPicker(selection: $avatarItem, matching: .images) {
@@ -415,7 +419,8 @@ struct ChatInfoView: View {
                 Label("Clear history", systemImage: "eraser")
             }
             .accessibilityIdentifier("chatInfo.clearHistory")
-            if !isGroup || ChatPermissions.canLeave(kind: kind, role: myRole) {
+            // the chat with yourself is cleared, never deleted: it is part of the account
+            if (!isGroup && !isSaved) || ChatPermissions.canLeave(kind: kind, role: myRole) {
                 Button(role: .destructive) {
                     showLeaveConfirm = true
                 } label: {

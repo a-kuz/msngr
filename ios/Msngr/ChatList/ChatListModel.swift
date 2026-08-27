@@ -13,9 +13,17 @@ struct ChatListItem: Identifiable, Equatable {
     var id: String { chat.id }
 
     var title: String {
-        if chat.kind == .direct { return peer?.displayName ?? "…" }
-        return chat.title ?? String(localized: "Group")
+        switch chat.kind {
+        case .direct: return peer?.displayName ?? "…"
+        case .saved: return String(localized: "Saved Messages")
+        case .group: return chat.title ?? String(localized: "Group")
+        }
     }
+
+    /// The picture the row shows: the peer's for a direct chat, the chat's own
+    /// for a group; the chat with yourself draws a glyph instead.
+    var avatarId: String? { chat.kind == .direct ? peer?.avatarId : chat.avatarId }
+    var avatarGlyph: String? { chat.kind == .saved ? AvatarStyle.savedGlyph : nil }
 }
 
 /// One observation result: the whole chat list and everything the tabs are
@@ -68,7 +76,10 @@ final class ChatListModel: ObservableObject {
         cancellable = ValueObservation
             .tracking { dbc -> ChatListSnapshot in
                 try PerfTrace.shared.measure("chatlist.fetch") {
-                let chats = try Chat.fetchAll(dbc, sql: "SELECT * FROM chat ORDER BY pinned DESC, lastActivityAt DESC")
+                // the chat with yourself leads the list, above the pins
+                let chats = try Chat.fetchAll(dbc, sql: """
+                    SELECT * FROM chat ORDER BY (kind = 'self') DESC, pinned DESC, lastActivityAt DESC
+                    """)
                 var peers: [String: User] = [:]
                 var lasts: [String: Message] = [:]
                 for chat in chats {

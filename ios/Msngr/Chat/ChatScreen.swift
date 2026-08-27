@@ -345,13 +345,16 @@ struct ChatScreen: View {
     /// Empty chat: a centred hint instead of a bare background.
     private var emptyChatHint: some View {
         VStack(spacing: 8) {
-            Image(systemName: "bubble.left.and.bubble.right")
+            Image(systemName: model.isSavedChat ? AvatarStyle.savedGlyph : "bubble.left.and.bubble.right")
                 .font(Theme.glyph(34, max: 48))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
-            Text(String(localized: "Start a conversation"))
+            Text(model.isSavedChat
+                 ? String(localized: "Notes to yourself")
+                 : String(localized: "Start a conversation"))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
             Label(String(localized: "End-to-end encrypted"), systemImage: "lock.fill")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
@@ -373,7 +376,8 @@ struct ChatScreen: View {
                            // connection presence is stale: the subtitle already
                            // says so, the dot must not claim otherwise
                            online: model.chat?.kind == .direct && model.connected
-                                   && (model.peer?.online ?? false))
+                                   && (model.peer?.online ?? false),
+                           glyph: model.avatarGlyph)
                     // the back chevron leads the header, so the avatar stays under it
                     .frame(width: 34, height: 34)
                 VStack(alignment: .leading, spacing: 0) {
