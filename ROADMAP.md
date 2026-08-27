@@ -682,7 +682,12 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   (HistoryFeedTests units)
 - 🟡 Data Protection on the storage files (not verified on a locked screen)
 - ⬜ cleaning out stale media by cache size
-- ⬜ deleting messages automatically once their TTL expires (the timer is configurable and synchronized, there is no local cleanup)
+- ✅ deleting messages automatically once their TTL expires: a sweep on the
+  maintenance loop plus an alarm for the nearest deadline, attachments removed
+  with the rows; a 20 s timer took an outgoing and an incoming message off the
+  screen and out of the table within the half minute (qa/runs/2026-08-27-ttl;
+  the deadline stamping in DisappearingTests; an expiring attachment's file
+  is not yet watched)
 
 - Backup to iCloud
   - ⬜ the backup itself: the history, the media and the settings, encrypted on
