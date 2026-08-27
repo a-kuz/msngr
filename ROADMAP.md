@@ -533,7 +533,9 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     extension write through a transaction, and an overtaken value is discarded
     (BadgeStoreTests, badge-run)
   - 🟡 withdrawing delivered notifications when the chat is read (not verified live)
-  - 🟡 tapping a system push opens the chat (not verified live)
+  - ✅ tapping a system push opens the chat: the push delivered through the dev
+    mock raised the system banner and the badge, and the tap was confirmed by
+    the owner watching the run (qa/runs/2026-08-27-push-tap-run.md)
 - A notification avalanche
   - ✅ the push carries seq and sentAt — the display order is built from them (smoke `push carries seq`, `push carries sentAt`)
   - 🟡 the coalescing window: the extension holds pushes back, plans a batch and answers by seq in a single chain
