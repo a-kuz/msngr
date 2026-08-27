@@ -496,28 +496,33 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             guard index < medias.count else { continue }
             let media = medias[index]
             let iv = UIImageView()
-            iv.frame = rect
-            iv.contentMode = .scaleAspectFill
-            iv.clipsToBounds = true
-            iv.backgroundColor = .tertiarySystemFill
-            iv.isUserInteractionEnabled = true
-            applyMediaCorners(iv, rect: rect, plan: plan)
-            iv.tag = index
-            let tap = UITapGestureRecognizer(target: self, action: #selector(mediaTapped(_:)))
-            iv.addGestureRecognizer(tap)
-            bubbleView.addSubview(iv)
-            mediaViews.append(iv)
-            loadMedia(into: iv, media: media, index: index, rect: rect)
+            // a fresh tile is built without animation: configure can run inside
+            // the feed's animation block, and an animated first frame flies the
+            // tile in from zero
+            UIView.performWithoutAnimation {
+                iv.frame = rect
+                iv.contentMode = .scaleAspectFill
+                iv.clipsToBounds = true
+                iv.backgroundColor = .tertiarySystemFill
+                iv.isUserInteractionEnabled = true
+                applyMediaCorners(iv, rect: rect, plan: plan)
+                iv.tag = index
+                let tap = UITapGestureRecognizer(target: self, action: #selector(mediaTapped(_:)))
+                iv.addGestureRecognizer(tap)
+                bubbleView.addSubview(iv)
+                mediaViews.append(iv)
+                loadMedia(into: iv, media: media, index: index, rect: rect)
 
-            if media.type == "video" {
-                let play = UIImageView(image: UIImage(systemName: "play.circle.fill"))
-                play.tintColor = .white.withAlphaComponent(0.9)
-                play.frame = CGRect(x: rect.width / 2 - 22, y: rect.height / 2 - 22, width: 44, height: 44)
-                play.autoresizingMask = [.flexibleLeftMargin, .flexibleRightMargin,
-                                         .flexibleTopMargin, .flexibleBottomMargin]
-                iv.addSubview(play)
-                playGlyphs[index] = play
-                startAutoplayIfLocal(on: iv, media: media, playGlyph: play)
+                if media.type == "video" {
+                    let play = UIImageView(image: UIImage(systemName: "play.circle.fill"))
+                    play.tintColor = .white.withAlphaComponent(0.9)
+                    play.frame = CGRect(x: rect.width / 2 - 22, y: rect.height / 2 - 22, width: 44, height: 44)
+                    play.autoresizingMask = [.flexibleLeftMargin, .flexibleRightMargin,
+                                             .flexibleTopMargin, .flexibleBottomMargin]
+                    iv.addSubview(play)
+                    playGlyphs[index] = play
+                    startAutoplayIfLocal(on: iv, media: media, playGlyph: play)
+                }
             }
         }
         syncProgressRings(msg)
@@ -538,8 +543,12 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         for iv in mediaViews where progressRings[iv.tag] == nil {
             let ring = UploadRingView()
             let side: CGFloat = 52
-            ring.frame = CGRect(x: (iv.bounds.width - side) / 2, y: (iv.bounds.height - side) / 2,
-                                width: side, height: side)
+            // a retry flips a visible cell to sending inside the feed's animation
+            // block; the ring's first frame lands in place, never animated
+            UIView.performWithoutAnimation {
+                ring.frame = CGRect(x: (iv.bounds.width - side) / 2, y: (iv.bounds.height - side) / 2,
+                                    width: side, height: side)
+            }
             ring.autoresizingMask = [.flexibleLeftMargin, .flexibleRightMargin,
                                      .flexibleTopMargin, .flexibleBottomMargin]
             iv.addSubview(ring)
