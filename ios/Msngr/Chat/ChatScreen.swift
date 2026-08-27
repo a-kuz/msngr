@@ -768,16 +768,47 @@ struct ChatScreen: View {
         MediaInfo(type: "photo", mediaId: "", key: "", hash: "", size: 0, mime: "image/jpeg")
     }
 
+    /// One pick is one message: a row with a typed placeholder per item goes
+    /// into the chat before the library has handed over a single byte, and
+    /// every slot fills in on its own timeline. Photos and videos share the
+    /// album; a video's export progress goes to the tile as it runs.
     private func sendPicked(_ items: [PhotosPickerItem]) async {
         guard !items.isEmpty else { return }
-        let isVideo: (PhotosPickerItem) -> Bool = { $0.supportedContentTypes.contains { $0.conforms(to: .movie) } }
-        for item in items where isVideo(item) {
-            Task { await sendVideoItem(item) }
+        let kinds: [PickedBatch.Item] = items.map {
+            $0.supportedContentTypes.contains { $0.conforms(to: .movie) } ? .video : .photo
         }
-        let photoItems = items.filter { !isVideo($0) }
-        guard !photoItems.isEmpty else { return }
-        let sources: [() async -> Data?] = photoItems.map { item in { try? await item.loadTransferable(type: Data.self) } }
-        await sendPhotoSources(sources, caption: nil)
+        let clientMsgId = UUID().uuidString
+        let kind = PickedBatch.kind(of: kinds)
+        let blanks = PickedBatch.blanks(for: kinds)
+        let isAlbum = kind == .album
+        await model.beginMedia(clientMsgId: clientMsgId, kind: kind, text: nil,
+                               media: isAlbum ? nil : blanks[0], album: isAlbum ? blanks : nil)
+
+        let finals = await withTaskGroup(of: (Int, MediaInfo).self) { group in
+            for (index, item) in items.enumerated() {
+                group.addTask {
+                    let slot = isAlbum ? index : nil
+                    switch kinds[index] {
+                    case .video:
+                        let movie = await retrying("load picked video") {
+                            try? await item.loadTransferable(type: VideoTransferable.self)
+                        }
+                        return (index, await processVideo(url: movie.url, clientMsgId: clientMsgId, index: slot))
+                    case .photo:
+                        let media = await processPhotoSource({ try? await item.loadTransferable(type: Data.self) },
+                                                             clientMsgId: clientMsgId, index: slot)
+                        return (index, media)
+                    }
+                }
+            }
+            var finals = blanks
+            for await (index, media) in group { finals[index] = media }
+            return finals
+        }
+
+        var c = ContentPayload(kind: kind.rawValue)
+        if isAlbum { c.album = finals } else { c.media = finals[0] }
+        try? await app.engine.finalizeMedia(chatId: chatId, clientMsgId: clientMsgId, content: c)
     }
 
     /// Images pasted from the clipboard take the same path as ones chosen in the picker.
@@ -868,16 +899,20 @@ struct ChatScreen: View {
         return info
     }
 
-    private func sendVideoItem(_ item: PhotosPickerItem) async {
-        let movie = await retrying("load picked video") { try? await item.loadTransferable(type: VideoTransferable.self) }
-        await sendVideo(movie.url)
-    }
-
-    private func sendVideo(_ url: URL) async {
-        let clientMsgId = UUID().uuidString
+    /// One picked video, quick pass then the transcode. `index` is the album
+    /// slot to update, nil for a single-video send. The transcode is the long
+    /// part of a send, so its progress goes to the tile as the first half of
+    /// the ring; the upload fills the second.
+    private func processVideo(url: URL, clientMsgId: String, index: Int?) async -> MediaInfo {
+        func publish(_ media: MediaInfo) async {
+            if let index {
+                try? await app.engine.updateAlbumItemPreview(clientMsgId: clientMsgId, index: index, media: media)
+            } else {
+                try? await app.engine.updateMediaPreview(clientMsgId: clientMsgId, media: media, album: nil)
+            }
+        }
         let asset = AVURLAsset(url: url)
-        var info = MediaInfo(type: "video", mediaId: "", key: "", hash: "", size: 0, mime: "video/mp4")
-        await model.beginMedia(clientMsgId: clientMsgId, kind: .video, text: nil, media: info, album: nil)
+        var info = PickedBatch.blankVideo()
 
         // quick pass: the track's real aspect, a poster frame and its BlurHash —
         // all far cheaper than the transcode below, so the bubble firms up long
@@ -902,29 +937,38 @@ struct ChatScreen: View {
                 info.thumbLocalPath = try? app.media.stash(jpeg, mime: "image/jpeg")
             }
         }
-        try? await app.engine.updateMediaPreview(clientMsgId: clientMsgId, media: info, album: nil)
+        await publish(info)
 
         // heavy pass: compress into a progressive mp4 — a gating step, retried until it succeeds
+        let progress = MediaProgress.shared
         let data: Data = await retrying("export video") {
             guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset1280x720) else { return nil }
             let out = FileManager.default.temporaryDirectory.appendingPathComponent("v-\(UUID().uuidString).mp4")
             export.outputURL = out
             export.outputFileType = .mp4
             export.shouldOptimizeForNetworkUse = true // faststart
+            // the session reports its progress only when asked, so it is asked
+            // a few times a second for as long as it runs
+            let poll = Task {
+                while !Task.isCancelled {
+                    progress.set(clientMsgId, index: index, fraction: Double(export.progress) * 0.5)
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                }
+            }
             await export.export()
+            poll.cancel()
             defer { try? FileManager.default.removeItem(at: out) }
             guard export.status == .completed else { return nil }
             return try? Data(contentsOf: out)
         }
+        progress.set(clientMsgId, index: index, fraction: 0.5)
         let localName = await retrying("stash video") { try? app.media.stash(data, mime: "video/mp4") }
         info.localPath = localName
         info.size = data.count
         if let d = try? await asset.load(.duration) { info.dur = d.seconds }
-
-        var c = ContentPayload(kind: "video")
-        c.media = info
-        try? await app.engine.finalizeMedia(chatId: chatId, clientMsgId: clientMsgId, content: c)
+        await publish(info)
         try? FileManager.default.removeItem(at: url)
+        return info
     }
 
     /// Puts the attachment's source file into a permanent folder. nil means the write
