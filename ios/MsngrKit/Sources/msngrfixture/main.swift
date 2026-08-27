@@ -310,7 +310,7 @@ func answer(dir: URL, base: URL, name: String, text: String, seconds: Double) as
 
 /// Sends one text into the existing direct chat with a named peer, so a
 /// one-simulator scenario can receive a message it did not ask for.
-func send(dir: URL, base: URL, name: String, peer: String, text: String) async throws {
+func send(dir: URL, base: URL, name: String, peer: String, text: String, repeatCount: Int = 1) async throws {
     guard let member = cast.first(where: { $0.name == name }) else {
         throw FixtureError("unknown account \(name)")
     }
@@ -329,16 +329,18 @@ func send(dir: URL, base: URL, name: String, peer: String, text: String) async t
     }
     guard let chatId else { throw FixtureError("no direct chat between \(name) and \(peer)") }
     await startEngine(p, base: base)
-    var content = ContentPayload(kind: "text")
-    content.text = text
-    try await p.engine.enqueue(content: content, chatId: chatId)
-    try await settle("the message to leave the outbox", seconds: 30) {
+    for i in 1...max(1, repeatCount) {
+        var content = ContentPayload(kind: "text")
+        content.text = repeatCount > 1 ? "\(text) \(i)" : text
+        try await p.engine.enqueue(content: content, chatId: chatId)
+    }
+    try await settle("the messages to leave the outbox", seconds: 300) {
         try await p.db.read { dbc in
             try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM outbox") ?? 0
         } == 0
     }
     await p.engine.stop()
-    print("· sent «\(text)» to \(peer) in \(chatId)")
+    print("· sent «\(text)» ×\(max(1, repeatCount)) to \(peer) in \(chatId)")
 }
 
 /// Holds a typing indicator up in the direct chat with a named peer for a few
@@ -441,7 +443,8 @@ do {
             base: URL(string: try arg("base", default: "http://localhost:8787"))!,
             name: try arg("as", default: "bravo"),
             peer: try arg("to", default: "alfa"),
-            text: try arg("text", default: "Checking in."))
+            text: try arg("text", default: "Checking in."),
+            repeatCount: Int(try arg("repeat", default: "1")) ?? 1)
     case "typing":
         try await typing(
             dir: URL(fileURLWithPath: try arg("dir")),

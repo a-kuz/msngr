@@ -35,6 +35,23 @@ struct UnreadMarkerState: Equatable {
         }
     }
 
+    /// The derived truth from the database: incoming rows at or after the anchor.
+    /// The feed's window snapshots coalesce, so growing the count per visible row
+    /// loses everything that never enters the window; the database count is what
+    /// the banner shows. A live +1 that landed after the query stays.
+    mutating func reconcile(incomingSinceAnchor n: Int) {
+        guard isActive else { return }
+        count = max(count, n)
+    }
+
+    /// A banner for what arrived while the screen was away, counted from the
+    /// database on return: the first unseen incoming seq and how many there are.
+    mutating func plant(anchorSeq seq: Int, count n: Int) {
+        guard n > 0 else { return }
+        anchorSeq = seq
+        count = n
+    }
+
     /// Sending something or reacting takes the banner away.
     mutating func dismiss() {
         anchorSeq = nil
