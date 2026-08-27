@@ -470,7 +470,10 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   - ✅ a skipped-key window of 5000 in the pairwise chain and in the sender key
     chain, with the skipped-key store bounded on both sides (CryptoTests units)
 - Trust
-  - 🟡 TOFU over all of the peer's devices (not verified live)
+  - ✅ TOFU over all of the peer's devices: a peer whose second device presents
+    a divergent identity key blocks the send, not just the first device
+    (MultiDeviceTofuTests `testASecondDeviceWithADivergentKeyBlocksTheSend`,
+    live against the stand)
   - ✅ outgoing messages blocked on a key change and a banner to accept it: a
     real identity re-publish on the stand blocked the send, and «Принять»
     released it (qa/runs/2026-08-27-key-change-run.md)
