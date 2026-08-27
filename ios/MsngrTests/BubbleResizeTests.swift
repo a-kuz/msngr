@@ -72,6 +72,35 @@ final class BubbleResizeTests: XCTestCase {
         XCTAssertEqual(capsules(in: cell).count, 1)
     }
 
+    /// A genuinely new capsule springs in as one unit. The emoji label must be
+    /// laid out to the capsule's final bounds before the entrance animation
+    /// starts: a label that picks its frame up in a later layout pass inherits
+    /// the feed's outer animation block and reveals the glyph as a clipped
+    /// sliver growing from the corner.
+    @MainActor
+    func testNewCapsuleLabelIsLaidOutBeforeTheSpring() {
+        let cell = MessageCell(frame: CGRect(x: 0, y: 0, width: width, height: 300))
+        let bare = message(reactions: [:])
+        cell.configure(msg: bare, plan: BubbleLayout.plan(for: bare, width: width, tightGap: false,
+                                                          showTail: true, showName: false, authorName: nil))
+        let reacted = message(reactions: ["❤️": ["peer"]])
+        let plan = BubbleLayout.plan(for: reacted, width: width, tightGap: false,
+                                     showTail: true, showName: false, authorName: nil)
+        // the feed reconfigures visible cells inside an animation block
+        UIView.animate(withDuration: 0.25) {
+            cell.configure(msg: reacted, plan: plan)
+        }
+        guard let capsule = capsules(in: cell).first else {
+            return XCTFail("no capsule after the reaction arrived")
+        }
+        XCTAssertNotEqual(capsule.bounds.size, .zero, "the capsule takes its plan frame at once")
+        guard let label = capsule.subviews.compactMap({ $0 as? UILabel }).first else {
+            return XCTFail("the capsule holds its emoji label")
+        }
+        XCTAssertEqual(label.frame.size, capsule.bounds.size,
+                       "the label is laid out to the capsule before the spring, or the glyph clips mid-entrance")
+    }
+
     @MainActor
     func testCapsuleSurvivesACountChange() {
         let cell = MessageCell(frame: CGRect(x: 0, y: 0, width: width, height: 300))

@@ -409,16 +409,22 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         for r in plan.reactionsFrames {
             let capsule = previous.removeValue(forKey: r.emoji) ?? ReactionCapsuleView()
             let isNew = capsule.superview == nil
-            if isNew { bubbleView.addSubview(capsule) }
-            capsule.configure(emoji: r.emoji, count: r.count, mine: r.mine,
-                              outgoing: plan.isOutgoing, animateIn: sameCell && isNew)
             if isNew {
-                // a fresh capsule must not fly in from frame .zero when an outer
-                // animation block is running
-                UIView.performWithoutAnimation { capsule.frame = r.frame }
+                bubbleView.addSubview(capsule)
+                // the frame and the label are laid out before the entrance
+                // spring starts: a label that picks its bounds up in a later
+                // layout pass inherits the outer animation block and reveals
+                // the glyph as a clipped sliver instead of scaling with the
+                // capsule
+                UIView.performWithoutAnimation {
+                    capsule.frame = r.frame
+                    capsule.layoutIfNeeded()
+                }
             } else {
                 capsule.frame = r.frame
             }
+            capsule.configure(emoji: r.emoji, count: r.count, mine: r.mine,
+                              outgoing: plan.isOutgoing, animateIn: sameCell && isNew)
             capsule.onTap = { [weak self] in self?.onCapsuleTap?(r.emoji) }
             reactionViews.append(capsule)
         }
