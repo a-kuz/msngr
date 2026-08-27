@@ -731,7 +731,9 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ✅ the context menu animation: the blur, the emoji cascade, the dismissal (anim-review)
 - ✅ swipe-to-reply: the drag, the capped offset and the arrow are live
   (qa/runs/2026-08-21-swipe-reply); haptics are not observable on the simulator
-- 🟡 the reaction capsule appearing on a spring (not verified live)
+- ✅ the reaction capsule appearing on a spring: recorded frame by frame, the
+  whole capsule scales as one unit (qa/runs/2026-08-27-reaction-spring-run.md;
+  the clipped-glyph entrance it replaced is in defects.md, closed)
 - 🟡 a pointwise feed diff instead of reloadData, the layout plan cache (indirectly in the runs)
 - ✅ the feed window is bounded by count while the reader is at the bottom:
     without a ceiling it grew for as long as the chat stayed open, and sending

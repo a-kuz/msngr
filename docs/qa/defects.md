@@ -125,6 +125,22 @@ frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
 
+### A new reaction capsule reveals a clipped emoji instead of springing in whole
+Reported by the owner 2026-08-27 («плохо», frames from the capsule-appearance
+recording). While the capsule sprang in, the plate stood at nearly full size
+and the emoji showed as a growing sliver cut from its top left corner — a
+reveal, not a scale. The capsule was created with a zero frame,
+`configure(animateIn:)` started the spring first, and the frame landed after;
+the label picked its bounds up in a layout pass that ran inside the feed's
+outer animation block, so `label.frame` animated from zero and clipped the
+glyph.
+Closed the same day: the capsule's frame and its label are laid out inside
+`performWithoutAnimation` before the entrance spring starts, so the whole
+capsule scales as one unit. `testNewCapsuleLabelIsLaidOutBeforeTheSpring`
+fails on the old order and passes on the new one; the re-recorded entrance
+shows the glyph whole in every frame, and the owner confirmed the look
+(«анимация теперь выглядит совсем иначе»).
+
 ### The viewer's close button does nothing over a video
 Found in passing 2026-08-27 in the viewer run: on a video page the tap on ✕
 went to the system player's picture-in-picture glyph, which sits in the same
