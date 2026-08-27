@@ -6,6 +6,23 @@ with the commit that closed it.
 
 ## Open
 
+### A video neither joins the album grid nor appears the moment it is sent
+Reported by the owner 2026-08-27: several videos picked together are sent one
+by one instead of as a mosaic, and a video does not show up in the chat until
+its preparation is done. The instant-appearance work of 2026-08-21
+(`0ebee18`) covered photos and albums of photos only. Investigation next.
+
+### Voice bubbles look unkempt
+Reported by the owner 2026-08-27 with a screenshot from the device: the voice
+plate is twice the height of a text bubble, the waveform sits at the very top
+and the duration hangs in the middle of empty space, one duration reads «0:…»,
+and every waveform is a flat row of dots whatever was said. The plate's height
+follows the text size (`attachmentHeight`, 42 to 78 pt) while
+`VoiceMessageView.layoutSubviews` places the wave and the label at fixed
+offsets for the 42 pt plate; the duration label is capped at 60 pt, which a
+scaled 11 pt font overflows on «0:00,5»; the amplitudes are normalised to the
+loudest peak, so a single click flattens the speech around it. Fix in progress.
+
 ### The unread banner says 56 with a thousand unread
 Reported by the owner 2026-08-21 near midnight, with a screenshot from the
 device: after a ~1000-message burst the feed's unread banner reads «56 unread

@@ -180,6 +180,23 @@ enum TypeScale {
             guard next != category else { return }
             apply(next)
         }
+        // at App.init the screen may still answer with the default category while
+        // the scene is about to render at the reader's; the scene's own traits
+        // are the ones the text is drawn with
+        NotificationCenter.default.addObserver(
+            forName: UIScene.didActivateNotification, object: nil, queue: .main
+        ) { note in
+            guard let scene = note.object as? UIWindowScene else { return }
+            sync(with: scene.traitCollection)
+        }
+    }
+
+    /// Takes the category of a trait collection that is on screen, if the
+    /// snapshot disagrees with it.
+    static func sync(with traits: UITraitCollection) {
+        let actual = traits.preferredContentSizeCategory
+        guard actual != .unspecified, actual != category else { return }
+        apply(actual)
     }
 
     /// Swaps the scale and invalidates everything measured against the old one.

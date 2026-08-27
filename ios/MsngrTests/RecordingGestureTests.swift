@@ -106,6 +106,19 @@ final class RecordingGestureTests: XCTestCase {
         XCTAssertEqual(g.interrupted(), .none)
     }
 
+    /// One click at the start of a take does not flatten the speech after it:
+    /// the scale is set by the bulk of the buckets, and the spike is clipped.
+    func testWaveformScaleIgnoresASingleSpike() {
+        var levels = [Float](repeating: 0.1, count: 99)
+        levels[0] = 1.0
+        let wave = VoiceRecorder.normalize(levels)
+        XCTAssertEqual(wave[0], 31)
+        XCTAssertEqual(wave[50], 31, "the speech itself is drawn at full height")
+        XCTAssertEqual(VoiceRecorder.normalize([0, 0.0025, 0.01]), [0, 16, 31],
+                       "the square root lifts the quiet buckets")
+        XCTAssertEqual(VoiceRecorder.normalize([]), [])
+    }
+
     func testRateTitles() {
         XCTAssertEqual(VoiceMessageView.rateTitle(1), "1×")
         XCTAssertEqual(VoiceMessageView.rateTitle(1.5), "1,5×")
