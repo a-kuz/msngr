@@ -28,6 +28,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
     private var shownKeys: Set<String> = []
     private var db: DatabaseQueue?
     private var incomingTask: Task<Void, Never>?
+    private var reactionTask: Task<Void, Never>?
     private var badgeCancellable: AnyCancellable?
 
     func setup() {
@@ -50,6 +51,13 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
                 await self.handleIncomingWS(ev)
             }
         }
+        reactionTask?.cancel()
+        reactionTask = Task { [weak self] in
+            for await ev in engine.reactionStream.subscribe() {
+                guard let self else { return }
+                await self.handleReactionWS(ev)
+            }
+        }
     }
 
     /// Releases the previous session's database and engine: logout deletes the
@@ -57,6 +65,8 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
     func detach() {
         incomingTask?.cancel()
         incomingTask = nil
+        reactionTask?.cancel()
+        reactionTask = nil
         badgeCancellable = nil
         if let db {
             Task { try? await db.write { dbc in try BadgeStore.applyLocal(dbc, value: 0) } }
@@ -123,6 +133,54 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         case .none:
             break
         }
+    }
+
+    /// A peer reacted to a message this account authored: the same banner
+    /// path as a message, with the reaction line as the body. The frame is
+    /// service on the wire, so no push competes for it: the claim only guards
+    /// against a repeated announcement.
+    private func handleReactionWS(_ ev: SyncEngine.ReactionEvent) async {
+        let appActive = UIApplication.shared.applicationState == .active
+        let key = Message.feedId(chatId: ev.chatId, seq: ev.seq)
+        guard let info = await reactionBannerInfo(ev) else { return }
+        let action = NotificationDecision.forIncomingWS(
+            appActive: appActive,
+            chatOpen: activeChatId == ev.chatId,
+            isOwn: false,
+            isService: false,
+            muted: info.muted,
+            alreadyShown: shownKeys.contains(key),
+            apnsAvailable: apnsAvailable)
+        guard action != .none, let content = info.content else { return }
+        guard let db, await NotificationBurstStore.claim(db, chatId: ev.chatId,
+                                                         seq: ev.seq) else { return }
+        shownKeys.insert(key)
+        await show(action, content: content, info: info, chatId: ev.chatId, seq: ev.seq)
+    }
+
+    /// Chat and sender for the reaction banner; nil for a request chat still
+    /// hiding its content.
+    private func reactionBannerInfo(_ ev: SyncEngine.ReactionEvent) async -> BannerInfo? {
+        guard let db else { return nil }
+        let showsText = NotificationPreferences.showsMessageText(in: AppGroup.defaults)
+        return try? await db.read { dbc -> BannerInfo? in
+            let chat = try Chat.fetchOne(dbc, key: ev.chatId)
+            guard !ChatPrivacy.hidesContent(chat) else { return nil }
+            let isGroup = chat?.kind == .group
+            let sender = try User.fetchOne(dbc, key: ev.fromUserId)
+            let senderInfo = NotificationContentBuilder.SenderInfo(
+                userId: ev.fromUserId,
+                displayName: sender?.displayName ?? "",
+                avatarId: sender?.avatarId)
+            var info = BannerInfo(content: nil, sender: senderInfo, isGroup: isGroup,
+                                  chatAvatarId: chat?.avatarId, muted: chat?.muted ?? false)
+            info.content = NotificationContentBuilder.reactionContent(
+                emoji: ev.emoji, targetText: ev.targetText, targetKind: ev.targetKind,
+                chat: NotificationContentBuilder.ChatInfo(chatId: ev.chatId, isGroup: isGroup,
+                                                          title: chat?.title),
+                sender: senderInfo, showsMessageText: showsText)
+            return info
+        } ?? nil
     }
 
     struct BannerInfo {

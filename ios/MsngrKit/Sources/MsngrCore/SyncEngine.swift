@@ -50,6 +50,22 @@ public actor SyncEngine {
     }
     public nonisolated let incomingMessageStream = Broadcast<IncomingMessage>()
 
+    /// A peer set a reaction on a message this account authored: what the
+    /// reaction banner runs on. A cleared reaction and reactions to other
+    /// people's messages are not announced.
+    public struct ReactionEvent: Sendable {
+        public let chatId: String
+        /// seq of the reaction frame itself: the dedup key of its banner
+        public let seq: Int
+        public let fromUserId: String
+        public let emoji: String
+        /// text of the message the reaction landed on; nil for media without a caption
+        public let targetText: String?
+        /// kind of the target message, for the media placeholder in the banner
+        public let targetKind: String
+    }
+    public nonisolated let reactionStream = Broadcast<ReactionEvent>()
+
     public init(db: DatabaseQueue, api: APIClient, e2ee: E2EEManager, media: MediaManager? = nil,
                 wsURL: URL, ownUserId: String, ownDeviceId: String) {
         self.db = db
@@ -725,6 +741,8 @@ public actor SyncEngine {
         var content: [(IncomingFrame, ContentPayload)] = []
         var cursors: [IncomingFrame] = []
         var announce: [IncomingFrame] = []
+        /// peers' reactions from this batch, checked against their targets once written
+        var reactions: [(IncomingFrame, ContentPayload)] = []
         /// chats this run put something into: their deferred envelopes get a try
         var touched: Set<String> = []
         var replayed: Set<String> = []
@@ -761,6 +779,9 @@ public actor SyncEngine {
                 switch result {
                 case .content(let payload) where !Self.repairKinds.contains(payload.kind):
                     content.append((item, payload))
+                    if payload.kind == "reaction", payload.emoji != nil, item.from != ownUserId {
+                        reactions.append((item, payload))
+                    }
                     touched.insert(item.chatId)
                 case .undecryptable(let reason):
                     await flush()
@@ -809,6 +830,20 @@ public actor SyncEngine {
             incomingMessageStream.send(IncomingMessage(
                 chatId: item.chatId, seq: item.seq, fromUserId: item.from,
                 isService: item.isService, isOwn: item.from == ownUserId))
+        }
+        // a reaction is announced only once its target is confirmed to be ours;
+        // one that waits in pendingApply for its target raises no banner
+        for (item, payload) in reactions {
+            guard let emoji = payload.emoji, let targetSeq = payload.targetSeq else { continue }
+            let target = try? await db.read { dbc in
+                try Row.fetchOne(dbc, sql: """
+                    SELECT isOutgoing, text, kind FROM message WHERE chatId = ? AND seq = ?
+                    """, arguments: [item.chatId, targetSeq])
+            }
+            guard let target, target["isOutgoing"] as Bool else { continue }
+            reactionStream.send(ReactionEvent(
+                chatId: item.chatId, seq: item.seq, fromUserId: item.from, emoji: emoji,
+                targetText: target["text"], targetKind: target["kind"]))
         }
     }
 

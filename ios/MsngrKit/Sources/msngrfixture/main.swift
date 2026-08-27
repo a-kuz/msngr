@@ -349,6 +349,45 @@ func send(dir: URL, base: URL, name: String, peer: String, text: String, repeatC
     print("· sent «\(text)» ×\(max(1, repeatCount)) to \(peer) in \(chatId)")
 }
 
+/// Reacts to the peer's latest message in their direct chat.
+func react(dir: URL, base: URL, name: String, peer: String, emoji: String) async throws {
+    guard let member = cast.first(where: { $0.name == name }) else {
+        throw FixtureError("unknown account \(name)")
+    }
+    let p = try await openPerson(name: member.name, display: member.display, dir: dir, base: base)
+    let peerMetaURL = dir.appendingPathComponent(peer).appendingPathComponent("meta.json")
+    guard let data = try? Data(contentsOf: peerMetaURL),
+          let peerMeta = try? JSONDecoder().decode(Meta.self, from: data) else {
+        throw FixtureError("no meta for \(peer)")
+    }
+    let target: (chatId: String, id: String, text: String?)? = try await p.db.read { dbc in
+        guard let chatId = try String.fetchOne(dbc, sql: """
+            SELECT c.id FROM chat c
+            JOIN member m ON m.chatId = c.id AND m.userId = ?
+            WHERE c.kind = 'direct'
+            """, arguments: [peerMeta.userId]) else { return nil }
+        guard let row = try Row.fetchOne(dbc, sql: """
+            SELECT id, text FROM message
+            WHERE chatId = ? AND isOutgoing = 0 AND seq IS NOT NULL
+            ORDER BY seq DESC LIMIT 1
+            """, arguments: [chatId]) else { return nil }
+        return (chatId, row["id"], row["text"])
+    }
+    guard let target else { throw FixtureError("no incoming message from \(peer) to react to") }
+    await startEngine(p, base: base)
+    var content = ContentPayload(kind: "reaction")
+    content.targetLocalId = target.id
+    content.emoji = emoji
+    try await p.engine.enqueue(content: content, chatId: target.chatId)
+    try await settle("the reaction to leave the outbox", seconds: 300) {
+        try await p.db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM outbox") ?? 0
+        } == 0
+    }
+    await p.engine.stop()
+    print("· reacted \(emoji) to «\(target.text ?? "")» in \(target.chatId)")
+}
+
 /// Writes to a fixture account from someone it has never talked to: a fresh
 /// account is registered under `name`, opens a direct chat with the peer and
 /// sends one text, so the peer's device receives a message request.
@@ -477,6 +516,13 @@ do {
             peer: try arg("to", default: "alfa"),
             text: try arg("text", default: "Checking in."),
             repeatCount: Int(try arg("repeat", default: "1")) ?? 1)
+    case "react":
+        try await react(
+            dir: URL(fileURLWithPath: try arg("dir")),
+            base: URL(string: try arg("base", default: "http://localhost:8787"))!,
+            name: try arg("as", default: "bravo"),
+            peer: try arg("to", default: "alfa"),
+            emoji: try arg("emoji", default: "❤️"))
     case "knock":
         try await knock(
             dir: URL(fileURLWithPath: try arg("dir")),
