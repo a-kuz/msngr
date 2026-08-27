@@ -314,20 +314,26 @@ func send(dir: URL, base: URL, name: String, peer: String, text: String, repeatC
     guard let member = cast.first(where: { $0.name == name }) else {
         throw FixtureError("unknown account \(name)")
     }
-    let peerMetaURL = dir.appendingPathComponent(peer).appendingPathComponent("meta.json")
-    guard let data = try? Data(contentsOf: peerMetaURL),
-          let peerMeta = try? JSONDecoder().decode(Meta.self, from: data) else {
-        throw FixtureError("\(peer) is not seeded")
-    }
     let p = try await openPerson(name: member.name, display: member.display, dir: dir, base: base)
-    let chatId = try await p.db.read { dbc in
-        try String.fetchOne(dbc, sql: """
-            SELECT c.id FROM chat c
-            JOIN member m ON m.chatId = c.id AND m.userId = ?
-            WHERE c.kind = 'direct'
-            """, arguments: [peerMeta.userId])
+    let peerMetaURL = dir.appendingPathComponent(peer).appendingPathComponent("meta.json")
+    let chatId: String?
+    if let data = try? Data(contentsOf: peerMetaURL),
+       let peerMeta = try? JSONDecoder().decode(Meta.self, from: data) {
+        chatId = try await p.db.read { dbc in
+            try String.fetchOne(dbc, sql: """
+                SELECT c.id FROM chat c
+                JOIN member m ON m.chatId = c.id AND m.userId = ?
+                WHERE c.kind = 'direct'
+                """, arguments: [peerMeta.userId])
+        }
+    } else {
+        // not a seeded account: a group is addressed by its title
+        chatId = try await p.db.read { dbc in
+            try String.fetchOne(dbc, sql: "SELECT id FROM chat WHERE kind = 'group' AND title = ?",
+                                arguments: [peer])
+        }
     }
-    guard let chatId else { throw FixtureError("no direct chat between \(name) and \(peer)") }
+    guard let chatId else { throw FixtureError("no chat between \(name) and \(peer)") }
     await startEngine(p, base: base)
     for i in 1...max(1, repeatCount) {
         var content = ContentPayload(kind: "text")
@@ -341,6 +347,32 @@ func send(dir: URL, base: URL, name: String, peer: String, text: String, repeatC
     }
     await p.engine.stop()
     print("· sent «\(text)» ×\(max(1, repeatCount)) to \(peer) in \(chatId)")
+}
+
+/// Writes to a fixture account from someone it has never talked to: a fresh
+/// account is registered under `name`, opens a direct chat with the peer and
+/// sends one text, so the peer's device receives a message request.
+func knock(dir: URL, base: URL, name: String, display: String, peer: String, text: String) async throws {
+    let peerMetaURL = dir.appendingPathComponent(peer).appendingPathComponent("meta.json")
+    guard let data = try? Data(contentsOf: peerMetaURL),
+          let peerMeta = try? JSONDecoder().decode(Meta.self, from: data) else {
+        throw FixtureError("\(peer) is not seeded")
+    }
+    try? FileManager.default.removeItem(at: dir.appendingPathComponent(name))
+    let p = try await openPerson(name: name, display: display, dir: dir, base: base)
+    await startEngine(p, base: base)
+    let chatId = try await p.api.createChat(kind: "direct", memberIds: [peerMeta.userId], title: nil)
+    try await settle("the chat to reach \(p.username)") { try await chatExists(p, chatId) }
+    var content = ContentPayload(kind: "text")
+    content.text = text
+    try await p.engine.enqueue(content: content, chatId: chatId)
+    try await settle("the message to leave the outbox", seconds: 60) {
+        try await p.db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM outbox") ?? 0
+        } == 0
+    }
+    await p.engine.stop()
+    print("· \(p.username) knocked on \(peer) with «\(text)» in \(chatId)")
 }
 
 /// Holds a typing indicator up in the direct chat with a named peer for a few
@@ -445,6 +477,14 @@ do {
             peer: try arg("to", default: "alfa"),
             text: try arg("text", default: "Checking in."),
             repeatCount: Int(try arg("repeat", default: "1")) ?? 1)
+    case "knock":
+        try await knock(
+            dir: URL(fileURLWithPath: try arg("dir")),
+            base: URL(string: try arg("base", default: "http://localhost:8787"))!,
+            name: try arg("as", default: "delta"),
+            display: try arg("name", default: "Delta Service"),
+            peer: try arg("to", default: "alfa"),
+            text: try arg("text", default: "Hi! Is this the right place to ask about the beta?"))
     case "typing":
         try await typing(
             dir: URL(fileURLWithPath: try arg("dir")),
@@ -470,7 +510,8 @@ do {
         usage:
           msngrfixture seed --dir <fixtures> [--base http://localhost:8787] [--reset]
           msngrfixture show --dir <fixtures>
-          msngrfixture send --dir <fixtures> [--as bravo] [--to alfa] [--base …] [--text …]
+          msngrfixture send --dir <fixtures> [--as bravo] [--to alfa | --to <group title>] [--base …] [--text …]
+          msngrfixture knock --dir <fixtures> [--as delta] [--name "Delta Service"] [--to alfa] [--base …] [--text …]
           msngrfixture typing --dir <fixtures> [--as charlie] [--to alfa] [--base …] [--seconds 10]
           msngrfixture answer --dir <fixtures> [--as alfa] [--base …] [--text …] [--timeout 180]
         """)
