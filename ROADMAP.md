@@ -299,7 +299,10 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ the service action queue: read marks and accept (receipts-run)
   - ✅ the service action queue: delete-for-all, chosen with the stand dead and
     landed in the journal on its return (qa/runs/2026-08-27-offline-queue)
-  - 🟡 media: the source in a permanent folder, uploaded by the worker (partly covered by offline-run 2–3)
+  - ✅ media: the source in a permanent folder, uploaded by the worker — a
+    photo sent offline survived an app kill and an offline relaunch, and went
+    out five seconds after the stand returned
+    (qa/runs/2026-08-27-offline-media-run.md)
 - The connection
   - ✅ reconnect with backoff and a ceiling of 12 s (ReconnectBackoffTests units)
   - ✅ an immediate reconnect when the network returns and from the foreground
