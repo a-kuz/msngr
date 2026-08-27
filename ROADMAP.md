@@ -252,7 +252,8 @@ A ✅ goes in only together with a link to the evidence.
   - ⬜ an anonymous poll and one with the voters visible; the count is the server's
     but the wording stays encrypted, so a poll is a message kind of its own
 - System messages
-  - 🟡 «Код безопасности собеседника изменился» (not verified live)
+  - ✅ «Код безопасности собеседника изменился» inserted into the feed on a
+    real key change (qa/runs/2026-08-27-key-change-run.md)
   - ✅ group events (left, title, photo, description, the admin role) as separate
     messages, worded for the actor, for the member it touches and for everyone else
     (qa/runs/2026-08-17-groups-run)
@@ -461,7 +462,9 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     chain, with the skipped-key store bounded on both sides (CryptoTests units)
 - Trust
   - 🟡 TOFU over all of the peer's devices (not verified live)
-  - 🟡 outgoing messages blocked on a key change and a banner to accept it (not verified live)
+  - ✅ outgoing messages blocked on a key change and a banner to accept it: a
+    real identity re-publish on the stand blocked the send, and «Принять»
+    released it (qa/runs/2026-08-27-key-change-run.md)
   - ✅ the 60-digit safety number in the chat info, matching the number an
     independent side computes for the same pair (qa/runs/2026-08-21-safety-number)
   - ⬜ comparing by QR
