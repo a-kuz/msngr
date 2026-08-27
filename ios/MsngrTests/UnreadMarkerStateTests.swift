@@ -1,8 +1,90 @@
 import XCTest
+import GRDB
+import MsngrCore
 @testable import Msngr
 
 /// The rule matrix for the "N unread messages" marker.
 final class UnreadMarkerStateTests: XCTestCase {
+
+    // The count is derived from the database, not incremented per visible row:
+    // catch-up appends rows the feed window never shows, and coalesced
+    // emissions skip seqs (the live 56-vs-1004 defect).
+    func testReconcileLiftsTheCountToTheDerivedTruth() {
+        var s = UnreadMarkerState()
+        s.enterChat(unreadCount: 700, myReadUpTo: 34)
+        s.reconcile(incomingSinceAnchor: 1000)
+        XCTAssertEqual(s.count, 1000)
+        XCTAssertEqual(s.anchorSeq, 35, "the anchor stays where it was planted")
+    }
+
+    func testReconcileKeepsALiveArrivalTheQueryMissed() {
+        var s = UnreadMarkerState()
+        s.enterChat(unreadCount: 5, myReadUpTo: 10)
+        s.incoming(seq: 16)
+        s.reconcile(incomingSinceAnchor: 5)
+        XCTAssertEqual(s.count, 6, "a +1 that landed after the query is not shrunk away")
+    }
+
+    func testReconcileWithoutMarkerDoesNothing() {
+        var s = UnreadMarkerState()
+        s.reconcile(incomingSinceAnchor: 40)
+        XCTAssertFalse(s.isActive)
+    }
+
+    // Rule 5 by derivation: arrivals while away that never entered a feed
+    // window snapshot still come back as a banner.
+    func testPlantRaisesTheReturnBanner() {
+        var s = UnreadMarkerState()
+        s.becameObscured()
+        s.becameActive()
+        s.plant(anchorSeq: 11, count: 3)
+        XCTAssertTrue(s.isActive)
+        XCTAssertEqual(s.anchorSeq, 11)
+        XCTAssertEqual(s.count, 3)
+    }
+
+    func testPlantWithNothingNewStaysQuiet() {
+        var s = UnreadMarkerState()
+        s.plant(anchorSeq: 11, count: 0)
+        XCTAssertFalse(s.isActive)
+    }
+
+    // The derivation queries themselves, over the real schema.
+    func testIncomingCountCountsOnlyIncomingFromTheAnchor() throws {
+        let db = try AppDatabase.openInMemory()
+        try db.write { dbc in
+            for seq in 1...12 {
+                let own = seq % 4 == 0
+                var m = Message(id: "m\(seq)", chatId: "c1", fromUserId: own ? "me" : "peer",
+                                sentAt: Double(seq), kind: .text, text: "t",
+                                status: .sent, isOutgoing: own)
+                m.seq = seq
+                try m.save(dbc)
+            }
+        }
+        let n = try db.read { try ChatViewModel.incomingCount($0, chatId: "c1", fromSeq: 5) }
+        XCTAssertEqual(n, 6, "seqs 5…12 hold six incoming rows; own messages do not count")
+        let all = try db.read { try ChatViewModel.incomingCount($0, chatId: "c1", fromSeq: 1) }
+        XCTAssertEqual(all, 9)
+    }
+
+    func testFirstArrivalFindsTheFirstUnseenIncoming() throws {
+        let db = try AppDatabase.openInMemory()
+        try db.write { dbc in
+            for (seq, own) in [(20, true), (21, false), (22, false)] {
+                var m = Message(id: "m\(seq)", chatId: "c1", fromUserId: own ? "me" : "peer",
+                                sentAt: Double(seq), kind: .text, text: "t",
+                                status: .sent, isOutgoing: own)
+                m.seq = seq
+                try m.save(dbc)
+            }
+        }
+        let found = try db.read { try ChatViewModel.firstArrival($0, chatId: "c1", after: 19) }
+        XCTAssertEqual(found?.firstSeq, 21, "our own message does not open a banner")
+        XCTAssertEqual(found?.count, 2)
+        let none = try db.read { try ChatViewModel.firstArrival($0, chatId: "c1", after: 22) }
+        XCTAssertNil(none)
+    }
 
     // Rule 1: entering with unread puts the marker above the first unread message
     func testEnterChatWithUnread() {

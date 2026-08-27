@@ -80,6 +80,10 @@ final class ChatViewModel: ObservableObject {
     private var enteredChat = false
     /// Incoming messages up to this seq are already counted in the banner.
     private var markerCountedUpToSeq = 0
+    /// lastSeq the banner count was last derived for; a row emission past it re-derives.
+    private var markerReconciledLastSeq = 0
+    /// The chat's lastSeq at the moment the screen went away, for the return banner.
+    private var obscuredAtLastSeq = 0
     private var lastMsgs: [Message] = []
     private var obscuredCancellable: AnyCancellable?
     private var pinCancellable: AnyCancellable?
@@ -136,9 +140,11 @@ final class ChatViewModel: ObservableObject {
             .sink { [weak self] obscured in
                 guard let self else { return }
                 if obscured {
+                    self.obscuredAtLastSeq = self.chat?.lastSeq ?? 0
                     self.unreadMarker.becameObscured()
                 } else {
                     self.unreadMarker.becameActive()
+                    self.restoreMarkerAfterObscured()
                     // what arrived in the background is already on screen, so send
                     // the read receipt now instead of waiting for the next db change
                     self.markVisibleRead()
@@ -227,6 +233,7 @@ final class ChatViewModel: ObservableObject {
             // everything already on the server at that moment is in the initial count
             markerCountedUpToSeq = chat.lastSeq
         }
+        if let chat { reconcileUnreadMarker(chat) }
         if cancellable == nil {
             observeChat()
         } else if contentHidden != wasHidden {
@@ -424,6 +431,72 @@ final class ChatViewModel: ObservableObject {
            first.id != lastMsgs.first?.id, (first.seq ?? Int.max) > markerCountedUpToSeq {
             unreadMarker.dismiss()
         }
+    }
+
+    /// The banner's count is derived, not incremented: catch-up appends rows the
+    /// feed window never shows, and coalesced emissions skip seqs, so counting
+    /// snapshot rows loses arrivals. Whenever the chat row's lastSeq moves past
+    /// what was last derived, the database says how many incoming messages stand
+    /// at or after the anchor.
+    private func reconcileUnreadMarker(_ chat: Chat) {
+        guard unreadMarker.isActive, let anchor = unreadMarker.anchorSeq,
+              chat.lastSeq > markerReconciledLastSeq, let db = app.db else { return }
+        markerReconciledLastSeq = chat.lastSeq
+        let chatId = self.chatId
+        Task { [weak self] in
+            let n = (try? await db.read { dbc in
+                try Self.incomingCount(dbc, chatId: chatId, fromSeq: anchor)
+            }) ?? 0
+            guard let self, self.unreadMarker.isActive,
+                  self.unreadMarker.anchorSeq == anchor else { return }
+            let before = self.unreadMarker.count
+            self.unreadMarker.reconcile(incomingSinceAnchor: n)
+            if self.unreadMarker.count != before { self.rebuildFeed() }
+        }
+    }
+
+    /// Back from the background or the shade: what arrived while away becomes a
+    /// banner counted from the database, whether or not any of it ever passed
+    /// through a feed window snapshot.
+    private func restoreMarkerAfterObscured() {
+        guard let chat, let db = app.db else { return }
+        markerReconciledLastSeq = 0
+        if unreadMarker.isActive {
+            reconcileUnreadMarker(chat)
+            return
+        }
+        let since = obscuredAtLastSeq
+        guard chat.lastSeq > since else { return }
+        let chatId = self.chatId
+        Task { [weak self] in
+            let found = try? await db.read { dbc in
+                try Self.firstArrival(dbc, chatId: chatId, after: since)
+            }
+            guard let self, let found,
+                  !self.app.obscured, !self.unreadMarker.isActive else { return }
+            self.unreadMarker.plant(anchorSeq: found.firstSeq, count: found.count)
+            self.rebuildFeed()
+        }
+    }
+
+    /// Incoming messages at or after the banner's anchor.
+    nonisolated static func incomingCount(_ dbc: GRDB.Database, chatId: String, fromSeq: Int) throws -> Int {
+        try Int.fetchOne(dbc, sql: """
+            SELECT COUNT(*) FROM message
+            WHERE chatId = ? AND isOutgoing = 0 AND seq >= ?
+            """, arguments: [chatId, fromSeq]) ?? 0
+    }
+
+    /// The first incoming message after the given seq and how many followed it.
+    nonisolated static func firstArrival(_ dbc: GRDB.Database, chatId: String,
+                             after seq: Int) throws -> (firstSeq: Int, count: Int)? {
+        let row = try Row.fetchOne(dbc, sql: """
+            SELECT COUNT(*) AS n, MIN(seq) AS first FROM message
+            WHERE chatId = ? AND isOutgoing = 0 AND seq > ?
+            """, arguments: [chatId, seq])
+        guard let row, let n = row["n"] as Int?, n > 0,
+              let first = row["first"] as Int? else { return nil }
+        return (firstSeq: first, count: n)
     }
 
     /// Rebuilds the feed from the last snapshot after the banner state changes.
