@@ -22,7 +22,7 @@ Own simulators `msngr-sw-A` (34245E1D) and `msngr-sw-B` (D8388E7C), iPhone 17,
 iOS 26.5, deleted after the run. Own `wrangler dev` on :8811 with a separate
 `--persist-to` (schema applied with `wrangler d1 execute msngr --local
 --persist-to … --file schema.sql`). The app was launched with
-`SIMCTL_CHILD_MSNGR_SERVER=http://localhost:8811`, built from commit `fce655f`
+`SIMCTL_CHILD_MSNGR_SERVER=http://localhost:8811`, built from commit `cc5966a`
 into a separate `derivedDataPath`. Users: `swalpha`
 (01M023JZWTJFVP3MS2ZCYRR10W), `swbeta` (01M023PDS5JJYMKGNB9CS9SA41), `swgamma`
 (01M0241EQW6BQZJ8W3TYVQGKC4), `swdelta` (01M024GV0CQ8K5HKM1ANWD78FC). Database

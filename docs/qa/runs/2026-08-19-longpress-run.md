@@ -2,7 +2,7 @@
 
 Two owner-reported defects, one interaction: the context menu opened behind the
 keyboard with only «Ответить» reachable, and the lifted bubble drew a second
-offset outline behind itself. Both fixed in `c5c0ab4`.
+offset outline behind itself. Both fixed in `2114f62`.
 
 ## Causes
 
@@ -58,10 +58,10 @@ messages sent, draft «Draft in progress» typed, software keyboard up.
     earlier aborted run (the app was not uninstalled before the retry);
     green on a clean install.
   - `testH_PulseConsoleOpensOnLaunchArg` was red on this branch and on main
-    alike: Pulse 5 (`bc528f7`) draws the console title as a toolbar item and
+    alike: Pulse 5 (`6c7d00c`) draws the console title as a toolbar item and
     exposes no navigation bar named «Console», so the smoke waited on a bar
     that never comes while the recording video shows the console open. The
-    smoke now anchors on the console's Filters button (`f13888e`), verified
+    smoke now anchors on the console's Filters button (`701f433`), verified
     against the live accessibility tree.
 
 ## The shared stand

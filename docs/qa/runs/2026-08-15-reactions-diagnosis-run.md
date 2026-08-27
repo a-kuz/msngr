@@ -16,7 +16,7 @@ iOS 26.5, deleted after the run. Own `wrangler dev` on :8809 with a separate
 `--persist-to` (the D1 schema was applied with `wrangler d1 execute msngr
 --local --persist-to ... --file schema.sql`; without it registration answers
 500). The app was launched with `SIMCTL_CHILD_MSNGR_SERVER=http://localhost:8809`,
-built from HEAD `ca9eacd` into its own `derivedDataPath`. Users: `rxalpha`
+built from HEAD `97ff2ed` into its own `derivedDataPath`. Users: `rxalpha`
 (01M01ZJN8AHPB3G803ES90BGG8), `rxbeta` (01M01ZKE9PX7M5E1XA450PA4GE), later
 `rxgamma` (01M02089DHDA71ET11V2W8DFR9). The chat was created with
 `POST /api/chats` under A's token. State was read straight out of the group

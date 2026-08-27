@@ -1,7 +1,7 @@
 # Signing in on a second device
 
 Status: design, 2026-08-16. Written before the code, against `main` at
-`2429451`.
+`9e52394`.
 
 Today the only way into an account is `POST /api/register`, which mints a new
 user. There is no login, so a reinstall is a new identity and a second device is

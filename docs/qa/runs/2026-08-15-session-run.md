@@ -22,7 +22,7 @@ Measured on a live container before the fix: `Library` held only `Caches`,
 `HTTPStorages`, `Preferences`, `Saved Application State` and `SplashBoard`, with
 no `Application Support` directory at all.
 
-## Run before the fix (HEAD 8c30820)
+## Run before the fix (HEAD b415b19)
 
 1. Clean install, the registration screen.
 2. Registered `sessfix1`, the chat list opened.

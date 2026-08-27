@@ -21,7 +21,7 @@ app itself builds the content. Verified with local notifications.
 The `NotificationService` target was already described in `ios/project.yml`
 (app-extension, `NSExtensionPointIdentifier: com.apple.usernotifications.service`,
 embedded into Msngr via `embed: true`), and the code is
-`ios/NotificationService/NotificationService.swift` from commit ee0538b. It
+`ios/NotificationService/NotificationService.swift` from commit 04cc6f6. It
 built before this run too; what was checked here is that the `.appex` lands in
 `Msngr.app/PlugIns/` and is registered by the system:
 

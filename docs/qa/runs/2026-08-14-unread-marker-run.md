@@ -32,5 +32,5 @@ code the animated `performBatchUpdates` runs only for the "marker removed" diff.
 The server smoke test fails on the push section because :9871 is taken by the
 owner's apns-mock, a stand process, so only the sections before the pushes are
 green. MsngrUITests is not part of the test scheme of the generated project
-(project.yml, since commit 098a439), so the UI smoke test does not run from the
+(project.yml, since commit 1375bfa), so the UI smoke test does not run from the
 worktree.
