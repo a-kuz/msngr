@@ -2770,17 +2770,6 @@
         }
       }
     },
-    "History starts here": {
-      "extractionState": "manual",
-      "localizations": {
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "История начинается здесь"
-          }
-        }
-      }
-    },
     "Message": {
       "extractionState": "manual",
       "localizations": {

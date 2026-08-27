@@ -191,8 +191,7 @@ final class FeedExtrasTests: XCTestCase {
         // the oldest known message with no separator above it
         let tail: [ChatFeedItem] = [.message(incoming("m1", sentAt: 1_700_000_000, seq: 1),
                                              tightGap: false, showTail: true, showName: false,
-                                             authorName: nil),
-                                    .historyStart(id: "history-start")]
+                                             authorName: nil)]
         XCTAssertNil(MessagesViewController.stickyLabel(items: tail, topIndex: 0))
     }
 }

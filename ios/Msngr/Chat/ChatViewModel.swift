@@ -31,9 +31,6 @@ enum ChatFeedItem: Identifiable, Equatable {
     /// Messages this device could not read, between two messages of the feed.
     /// Neighbouring seqs collapse into one item.
     case unreadable(id: String)
-    /// The oldest message stored on this device: the ratchet is forward-only,
-    /// so nothing above it can be restored.
-    case historyStart(id: String)
 
     var id: String {
         switch self {
@@ -41,7 +38,6 @@ enum ChatFeedItem: Identifiable, Equatable {
         case .dateSeparator(let id, _): return id
         case .unreadMarker(let id, _): return id
         case .unreadable(let id): return id
-        case .historyStart(let id): return id
         }
     }
 }
@@ -329,8 +325,7 @@ final class ChatViewModel: ObservableObject {
         feed = PerfTrace.shared.measure("feed.build", info: ["msgs": Double(snapshot.msgs.count)]) {
             Self.buildFeed(snapshot.msgs, members: snapshot.users, ownId: ownId,
                            unreadMarker: markerFeedParam, contentHidden: contentHidden,
-                           unreadableSeqs: snapshot.unreadableSeqs,
-                           atHistoryStart: snapshot.atHistoryStart)
+                           unreadableSeqs: snapshot.unreadableSeqs)
         }
         keyChangePending = snapshot.keyChangePending
         markVisibleRead()
@@ -434,8 +429,7 @@ final class ChatViewModel: ObservableObject {
     /// Rebuilds the feed from the last snapshot after the banner state changes.
     private func rebuildFeed() {
         feed = Self.buildFeed(lastMsgs, members: members, ownId: ownUserId, unreadMarker: markerFeedParam,
-                              contentHidden: contentHidden, unreadableSeqs: unreadableSeqs,
-                              atHistoryStart: atHistoryStart)
+                              contentHidden: contentHidden, unreadableSeqs: unreadableSeqs)
     }
 
     /// A request before it is accepted: the content is neither shown nor marked read.
@@ -461,12 +455,10 @@ final class ChatViewModel: ObservableObject {
     /// unreadableSeqs are the seqs this device could not read; between two messages
     /// of the window they become a neutral placeholder, and adjacent ones collapse
     /// into a single placeholder.
-    /// atHistoryStart means the window reached the oldest message on this device.
     static func buildFeed(_ msgs: [Message], members: [User], ownId: String = "",
                           unreadMarker: (anchorSeq: Int, count: Int)? = nil,
                           contentHidden: Bool = false,
-                          unreadableSeqs: [Int] = [],
-                          atHistoryStart: Bool = false) -> [ChatFeedItem] {
+                          unreadableSeqs: [Int] = []) -> [ChatFeedItem] {
         guard !contentHidden else { return [] }
         var out: [ChatFeedItem] = []
         let cal = Calendar.current
@@ -536,8 +528,6 @@ final class ChatViewModel: ObservableObject {
                 out.append(.dateSeparator(id: "date:\(msg.id)", label: Self.dayLabel(msgDay)))
             }
         }
-        // the oldest message on the device: nothing above it can be restored
-        if atHistoryStart, !out.isEmpty { out.append(.historyStart(id: "history-start")) }
         return out
     }
 

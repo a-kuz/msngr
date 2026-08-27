@@ -53,12 +53,11 @@ final class ClearedFeedTests: XCTestCase {
         XCTAssertEqual(vc.collectionView.numberOfItems(inSection: 0), 2) // message + date
     }
 
-    /// A cleared chat builds no feed at all: with no messages there are neither
-    /// placeholders for unreadable seqs nor a history-start item.
+    /// A cleared chat builds no feed at all: with no messages there are no
+    /// placeholders for unreadable seqs.
     @MainActor
     func testEmptyChatBuildsNoFeedItems() {
-        let feed = ChatViewModel.buildFeed([], members: [], unreadableSeqs: [4, 5],
-                                           atHistoryStart: true)
+        let feed = ChatViewModel.buildFeed([], members: [], unreadableSeqs: [4, 5])
         XCTAssertTrue(feed.isEmpty)
     }
 }
