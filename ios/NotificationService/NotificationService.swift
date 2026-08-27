@@ -232,6 +232,6 @@ private final class PushAnswer: @unchecked Sendable {
 
 enum AppGroup {
     static let identifier = AppContainer.appGroupIdentifier
-    static let keychainGroup = "ai.enface.msngr.shared"
+    static let keychainGroup = "msngr.msngr.shared"
     static let defaults = UserDefaults(suiteName: identifier) ?? .standard
 }

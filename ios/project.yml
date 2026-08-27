@@ -1,6 +1,6 @@
 name: Msngr
 options:
-  bundleIdPrefix: ai.enface
+  bundleIdPrefix: msngr
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
@@ -29,7 +29,7 @@ targets:
     entitlements:
       path: Msngr/Msngr.entitlements
       properties:
-        com.apple.security.application-groups: [group.ai.enface.msngr]
+        com.apple.security.application-groups: [group.msngr.msngr]
         # sender avatar and name in the banner (Communication Notifications)
         com.apple.developer.usernotifications.communication: true
     dependencies:
@@ -68,8 +68,8 @@ targets:
           - CFBundleURLSchemes: [msngr]
     settings:
       base:
-        # ai.enface.Msngr everywhere; a device build under a foreign team
-        # substitutes its own (make device)
+        # msngr.msngr everywhere; a device build substitutes the signing
+        # team's own id (make device, local.mk)
         PRODUCT_BUNDLE_IDENTIFIER: ${MSNGR_APP_ID}
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
@@ -90,7 +90,7 @@ targets:
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: true
-        PRODUCT_BUNDLE_IDENTIFIER: ai.enface.MsngrTests
+        PRODUCT_BUNDLE_IDENTIFIER: msngr.MsngrTests
 
   MsngrUITests:
     type: bundle.ui-testing
@@ -103,7 +103,7 @@ targets:
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: true
-        PRODUCT_BUNDLE_IDENTIFIER: ai.enface.MsngrUITests
+        PRODUCT_BUNDLE_IDENTIFIER: msngr.MsngrUITests
         TEST_TARGET_NAME: Msngr
 
   MsngrMac:
@@ -125,7 +125,7 @@ targets:
         NSMicrophoneUsageDescription: "Запись голосовых сообщений"
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: ai.enface.MsngrMac
+        PRODUCT_BUNDLE_IDENTIFIER: msngr.MsngrMac
         SWIFT_VERSION: "5.9"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         CODE_SIGN_STYLE: Automatic

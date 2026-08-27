@@ -3,7 +3,7 @@ import OSLog
 /// Core log channels. Everything that would otherwise fail silently goes here:
 /// a refused disk write, an unreachable data location.
 public enum MsngrLog {
-    public static let subsystem = "ai.enface.msngr"
+    public static let subsystem = "msngr.msngr"
 
     /// Storage: data location, directory creation, migration into the group container.
     public static let storage = Logger(subsystem: subsystem, category: "storage")

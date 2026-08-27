@@ -71,7 +71,7 @@ make check DEV_UDID=14C70E21-A23A-4492-8E6A-113AE0BC6B6D   # gate-runner
 ```
 
 Uninstall the app from the simulator before `make uicheck`
-(`xcrun simctl uninstall <udid> ai.enface.Msngr`). The device keeps the
+(`xcrun simctl uninstall <udid> msngr.msngr`). The device keeps the
 migrations of whichever build ran on it last, and a branch that does not know the
 newest of them leaves the file closed and shows «Приложение устарело» in place of
 the chat list: every UI test then fails on a screen with no chats, as a wandering

@@ -531,7 +531,7 @@ Dev without an Apple account: `APNS_HOST` (in `server/.dev.vars` —
 `server/tools/apns-mock.mjs`, which delivers them to the simulator through
 `xcrun simctl push` (apnsToken = the simulator's UDID). On a non-Apple host the
 request goes out without a JWT signature, no p8 key is needed, and `apns-topic`
-defaults to `ai.enface.Msngr`. A limit of that channel: `simctl push` does not
+defaults to `msngr.msngr`. A limit of that channel: `simctl push` does not
 launch the Notification Service Extension — see
 `docs/research/nse-simulator-experiment.md`.
 

@@ -36,8 +36,8 @@ FIXTURES = ROOT / ".claude" / "fixtures"
 KIT = ROOT / "ios" / "MsngrKit"
 GRANT_BLOB = ROOT / "scripts" / "assets" / "notification-grant.bplist"
 
-BUNDLE_ID = os.environ.get("MSNGR_APP_ID", "ai.enface.Msngr")
-GROUP_ID = "group.ai.enface.msngr"
+BUNDLE_ID = os.environ.get("MSNGR_APP_ID", "msngr.msngr")
+GROUP_ID = "group.msngr.msngr"
 NAMES = ["alfa", "bravo", "charlie"]
 # what the app keeps in the group container; the journal is checkpointed into
 # the database before a home is written, so these three files are the whole state

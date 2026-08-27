@@ -1110,7 +1110,7 @@ if (push1) {
   check("push collapse-id names (chatId, seq)",
     push1.headers["apns-collapse-id"] === expectCollapse,
     push1.headers["apns-collapse-id"]);
-  check("push topic", push1.headers["apns-topic"] === "ai.enface.Msngr"
+  check("push topic", push1.headers["apns-topic"] === "msngr.msngr"
     && push1.headers["apns-push-type"] === "alert");
   check("dev push unsigned", push1.headers.authorization === undefined);
 }
