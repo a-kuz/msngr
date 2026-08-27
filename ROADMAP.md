@@ -303,7 +303,10 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ an immediate reconnect when the network returns and from the foreground
     (devices-version run: 8 proxy kills, both apps re-upgraded and delivered
     9/9 right after each return)
-  - 🟡 detecting a dead socket by a pong timeout (not verified live)
+  - ✅ detecting a dead socket by a pong timeout: with the stand's processes
+    frozen and the TCP connection left open, the header reads «подключение…»
+    17 s later, and «был(а) …» again 4 s after the thaw
+    (qa/runs/2026-08-27-dead-socket)
   - ✅ catch-up in portions by the client's cursor: one portion per frame, and
     between portions the object answers live traffic (smoke `catch-up goes in portions`,
     `catch-up cursor moves forward`, `live traffic is answered mid catch-up`)
