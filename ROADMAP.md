@@ -236,7 +236,9 @@ A ✅ goes in only together with a link to the evidence.
   - ⬜ a round bubble in the feed, playing without sound until it is tapped
   - ⬜ playback continuing in a small circle while the reader scrolls away
 - Files
-  - 🟡 sending up to 100 MB with the name (not verified live)
+  - ✅ sending up to 100 MB with the name: a 99.6 MB file sent from the Files
+    app, acked and stored as one encrypted blob on the stand
+    (qa/runs/2026-08-27-file-100mb-run.md)
   - ✅ previewing a file in the app: QuickLook over the decrypted cache, a
     spinner for the long fetch, unreadable types going to the share sheet
     (qa/runs/2026-08-21-file-preview, a 98.9 MB PDF of 642 pages)
