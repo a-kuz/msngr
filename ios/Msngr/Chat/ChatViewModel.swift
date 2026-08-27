@@ -232,6 +232,9 @@ final class ChatViewModel: ObservableObject {
             unreadMarker.enterChat(unreadCount: chat.unreadCount, myReadUpTo: chat.myReadUpTo)
             // everything already on the server at that moment is in the initial count
             markerCountedUpToSeq = chat.lastSeq
+            // the banner owns the landing when there is unread; otherwise the feed
+            // goes back to where the reader left off last time
+            if chat.unreadCount == 0 { publishSavedReadingPosition() }
         }
         if let chat { reconcileUnreadMarker(chat) }
         if cancellable == nil {
@@ -497,6 +500,55 @@ final class ChatViewModel: ObservableObject {
         guard let row, let n = row["n"] as Int?, n > 0,
               let first = row["first"] as Int? else { return nil }
         return (firstSeq: first, count: n)
+    }
+
+    // MARK: - The reading position between openings
+
+    /// Where the reader stood when the chat was last left; the screen scrolls
+    /// there once, on entry with nothing unread.
+    @Published private(set) var restoreSeq: Int?
+    private var restoreSuppressed = false
+
+    /// An explicit jump (search, a push) owns the landing; the stored position yields.
+    func suppressRestore() { restoreSuppressed = true }
+
+    /// Called on leaving the chat: the seq the reader was looking at, or nil at
+    /// the bottom, which clears the stored position.
+    func saveReadingPosition(_ seq: Int?) {
+        guard let db = app.db else { return }
+        let chatId = self.chatId
+        Task {
+            try? await db.write { dbc in
+                try Self.storeReadingPosition(dbc, chatId: chatId, seq: seq)
+            }
+        }
+    }
+
+    private func publishSavedReadingPosition() {
+        guard !restoreSuppressed, let db = app.db else { return }
+        let chatId = self.chatId
+        Task { [weak self] in
+            let seq = try? await db.read { dbc in
+                try Self.readingPosition(dbc, chatId: chatId)
+            }
+            guard let self, let seq else { return }
+            self.restoreSeq = seq
+        }
+    }
+
+    nonisolated static func storeReadingPosition(_ dbc: GRDB.Database, chatId: String,
+                                                 seq: Int?) throws {
+        let key = "feedpos:\(chatId)"
+        if let seq {
+            try KVRow(key: key, value: String(seq)).save(dbc)
+        } else {
+            try dbc.execute(sql: "DELETE FROM kv WHERE key = ?", arguments: [key])
+        }
+    }
+
+    nonisolated static func readingPosition(_ dbc: GRDB.Database, chatId: String) throws -> Int? {
+        try String.fetchOne(dbc, sql: "SELECT value FROM kv WHERE key = ?",
+                            arguments: ["feedpos:\(chatId)"]).flatMap(Int.init)
     }
 
     /// Rebuilds the feed from the last snapshot after the banner state changes.
