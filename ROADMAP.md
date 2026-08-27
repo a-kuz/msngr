@@ -264,10 +264,11 @@ A ✅ goes in only together with a link to the evidence.
 
 - Optimistic send
   - ✅ the message appears before the network, with the clock status (offline-run 1–3)
-  - 🟡 a queued message sends at the slightest opportunity and never gives up:
+  - ✅ a queued message sends at the slightest opportunity and never gives up:
     the drain wakes on a reconnect, on the foreground, on a network change and
-    on a 30 s timer (the owner's bar is WhatsApp's — clocks resolve themselves;
-    the timer landed in 671b5e5, the full scenario is not watched live yet)
+    on a 30 s timer; with the stand killed for 45 s the clock held, and the
+    socket was back within the first second of the stand's return with the
+    message acked (qa/runs/2026-08-27-offline-queue)
   - ✅ statuses: sent → delivered → read (media-run, case 32)
   - ✅ read only while the recipient is in front of the message: not from the
     chat list, not from the background, not with the feed scrolled up, and at
@@ -294,7 +295,8 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ killing the app with something unsent: the message is still there and goes out (offline-run 4)
   - ✅ a reaction offline (offline-run 6)
   - ✅ the service action queue: read marks and accept (receipts-run)
-  - 🟡 the service action queue: delete-for-all (units, not verified live)
+  - ✅ the service action queue: delete-for-all, chosen with the stand dead and
+    landed in the journal on its return (qa/runs/2026-08-27-offline-queue)
   - 🟡 media: the source in a permanent folder, uploaded by the worker (partly covered by offline-run 2–3)
 - The connection
   - ✅ reconnect with backoff and a ceiling of 12 s (ReconnectBackoffTests units)
@@ -357,7 +359,8 @@ A ✅ goes in only together with a link to the evidence.
     comes back on their next message (run 08–12, smoke `chat comes back
     on the next message`)
   - ✅ deleting a group means leaving it (smoke `group delete leaves the group`)
-  - 🟡 deleting offline: the request waits in the action queue (not verified live)
+  - ✅ deleting offline: the request waits in the action queue and lands as
+    `POST /delete` on the reconnect (qa/runs/2026-08-27-offline-queue)
 
 ## Reactions and the context menu
 
