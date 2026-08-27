@@ -81,6 +81,13 @@ frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
 
+### The viewer's close button does nothing over a video
+Found in passing 2026-08-27 in the viewer run: on a video page the tap on ✕
+went to the system player's picture-in-picture glyph, which sits in the same
+corner, and the viewer stayed open. Closed by b7cfa10: the video page is the
+player controller with picture-in-picture off; ✕ closes a photo and a video
+page alike (`docs/qa/runs/2026-08-27-viewer-run.md`).
+
 ### A video neither joins the album grid nor appears the moment it is sent
 Reported by the owner 2026-08-27: several videos picked together are sent one
 by one instead of as a mosaic, and a video does not show up in the chat until
