@@ -1,5 +1,6 @@
 import UIKit
 import AVFoundation
+import Combine
 import MsngrCore
 
 /// Message cell: manual layout driven by BubbleLayoutPlan, no Auto Layout at all.
@@ -38,6 +39,11 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     /// a placeholder to a finished upload — so an in-place reconfigure has to
     /// tell "nothing changed" from "the same slot now points at more".
     private var mediaSignatures: [String] = []
+    /// The progress ring over each tile of a message still being sent, by slot.
+    private var progressRings: [Int: UploadRingView] = [:]
+    private var progressCancellable: AnyCancellable?
+    /// The play glyph over each video tile, by slot; hidden while its ring shows.
+    private var playGlyphs: [Int: UIImageView] = [:]
     private var reactionViews: [ReactionCapsuleView] = []
     private let voiceView = VoiceMessageView()
     private let avatarView = FeedAvatarView()
@@ -97,6 +103,10 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         tickView.contentMode = .scaleAspectFit
         bubbleView.addSubview(tickView)
         bubbleView.addSubview(voiceView)
+        // the rings follow the sender's progress store rather than polling it
+        progressCancellable = MediaProgress.shared.$fractions
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] fractions in self?.applyProgress(fractions) }
 
         // the avatar lives outside the bubble: press dips and swipe-to-reply move
         // the bubble alone, the face stays put the way it does in Telegram
@@ -463,6 +473,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
                 }
             }
             mediaSignatures = signatures
+            syncProgressRings(msg)
             return
         }
 
@@ -471,6 +482,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         teardownAutoplay()
         mediaViews.forEach { $0.removeFromSuperview() }
         mediaViews = []
+        progressRings = [:]
+        playGlyphs = [:]
         mediaSignatures = signatures
 
         for (index, rect) in rects {
@@ -497,8 +510,42 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
                 play.autoresizingMask = [.flexibleLeftMargin, .flexibleRightMargin,
                                          .flexibleTopMargin, .flexibleBottomMargin]
                 iv.addSubview(play)
+                playGlyphs[index] = play
                 startAutoplayIfLocal(on: iv, media: media, playGlyph: play)
             }
+        }
+        syncProgressRings(msg)
+    }
+
+    /// A message on its way out carries a ring per tile with the fraction of
+    /// its preparation and upload; the rings go the moment the ack lands and
+    /// the status leaves `sending`.
+    private func syncProgressRings(_ msg: Message) {
+        let wanted = msg.isOutgoing && msg.status == .sending
+        // the ring stands where the play glyph would: one of the two at a time
+        playGlyphs.values.forEach { $0.isHidden = wanted }
+        if !wanted {
+            progressRings.values.forEach { $0.removeFromSuperview() }
+            progressRings = [:]
+            return
+        }
+        for iv in mediaViews where progressRings[iv.tag] == nil {
+            let ring = UploadRingView()
+            let side: CGFloat = 52
+            ring.frame = CGRect(x: (iv.bounds.width - side) / 2, y: (iv.bounds.height - side) / 2,
+                                width: side, height: side)
+            ring.autoresizingMask = [.flexibleLeftMargin, .flexibleRightMargin,
+                                     .flexibleTopMargin, .flexibleBottomMargin]
+            iv.addSubview(ring)
+            progressRings[iv.tag] = ring
+        }
+        applyProgress(MediaProgress.shared.fractions)
+    }
+
+    private func applyProgress(_ fractions: [String: Double]) {
+        guard let msg, !progressRings.isEmpty else { return }
+        for (index, ring) in progressRings {
+            ring.fraction = fractions[MediaProgress.key(msg.id, index: index)] ?? 0
         }
     }
 
@@ -1186,5 +1233,62 @@ extension UIImage {
                                provider: provider, decode: nil, shouldInterpolate: true,
                                intent: .defaultIntent) else { return nil }
         return UIImage(cgImage: cg)
+    }
+}
+
+/// The ring over a tile of a message on its way out: a track, the arc of the
+/// fraction done and the same number in percent, on a dimmed disc so it reads
+/// over any picture.
+final class UploadRingView: UIView {
+    var fraction: Double = 0 {
+        didSet {
+            guard fraction != oldValue else { return }
+            label.text = "\(Int((fraction * 100).rounded()))%"
+            setNeedsDisplay()
+        }
+    }
+    private let label = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        isOpaque = false
+        isUserInteractionEnabled = false
+        label.textColor = .white
+        label.textAlignment = .center
+        label.font = Theme.Text.voiceDuration.uiFont
+        label.text = "0%"
+        label.adjustsFontSizeToFitWidth = true
+        label.minimumScaleFactor = 0.6
+        addSubview(label)
+        accessibilityIdentifier = "media.progress"
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        label.frame = bounds.insetBy(dx: 8, dy: 8)
+    }
+
+    override func draw(_ rect: CGRect) {
+        guard let ctx = UIGraphicsGetCurrentContext() else { return }
+        let line: CGFloat = 3
+        let disc = bounds.insetBy(dx: line / 2, dy: line / 2)
+        ctx.setFillColor(UIColor.black.withAlphaComponent(0.45).cgColor)
+        ctx.fillEllipse(in: disc)
+        let center = CGPoint(x: bounds.midX, y: bounds.midY)
+        let radius = disc.width / 2 - line
+        ctx.setLineWidth(line)
+        ctx.setLineCap(.round)
+        ctx.setStrokeColor(UIColor.white.withAlphaComponent(0.3).cgColor)
+        ctx.addArc(center: center, radius: radius, startAngle: 0, endAngle: .pi * 2, clockwise: false)
+        ctx.strokePath()
+        guard fraction > 0 else { return }
+        ctx.setStrokeColor(UIColor.white.cgColor)
+        let start = -CGFloat.pi / 2
+        ctx.addArc(center: center, radius: radius, startAngle: start,
+                   endAngle: start + CGFloat(fraction) * .pi * 2, clockwise: false)
+        ctx.strokePath()
     }
 }

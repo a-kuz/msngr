@@ -489,9 +489,31 @@ public final class APIClient: @unchecked Sendable {
         public let mediaId: String
         public let size: Int
     }
-    public func uploadMedia(_ data: Data) async throws -> MediaUploadResponse {
-        let raw = try await request("api/media", method: "POST", rawBody: data)
+    /// `progress` hears the sent fraction of the body as it goes up.
+    public func uploadMedia(_ data: Data,
+                            progress: (@Sendable (Double) -> Void)? = nil) async throws -> MediaUploadResponse {
+        var req = URLRequest(url: url(for: "api/media"))
+        req.httpMethod = "POST"
+        if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        let delegate = progress.map(UploadProgressDelegate.init)
+        let (raw, resp) = try await session.upload(for: req, from: data, delegate: delegate)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if status >= 400 {
+            let err = try? JSONDecoder().decode(ErrBody.self, from: raw)
+            throw APIError(code: err?.error ?? "http_\(status)", status: status)
+        }
         return try JSONDecoder().decode(MediaUploadResponse.self, from: raw)
+    }
+
+    private final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate {
+        let progress: @Sendable (Double) -> Void
+        init(progress: @escaping @Sendable (Double) -> Void) { self.progress = progress }
+        func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64,
+                        totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+            guard totalBytesExpectedToSend > 0 else { return }
+            progress(Double(totalBytesSent) / Double(totalBytesExpectedToSend))
+        }
     }
     public func downloadMedia(_ mediaId: String) async throws -> Data {
         try await request("api/media/\(mediaId)")

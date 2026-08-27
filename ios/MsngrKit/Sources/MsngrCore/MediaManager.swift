@@ -63,9 +63,10 @@ public final class MediaManager: @unchecked Sendable {
     }
 
     /// Uploads a local original; called by the outbox worker before it encrypts the envelope.
-    public func uploadPending(localName: String, mime: String? = nil) async throws -> (mediaId: String, key: String, hash: String, size: Int) {
+    public func uploadPending(localName: String, mime: String? = nil,
+                              progress: (@Sendable (Double) -> Void)? = nil) async throws -> (mediaId: String, key: String, hash: String, size: Int) {
         guard let url = pendingURL(for: localName) else { throw MediaError.pendingFileMissing }
-        return try await upload(try Data(contentsOf: url), mime: mime)
+        return try await upload(try Data(contentsOf: url), mime: mime, progress: progress)
     }
 
     public func removePending(localName: String) {
@@ -74,9 +75,10 @@ public final class MediaManager: @unchecked Sendable {
 
     /// Encrypts and uploads, returning the fields for MediaInfo. The plaintext goes into the
     /// cache right away so the sender sees their own media without a round trip.
-    public func upload(_ plaintext: Data, mime: String? = nil) async throws -> (mediaId: String, key: String, hash: String, size: Int) {
+    public func upload(_ plaintext: Data, mime: String? = nil,
+                       progress: (@Sendable (Double) -> Void)? = nil) async throws -> (mediaId: String, key: String, hash: String, size: Int) {
         let enc = try MediaCrypto.encrypt(plaintext)
-        let res = try await api.uploadMedia(enc.ciphertext)
+        let res = try await api.uploadMedia(enc.ciphertext, progress: progress)
         let local = cacheDir.appendingPathComponent(cacheFileName(res.mediaId, mime: mime))
         try? plaintext.write(to: local, options: .atomic)
         return (res.mediaId, enc.key.base64EncodedString(), enc.sha256.base64EncodedString(), plaintext.count)

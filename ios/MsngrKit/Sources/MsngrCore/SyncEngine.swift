@@ -1522,6 +1522,7 @@ public actor SyncEngine {
                             ttl > 0 ? Date().timeIntervalSince1970 + Double(ttl) : nil,
                             clientMsgId])
             try dbc.execute(sql: "DELETE FROM outbox WHERE clientMsgId = ?", arguments: [clientMsgId])
+            MediaProgress.shared.clear(clientMsgId)
             // edits and reactions that waited for their target's seq: it is here now
             try dbc.execute(sql: "UPDATE outbox SET state = 'ready' WHERE state = 'waiting'")
             // a peer's edit or reaction may have arrived before this ack gave
@@ -1997,14 +1998,14 @@ public actor SyncEngine {
         func needsUpload(_ i: MediaInfo) -> Bool { i.mediaId.isEmpty && i.localPath != nil }
         var content = content
         if let m = content.media, needsUpload(m) {
-            let (uploaded, obsolete) = try await uploadOne(m)
+            let (uploaded, obsolete) = try await uploadOne(m, clientMsgId: item.clientMsgId, index: nil)
             content.media = uploaded
             try await persistUploadedPayload(content, clientMsgId: item.clientMsgId)
             obsolete.forEach { media?.removePending(localName: $0) }
         }
         if var album = content.album, album.contains(where: needsUpload) {
             for idx in album.indices where needsUpload(album[idx]) {
-                let (uploaded, obsolete) = try await uploadOne(album[idx])
+                let (uploaded, obsolete) = try await uploadOne(album[idx], clientMsgId: item.clientMsgId, index: idx)
                 album[idx] = uploaded
                 content.album = album
                 try await persistUploadedPayload(content, clientMsgId: item.clientMsgId)
@@ -2014,7 +2015,11 @@ public actor SyncEngine {
         return content
     }
 
-    private func uploadOne(_ info: MediaInfo) async throws -> (MediaInfo, obsoleteLocal: [String]) {
+    /// The upload's progress continues whatever the preparation on this device
+    /// reported for the slot: a transcoded video stands at its half when the
+    /// upload begins, a photo at zero.
+    private func uploadOne(_ info: MediaInfo, clientMsgId: String,
+                           index: Int?) async throws -> (MediaInfo, obsoleteLocal: [String]) {
         guard let media else { throw MediaManagerMissing() }
         var info = info
         var obsolete: [String] = []
@@ -2027,7 +2032,11 @@ public actor SyncEngine {
             obsolete.append(thumbName)
         }
         if let name = info.localPath {
-            let up = try await media.uploadPending(localName: name, mime: info.mime)
+            let progress = MediaProgress.shared
+            let start = progress.fraction(clientMsgId, index: index) ?? 0
+            let up = try await media.uploadPending(localName: name, mime: info.mime) { sent in
+                progress.set(clientMsgId, index: index, fraction: start + (1 - start) * sent)
+            }
             info.mediaId = up.mediaId
             info.key = up.key
             info.hash = up.hash

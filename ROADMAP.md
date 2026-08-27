@@ -195,6 +195,9 @@ A ✅ goes in only together with a link to the evidence.
     its frame first, tiles resolving as preparation finishes, the outbox waiting
     for the file, no rollback on any path (media-appears-on-send run: ~2 s to
     the bubble for a 5-photo album and for a video)
+  - ✅ photos and videos picked together go as one album, the row appears before
+    the library hands over a byte, and every tile wears a ring with the percent
+    of its transcode and upload until the ack (qa/runs/2026-08-27-video-album)
   - ✅ a blurhash placeholder until the download finishes: a cold cache on the
     receiver shows blurred tiles and the sharp ones arrive 0.4 s later than in
     the same run with a warm cache (media-close-out; BlurHashTests units)
