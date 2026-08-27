@@ -135,7 +135,9 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ clearing on your own send and your own reaction (rule 3)
   - ✅ clearing when going to the background and a new banner on return (rules 4–5)
   - ✅ the «непрочитанное/непрочитанных сообщение/сообщения/сообщений» declension (units + a run)
-  - 🟡 the banner's disappearance animation (not captured frame by frame)
+  - ✅ the banner's disappearance captured frame by frame: it leaves in a
+    single frame together with the send's jump to the bottom, where no
+    separate animation would be visible (qa/runs/2026-08-27-banner-dismiss-run.md)
 - The header and the bars
   - ✅ a pinned message as a bar on top, its tap flashing the message, «Открепить»
     over the pinned one (design-review 03b; header-run)
