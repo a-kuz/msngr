@@ -145,12 +145,27 @@ struct ChatScreen: View {
             NotificationCoordinator.shared.activeChatId = chatId
             // search opens the chat for one particular message; the request has been
             // waiting for this screen to appear
-            if let request = MessageJump.take(chatId: chatId) { jump(to: request.id) }
+            if let request = MessageJump.take(chatId: chatId) {
+                // the reader came for one particular message; the stored reading
+                // position yields to it
+                model.suppressRestore()
+                jump(to: request.id)
+            }
         }
         // chat loads asynchronously and is still nil in onAppear, so the draft goes
         // in once the chat has actually arrived (and still only into an empty field)
         .onChange(of: model.chat?.id) { _, _ in
             if text.isEmpty, let draft = model.chat?.draft { text = draft }
+        }
+        // entering with nothing unread returns the feed to where the reader left
+        // off; an explicit jump request (search) outranks it
+        .onChange(of: model.restoreSeq) { _, seq in
+            guard let seq else { return }
+            if messagesVC.scrollTo(seq: seq, highlight: false, animated: false) { return }
+            Task {
+                guard await model.ensureLoaded(seq: seq) else { return }
+                MessagesView.scrollWhenReady(vc: messagesVC, seq: seq, highlight: false)
+            }
         }
         // back into the field from a match: the matches are what the reader wants
         // to see again
@@ -160,6 +175,8 @@ struct ChatScreen: View {
         .onDisappear {
             let draft = text.trimmingCharacters(in: .whitespacesAndNewlines)
             model.saveDraft(draft.isEmpty ? nil : draft, immediately: true)
+            // where the reader stood; nil at the bottom clears the stored position
+            model.saveReadingPosition(messagesVC.readingPositionSeq())
             // on a push deeper in (ChatInfo) the subscription stays and the active chat
             // is not cleared: otherwise the feed comes back dead and pushes from this
             // chat start showing up as banners

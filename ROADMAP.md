@@ -117,8 +117,10 @@ A ✅ goes in only together with a link to the evidence.
     an insert goes into the bottom item and shifts the content above it, so an
     update remembers the topmost visible item and puts it back (the 20k run: 316
     messages arrived in 4 seconds, neither the feed nor the banner moved)
-  - 🟡 keeping the position between openings of a chat: the feed lands on the
-    unread banner or at the bottom, an arbitrary position is not restored
+  - ✅ keeping the position between openings of a chat: the seq at the visual
+    top is stored on leaving and restored on entry, the bottom clears it, and
+    the unread banner and search jumps outrank it
+    (qa/runs/2026-08-27-reading-position-run.md; ReadingPositionTests units)
   - ✅ the scroll-down button with a badge: it appears only once the newest
     message has left the screen; the same signal drives the read receipt
     (viewing-bottom-run, cases 1–4; ViewingBottomTests units)

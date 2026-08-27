@@ -567,6 +567,19 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
                              offsetInView: top.frame.maxY - collectionView.contentOffset.y)
     }
 
+    /// The seq of the message the reader is looking at, for keeping the reading
+    /// position between openings of the chat. Nil at the bottom: the feed is led
+    /// by new messages there and the next opening starts at the end. The topmost
+    /// visible item may be a separator or the banner, so the nearest message
+    /// below it carries the position.
+    func readingPositionSeq() -> Int? {
+        guard isViewLoaded, !atBottom, let top = topVisible() else { return nil }
+        for i in stride(from: top.index, through: 0, by: -1) {
+            if case .message(let m, _, _, _, _, _, _) = items[i], let seq = m.seq { return seq }
+        }
+        return nil
+    }
+
     // MARK: - The floating day capsule
 
     @objc private func stickyDateTapped() { onDateTap?() }
