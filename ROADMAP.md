@@ -56,8 +56,13 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ client: the screen of your own devices, adding one and signing out
     (qa/runs/2026-08-15-sessions, qa/runs/2026-08-16-second-device-run.md)
 - Phone and contacts
-  - 🟡 the number's hash to the server, discovery over the address book (not verified live)
-  - 🟡 contact access on an explicit tap, the address book name taking precedence (not verified live)
+  - ✅ the number's hash to the server, discovery over the address book: the
+    number is set in the settings, normalized to E.164 and hashed on the
+    device; the raw number never leaves it
+    (qa/runs/2026-08-27-phone-discovery-run; PhoneTests units)
+  - ✅ contact access on an explicit tap, the address book name taking
+    precedence (qa/runs/2026-08-27-phone-discovery-run: «Boris Bravov» shown
+    over the profile's «Bravo Service»)
   - ⬜ inviting people who are not registered
 
 ## The chat list
