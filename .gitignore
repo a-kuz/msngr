@@ -1,6 +1,7 @@
 node_modules
 server/.dev.vars
 *.p8
+local.mk
 .wrangler/
 # state of a separate stand: `wrangler dev --persist-to .wrangler-<name>`
 .wrangler-*/

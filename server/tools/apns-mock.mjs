@@ -13,7 +13,7 @@
 // a mock that queues without limit only postpones the same pile-up.
 //
 // Run:     node tools/apns-mock.mjs [--port 9871] [--drop-rate 0.05]
-//          [--min-delay 150] [--max-delay 500] [--bundle ai.enface.Msngr] [--log]
+//          [--min-delay 150] [--max-delay 500] [--bundle msngr.msngr] [--log]
 //          [--concurrency 4] [--queue 256] [--stats-every 5000]
 //
 // GET /stats answers with the counters, so a test can assert that every push
@@ -34,7 +34,7 @@ const PORT = Number(opt("--port", 9871));
 const DROP_RATE = Number(opt("--drop-rate", 0)); // share of pushes swallowed silently
 const MIN_DELAY = Number(opt("--min-delay", 150));
 const MAX_DELAY = Number(opt("--max-delay", 500));
-const BUNDLE = opt("--bundle", "ai.enface.Msngr");
+const BUNDLE = opt("--bundle", "msngr.msngr");
 const LOG = args.includes("--log");
 /// How many `xcrun simctl push` processes may run at once.
 const CONCURRENCY = Math.max(1, Number(opt("--concurrency", 4)));

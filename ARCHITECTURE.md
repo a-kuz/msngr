@@ -96,7 +96,7 @@ with no original yet.
 ## Storage
 
 Paths are computed in one place, `StorageLocation` and `AppContainer`. The root
-is the app group container `group.ai.enface.msngr` so that the NSE reads the
+is the app group container `group.msngr.msngr` so that the NSE reads the
 same files; without a group, on macOS and in tests, it is Application Support.
 The contents are `msngr.sqlite`, `.masterkey`, `avatars/` and `media-outgoing/`.
 

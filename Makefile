@@ -1,4 +1,7 @@
 # The quality gate: run make check before every commit.
+# Machine-local values (the signing team, the device bundle id) live in
+# local.mk, which is gitignored.
+-include local.mk
 DEV_UDID := 44CE2242-EBB9-48EA-A605-5988A00E4C31
 DEST := -destination 'id=$(DEV_UDID)'
 # every agent builds the same project on the same host, so builds queue for a
@@ -23,7 +26,7 @@ uicheck: gen build uitest
 	@echo "== make uicheck: all green =="
 
 MSNGR_DEVICE_SERVER ?=
-MSNGR_APP_ID ?= ai.enface.Msngr
+MSNGR_APP_ID ?= msngr.msngr
 export MSNGR_DEVICE_SERVER MSNGR_APP_ID
 
 gen:
@@ -42,15 +45,17 @@ uitest:
 	@test "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 $(MSNGR_SERVER)/api/me)" != "000" || (echo "wrangler dev is not running ($(MSNGR_SERVER)): npx wrangler dev"; exit 1)
 	MSNGR_SERVER=$(MSNGR_SERVER) $(XCODE) -scheme Msngr $(DEST) test -only-testing:MsngrUITests 2>&1 | tail -5 | grep -q "TEST SUCCEEDED"
 
-# Build and install on a physical iPhone. Signed by the K2FINTECH team under a
-# borrowed bundle id, with every capability stripped so the portal gains two
-# bare App IDs and the device registration, nothing else. Storage falls back
-# from the app group container to Application Support by itself; pushes and the
-# NSE are dead on a device build anyway until an APNs key exists.
+# Build and install on a physical iPhone. Signed with the team and bundle id
+# from local.mk (TEAM, DEVICE_APP_ID), with every capability stripped so the
+# portal gains two bare App IDs and the device registration, nothing else.
+# Storage falls back from the app group container to Application Support by
+# itself; pushes and the NSE are dead on a device build anyway until an APNs
+# key exists.
 #   make device [TEAM=…] [DEVICE=<udid>] [SERVER=…]
 DEVICE_APP := ios/build/device/Build/Products/Debug-iphoneos/Msngr.app
 device:
-	cd ios && MSNGR_APP_ID=com.k2fintech.msngr \
+	@test -n "$(TEAM)" || (echo "TEAM is not set: put TEAM and DEVICE_APP_ID into local.mk"; exit 1)
+	cd ios && MSNGR_APP_ID=$(or $(DEVICE_APP_ID),$(MSNGR_APP_ID)) \
 	  MSNGR_DEVICE_SERVER="$(or $(SERVER),https://msngr.a-kuz.online)" xcodegen
 	plutil -remove "com\.apple\.developer\.usernotifications\.communication" ios/Msngr/Msngr.entitlements || true
 	plutil -remove "com\.apple\.security\.application-groups" ios/Msngr/Msngr.entitlements || true
@@ -58,7 +63,7 @@ device:
 	$(SLOT) xcodebuild -project ios/Msngr.xcodeproj -scheme Msngr \
 	  -destination 'generic/platform=iOS' -derivedDataPath ios/build/device \
 	  -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
-	  CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=$(or $(TEAM),NZG926X62F) build
+	  CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=$(TEAM) build
 	xcrun devicectl device install app --device "$(or $(DEVICE),$$(xcrun devicectl list devices --hide-headers 2>/dev/null | awk '/connected/{for(i=1;i<=NF;i++) if ($$i ~ /^[0-9A-F-]{36}$$/) {print $$i; exit}}'))" "$(CURDIR)/$(DEVICE_APP)"
 	cd ios && xcodegen
 

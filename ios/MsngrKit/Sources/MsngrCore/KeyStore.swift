@@ -14,7 +14,7 @@ public struct KeychainMasterKey: MasterKeyProvider {
     let service: String
     let accessGroup: String?
 
-    public init(service: String = "ai.enface.msngr.masterkey", accessGroup: String? = nil) {
+    public init(service: String = "msngr.msngr.masterkey", accessGroup: String? = nil) {
         self.service = service
         self.accessGroup = accessGroup
     }

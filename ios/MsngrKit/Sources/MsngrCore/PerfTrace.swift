@@ -29,7 +29,7 @@ public final class PerfTrace: @unchecked Sendable {
     private var buffer: [Entry] = []
     private var seen: Set<String> = []
     private var handle: FileHandle?
-    private let io = DispatchQueue(label: "ai.enface.msngr.perftrace")
+    private let io = DispatchQueue(label: "msngr.msngr.perftrace")
 
     private init() {
         isEnabled = ProcessInfo.processInfo.environment["MSNGR_PERF"] == "1"

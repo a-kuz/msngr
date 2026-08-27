@@ -43,7 +43,7 @@ public struct StorageLocation: Sendable, Equatable {
 /// The single place storage paths are computed. Where the app group container is
 /// unavailable (macOS, unit tests), Application Support stands in for it.
 public enum AppContainer {
-    public static let appGroupIdentifier = "group.ai.enface.msngr"
+    public static let appGroupIdentifier = "group.msngr.msngr"
 
     /// Application Support: the location used before the group, and the fallback without it.
     public static func legacyLocation(fileManager: FileManager = .default) -> StorageLocation {

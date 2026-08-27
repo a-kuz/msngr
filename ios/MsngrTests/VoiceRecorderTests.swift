@@ -5,7 +5,7 @@ import XCTest
 /// The 0.3 s cut: a touch of the microphone shorter than that is an accident, and it
 /// leaves neither a message nor a file. The takes are recorded for real, which needs the
 /// microphone; the simulator grants it per device (`xcrun simctl privacy <udid> grant
-/// microphone ai.enface.Msngr`), and without it there is nothing to measure, so those
+/// microphone msngr.msngr`), and without it there is nothing to measure, so those
 /// tests step aside instead of passing quietly.
 @MainActor
 final class VoiceRecorderTests: XCTestCase {
