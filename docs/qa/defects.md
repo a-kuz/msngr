@@ -6,23 +6,6 @@ with the commit that closed it.
 
 ## Open
 
-### A video neither joins the album grid nor appears the moment it is sent
-Reported by the owner 2026-08-27: several videos picked together are sent one
-by one instead of as a mosaic, and a video does not show up in the chat until
-its preparation is done. The instant-appearance work of 2026-08-21
-(`0ebee18`) covered photos and albums of photos only. Investigation next.
-
-### Voice bubbles look unkempt
-Reported by the owner 2026-08-27 with a screenshot from the device: the voice
-plate is twice the height of a text bubble, the waveform sits at the very top
-and the duration hangs in the middle of empty space, one duration reads «0:…»,
-and every waveform is a flat row of dots whatever was said. The plate's height
-follows the text size (`attachmentHeight`, 42 to 78 pt) while
-`VoiceMessageView.layoutSubviews` places the wave and the label at fixed
-offsets for the 42 pt plate; the duration label is capped at 60 pt, which a
-scaled 11 pt font overflows on «0:00,5»; the amplitudes are normalised to the
-loudest peak, so a single click flattens the speech around it. Fix in progress.
-
 ### The unread banner says 56 with a thousand unread
 Reported by the owner 2026-08-21 near midnight, with a screenshot from the
 device: after a ~1000-message burst the feed's unread banner reads «56 unread
@@ -97,6 +80,36 @@ not on a single fix. Measured so far (bubbleanim run, merged 14c3a0a): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### A video neither joins the album grid nor appears the moment it is sent
+Reported by the owner 2026-08-27: several videos picked together are sent one
+by one instead of as a mosaic, and a video does not show up in the chat until
+its preparation is done; the owner also asked for a loader with the percent.
+`sendPicked` split the pick into photos (one album) and videos (a bubble
+each), and a video's row was written only after `loadTransferable` had copied
+the file out of the library.
+Closed by 79bbe97: one pick is one message with a typed placeholder per slot
+before any loading, videos share the mosaic, and every tile carries a ring
+with the percent of the transcode and the upload until the ack. Verified live
+with two ffmpeg clips and a still (`docs/qa/runs/2026-08-27-video-album-run.md`).
+
+### Voice bubbles look unkempt
+Reported by the owner 2026-08-27 with a screenshot from the device: the voice
+plate is twice the height of a text bubble, the waveform sits at the very top
+and the duration hangs in the middle of empty space, one duration reads «0:…»,
+and every waveform is a flat row of dots whatever was said. The plate's height
+follows the text size (`attachmentHeight`, 42 to 78 pt) while
+`VoiceMessageView.layoutSubviews` placed the wave and the label at fixed
+offsets for the 42 pt plate; the duration label was capped at 60 pt, which a
+scaled 11 pt font overflows on «0:00,5»; the amplitudes were normalised to the
+loudest peak, so a single click flattened the speech around it.
+Closed by 2fb251c: the plate lays itself out from its height, the label is as
+wide as its text, loudness is the RMS per bucket scaled to the 95th
+percentile. The same run found the feed measuring at the default text size on
+a cold start under text drawn at the reader's; the snapshot now follows the
+scene's traits. Reproduced and re-run at accessibility XXXL on the simulator
+(`docs/qa/runs/2026-08-27-info-screen-and-voice-run.md`); a spoken take on
+the device is the owner's to look at.
 
 ### An animated GIF plays as a single frame
 Reported by the owner 2026-08-21, late evening: a GIF sent into a chat showed
