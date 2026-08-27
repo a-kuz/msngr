@@ -6,6 +6,18 @@ with the commit that closed it.
 
 ## Open
 
+### A held swipe on a chat row stutters
+Reported by the owner 2026-08-27: swiping a row sideways in the chat list
+with the finger kept on the screen, the row's motion is badly jerky. The list
+has two horizontal gestures over the same rows, the row's swipe actions and
+the folder-tab pager, so the first thing to look at is the two of them
+fighting for the touch. On the simulator a synthetic 2.5 s drag from `idb`
+moved the row evenly, with and without the pager gesture (recorded at
+~48 fps, the row advanced ~3 pt per frame throughout); the owner confirmed
+that recording looks smooth. A real finger differs in two ways the driver
+cannot fake, vertical jitter and touch-event cadence, so the next step is a
+screen recording from the device.
+
 ### The unread banner says 56 with a thousand unread
 Reported by the owner 2026-08-21 near midnight, with a screenshot from the
 device: after a ~1000-message burst the feed's unread banner reads «56 unread
