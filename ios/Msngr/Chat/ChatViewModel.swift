@@ -558,7 +558,8 @@ final class ChatViewModel: ObservableObject {
     }
 
     /// A request before it is accepted: the content is neither shown nor marked read.
-    var contentHidden: Bool { ChatPrivacy.hidesContent(chat) }
+    var contentHidden: Bool { ChatPrivacy.hidesContent(chat) && !acceptedLocally }
+    @Published private(set) var acceptedLocally = false
 
     /// Sending a message or a reaction of our own dismisses the banner.
     private func dismissUnreadMarker() {
@@ -929,7 +930,11 @@ final class ChatViewModel: ObservableObject {
         Task { [chatId] in await app.engine.pinMessage(chatId: chatId, seq: seq, pinned: false) }
     }
 
+    /// The card gives way to the feed in the caller's transaction: the flag flips
+    /// here, on the spot, and the database row follows.
     func acceptRequest() {
+        acceptedLocally = true
+        rebuildFeed()
         Task { await app.engine.acceptChatRequest(chatId: chatId) }
     }
 

@@ -445,6 +445,22 @@ enum StableHash {
     }
 }
 
+/// A view leaving as dust: it blurs, swells a little and fades, all at once.
+struct DissolveModifier: ViewModifier {
+    let progress: CGFloat
+    func body(content: Content) -> some View {
+        content
+            .opacity(1 - progress)
+            .blur(radius: 14 * progress)
+            .scaleEffect(1 + 0.08 * progress)
+    }
+}
+
+extension AnyTransition {
+    static let dissolve = AnyTransition.modifier(active: DissolveModifier(progress: 1),
+                                                 identity: DissolveModifier(progress: 0))
+}
+
 enum Haptics {
     static func light() { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
     static func medium() { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
