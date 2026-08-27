@@ -2589,6 +2589,17 @@
         }
       }
     },
+    "Send" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправить"
+          }
+        }
+      }
+    },
     "Send %lld messages" : {
       "extractionState" : "manual",
       "localizations" : {

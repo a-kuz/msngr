@@ -32,6 +32,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
 
     func setup() {
         UNUserNotificationCenter.current().delegate = self
+        UNUserNotificationCenter.current().setNotificationCategories([NotificationActions.messageCategory()])
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in }
     }
 
@@ -276,9 +277,51 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
 
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 didReceive response: UNNotificationResponse) async {
-        if let chatId = response.notification.request.content.userInfo["chatId"] as? String {
+        let chatId = response.notification.request.content.userInfo["chatId"] as? String
+        let text = (response as? UNTextInputNotificationResponse)?.userText
+        switch NotificationActions.route(actionIdentifier: response.actionIdentifier,
+                                         chatId: chatId, userText: text) {
+        case .open(let chatId):
             NotificationCenter.default.post(name: .openChatRequested, object: chatId)
+        case .reply(let chatId, let text):
+            await sendReply(text, chatId: chatId)
+        case .mute(let chatId):
+            await muteChat(chatId)
+        case .none:
+            break
         }
+    }
+
+    // MARK: - Notification actions
+
+    /// A response can launch the app in the background, ahead of bootstrap;
+    /// the handler waits for the core rather than dropping the action.
+    private func engineWhenReady() async -> SyncEngine? {
+        for _ in 0..<40 {
+            if let engine = AppState.shared.engine { return engine }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+        return nil
+    }
+
+    /// Quick reply from the banner: the same outbox path as the composer, so it
+    /// works offline and retries on its own.
+    private func sendReply(_ text: String, chatId: String) async {
+        guard let engine = await engineWhenReady() else { return }
+        var content = ContentPayload(kind: "text")
+        content.text = text
+        try? await engine.enqueue(content: content, chatId: chatId)
+    }
+
+    /// Mute from the banner: the local row first (the list and the decision
+    /// logic read it), then the server flag for pushes.
+    private func muteChat(_ chatId: String) async {
+        guard await engineWhenReady() != nil, let db = self.db ?? AppState.shared.db else { return }
+        try? await db.write { dbc in
+            try dbc.execute(sql: "UPDATE chat SET muted = 1, mutedUntil = NULL WHERE id = ?",
+                            arguments: [chatId])
+        }
+        try? await AppState.shared.api?.setChatFlags(chatId, muted: true)
     }
 }
 

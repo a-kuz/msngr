@@ -34,6 +34,7 @@ enum CommunicationNotification {
         content.body = built.body
         content.threadIdentifier = built.threadIdentifier
         content.sound = .default
+        content.categoryIdentifier = NotificationCategory.message
         content.userInfo = userInfo
 
         let senderImage = avatarFile.flatMap { try? Data(contentsOf: $0) }.map { INImage(imageData: $0) }
