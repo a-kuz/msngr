@@ -323,8 +323,9 @@ A ✅ goes in only together with a link to the evidence.
     and the reply arrow, releasing arms the strip; haptics are not observable
     on the simulator (qa/runs/2026-08-21-swipe-reply)
   - ✅ rendering the quote: text on text (qa/runs/2026-08-21-swipe-reply)
-  - 🟡 rendering the quote on media: the album case is live
-    (qa/runs/2026-08-21-swipe-reply); photo, video, voice message and file are not
+  - ✅ rendering the quote on media: photo, video, voice message and file each
+    quoted live, the file by its own name; the album case was live earlier
+    (qa/runs/2026-08-27-quote-on-media; qa/runs/2026-08-21-swipe-reply)
   - ✅ a quote of a deleted message: the preview is kept in the payload while
     the original shows the tombstone (qa/runs/2026-08-21-swipe-reply)
   - ✅ tapping the quote → jumping to the original with a highlight, loading more of the history window
