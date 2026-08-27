@@ -1,6 +1,5 @@
 import SwiftUI
 import Contacts
-import CryptoKit
 import MsngrCore
 
 /// A new chat: search by username, contacts from the address book, group creation.
@@ -204,11 +203,9 @@ struct NewChatView: View {
         try? store.enumerateContacts(with: request) { contact, _ in
             let name = "\(contact.givenName) \(contact.familyName)".trimmingCharacters(in: .whitespaces)
             for phone in contact.phoneNumbers {
-                let normalized = Self.e164(phone.value.stringValue)
+                let normalized = Phone.e164(phone.value.stringValue)
                 guard !normalized.isEmpty else { continue }
-                let hash = SHA256.hash(data: Data(normalized.utf8))
-                    .map { String(format: "%02x", $0) }.joined()
-                hashToName[hash] = name.isEmpty ? normalized : name
+                hashToName[Phone.hash(normalized)] = name.isEmpty ? normalized : name
             }
         }
         guard !hashToName.isEmpty,
@@ -219,15 +216,6 @@ struct NewChatView: View {
                          avatarId: $0.avatar_id)
         }
         .sorted { $0.bookName < $1.bookName }
-    }
-
-    static func e164(_ raw: String) -> String {
-        var digits = raw.filter { $0.isNumber || $0 == "+" }
-        if digits.hasPrefix("8") && digits.count == 11 {
-            digits = "+7" + digits.dropFirst() // Russian format
-        }
-        guard digits.hasPrefix("+"), digits.count >= 11 else { return "" }
-        return digits
     }
 }
 

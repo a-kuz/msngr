@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import GRDB
 import MsngrCore
 
 struct SettingsView: View {
@@ -20,6 +21,8 @@ struct SettingsView: View {
     @State private var cacheSize: Int64 = 0
     @State private var uploadingAvatar = false
     @State private var nameError: String?
+    @State private var phone = ""
+    @State private var phoneError: String?
 
     var body: some View {
         NavigationStack {
@@ -78,6 +81,8 @@ struct SettingsView: View {
                         Text("Your name is what people see in the chat list and the conversation header.")
                     }
                 }
+
+                phoneSection
 
                 Section("Appearance") {
                     HStack(spacing: 12) {
@@ -191,6 +196,7 @@ struct SettingsView: View {
             }
             .task { await loadMe() }
             .onChange(of: displayName) { _, _ in nameError = nil }
+            .onChange(of: phone) { _, _ in phoneError = nil }
             .onChange(of: avatarItem) { _, item in
                 guard let item else { return }
                 Task { await uploadAvatar(item) }
@@ -217,12 +223,31 @@ struct SettingsView: View {
         }
     }
 
+    private var phoneSection: some View {
+        Section {
+            TextField("Phone number", text: $phone)
+                .keyboardType(.phonePad)
+                .accessibilityIdentifier("settings.phone")
+        } header: {
+            Text("Phone")
+        } footer: {
+            if let hint = phoneError {
+                Text(hint).foregroundStyle(.red)
+            } else {
+                Text("People who have your number in their contacts will find you. Only the number's hash reaches the server.")
+            }
+        }
+    }
+
     private func loadMe() async {
         me = try? await app.db.read { [id = app.session?.userId ?? ""] dbc in
             try User.fetchOne(dbc, key: id)
         }
         displayName = me?.displayName ?? ""
         bio = me?.bio ?? ""
+        phone = ((try? await app.db.read { dbc in
+            try String.fetchOne(dbc, sql: "SELECT value FROM kv WHERE key = 'myPhone'")
+        }) ?? nil) ?? ""
     }
 
     /// A name has to be there: it is what a peer reads instead of a handle.
@@ -233,7 +258,24 @@ struct SettingsView: View {
             return
         }
         let name = AccountValidator.trimmedName(displayName)
+        // The number never leaves the device: the server keeps its hash, which
+        // is what the address-book discovery matches by. An emptied field takes
+        // the hash down and the account stops being discoverable.
+        let trimmedPhone = phone.trimmingCharacters(in: .whitespaces)
+        let normalizedPhone = trimmedPhone.isEmpty ? "" : Phone.e164(trimmedPhone)
+        guard trimmedPhone.isEmpty || !normalizedPhone.isEmpty else {
+            phoneError = String(localized: "Enter the number in international format, like +79261234567")
+            return
+        }
         try? await app.api.updateProfile(displayName: name, bio: bio)
+        try? await app.api.setPhoneHash(normalizedPhone.isEmpty ? nil : Phone.hash(normalizedPhone))
+        try? await app.db.write { dbc in
+            if normalizedPhone.isEmpty {
+                try dbc.execute(sql: "DELETE FROM kv WHERE key = 'myPhone'")
+            } else {
+                try KVRow(key: "myPhone", value: normalizedPhone).save(dbc)
+            }
+        }
         // the row the screens read is ours to keep in step: the frame the
         // server sends out over this change goes to everyone but us
         if let id = app.session?.userId {
