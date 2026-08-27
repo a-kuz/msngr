@@ -38,10 +38,9 @@ the journal is the evidence.
 
 ## Also seen
 
-`GET /api/chats/:id/history?fromSeq=5` answered an empty list for a chat
-whose `lastSeq` was 5 while `fromSeq=1` returned the message; the run did not
-chase it, the state's `lastSeq` was used instead. Worth a look at the bounds of
-the history endpoint.
+`history?fromSeq=5` answered an empty list for a chat whose `lastSeq` was 5:
+`fromSeq` is exclusive by contract (the scan starts at `fromSeq + 1`), which
+`docs/protocol.md` states and the run's first poll forgot. Not a defect.
 
 ## Not covered
 
