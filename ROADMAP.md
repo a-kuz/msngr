@@ -435,7 +435,9 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     one is sent again, and a member can ask for a re-handout (MessageRepairTests
     units, CoreIntegrationTests `testGroupChatSenderKeys`)
   - ✅ /devices instead of burning a one-time prekey on every message (smoke prekey checks)
-  - 🟡 one-time prekeys topped up automatically below 20 left (not verified live)
+  - ✅ one-time prekeys topped up automatically below 20 left: burned to 14 by
+    bundle handouts, back at 100 three seconds after the next launch
+    (qa/runs/2026-08-27-prekey-topup-run.md)
   - 🟡 the session archive and glare resolution (CryptoTests units)
   - ✅ a message that arrived before its key is replayed later (ServiceFrameTests, HistoricReplayTests units)
   - ✅ an unreadable envelope is stored whatever the reason and replayed by passes
