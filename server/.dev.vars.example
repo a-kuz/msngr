@@ -1,0 +1,7 @@
+# Local variables for wrangler dev. Copy to .dev.vars (gitignored: it holds
+# the APNs provider key on a real stand).
+# Pushes go to the dev APNs mock (tools/apns-mock.mjs) instead of Apple.
+APNS_HOST=http://localhost:9871
+# Artificial delay (ms) before the message fanout, off by default.
+# DEV_WS_LATENCY_MS=120
+# Real APNs: APNS_KEY_ID, APNS_TEAM_ID, APNS_KEY_P8 (the p8 body, \n-escaped).
