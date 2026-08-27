@@ -298,6 +298,28 @@
         }
       }
     },
+    "Reacted %@ to your message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Реакция %@ на ваше сообщение"
+          }
+        }
+      }
+    },
+    "Reacted %@ to “%@”" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Реакция %1$@ на «%2$@»"
+          }
+        }
+      }
+    },
     "New message request" : {
       "extractionState" : "manual",
       "localizations" : {

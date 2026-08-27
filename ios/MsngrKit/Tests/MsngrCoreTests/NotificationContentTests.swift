@@ -29,6 +29,35 @@ final class NotificationContentTests: XCTestCase {
                                          showsMessageText: showsText, isDeleted: isDeleted)
     }
 
+    // MARK: - Reactions
+
+    func testReactionQuotesTheTargetText() {
+        let c = NotificationContentBuilder.reactionContent(
+            emoji: "❤️", targetText: "see you at five", targetKind: "text",
+            chat: direct, sender: sender)
+        XCTAssertEqual(c.title, "Anna")
+        XCTAssertNil(c.subtitle)
+        XCTAssertEqual(c.body, s("Reacted ❤️ to “see you at five”"))
+        XCTAssertEqual(c.threadIdentifier, "c1")
+    }
+
+    func testReactionToMediaUsesThePlaceholder() {
+        let c = NotificationContentBuilder.reactionContent(
+            emoji: "👍", targetText: nil, targetKind: "photo",
+            chat: group, sender: sender)
+        XCTAssertEqual(c.title, "Anna")
+        XCTAssertEqual(c.subtitle, "Team")
+        XCTAssertEqual(c.body, s("Reacted 👍 to “\(s("📷 Photo"))”"))
+    }
+
+    func testReactionHidesTextWhenThePrivacySettingAsks() {
+        let c = NotificationContentBuilder.reactionContent(
+            emoji: "🔥", targetText: "secret", targetKind: "text",
+            chat: direct, sender: sender, showsMessageText: false)
+        XCTAssertEqual(c.body, s("Reacted 🔥 to your message"))
+        XCTAssertFalse(c.body.contains("secret"))
+    }
+
     // MARK: - 1:1
 
     func testDirectTextUsesSenderNameAndText() {

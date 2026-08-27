@@ -604,6 +604,11 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     banner itself needs a device: idb cannot produce the SpringBoard
     context-menu press, and the NSE path does not run on the simulator)
   - 🟡 mute the chat straight from the push (same category; same device caveat)
+  - 🟡 a banner when someone reacts to your message («Реакция 👍 на «🖼 Альбом»»,
+    live run 2026-08-28 on the WS path, NotificationContentTests for the body;
+    the reaction frame is service on the wire — with the app killed there is no
+    push for it yet, that part needs the server to raise a targeted push and
+    the NSE to render it, device-gated)
   - ⬜ a photo preview as an image in the notification
 - Sounds and exceptions
   - ⬜ a sound of its own for one chat, overriding the default

@@ -81,6 +81,30 @@ public enum NotificationContentBuilder {
             threadIdentifier: chat.chatId)
     }
 
+    /// A peer reacted to your message: the sender's name in the title, the
+    /// emoji and a quote of the target in the body.
+    public static func reactionContent(emoji: String,
+                                       targetText: String?,
+                                       targetKind: String,
+                                       chat: ChatInfo,
+                                       sender: SenderInfo,
+                                       showsMessageText: Bool = true) -> NotificationContent {
+        let name = sender.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let groupTitle = chat.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        var payload = ContentPayload(kind: targetKind)
+        payload.text = targetText
+        let quote = truncate(preview(payload), limit: 80)
+        return NotificationContent(
+            title: name.isEmpty
+                ? (chat.isGroup ? (groupTitle ?? CoreStrings.string("Group")) : "Msngr") : name,
+            subtitle: chat.isGroup
+                ? (groupTitle?.isEmpty == false ? groupTitle : CoreStrings.string("Group")) : nil,
+            body: showsMessageText
+                ? CoreStrings.string("Reacted \(emoji) to “\(quote)”")
+                : CoreStrings.string("Reacted \(emoji) to your message"),
+            threadIdentifier: chat.chatId)
+    }
+
     /// A request before it is accepted: sender name and avatar stay, content does not.
     public static func requestContent(chat: ChatInfo, sender: SenderInfo) -> NotificationContent {
         let name = sender.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
