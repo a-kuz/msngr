@@ -91,6 +91,29 @@ struct SettingsView: View {
                     .padding(.vertical, 4)
                 }
 
+                Section {
+                    // the language is the system's per-app setting: the bundle
+                    // carries two localizations, so Settings shows the row and
+                    // relaunches the app in the chosen one
+                    Button {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
+                        }
+                    } label: {
+                        HStack {
+                            Label("Language", systemImage: "globe")
+                            Spacer()
+                            Text(Self.currentLanguageName)
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "arrow.up.forward.app")
+                                .font(.footnote)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .foregroundStyle(.primary)
+                    .accessibilityIdentifier("settings.language")
+                }
+
                 Section("Notifications") {
                     Toggle(isOn: $showsMessageText) {
                         Label("Show message text", systemImage: "text.bubble")
@@ -238,6 +261,15 @@ struct SettingsView: View {
     }
 
     /// Cache size by hand: ByteCountFormatter writes "Zero KB" under the system locale.
+    /// The language the interface is running in, named in that language
+    /// («Русский», "English"), as the row's value.
+    static var currentLanguageName: String {
+        let locale = Locale.current
+        guard let code = locale.language.languageCode?.identifier,
+              let name = locale.localizedString(forLanguageCode: code) else { return "" }
+        return name.prefix(1).uppercased() + name.dropFirst()
+    }
+
     static func sizeLabel(_ bytes: Int64) -> String {
         let kb = Double(bytes) / 1024
         switch kb {

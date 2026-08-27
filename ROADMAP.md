@@ -662,7 +662,10 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ⬜ a privacy screen gathering what E2EE, trust, privacy lists: last seen,
   receipts and typing, the profile's visibility, who finds me and who adds me,
   the default disappearing timer
-- ⬜ language choice and localization
+- ✅ language choice: the bundle ships English and Russian, iOS offers the
+  per-app language on the app's page in Settings, and the app's settings show
+  a «Язык» row with the current language that opens Settings
+  (qa/runs/2026-08-27-language)
 - ⬜ exporting and deleting the account
 
 ## Storage and data
