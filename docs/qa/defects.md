@@ -6,6 +6,15 @@ with the commit that closed it.
 
 ## Open
 
+### The unread banner says 56 with a thousand unread
+Reported by the owner 2026-08-21 near midnight, with a screenshot from the
+device: after a ~1000-message burst the feed's unread banner reads «56 unread
+messages» while the scroll-down badge next to it says 1004. The banner's
+count is taken when the marker is planted and grown per live arrival, so
+either the growth path does not fire for messages that arrive through
+catch-up replay, or the count was planted from a chat row the catch-up had
+not finished with. Investigation next.
+
 ### An edit's envelope failed to open on the peer with no_session
 Seen in passing 2026-08-21 during the unread-recount run: alfa edited a
 message while charlie's headless engine was offline; on his next sync the
