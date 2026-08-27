@@ -6,9 +6,10 @@
 
 <p align="center">End-to-end encrypted messenger. Swift clients for iOS and macOS, Cloudflare Workers backend.</p>
 
-<p align="center">
-  <img src="docs/media/demo.gif" width="300" alt="Demo">
-</p>
+<table align="center"><tr>
+<td><img src="docs/media/demo-1.gif" width="320" alt="A message arrives, a row swipe, a reaction, the context menu"></td>
+<td><img src="docs/media/demo-2.gif" width="320" alt="A photo and a video sent as an album, a message request accepted"></td>
+</tr></table>
 
 <p align="center">
   <a href="https://github.com/a-kuz/msngr/raw/main/docs/media/demo.mp4">Full video, 60 fps</a>
