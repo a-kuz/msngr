@@ -40,6 +40,23 @@ Needs its own investigation: whether the duplicate replay of an
 already-applied service frame should be dropped by seq before it is treated
 as unreadable, and why the prefix stalls behind it.
 
+Reproduced on demand 2026-08-27 on a private stand (`--persist-to` of its own
+on :8803, a fresh `msngrfixture seed` trio, the `alfa` home installed from
+that directory). With bravo's engine live through `msngrfixture typing`, alfa
+sent into the direct chat and drove several edits and reconnect cycles over
+it. Bravo ended with `syncedSeq=4`, `lastSeq=12`, `unreadCount=3`, seq 9 in
+both `pendingDecrypt` and `historyGap` as `no_session` at 3 attempts, while
+the content frames on either side (seq 8, 10) had rows. The server's journal
+addresses seq 9 to bravo's device as a `dr` box (`{…2H5GEZ: dr}`), so it is a
+Double-Ratchet frame bravo cannot place in any live or archived chain rather
+than a duplicate of something already applied. The stall is downstream: a seq
+that never decrypts never joins the contiguous prefix, so `syncedSeq` holds at
+4 and the seq-based unread estimate stays at 3. The likely cause is chain
+identity across a session reset — a frame sent under a sending chain bravo
+archived during the churn — which is why repair (which re-requests by msgId
+and rebuilds the pairwise session) does not recover it. A fix belongs in the
+crypto layer and wants its own change; not attempted here.
+
 ### The in-app banner does not react to a tap
 Reported 2026-08-19 from the device. Tapping the in-app notification banner does
 nothing; it has to open the chat it announces. The tap-opens-chat path exists and
