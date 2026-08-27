@@ -541,9 +541,10 @@ async function broadcastProfile(env: Env, userId: string) {
 // --- chats ---
 app.post("/api/chats", async (c) => {
   const { userId } = c.get("auth");
-  const b = await c.req.json<{ kind: "direct" | "group"; memberIds: string[]; title?: string }>();
+  const b = await c.req.json<{ kind: "direct" | "group" | "self"; memberIds: string[]; title?: string }>();
   const members = [...new Set(b.memberIds)].filter((m) => m !== userId);
   if (b.kind === "direct" && members.length !== 1) return err("direct_needs_one_peer");
+  if (b.kind === "self" && members.length !== 0) return err("self_has_no_peers");
 
   // a block in either direction forbids opening the direct chat
   if (b.kind === "direct") {
@@ -553,7 +554,10 @@ app.post("/api/chats", async (c) => {
     if (blocked) return err("blocked", 403);
   }
 
-  const chatId = b.kind === "direct" ? directChatName(userId, members[0]) : ulid();
+  // one saved-messages chat per user, so creating it again opens the same one
+  const chatId = b.kind === "direct" ? directChatName(userId, members[0])
+    : b.kind === "self" ? "self:" + userId
+    : ulid();
   const res = await convStub(c.env, chatId).fetch("https://do/create", {
     method: "POST",
     body: JSON.stringify({

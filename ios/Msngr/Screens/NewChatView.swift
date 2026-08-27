@@ -246,8 +246,7 @@ struct ForwardPickerView: View {
                     dismiss()
                 } label: {
                     HStack {
-                        AvatarView(name: item.title,
-                                   avatarId: item.chat.kind == .direct ? item.peer?.avatarId : item.chat.avatarId)
+                        AvatarView(name: item.title, avatarId: item.avatarId, glyph: item.avatarGlyph)
                             .frame(width: 40, height: 40)
                         Text(item.title).foregroundStyle(.primary)
                     }

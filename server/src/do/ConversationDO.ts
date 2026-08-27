@@ -108,7 +108,7 @@ function fanoutRetryable(frame: ServerFrame): boolean {
 
 interface Meta {
   chatId: string;
-  kind: "direct" | "group";
+  kind: "direct" | "group" | "self";
   title: string | null;
   avatarId: string | null;
   description: string | null;
@@ -624,7 +624,7 @@ export class ConversationDO implements DurableObject {
 
     if (path === "/create" && req.method === "POST") {
       const b = (await req.json()) as {
-        chatId: string; kind: "direct" | "group"; title: string | null;
+        chatId: string; kind: "direct" | "group" | "self"; title: string | null;
         memberIds: string[]; createdBy: string;
       };
       const existing = await this.loadMeta();

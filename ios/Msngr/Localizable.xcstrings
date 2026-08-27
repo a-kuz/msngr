@@ -1523,6 +1523,17 @@
         }
       }
     },
+    "Notes to yourself": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Заметки для себя"
+          }
+        }
+      }
+    },
     "Notifications": {
       "extractionState": "manual",
       "localizations": {
@@ -1782,6 +1793,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Сохранить название"
+          }
+        }
+      }
+    },
+    "Saved Messages": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Избранное"
           }
         }
       }

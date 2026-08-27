@@ -11,8 +11,8 @@ struct ChatRowView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            AvatarView(name: item.title, avatarId: item.chat.kind == .direct ? item.peer?.avatarId : item.chat.avatarId,
-                       online: item.peer?.online ?? false)
+            AvatarView(name: item.title, avatarId: item.avatarId,
+                       online: item.peer?.online ?? false, glyph: item.avatarGlyph)
                 .frame(width: avatarSide, height: avatarSide)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -208,13 +208,17 @@ struct AvatarView: View {
     let name: String
     let avatarId: String?
     var online: Bool = false
+    /// A system image drawn in place of the picture and the initials.
+    var glyph: String? = nil
     @State private var image: UIImage?
 
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .bottomTrailing) {
                 Group {
-                    if let image {
+                    if let glyph {
+                        glyphView(glyph, side: geo.size.width)
+                    } else if let image {
                         Image(uiImage: image).resizable().scaledToFill()
                     } else {
                         initialsView
@@ -250,11 +254,26 @@ struct AvatarView: View {
                     .foregroundStyle(.white)
             )
     }
+
+    private func glyphView(_ glyph: String, side: CGFloat) -> some View {
+        LinearGradient(colors: AvatarStyle.savedGradient, startPoint: .top, endPoint: .bottom)
+            .overlay(
+                Image(systemName: glyph)
+                    .resizable()
+                    .scaledToFit()
+                    .padding(side * 0.3)
+                    .foregroundStyle(.white)
+            )
+    }
 }
 
 /// The initials fallback shared by every avatar drawing: the same name gets the
 /// same gradient in the chat list and in the feed.
 enum AvatarStyle {
+    /// The chat with yourself: a bookmark on blue, the same everywhere it is drawn.
+    static let savedGlyph = "bookmark.fill"
+    static let savedGradient: [Color] = [.blue, .cyan]
+
     static func gradient(for name: String) -> [Color] {
         let palettes: [[Color]] = [
             [.red, .orange], [.blue, .cyan], [.purple, .pink],
