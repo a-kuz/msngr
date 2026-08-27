@@ -389,10 +389,13 @@ A ✅ goes in only together with a link to the evidence.
 ## The media viewer
 
 - ✅ fullscreen above the header, opened from the bubble (media-run)
-- 🟡 pinch zoom and a double tap 1 ↔ 2.5 (not verified live)
+- 🟡 pinch zoom and a double tap 1 ↔ 2.5 (the double tap live in
+  qa/runs/2026-08-27-viewer; the pinch waits for a run with two fingers, the
+  simulator driver has one)
 - ✅ closing by a swipe down with dimming (qa/runs/2026-08-21-media-viewer)
 - ✅ paging through the album, both directions (qa/runs/2026-08-21-media-viewer)
-- 🟡 sharing a file from the viewer (not verified live)
+- ✅ sharing a file from the viewer: the share sheet opens on the cached file
+  with the system's save actions (qa/runs/2026-08-27-viewer)
 - ✅ video in the viewer (media-close-out)
 - ⬜ a hero transition bubble ↔ viewer
 
