@@ -340,7 +340,10 @@ A ✅ goes in only together with a link to the evidence.
     (docs/protocol.md, ForwardPayloadTests units, run 12)
 - Editing
   - ✅ editing your own text message, the «изм.» mark (2026-08-21-reactions-forward run, 08–09)
-  - 🟡 an edit does not grow the peer's unread count (ServiceFrameTests units, smoke `service flag delivered`)
+  - ✅ an edit does not grow the peer's unread count: two edit frames landed on
+    a peer holding one unread and the count stayed at 1
+    (qa/runs/2026-08-27-edit-unread-run.md; ServiceFrameTests units, smoke
+    `service flag delivered`)
   - ✅ edit history: every text kept with its time, a context-menu item shows them
     on both sides (EditHistoryTests units, run 10–11)
 - Deleting
