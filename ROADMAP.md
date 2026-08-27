@@ -599,7 +599,11 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   - 🟡 previews from the shared database in the NSE (the extension does not launch on the simulator, a device is needed — docs/research/nse-simulator-experiment.md)
   - ⬜ the sender's avatar and name through Communication Notifications
   - ⬜ a group avatar in the notification
-  - ⬜ quick reply straight from the push
+  - 🟡 quick reply straight from the push (category, action routing and the
+    reply/mute handlers are in — NotificationActionRouteTests; the expanded
+    banner itself needs a device: idb cannot produce the SpringBoard
+    context-menu press, and the NSE path does not run on the simulator)
+  - 🟡 mute the chat straight from the push (same category; same device caveat)
   - ⬜ a photo preview as an image in the notification
 - Sounds and exceptions
   - ⬜ a sound of its own for one chat, overriding the default

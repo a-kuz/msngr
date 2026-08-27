@@ -214,6 +214,7 @@ private final class PushAnswer: @unchecked Sendable {
                 content.subtitle = built.subtitle ?? ""
                 content.body = built.body
                 content.threadIdentifier = built.threadIdentifier
+                content.categoryIdentifier = NotificationCategory.message
             }
             handler(content)
         case .skip(let reason):
