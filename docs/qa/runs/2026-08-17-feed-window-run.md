@@ -18,11 +18,11 @@ The direct chat holds 18 611 messages, seeded through the regular send path;
 18 611. Usernames and search queries are digits: on this host the simulator maps
 hardware key codes through a Russian layout.
 
-Two builds, both carrying the same `main` (`482cdcc`):
+Two builds, both carrying the same `main` (`4ab239e`):
 
-- **before** — `1d2de58` merged with `main`: the tracing of the earlier run and
+- **before** — `63e8e9f` merged with `main`: the tracing of the earlier run and
   none of the four fixes.
-- **after** — `41ee108`, the same merge with the four fixes on it.
+- **after** — `b1aa304`, the same merge with the four fixes on it.
 
 The device database is carried from one build to the other, so both runs work on
 the same messages. Before the baseline run the FTS triggers are put back to their

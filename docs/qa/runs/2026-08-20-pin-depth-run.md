@@ -1,7 +1,7 @@
 # Pinning at any depth: a live run on two simulators
 
 Run date: 2026-08-20. Closes the two behaviours left after
-`f3df882` (pinned bar drawn from its own row): the tap on the bar reaching a
+`5943e30` (pinned bar drawn from its own row): the tap on the bar reaching a
 pin far below the feed window, and a pin applying to both members before the
 next chat-state sync. Measured against `docs/qa/runs/2026-08-16-large-chat-perf-run.md`,
 which found neither working: the bar had nothing to jump to, and the local
@@ -12,14 +12,14 @@ which found neither working: the bar had nothing to jump to, and the local
 Own `wrangler dev` on :8805, own `--persist-to` outside the repository,
 `APNS_HOST` pointed at an unused mock. Two own simulators, iPhone 17, iOS 26.5:
 `pin-a` (23B9A339) as user `9010`, `pin-b` (3F0F8BF4) as user `8009`. Built from
-the working tree after merging main (`e87077a`): the fanout rework landed
+the working tree after merging main (`9905020`): the fanout rework landed
 there mid-run (outbox-per-recipient with unbounded retry), and both accounts
 were registered fresh afterwards — the branch's own crypto-identity merge made
 every earlier account's identity key unsigned and unusable for a new session.
 
 ## What was fixed
 
-`ChatViewModel.observePinnedMessage` (commit `f3df882`) reads the pinned row by
+`ChatViewModel.observePinnedMessage` (commit `5943e30`) reads the pinned row by
 its own `ValueObservation` keyed on `msgId`, not by scanning the loaded window;
 the bar's tap goes through `jump(to:)`, which calls `ensureLoaded` and pages
 history in before scrolling. `SyncEngine.pinMessage` (this run) writes

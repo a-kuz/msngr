@@ -15,7 +15,7 @@ the move.
 
 ## Before the migration
 
-Build from commit 4234a3d, no entitlement yet. Two users, a chat with three
+Build from commit 11aaba7, no entitlement yet. Two users, a chat with three
 messages in both directions, decryption and read ticks working.
 
 ```

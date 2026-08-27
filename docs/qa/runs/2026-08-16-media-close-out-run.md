@@ -18,7 +18,7 @@ crossed-out play glyph, and `--:-- … --:--`: the AVPlayerItem had not loaded a
 all. The sender side plays too. The same video opened on A reports duration
 0:02 and reaches position 1.
 
-No new fix was needed. The MIME-to-extension mapping added in 7d1e4d6 is what
+No new fix was needed. The MIME-to-extension mapping added in 4747a9a is what
 makes this work: the cache file is written as `<mediaId>.mp4` and AVPlayer
 picks the container from the extension. `MediaInfo.mime` is non-optional and
 travels inside the E2E envelope, so the receiver names the file correctly from

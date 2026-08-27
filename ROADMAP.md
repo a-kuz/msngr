@@ -783,7 +783,7 @@ Decided in `docs/research/2026-08-19-per-user-do.md`; the queue orders the steps
   independent chains, the push in its own persisted queue (run-delivery,
   `runs/2026-08-19-delivery-run.md`)
 - ✅ a receipt writes one per-member mark key; the cmid idempotency records are
-  swept behind the sender's delivered mark (`01d12ff`, smoke holds the rule)
+  swept behind the sender's delivered mark (`17354b3`, smoke holds the rule)
 - ✅ identity keys, one-time prekeys and the device list live in `UserDO`; a
   first message costs 2 D1 statements instead of 7 (run-userdo,
   `runs/2026-08-21-userdo-run.md`)

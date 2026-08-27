@@ -143,7 +143,7 @@ for. Not investigated further.
 ### Interaction smoothness below Telegram
 Reported 2026-08-18. Overall animation quality and frame pacing feel worse
 than Telegram across the app. Umbrella item; closes on the owner's judgement,
-not on a single fix. Measured so far (bubbleanim run, merged 14c3a0a): no
+not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
@@ -205,7 +205,7 @@ shows the glyph whole in every frame, and the owner confirmed the look
 ### The viewer's close button does nothing over a video
 Found in passing 2026-08-27 in the viewer run: on a video page the tap on ✕
 went to the system player's picture-in-picture glyph, which sits in the same
-corner, and the viewer stayed open. Closed by b7cfa10: the video page is the
+corner, and the viewer stayed open. Closed by a423462: the video page is the
 player controller with picture-in-picture off; ✕ closes a photo and a video
 page alike (`docs/qa/runs/2026-08-27-viewer-run.md`).
 
@@ -216,7 +216,7 @@ its preparation is done; the owner also asked for a loader with the percent.
 `sendPicked` split the pick into photos (one album) and videos (a bubble
 each), and a video's row was written only after `loadTransferable` had copied
 the file out of the library.
-Closed by 79bbe97: one pick is one message with a typed placeholder per slot
+Closed by 987bb8c: one pick is one message with a typed placeholder per slot
 before any loading, videos share the mosaic, and every tile carries a ring
 with the percent of the transcode and the upload until the ack. Verified live
 with two ffmpeg clips and a still (`docs/qa/runs/2026-08-27-video-album-run.md`).
@@ -231,7 +231,7 @@ follows the text size (`attachmentHeight`, 42 to 78 pt) while
 offsets for the 42 pt plate; the duration label was capped at 60 pt, which a
 scaled 11 pt font overflows on «0:00,5»; the amplitudes were normalised to the
 loudest peak, so a single click flattened the speech around it.
-Closed by 2fb251c: the plate lays itself out from its height, the label is as
+Closed by 126a8a3: the plate lays itself out from its height, the label is as
 wide as its text, loudness is the RMS per bucket scaled to the 95th
 percentile. The same run found the feed measuring at the default text size on
 a cold start under text drawn at the reader's; the snapshot now follows the
@@ -243,7 +243,7 @@ the device is the owner's to look at.
 Reported by the owner 2026-08-21, late evening: a GIF sent into a chat showed
 one static frame. The animation was lost on the way out — every picked image
 went through the JPEG pass, and JPEG holds one frame.
-Closed by 27daed3: a multi-frame GIF is sent as its own bytes with `image/gif`
+Closed by 2cfd65c: a multi-frame GIF is sent as its own bytes with `image/gif`
 as the mime, the feed plays it in the tile a still would have filled (frame
 delays read from the file, one decoded frame at a time, stopped with the cell
 and paused off-screen through the same switch the video autoplay uses), and the
@@ -293,7 +293,7 @@ one host gap, all of them reading as a lost tap from the outside:
 - The new chat sheet's field was matched by its localised placeholder (its own
   closed entry above).
 
-Closed by 878d6e5: the play button carries the state in its identifier
+Closed by 2154fba: the play button carries the state in its identifier
 (`voice.play` / `voice.pause`) and the speed rides in the element's value,
 while the translated labels stay for the reader. The product was right
 throughout — checked by hand with a 62 s and a 26 s take: after the walk out to
@@ -315,7 +315,7 @@ time label hold still, the preview cross-fades in place
 ### The block button on a request has no contrast in the dark appearance
 Seen in passing on 2026-08-20: on the request screen «Заблокировать» is a
 `.bordered` destructive button, but the app's accent tint painted it, so on
-the dark ground it read as orange letters on dark brown. Closed by `48592cb`:
+the dark ground it read as orange letters on dark brown. Closed by `ab89288`:
 the button carries its own `.tint(.red)`, and a destructive action no longer
 inherits the accent. Verified live on 2026-08-21 in the dark appearance — a
 fresh peer's message request shows the block button in red over its own dark
@@ -324,9 +324,9 @@ line to take back.
 
 ### List rows are tappable only on their letters and icons
 Reported 2026-08-19 from the device: in many lists the tap worked only exactly
-on the text or the icon. The first pass (`324c4d2`) gave the chat-list and
+on the text or the icon. The first pass (`91d6bb7`) gave the chat-list and
 new-chat rows a content shape and was verified live the same day. The sweep of
-2026-08-21 (`152e106`) read every `buttonStyle(.plain)` in the app and found
+2026-08-21 (`3b9f942`) read every `buttonStyle(.plain)` in the app and found
 three more instances: the folder tabs and the manage chip (`ChatFolderBar`,
 transparent padding without a content shape), the forward picker rows
 (`ForwardPickerView`, content-hugging label), and the pin pad's del/face keys
@@ -342,7 +342,7 @@ Found 2026-08-21 during the reactions/forward run, out of its scope: deletion
 cleared text and media but left the `forward` column, and the layout kept
 drawing the header row above «Сообщение удалено» (seen live in the alfa–bravo
 direct chat, docs/qa/runs/2026-08-21-reactions-forward/, the deleted album).
-Closed by `cc00390`: a message deleted for everyone lays out neither the
+Closed by `fc55c81`: a message deleted for everyone lays out neither the
 forward line nor the reply strip. Verified live the same day — a forward into
 the Standup group deleted for everyone renders as a bare one-line tombstone.
 
@@ -351,7 +351,7 @@ Seen 2026-08-19 in a gate run on `run-longpress` (server code untouched by the
 branch): `smoke.mjs` check 21 asserted the sender's `sent` frame arrives before
 the push request reaches the APNs mock, and one run out of three had the push
 2 ms earlier — host scheduling over an ordering the design never promises,
-since the push queue is independent of the ack path. Closed in 4df77d3: the
+since the push queue is independent of the ack path. Closed in 840f2ea: the
 check now asserts the real claim — the ack does not wait out the mock's
 1500 ms hold (`h1.at - hp1.at < 1000`) — and the quiet rerun was green whole
 (259/259).
@@ -386,15 +386,15 @@ read ticks with no unread resurrection on the reader after sync.
 ### Unread count inflated in group chats
 Reported 2026-08-19. Reproduced by a red server-smoke check before any product
 change: with one unread message, a service frame and a second message, the
-push badge said 3 where the reader had two messages to open (d09b138); the
+push badge said 3 where the reader had two messages to open (100af30); the
 device row inflated the same way (`UnreadCountTests`). Fixed by counting
 unread in content rather than in seqs — the server keeps a running content
-count stored on every message (8eb1899), the device counts only frames that
-take the chat further than it has ever been (d36f0cc). Merged in e4f1ea0,
+count stored on every message (5d5763f), the device counts only frames that
+take the chat further than it has ever been (06f9359). Merged in 4356910,
 gate green.
 
 ### Bubble resize on a reaction change is not animated
-Reported 2026-08-18. Closed in 14c3a0a: `refreshItem` reconfigures the visible
+Reported 2026-08-18. Closed in d4f58f5: `refreshItem` reconfigures the visible
 cell inside a 0.35 s spring with `performBatchUpdates` in the same animation —
 the bubble grows in place, neighbours slide, contentOffset holds; reaction
 capsules are reused per emoji, media survives without a BlurHash flash. The
@@ -402,17 +402,17 @@ width-only inline-reaction case animates too. Frame-by-frame evidence in
 docs/qa/runs/2026-08-19-bubbleanim/.
 
 ### Long-press on a bubble has no animation
-Reported 2026-08-18. Closed in 14c3a0a: a 0.1 s press dips the bubble to 0.96,
+Reported 2026-08-18. Closed in d4f58f5: a 0.1 s press dips the bubble to 0.96,
 a 12 pt finger move releases it (scroll unaffected), and the context menu
 lifts from the pressed state — the overlay snapshot starts at the presentation
 layer's current scale, so the touch flows into the lift without a seam.
 
 ### Read tick colour invisible, single tick oversized
-Reported 2026-08-18. Closed by 95c03a3: the read tick got its own hue per
+Reported 2026-08-18. Closed by 84467d5: the read tick got its own hue per
 theme, the single tick the same glyph size as one of the pair.
 
 ### Back button in the chat header oversized
-Reported 2026-08-18 (third time). Closed by 95c03a3: the custom button now
+Reported 2026-08-18 (third time). Closed by 84467d5: the custom button now
 draws the system chevron at the system size, kept only for the `chat.back`
 accessibility identifier; the header title sits on a capsule ground.
 
@@ -430,7 +430,7 @@ Closed the same evening: this is the row hit area, not the Task. The row of
 `NewChatView` carried no shape of its own, so only its letters and avatar
 answered a touch — a tap aimed at the centre of the row's frame landed in the
 gap beside the name and did nothing, which is exactly what the run saw. The pin
-run was built from main as of the night before and did not have `324c4d2`, where
+run was built from main as of the night before and did not have `91d6bb7`, where
 the row states `contentShape(Rectangle())`. Verified on the shared stand with a
 build that has it: a peer registered a minute earlier, no chat between us,
 searched in «Новый чат», one tap on the row — the chat opened.
@@ -465,7 +465,7 @@ about four minutes (`POST /api/register`, `POST /api/push-token` in
 `.claude/wrangler-8787.log`) before workerd came back on its own. Nothing on our
 side asked it to; what the crash was is not established.
 
-Under that, a permanent one: the identity binding merged in `eed62e8` added
+Under that, a permanent one: the identity binding merged in `f28c27f` added
 `identity_key_sig` with `DEFAULT ''`, and on the stand 2357 of 2360 rows in
 `identity_keys` carry that empty default. A client refuses a bundle without the
 signature (`newSessionBox` returns nil), so every device of the recipient stayed
@@ -546,7 +546,7 @@ to see.
 Cause and fix, found by elimination on 2026-08-20: the chat replaced the system
 back button with a leading item of its own under
 `navigationBarBackButtonHidden(true)`, and after such a pop the list's bar
-stayed as the pushed screen left it. With the system back button (`800cad0`)
+stayed as the pushed screen left it. With the system back button (`881ea3c`)
 the title and both glyphs are in place the moment the pop settles, through two
 cycles. Re-verified live on 2026-08-21 on current main. The dark appearance
 also lost the empty-screen glyph, fixed through a `Theme.decorativeGlyph` role
@@ -563,7 +563,7 @@ Cause and fix: `ChatRow` carries the navigation in a `NavigationLink` whose
 label is an `EmptyView` at `opacity(0)`, so nothing in the row was hit-testable
 except the content's own letters and avatar; the same in `NewChatView`'s rows,
 where `buttonStyle(.plain)` takes away the cell behaviour a List button would
-have had. Both now state `contentShape(Rectangle())` (`324c4d2`), and a tap at
+have had. Both now state `contentShape(Rectangle())` (`91d6bb7`), and a tap at
 (300, 305) — the far right of a row — opens the chat. The wider sweep of every
 list in the app lives in the open entry above.
 
@@ -576,7 +576,7 @@ in about two seconds and answered taps throughout. No hang. Kept as an entry
 because the aiming mistake has now cost two runs: a tap goes through
 `scripts/grid.py <udid> --tap X Y` with the coordinate read off the picture.
 
-What the false alarm did turn up, and what is fixed (`3cdfbb9`): the sheet's
+What the false alarm did turn up, and what is fixed (`f1a839d`): the sheet's
 search fired a request per keystroke, cancelling nothing, so nine letters meant
 nine searches whose answers could arrive out of order and an older one could
 overwrite the newest results. The search now waits out the typing and cancels
@@ -587,7 +587,7 @@ longer claims «Нет результатов» about it.
 Reported 2026-08-19 from the device, with a screenshot. Long-pressing a bubble
 while the keyboard is up showed the action menu behind the keyboard: only
 «Ответить» peeked above it, the rest was unreachable.
-Closed by c5c0ab4: the overlay sends the keyboard down as it opens
+Closed by 2114f62: the overlay sends the keyboard down as it opens
 (`window.endEditing`), so the card lays out against the full screen; the draft
 stays in the composer. Verified live on a simulator with the keyboard up:
 all seven actions on screen, the draft intact after the menu closes
@@ -597,7 +597,7 @@ all seven actions on screen, the draft intact after the menu closes
 Reported 2026-08-19 from the device, with a screenshot. In the opened context
 menu the bubble was drawn twice: behind the lifted copy a second outline stuck
 out, offset up and left, with its own tail.
-Closed by c5c0ab4: it was the original left visible under the overlay — the
+Closed by 2114f62: it was the original left visible under the overlay — the
 scrim's gradient is transparent at the focus, and whenever the snapshot moved
 away from the origin (with the keyboard up it always does) the source bubble
 read through the blur as a second outline. The overlay now hides the source
@@ -625,7 +625,7 @@ text. The caret half was the absolute-position restore above; the same
 the binding holds a value the view never reported (send-clear, draft, edit),
 so ordinary typing takes no programmatic write at all.
 Closed with the owner's 2026-08-21 confirmation and a live run on main
-(dc17a5a): 20 fast HID keystrokes landed in order with the caret at the end,
+(d166273): 20 fast HID keystrokes landed in order with the caret at the end,
 and insertion after a word-replacement kept its place. The one full-field
 wipe seen in the run was the system's autocorrect replacing a tapped
 misspelled "word" wholesale — stock UITextView behaviour, not the composer.
@@ -638,7 +638,7 @@ ru-RU locale, so the placeholder reads «Введите юзернейм или 
 and the lookup finds nothing — the fallback path that opens a chat with a peer
 the device has no row for dies at "no user search field", and every voice test
 run on a fresh user fails there before it reaches what it tests.
-Closed by d1ce36a: both suites now take the first search field that answers a
+Closed by 58da84d: both suites now take the first search field that answers a
 touch — the list's own field sits behind the sheet and is not hittable, which
 is what tells the two apart, and no placeholder is named. Verified live: the
 sheet's field is the only hittable one in the tree on a ru simulator

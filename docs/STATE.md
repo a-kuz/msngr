@@ -19,22 +19,22 @@ picture of the site.
 
 A single agent working the easiest open ROADMAP items straight on main, one
 commit each, live-run evidence in `docs/qa/runs/`: clipboard paste closed as
-already-done (34000af); the chat list reorder animated and the stale
-`.animation`-on-ForEach removed (ebb76d4); the row height held steady across
-preview line counts — an owner report fixed the same hour (19e6bc6); the
-unread capsule rolls and pops on an increment — an owner ask (6e8b32c); bulk
-copy closed with units and a pasteboard read-back (e21a843); the passcode
-block verified end to end (6f19bc8); blocking, the blocked list and the
+already-done (8e01228); the chat list reorder animated and the stale
+`.animation`-on-ForEach removed (1e49b5b); the row height held steady across
+preview line counts — an owner report fixed the same hour (08f9489); the
+unread capsule rolls and pops on an increment — an owner ask (7f218de); bulk
+copy closed with units and a pasteboard read-back (f3320d4); the passcode
+block verified end to end (90798f8); blocking, the blocked list and the
 resume of delivery verified, with a missing ru string for the blocked strip
-added (23022c8); delete-for-me verified against a relaunch and the peer's
-copy (ae2f165); the viewer's album paging and swipe-close verified and the
-cache row's stale size fixed (48b2efa); swipe-to-reply and the text and album
-quotes (638b3ae); header presence and group author names (521a59e); the
-typing indicator in the header and the list (939a5eb). `msngrfixture` grew
-`send` and `typing` subcommands along the way (db7b052, 939a5eb). Gates ran
+added (e86dbf0); delete-for-me verified against a relaunch and the peer's
+copy (936443d); the viewer's album paging and swipe-close verified and the
+cache row's stale size fixed (f1f675e); swipe-to-reply and the text and album
+quotes (c880c9f); header presence and group author names (7f4e086); the
+typing indicator in the header and the list (f385ad5). `msngrfixture` grew
+`send` and `typing` subcommands along the way (d9efbc2, f385ad5). Gates ran
 green after each batch.
 
-run-userdo (`b94698c`): identity keys, one-time prekeys and the E2EE device
+run-userdo (`4caf2c6`): identity keys, one-time prekeys and the E2EE device
 list moved from D1 into the user's own Durable Object (`UserSessionDO` renamed
 `UserDO`, wrangler migration v3 `renamed_classes`, storage preserved). The
 prekey handout consumes inside the object, so two senders never draw the same
@@ -49,17 +49,17 @@ through the real core, so a one-simulator scenario gets a live counterpart.
 Dispatcher fixes on main the same day: twelve fixed defect entries moved from
 the open list to closed where their fixes had been recorded all along, and
 progress.py now shows defect counts and grows its bar against today's item
-total (`4534593`); folder tabs, forward-picker rows and pin-pad keys got full
-hit areas (`152e106`); a message deleted for everyone is a bare tombstone —
-no forward line, no reply strip (`cc00390`); the request screen's block button
-paints its own destructive red instead of the accent (`48592cb`). The feed's
-strings moved to English keys (`fdb9c47`), and the unread-marker and
+total (`c3379ad`); folder tabs, forward-picker rows and pin-pad keys got full
+hit areas (`3b9f942`); a message deleted for everyone is a bare tombstone —
+no forward line, no reply strip (`fc55c81`); the request screen's block button
+paints its own destructive red instead of the accent (`ab89288`). The feed's
+strings moved to English keys (`9a62448`), and the unread-marker and
 participants counters that had been hardcoded in English on that path went
 through the catalog's plural forms.
 
 ## Merged on 2026-08-21, night
 
-run-msgid (`229389b`): a message is identified by `(chatId, seq)` and the minted
+run-msgid (`94c0477`): a message is identified by `(chatId, seq)` and the minted
 msgId ULID is gone — from the client's schema, from the frames and from the
 REST. `delete` carries seqs, and the pin, the reply preview, the reaction, the
 edit target, the search hit and the jump request all name a message the same
@@ -68,7 +68,7 @@ id. The branch had to be finished by hand: the agent reported the work done
 with nothing committed, so the dispatcher committed it, merged main into it
 twice (main moved by fifteen commits under it), resolved sixteen conflicts, and
 found one red — `UnreadRecountTests` inserted into `pendingDecrypt` a `msgId`
-column the new schema does not have (`0c3f084`, the recount logic untouched).
+column the new schema does not have (`3d6fe71`, the recount logic untouched).
 Checked before landing: `swift test` 382 with 0 failures, MsngrTests 205 with
 0, and the server smoke on a stand of its own through `scripts/smoke-stand.sh`
 — ALL PASS, 265 checks. The 22 failures an earlier smoke run showed were
@@ -78,7 +78,7 @@ The client schema changed in place, so the fixture trio was reseeded
 
 ## Merged on 2026-08-21
 
-run-reactions (`1482c31`): a tap on a group reaction capsule opens who reacted,
+run-reactions (`ac437b2`): a tap on a group reaction capsule opens who reacted,
 grouped by emoji; a forward carries the quote preview and the original author
 (reactions deliberately do not travel — Telegram's choice, written into
 docs/protocol.md); an edited message keeps every text it has shown and the
@@ -88,7 +88,7 @@ own — a forwarded album arriving with no «Переслано от…» line, 
 unreadable on own dark bubbles
 (`docs/qa/runs/2026-08-21-reactions-forward-run.md`).
 
-run-feedextras (`9d233b2`): group feeds show sender avatars — the column is
+run-feedextras (`214d2d1`): group feeds show sender avatars — the column is
 reserved in the layout plan, the picture rides the last message of a run — and
 the current day floats as a sticky capsule under the header while the reader
 scrolls, yielding to the real separator at the boundary. The run's pixel diff
@@ -97,7 +97,7 @@ but the unread badge (`docs/qa/runs/2026-08-21-feedextras-run.md`). A defect
 the run found — a doubled «Сегодня» capsule during the 0.3 s handoff fade —
 was fixed in the branch.
 
-run-devices (`34fbf01`): the set of a user's devices carries
+run-devices (`216767b`): the set of a user's devices carries
 `users.devices_version`, the `devices` frame names it, the sync answer confirms
 it, and a reconnect marks cache entries suspect instead of dropping them — 9
 device reads over 8 reconnects became 1, delivery 9/9
@@ -105,7 +105,7 @@ device reads over 8 reconnects became 1, delivery 9/9
 the shared stand. In passing it fixed `SyncEngine.start()` after `stop()`
 leaving the outbox dead (one-shot wakeup streams), which only tests reach.
 
-run-media (`0ebee18`): a photo, an album or a video is in the feed before its
+run-media (`5a830c2`): a photo, an album or a video is in the feed before its
 preparation finishes — the row is written first and filled in as the work
 completes, and the outbox only picks the message up once the file is on disk.
 Nothing on that path rolls back; preparation retries in the background. The run
@@ -118,26 +118,26 @@ independently a second and a half later.
 
 ## Merged on 2026-08-20
 
-run-pin (`1a3f008`, the pinned bar reaches a message a thousand behind the newest
+run-pin (`3fccbad`, the pinned bar reaches a message a thousand behind the newest
 and a pin applies to both members within a second — numbers in
-`docs/qa/runs/2026-08-20-pin-depth-run.md`), run-longpress (`48dadad`, the
+`docs/qa/runs/2026-08-20-pin-depth-run.md`), run-longpress (`d21c14e`, the
 context menu clears the keyboard and one bubble is
 lifted), and a run of the owner's device defects straight on main: the composer
-caret that put «123» in as «231» (`33f30f8`), the empty-screen glyph that turned
-to mud in the dark appearance (`5f95956`), list rows that answered only on their
-letters (`324c4d2`), the chat search that fired a request per keystroke
-(`3cdfbb9`), and the chat list's navigation bar coming back from a chat washed
+caret that put «123» in as «231» (`d54cafd`), the empty-screen glyph that turned
+to mud in the dark appearance (`ec1eed7`), list rows that answered only on their
+letters (`91d6bb7`), the chat search that fired a request per keystroke
+(`f1a839d`), and the chat list's navigation bar coming back from a chat washed
 out — its cause was the custom back button. Sends to accounts registered before
-the identity binding no longer hang the whole outbox (`123a23d`), and the in-app
+the identity binding no longer hang the whole outbox (`38ecdd5`), and the in-app
 banner is laid out inside its own window band with tests holding that shape.
-A run no longer starts at registration (`e005621`): `alfa`, `bravo` and
+A run no longer starts at registration (`9bff7ee`): `alfa`, `bravo` and
 `charlie` live on the stand with the three direct chats between them and three
 groups, all with history, and `scripts/fixture.py install <name> <udid>` hands
 one of them to a simulator as a file copy with every permission already granted,
 notifications included. `CLAUDE.md` holds the rules that come with it — one
 simulator per home, `pull` before the next hand-out.
 
-The socket now watches itself by the clock (`21f73fb`): `WSFreshness` holds the
+The socket now watches itself by the clock (`c847f9d`): `WSFreshness` holds the
 rule — 8 s for a handshake, 4 s for a pong, 12 s of quiet — and `WSClient` asks
 it once a second from the upgrade, so a stalled stream is caught by a tick
 rather than by a callback that never comes. Death is noticed within 16 s at
@@ -164,7 +164,7 @@ The gate itself changed: `scripts/collect-crashes.sh` now fails on our own
 crashes and only reports a launch failure of the XCTest harness, which had been
 failing the gate off a stale runner bundle on a simulator that was not ours.
 
-Two defects the owner reported were closed in `b73cc80`: a send nobody could read
+Two defects the owner reported were closed in `f75ec3b`: a send nobody could read
 now fails and stays in the outbox instead of showing a tick, and a deleted direct
 chat can be opened again without waiting for the peer to write.
 

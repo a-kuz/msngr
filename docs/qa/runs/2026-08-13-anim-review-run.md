@@ -5,7 +5,7 @@ Run date: 2026-08-13.
 ## Stand
 
 Two simulators, `anim-a` and `anim-b`, iPhone 17, iOS 26.5, palette graphite.
-Build from main (`ba585e8`) against the stand on localhost:8787, users `anim7`
+Build from main (`1183d8a`) against the stand on localhost:8787, users `anim7`
 and `anim8`.
 
 Slow Animations in Simulator.app had no effect on these simulators: the checkbox

@@ -18,7 +18,7 @@ Two own simulators, iPhone 17, iOS 26.5, deleted after the run:
 `--persist-to .wrangler-offlineread` and `APNS_HOST:http://localhost:9887`
 (apns-mock on that port), migrations applied into the same persist dir. Both
 apps launched with `SIMCTL_CHILD_MSNGR_SERVER=http://localhost:8847`. Build
-from the working tree at f9205e1. Offline means this wrangler killed; online
+from the working tree at 66961c7. Offline means this wrangler killed; online
 means it started again with the same `--persist-to`.
 
 Setup before the scenario: Sender opened the chat through global search, the

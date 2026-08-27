@@ -21,7 +21,7 @@ Counted from the sanitized proxy logs in `2026-08-21-devices-version/`:
 
 | build | socket upgrades | GET /api/devices | messages delivered |
 | --- | --- | --- | --- |
-| before (0ebee18, blanket drop) | 18 | 9 | 9/9 |
+| before (5a830c2, blanket drop) | 18 | 9 | 9/9 |
 | after (this branch) | 18 | 1 | 9/9 |
 
 Before: the warm-up costs one read (the cache is empty in a fresh process) and
