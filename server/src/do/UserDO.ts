@@ -408,6 +408,20 @@ export class UserDO implements DurableObject {
         return json({ ok: true });
       }
 
+      case "/notify-plain": {
+        // A push that is not a chat message: it carries a ready alert, no
+        // envelope, and leaves the badge at the current unread total.
+        const b = (await req.json()) as {
+          chatId: string; title: string; body: string; userId?: string;
+        };
+        if (b.userId) {
+          await this.state.storage.put("userId", b.userId);
+          this.userId = b.userId;
+        }
+        await this.pushPlain(b.chatId, { title: b.title, body: b.body });
+        return json({ ok: true });
+      }
+
       case "/revoke-device": {
         const b = (await req.json()) as { deviceId: string; userId?: string };
         if (b.userId) {
@@ -738,6 +752,32 @@ export class UserDO implements DurableObject {
   /// their push — the ones that failed in transit and are worth another try. A
   /// refusal APNs actually pronounced is final: retrying the same payload buys
   /// nothing, and a dead token is dropped here.
+  /// A single informational push to every device of this user (added to a
+  /// group, and the like). No envelope, no seq; the badge stays at the current
+  /// unread total. A dead token is dropped the same way the message path does.
+  private async pushPlain(chatId: string, alert: { title: string; body: string }): Promise<void> {
+    const tokens =
+      (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
+    const devices = Object.entries(tokens);
+    if (!devices.length) return;
+    const badge = await this.totalUnread();
+    const badgeStamp = await this.nextBadgeStamp();
+    const results = await Promise.all(
+      devices.map(async ([deviceId, t]) => {
+        try {
+          return { deviceId, res: await sendPush(this.env, t.token, t.env, {
+            chatId, badge, badgeStamp, alert,
+          }) };
+        } catch (e) {
+          console.warn(`plain push to device ${deviceId} for ${chatId} failed: ${String(e)}`);
+          return { deviceId, res: null };
+        }
+      })
+    );
+    const dead = results.filter((r) => r.res?.dead).map((r) => r.deviceId);
+    if (dead.length) await this.dropPushTokens(dead);
+  }
+
   private async pushToDevices(frame: PushJob, skip: string[] = []): Promise<string[]> {
     const tokens =
       (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};

@@ -61,6 +61,10 @@ export interface PushPayload {
   /// dropped when the payload would not fit; the message then arrives on the
   /// next connection.
   env?: string;
+  /// A ready alert for a push that is not a chat message — being added to a
+  /// group, and the like. It carries no envelope and nothing for the extension
+  /// to decrypt: the text is shown as it is.
+  alert?: { title: string; body: string };
 }
 
 /// APNs refuses a payload over this size, and a refusal is a notification the
@@ -84,6 +88,18 @@ export function envelopeForDevice(body: unknown, address: string): string | unde
 /// payload does not fit: everything else is what orders the burst and counts
 /// the badge.
 export function pushBody(payload: PushPayload): string {
+  if (payload.alert) {
+    return JSON.stringify({
+      aps: {
+        alert: payload.alert,
+        ...(payload.badge !== undefined ? { badge: payload.badge } : {}),
+        sound: "default",
+        "thread-id": payload.chatId,
+      },
+      chatId: payload.chatId,
+      badgeStamp: payload.badgeStamp,
+    });
+  }
   const build = (env?: string) =>
     JSON.stringify({
       aps: {

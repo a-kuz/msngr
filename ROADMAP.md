@@ -545,6 +545,10 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   - ✅ APNs for every content message, regardless of a live socket (smoke `push delivered despite live ws`)
   - ✅ the APNs call is awaited in the handler, without waitUntil; the sender does not wait for it (smoke `push follows its ack`)
   - ✅ no push for service frames, a muted chat and your own echo (smoke, three checks)
+  - ✅ being added to a group raises its own push, the group's title in the clear
+    and no envelope; re-adding a member is a no-op with no push (smoke
+    `push on being added to a group`, `group-add push names the group`,
+    `re-add is a no-op with no push`)
   - ✅ the badge from the server's unread cache, recounted after a read (smoke `push badge=1/2/after read`)
   - ✅ collapse-id = msgId, thread-id = chatId, the alert with no plaintext (smoke)
   - ✅ the dev path through the mock and `simctl push` without an Apple account (apns-mock, smoke `dev push unsigned`)
