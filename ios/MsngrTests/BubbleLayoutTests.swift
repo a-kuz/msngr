@@ -468,6 +468,22 @@ final class BubbleLayoutTests: XCTestCase {
         }
     }
 
+    /// A voice bubble is the plate and nothing else: the time shares the plate's
+    /// bottom line at every text size instead of opening a storey of its own.
+    func testVoiceTimeStaysOnThePlateAtEverySize() {
+        defer { TypeScale.apply(.large) }
+        for category in [UIContentSizeCategory.extraSmall, .large, .extraExtraLarge,
+                         .accessibilityExtraExtraExtraLarge] {
+            TypeScale.apply(category)
+            let p = mediaPlan(.voice, [:])
+            let vf = try! XCTUnwrap(p.voiceFrame)
+            XCTAssertEqual(p.statusFrame.maxY, vf.maxY, accuracy: 0.5, "\(category.rawValue)")
+            XCTAssertGreaterThanOrEqual(p.statusFrame.minY, vf.minY, "\(category.rawValue)")
+            XCTAssertEqual(p.bubbleFrame.height, vf.height + 2 * BubbleLayout.vPadding,
+                           accuracy: 0.5, "\(category.rawValue)")
+        }
+    }
+
     // MARK: - Forward line over media
 
     private func forwarded(_ kind: MessageKind) -> Message {

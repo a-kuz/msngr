@@ -133,6 +133,13 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
                                                name: .typeScaleChanged, object: nil)
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // the feed measures against a snapshot of the text size; the traits this
+        // view is about to be drawn with are the truth it has to match
+        TypeScale.sync(with: traitCollection)
+    }
+
     /// Reader changed their text size: every cached plan was measured against
     /// the old font, so the feed re-measures from scratch and puts the message
     /// the reader was looking at back where it was.

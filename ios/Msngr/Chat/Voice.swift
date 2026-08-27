@@ -232,14 +232,23 @@ final class VoiceRecorder: NSObject, ObservableObject {
         for b in 0..<buckets {
             let start = b * perBucket
             guard start < frames else { break }
-            var peak: Float = 0
-            for i in start..<min(start + perBucket, frames) {
-                peak = max(peak, abs(data[i]))
-            }
-            out.append(peak)
+            let end = min(start + perBucket, frames)
+            var sum: Float = 0
+            for i in start..<end { sum += data[i] * data[i] }
+            out.append((sum / Float(end - start)).squareRoot())
         }
-        let maxPeak = max(out.max() ?? 1, 0.01)
-        return out.map { Int(($0 / maxPeak) * 31) }
+        return normalize(out)
+    }
+
+    /// Loudness per bucket into the 0…31 the wave is drawn from. The scale is
+    /// the 95th percentile rather than the loudest bucket: one click at the
+    /// start of a take would otherwise flatten all the speech after it. The
+    /// square root lifts quiet speech, so a calm voice still reads as a wave.
+    static func normalize(_ levels: [Float]) -> [Int] {
+        guard !levels.isEmpty else { return [] }
+        let sorted = levels.sorted()
+        let ceiling = max(sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))], 0.001)
+        return levels.map { Int((min($0 / ceiling, 1).squareRoot() * 31).rounded()) }
     }
 }
 
@@ -394,11 +403,12 @@ final class WaveformView: UIView {
         let barW: CGFloat = 2.5
         let gap: CGFloat = 1.5
         let count = min(amplitudes.count, Int(bounds.width / (barW + gap)))
+        guard count > 0 else { return }
         let step = CGFloat(amplitudes.count) / CGFloat(count)
         let midY = bounds.midY
         for i in 0..<count {
             let amp = amplitudes[Int(CGFloat(i) * step)]
-            let h = max(3, CGFloat(amp) / 31 * bounds.height)
+            let h = max(barW, CGFloat(amp) / 31 * bounds.height)
             let x = CGFloat(i) * (barW + gap)
             let played = Double(i) / Double(count) < progress
             ctx.setFillColor((played ? playedColor : unplayedColor).cgColor)
@@ -583,19 +593,31 @@ final class VoiceMessageView: UIView {
 
     // one row: play button on the left, waveform on the right, the duration small beneath
     // it; BubbleLayout puts the message time in the bottom right on the duration's line,
-    // and the speed sits in the gap between the two
+    // and the speed sits in the gap between the two. Everything is placed from the
+    // plate's height, which follows the text size, so a large setting keeps the wave
+    // and the label together instead of leaving the label in empty space
     override func layoutSubviews() {
         super.layoutSubviews()
-        playButton.frame = CGRect(x: 0, y: 1, width: 40, height: 40)
-        waveform.frame = CGRect(x: 48, y: 3, width: bounds.width - 48, height: 22)
+        let h = bounds.height
+        let button = min(40, h - 2)
+        playButton.frame = CGRect(x: 0, y: (h - button) / 2, width: button, height: button)
+        let left = button + 8
+        let labelH = ceil(durationLabel.font.lineHeight)
+        let waveH = h - labelH - 5
+        waveform.frame = CGRect(x: left, y: 2, width: bounds.width - left, height: waveH)
         // the voice duration is measured so the speed can sit right next to it; a file
         // puts its size in the same label and has the row to itself
         let durationWidth = msg?.kind == .voice
-            ? min(60, ceil(durationLabel.sizeThatFits(bounds.size).width)) : 100
-        durationLabel.frame = CGRect(x: 48, y: 27, width: durationWidth, height: 14)
-        rateButton.frame = CGRect(x: durationLabel.frame.maxX + 8, y: 24, width: 38, height: 18)
-        fileIcon.frame = CGRect(x: 4, y: 5, width: 32, height: 32)
-        fileName.frame = CGRect(x: 48, y: 3, width: bounds.width - 48, height: 22)
+            ? min(bounds.width - left - 50, ceil(durationLabel.sizeThatFits(bounds.size).width))
+            : bounds.width - left
+        durationLabel.frame = CGRect(x: left, y: h - labelH - 1, width: durationWidth, height: labelH)
+        let rateH = labelH + 4
+        rateButton.frame = CGRect(x: durationLabel.frame.maxX + 8, y: h - rateH + 1,
+                                  width: ceil(rateH * 2.1), height: rateH)
+        let icon = min(32, h - 10)
+        fileIcon.frame = CGRect(x: (button - icon) / 2, y: (h - labelH - 4 - icon) / 2 + 2,
+                                width: icon, height: icon)
+        fileName.frame = CGRect(x: left, y: 2, width: bounds.width - left, height: waveH)
     }
 }
 
