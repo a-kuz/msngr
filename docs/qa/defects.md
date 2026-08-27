@@ -109,7 +109,10 @@ message from «Charlie Service» lifted its row from the bottom to second place,
 the row travelled over the others in about 170 ms with nothing clipping it:
 for four or five frames its title and preview were drawn on top of «Bravo
 Service» and «Standup», and the rows it passed shifted down under it while
-the move was still going. The owner's word for the result: crooked.
+the move was still going. The owner's word for the result: crooked. The list
+now moves in `Theme.spring` (0.45 s) instead of `springFast`; in the re-run of
+2026-08-27 the lifted row started below the screen, so the crossing itself was
+not exercised — to be watched on the next lift of an on-screen row.
 
 ### A new request appears in the list with no animation
 Seen 2026-08-27 in the same recording. When a stranger's first message
@@ -124,7 +127,10 @@ header and the row easing in). The «…» avatar frame is still open.
 Asked for by the owner 2026-08-27 while reviewing the demo: after «Принять»
 on the request screen the closed-eye placeholder and the two buttons are
 replaced by the chat in a cut. The owner wants a transition here, a dissolve
-(«dust») or something of that kind.
+(«dust») or something of that kind. Done the same day: the card leaves through
+`AnyTransition.dissolve` (blur, a slight swell, fade) and the feed fades in,
+both in one `Theme.spring` transaction; the flag flips in the model on the
+tap, ahead of the database row. Waiting for the owner's look.
 
 ### A group shows «Сообщение ещё не загружено» that never resolves
 Seen 2026-08-27 on the alfa fixture in the «Design» group: a placeholder row
