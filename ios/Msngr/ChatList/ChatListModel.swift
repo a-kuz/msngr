@@ -122,8 +122,13 @@ final class ChatListModel: ObservableObject {
                 // List animates a structural change only when the data moves
                 // inside an animated transaction; a modifier on the ForEach does
                 // not reach its diff. The first fill stays instant on purpose.
-                if self.loaded, visible.map(\.id) != self.items.map(\.id) {
-                    withAnimation(Theme.springFast, apply)
+                let requests = all.filter { $0.chat.isRequest }
+                let archived = all.filter { $0.chat.archived && !$0.chat.isRequest }
+                let moved = visible.map(\.id) != self.items.map(\.id)
+                    || requests.map(\.id) != self.requests.map(\.id)
+                    || archived.isEmpty != self.archived.isEmpty
+                if self.loaded, moved {
+                    withAnimation(Theme.spring, apply)
                 } else {
                     apply()
                 }

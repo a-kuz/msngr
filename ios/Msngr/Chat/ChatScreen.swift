@@ -44,7 +44,9 @@ struct ChatScreen: View {
                 // pending request: a profile card with the two buttons stands in for the feed
                 if model.contentHidden {
                     requestCard
+                        .transition(.dissolve)
                 } else {
+                  VStack(spacing: 0) {
                     if searching { searchHeader }
                     if !model.pinnedMessages.isEmpty, !searching {
                         pinnedBar
@@ -88,8 +90,11 @@ struct ChatScreen: View {
                                      Task { await sendImages(images, caption: caption) }
                                  })
                     }
+                  }
+                  .transition(.opacity)
                 }
             }
+            .animation(Theme.spring, value: model.contentHidden)
             if !model.selecting { scrollDownButton }
             // the fade dissolves bubbles running under the navigation bar; while
             // searching the bar is gone and the field stands in its own row
