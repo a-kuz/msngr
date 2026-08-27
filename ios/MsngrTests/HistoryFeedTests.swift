@@ -44,30 +44,12 @@ final class HistoryFeedTests: XCTestCase {
         XCTAssertTrue(unreadableIds(feed).isEmpty)
     }
 
-    /// Once the oldest message on the device is reached, the very top of the feed holds
-    /// one item rather than a placeholder per missing message.
-    @MainActor
-    func testHistoryStartIsASingleItemAtTheTop() {
-        let feed = ChatViewModel.buildFeed([msg(9), msg(8)], members: [], atHistoryStart: true)
-        guard case .historyStart = feed.last else {
-            return XCTFail("the last feed item must be the history start, got \(String(describing: feed.last))")
-        }
-        XCTAssertEqual(feed.filter { if case .historyStart = $0 { return true } else { return false } }.count, 1)
-    }
-
-    /// An empty feed gets no "history starts here" item.
-    @MainActor
-    func testEmptyFeedHasNoHistoryStart() {
-        XCTAssertTrue(ChatViewModel.buildFeed([], members: [], atHistoryStart: true).isEmpty)
-    }
-
     /// The unread marker and the placeholders coexist: item ids stay unique.
     @MainActor
     func testFeedIdsStayUnique() {
         let feed = ChatViewModel.buildFeed([msg(9), msg(6), msg(2)], members: [],
                                            unreadMarker: (anchorSeq: 6, count: 2),
-                                           unreadableSeqs: [3, 4, 7, 8],
-                                           atHistoryStart: true)
+                                           unreadableSeqs: [3, 4, 7, 8])
         let ids = feed.map(\.id)
         XCTAssertEqual(Set(ids).count, ids.count, "feed item ids must be unique: \(ids)")
         XCTAssertEqual(unreadableIds(feed), ["gap:7-8", "gap:3-4"])

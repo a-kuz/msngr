@@ -505,7 +505,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
             return l1 == l2
         case let (.unreadMarker(_, c1), .unreadMarker(_, c2)):
             return c1 == c2
-        case (.unreadable, .unreadable), (.historyStart, .historyStart):
+        case (.unreadable, .unreadable):
             return true
         default:
             return false
@@ -749,10 +749,6 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "system", for: indexPath) as! SystemCell
             cell.configure(text: SystemCell.unreadableText)
             return cell
-        case .historyStart:
-            let cell = cv.dequeueReusableCell(withReuseIdentifier: "system", for: indexPath) as! SystemCell
-            cell.configure(text: SystemCell.historyStartText)
-            return cell
         case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName,
                       let avatar):
             if msg.kind == .system {
@@ -789,9 +785,6 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
         case .unreadable:
             return CGSize(width: cv.bounds.width,
                           height: FeedNote.height(SystemCell.unreadableText, width: cv.bounds.width) + 12)
-        case .historyStart:
-            return CGSize(width: cv.bounds.width,
-                          height: FeedNote.height(SystemCell.historyStartText, width: cv.bounds.width) + 12)
         case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName,
                       let avatar):
             if msg.kind == .system {
@@ -1052,7 +1045,6 @@ final class SystemCell: UICollectionViewCell {
     required init?(coder: NSCoder) { fatalError() }
 
     static let unreadableText = String(localized: "Message not loaded yet")
-    static let historyStartText = String(localized: "History starts here")
 
     static func text(for msg: Message, ownUserId: String = "") -> String {
         let t = msg.text ?? ""
