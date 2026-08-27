@@ -101,6 +101,75 @@ final class BubbleResizeTests: XCTestCase {
                        "the label is laid out to the capsule before the spring, or the glyph clips mid-entrance")
     }
 
+    private func photoMessage(id: String, status: MessageStatus) -> Message {
+        var media = MediaInfo(type: "photo", mediaId: "x", key: "k", hash: "h", size: 1, mime: "image/jpeg")
+        media.w = 800; media.h = 600
+        var m = Message(id: id, chatId: "c", fromUserId: "me",
+                        sentAt: 1_700_000_000, kind: .photo,
+                        text: nil, status: status, isOutgoing: true)
+        m.seq = 2
+        m.serverTs = 1_700_000_000
+        m.media = media
+        return m
+    }
+
+    /// A media tile is a tappable image view sitting inside the bubble, which is
+    /// an image view itself — the bubble alone would match a looser predicate,
+    /// and the bubble's frame is animated on purpose.
+    private func mediaImageViews(in view: UIView) -> [UIImageView] {
+        var out: [UIImageView] = []
+        for sub in view.subviews {
+            if let iv = sub as? UIImageView, iv.isUserInteractionEnabled,
+               view is UIImageView { out.append(iv) }
+            out += mediaImageViews(in: sub)
+        }
+        return out
+    }
+
+    /// The first frame of a freshly created subview never animates: a media view
+    /// rebuilt while the feed's animation block is running must land in place,
+    /// not fly in from zero.
+    @MainActor
+    func testFreshMediaViewDoesNotAnimateItsFirstFrame() {
+        let cell = MessageCell(frame: CGRect(x: 0, y: 0, width: width, height: 400))
+        let textMsg = message(reactions: [:])
+        cell.configure(msg: textMsg, plan: BubbleLayout.plan(for: textMsg, width: width, tightGap: false,
+                                                             showTail: true, showName: false, authorName: nil))
+        let photo = photoMessage(id: "m2", status: .sent)
+        let plan = BubbleLayout.plan(for: photo, width: width, tightGap: false,
+                                     showTail: true, showName: false, authorName: nil)
+        UIView.animate(withDuration: 0.25) {
+            cell.configure(msg: photo, plan: plan)
+        }
+        guard let iv = mediaImageViews(in: cell).first else {
+            return XCTFail("no media view after the photo configure")
+        }
+        XCTAssertEqual(iv.layer.animationKeys() ?? [], [],
+                       "a rebuilt media view must take its first frame without animating from zero")
+    }
+
+    /// A retry flips a visible cell from failed to sending inside the feed's
+    /// animation block; the upload ring it creates must appear in place.
+    @MainActor
+    func testUploadRingDoesNotAnimateItsFirstFrame() {
+        let cell = MessageCell(frame: CGRect(x: 0, y: 0, width: width, height: 400))
+        let failed = photoMessage(id: "m3", status: .failed)
+        cell.configure(msg: failed, plan: BubbleLayout.plan(for: failed, width: width, tightGap: false,
+                                                            showTail: true, showName: false, authorName: nil))
+        let sending = photoMessage(id: "m3", status: .sending)
+        let plan = BubbleLayout.plan(for: sending, width: width, tightGap: false,
+                                     showTail: true, showName: false, authorName: nil)
+        UIView.animate(withDuration: 0.25) {
+            cell.configure(msg: sending, plan: plan)
+        }
+        let rings = mediaImageViews(in: cell).flatMap { $0.subviews.compactMap { $0 as? UploadRingView } }
+        guard let ring = rings.first else {
+            return XCTFail("no upload ring on the sending photo")
+        }
+        XCTAssertEqual(ring.layer.animationKeys() ?? [], [],
+                       "the ring must take its first frame without animating from zero")
+    }
+
     @MainActor
     func testCapsuleSurvivesACountChange() {
         let cell = MessageCell(frame: CGRect(x: 0, y: 0, width: width, height: 300))
