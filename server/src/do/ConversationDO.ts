@@ -949,11 +949,13 @@ export class ConversationDO implements DurableObject {
           }
         }
         const now = nowSec();
+        const added: string[] = [];
         for (const uid of b.add) {
           if (members.has(uid)) continue;
           const m: ChatMember = { userId: uid, role: "member", joinedAt: now, accepted: true };
           members.set(uid, m);
           await this.state.storage.put("member:" + uid, m);
+          added.push(uid);
         }
         for (const uid of b.remove) {
           if (!members.has(uid)) continue;
@@ -962,6 +964,19 @@ export class ConversationDO implements DurableObject {
         }
         this.members = members;
         if (b.add.length) await this.notifyUserDOsChatList(b.add);
+        // someone who was actually added, and did not add themselves, gets a
+        // push about it; the group's title is stored here in the clear
+        const invited = added.filter((uid) => uid !== b.actor);
+        if (invited.length) {
+          const body = meta.title
+            ? `Вас добавили в «${meta.title}»`
+            : "Вас добавили в группу";
+          await Promise.allSettled(invited.map((uid) =>
+            this.userStub(uid).fetch("https://do/notify-plain", {
+              method: "POST",
+              body: JSON.stringify({ chatId: meta.chatId, title: "Msngr", body, userId: uid }),
+            })));
+        }
         if (b.remove.length) await this.notifyUserDOsChatList(b.remove, true);
         await this.broadcastChat("members");
         if (b.remove.length) {

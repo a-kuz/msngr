@@ -1205,6 +1205,34 @@ check("service frame does not grow the badge", pushSvc?.body.aps.badge === 1,
   const u3 = await gsend("cm-u3");
   const badge2 = (await waitPush(pushFor("olga-sim-udid", u3)))?.body.aps.badge;
   check("a service frame does not grow an unread badge", badge2 === 2, `badge=${badge2}`);
+
+  // being added to a group raises its own push, with the group's title in the
+  // clear and no envelope for the extension to decrypt
+  const quinn = await api("/api/register", { body: {
+    username: "quinn_" + suffix, displayName: "Quinn", ...fakeKeys("q") } });
+  await api("/api/push-token", { token: quinn.token,
+    body: { apnsToken: "quinn-sim-udid", env: "development" } });
+  const added = await api(`/api/chats/${gchat.chatId}/members`, { token: nils.token,
+    body: { add: [quinn.userId], remove: [] } });
+  check("group add ok", added.ok, JSON.stringify(added));
+  const addPush = await waitPush((p) =>
+    p.url === "/3/device/quinn-sim-udid" && p.body.chatId === gchat.chatId);
+  check("push on being added to a group", !!addPush, JSON.stringify(pushes.slice(-3)));
+  if (addPush) {
+    check("group-add push names the group",
+      addPush.body.aps.alert.body === "Вас добавили в «Counting»",
+      JSON.stringify(addPush.body.aps.alert));
+    // an informational push carries nothing to decrypt
+    check("group-add push has no envelope",
+      addPush.body.env === undefined && addPush.body.aps["mutable-content"] === undefined,
+      JSON.stringify(addPush.body));
+  }
+  // adding someone already in the group is a no-op and raises no push
+  const readd = await api(`/api/chats/${gchat.chatId}/members`, { token: nils.token,
+    body: { add: [olga.userId], remove: [] } });
+  check("re-add is a no-op with no push", readd.ok
+    && !(await waitPush((p) => p.url === "/3/device/olga-sim-udid"
+      && p.body.aps?.alert?.body?.startsWith("Вас добавили"), 1200)));
   cni.ws.close();
 }
 
