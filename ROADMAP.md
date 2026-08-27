@@ -563,7 +563,8 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ✅ the invite link: created by a member, joining, idempotency (smoke, four checks)
 - ✅ creating a group from the interface, picking members and a title (qa/runs/2026-08-17-groups-run)
 - ✅ the info screen: the member list, the row's swipe actions, leaving a group (qa/runs/2026-08-17-groups-run)
-- 🟡 adding a member and the invite link from the info screen (not verified live)
+- ✅ adding a member and the invite link from the info screen
+  (qa/runs/2026-08-27-info-screen-and-voice-run)
 - ✅ the author's name in group bubbles (qa/runs/2026-08-21-presence-names)
 - ✅ granting and revoking the admin role from the interface, live on all three
   devices (qa/runs/2026-08-17-groups-run)

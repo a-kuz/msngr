@@ -221,7 +221,7 @@ struct ChatInfoView: View {
         .task { await app.engine?.refreshBlocked() }
         .sheet(isPresented: $showAddMembers) {
             AddMembersView(chatId: model.chatId, existing: Set(model.members.map(\.id))) { user in
-                model.announce(.added, member: user.display_name, memberId: user.id)
+                model.announce(.added, member: user.displayName, memberId: user.id)
             }
         }
         .confirmationDialog("Mute", isPresented: $showMuteOptions, titleVisibility: .visible) {
@@ -551,38 +551,90 @@ struct AddMembersView: View {
     let existing: Set<String>
     /// Called with the new member once the server has taken them in, so the
     /// chat can announce it.
-    let onAdded: (APIClient.UserDTO) -> Void
+    let onAdded: (Candidate) -> Void
     @EnvironmentObject var app: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
-    @State private var results: [APIClient.UserDTO] = []
+    /// People this device already knows: the peers of its chats. Shown before
+    /// a query is typed, so the usual case, adding someone you talk to, takes
+    /// one tap instead of a search.
+    @State private var known: [Candidate] = []
+    @State private var results: [Candidate] = []
+    /// The member whose add did not go through: the row says so and stays
+    /// available for another tap instead of the sheet closing on a failure.
+    @State private var failedId: String?
+
+    struct Candidate: Identifiable, Equatable {
+        let id: String
+        let username: String
+        let displayName: String
+        let avatarId: String?
+    }
+
+    private var shown: [Candidate] {
+        (query.count >= 2 ? results : known).filter { !existing.contains($0.id) }
+    }
 
     var body: some View {
         NavigationStack {
-            List(results.filter { !existing.contains($0.id) }, id: \.id) { u in
+            List(shown) { u in
                 Button {
-                    Task {
-                        do {
-                            try await app.api.updateMembers(chatId, add: [u.id], remove: [])
-                            onAdded(u)
-                        } catch {}
-                        dismiss()
-                    }
+                    add(u)
                 } label: {
                     HStack {
-                        AvatarView(name: u.display_name, avatarId: u.avatar_id)
+                        AvatarView(name: u.displayName, avatarId: u.avatarId)
                             .frame(width: 36, height: 36)
-                        Text(u.display_name).foregroundStyle(.primary)
+                        Text(u.displayName).foregroundStyle(.primary)
                         Text("@\(u.username)").font(.footnote).foregroundStyle(.secondary)
+                        if failedId == u.id {
+                            Spacer()
+                            Text("Not added").font(.footnote).foregroundStyle(.red)
+                        }
                     }
                 }
+                .accessibilityIdentifier("addMember.\(u.username)")
             }
             .searchable(text: $query)
             .onChange(of: query) { _, q in
-                Task { results = q.count >= 2 ? ((try? await app.api.searchUsers(q)) ?? []) : [] }
+                Task {
+                    guard q.count >= 2 else { results = []; return }
+                    let found = (try? await app.api.searchUsers(q)) ?? []
+                    results = found.map {
+                        Candidate(id: $0.id, username: $0.username, displayName: $0.display_name,
+                                  avatarId: $0.avatar_id)
+                    }
+                }
             }
+            .task { await loadKnown() }
             .navigationTitle("Add")
             .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    private func loadKnown() async {
+        guard let db = app.db else { return }
+        let ownId = app.session?.userId ?? ""
+        let users = (try? await db.read { dbc in
+            try User.fetchAll(dbc, sql: """
+                SELECT * FROM user WHERE id != ? AND isBlocked = 0
+                ORDER BY displayName COLLATE NOCASE
+                """, arguments: [ownId])
+        }) ?? []
+        known = users.map {
+            Candidate(id: $0.id, username: $0.username, displayName: $0.displayName, avatarId: $0.avatarId)
+        }
+    }
+
+    private func add(_ u: Candidate) {
+        failedId = nil
+        Task {
+            do {
+                try await app.api.updateMembers(chatId, add: [u.id], remove: [])
+                onAdded(u)
+                dismiss()
+            } catch {
+                failedId = u.id
+            }
         }
     }
 }
