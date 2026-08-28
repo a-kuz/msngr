@@ -26,9 +26,23 @@ token in the text.
   the tap opened the direct chat with Charlie Service; the chat list row shows
   the stripped text.
 
+## Autocomplete (same day, second slice)
+
+- The composer keeps a plain «@username» while typing; a suggestion panel with
+  the chat's members appears above the field on an open «@prefix»
+  (`mentionSuggestions`), a tap swaps the prefix for the handle, and send
+  resolves every known handle into the token (`tokenizeMentions`, 6 unit
+  cases: case-insensitive, mid-word @ untouched, unknown handle untouched,
+  existing tokens pass through).
+- Live in the «Design» group: the panel offered Bravo and Charlie over the
+  draft «ask @», the tap made it «ask @charlie3», and the sent bubble shows
+  «ask @Charlie Service» as a link. The draft was seeded through the database:
+  the simulator's ru hardware layout transliterates `idb ui text`, so typing
+  the prefix by HID is not reproducible here.
+- Seen in passing, pre-existing: the Design fixture still shows one
+  «Сообщение ещё не загружено» placeholder from an old repair gap.
+
 ## Left for the next slices
 
-- Composer autocomplete on `@` (the token is currently written by hand or by
-  the fixture).
 - Your own mention marked in the feed and the chat list, piercing mute the way
   a reply already does; the unread-mention counter and the jump.

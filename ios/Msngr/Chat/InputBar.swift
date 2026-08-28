@@ -54,6 +54,7 @@ struct InputBar: View {
     private var composer: some View {
         VStack(spacing: 0) {
             replyEditBanner
+            mentionBar
             pendingImagesBar
             HStack(alignment: .bottom, spacing: 8) {
                 if recorder.isRecording {
@@ -66,6 +67,7 @@ struct InputBar: View {
                         .accessibilityIdentifier("chat.attach.photo")
                         Button { onAttachFile() } label: {
                             Label("File", systemImage: "doc")
+                        }
                         }
                         if pasteboardHasImage && text.isEmpty {
                             Button { pasteImages() } label: {
@@ -130,6 +132,47 @@ struct InputBar: View {
         }
         .animation(Theme.springFast, value: recorder.isRecording)
         .animation(Theme.springFast, value: gesture.isLocked)
+    }
+
+    /// Autocomplete for a mention: appears while the field ends with an open
+    /// "@prefix", a tap swaps the prefix for the picked handle.
+    @ViewBuilder
+    private var mentionBar: some View {
+        let suggestions = model.mentionSuggestions(for: text)
+        if !suggestions.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(suggestions, id: \.userId) { user in
+                        Button {
+                            insertMention(user)
+                        } label: {
+                            HStack(spacing: 6) {
+                                AvatarView(name: user.displayName, avatarId: nil)
+                                    .frame(width: 24, height: 24)
+                                Text(user.displayName)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.primary)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color(.systemGray6), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("chat.mention.\(user.username)")
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+            }
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+    }
+
+    /// Replaces the open "@prefix" the field ends with by the picked handle.
+    private func insertMention(_ user: MessageMarkdown.MentionCandidate) {
+        guard let at = text.lastIndex(of: "@") else { return }
+        text = String(text[..<at]) + "@\(user.username) "
+        model.textChanged(text)
     }
 
     private var recordingHint: some View {

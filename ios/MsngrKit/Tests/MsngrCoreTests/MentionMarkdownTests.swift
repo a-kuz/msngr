@@ -40,6 +40,23 @@ final class MentionMarkdownTests: XCTestCase {
         XCTAssertEqual(s[0].link, "user:u1")
     }
 
+    func testTypedHandlesBecomeTokens() {
+        let users = [MessageMarkdown.MentionCandidate(userId: "u1", username: "bravo3",
+                                                      displayName: "Bravo Service")]
+        XCTAssertEqual(MessageMarkdown.tokenizeMentions("эй @bravo3, глянь", users: users),
+                       "эй [@Bravo Service](user:u1), глянь")
+        XCTAssertEqual(MessageMarkdown.tokenizeMentions("эй @BRAVO3!", users: users),
+                       "эй [@Bravo Service](user:u1)!")
+        // an unknown handle, a mid-word @, a bare @ all stay as typed
+        XCTAssertEqual(MessageMarkdown.tokenizeMentions("эй @noone", users: users), "эй @noone")
+        XCTAssertEqual(MessageMarkdown.tokenizeMentions("mail@bravo3.com", users: users),
+                       "mail@bravo3.com")
+        XCTAssertEqual(MessageMarkdown.tokenizeMentions("просто @", users: users), "просто @")
+        // an already-built token is not re-tokenized
+        XCTAssertEqual(MessageMarkdown.tokenizeMentions("[@X](user:u9) и @bravo3", users: users),
+                       "[@X](user:u9) и [@Bravo Service](user:u1)")
+    }
+
     func testStrippingLeavesTheVisibleName() {
         XCTAssertEqual(MessageMarkdown.mentionsStripped("эй [@Bravo](user:u1), глянь"),
                        "эй @Bravo, глянь")

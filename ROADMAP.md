@@ -169,7 +169,10 @@ A ✅ goes in only together with a link to the evidence.
     when the pasteboard holds one, the system paste gesture lands it as an
     attachment, and it goes out as a photo message
     (qa/runs/2026-08-15-reply-file-clipboard)
-  - ⬜ mentions and autocomplete
+  - ✅ mentions and autocomplete: the panel above the field on an open
+    "@prefix", a tap inserts the handle, sending resolves it into the mention
+    token by the chat's members (qa/runs/2026-08-28-mention-token;
+    tokenizeMentions in MentionMarkdownTests)
   - ⬜ sending at a chosen time: the message waits in the outbox, the chat shows
     what is queued for when, and it can be edited or cancelled before it leaves
   - ⬜ a send that survives a killed app and a cold start at the appointed time
