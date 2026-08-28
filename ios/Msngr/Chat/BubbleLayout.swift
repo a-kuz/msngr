@@ -29,6 +29,9 @@ struct BubbleLayoutPlan: Equatable {
     var reactionsFrames: [(emoji: String, count: Int, mine: Bool, frame: CGRect)]
     var reactionsHeight: CGFloat
     var isOutgoing: Bool
+    /// An incoming message whose text carries a mention of this user: the
+    /// bubble keeps an accent wash so the message is findable by eye.
+    var mentionsMe: Bool
     var showTail: Bool
     var timeString: String
     var edited: Bool
@@ -427,6 +430,8 @@ enum BubbleLayout {
             reactionsFrames: reactionsFrames.map { ($0.0, $0.1, $0.2, $0.3) },
             reactionsHeight: reactionsHeight,
             isOutgoing: msg.isOutgoing,
+            mentionsMe: !msg.isOutgoing && !msg.deletedForAll && !OwnUser.id.isEmpty
+                && MessageMarkdown.mentionsUser(msg.text ?? "", userId: OwnUser.id),
             showTail: showTail,
             timeString: timeString,
             edited: msg.edited,

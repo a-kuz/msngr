@@ -228,7 +228,30 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         }
     }
 
+    /// The accent wash a message mentioning this user keeps for as long as it
+    /// is on screen; it lies under every other subview, so a photo covers it
+    /// and only the bubble's own background is tinted.
+    private func applyMentionWash(_ plan: BubbleLayoutPlan) {
+        let wash = bubbleView.viewWithTag(Self.mentionTag)
+        guard plan.mentionsMe else {
+            wash?.removeFromSuperview()
+            return
+        }
+        let view = wash ?? {
+            let v = UIView()
+            v.tag = Self.mentionTag
+            v.backgroundColor = UIColor(Theme.accent).withAlphaComponent(0.14)
+            v.layer.cornerRadius = Theme.bubbleCorner
+            v.layer.cornerCurve = .continuous
+            v.isUserInteractionEnabled = false
+            bubbleView.insertSubview(v, at: 0)
+            return v
+        }()
+        view.frame = bubbleView.bounds
+    }
+
     private static let highlightTag = 7181
+    private static let mentionTag = 7182
 
     required init?(coder: NSCoder) { fatalError() }
 
@@ -239,6 +262,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         reactionViews.forEach { $0.removeFromSuperview() }
         reactionViews = []
         bubbleView.viewWithTag(Self.highlightTag)?.removeFromSuperview()
+        bubbleView.viewWithTag(Self.mentionTag)?.removeFromSuperview()
         contentView.transform = CGAffineTransform(scaleX: 1, y: -1)
         // drop an unfinished swipe-to-reply or press dip; a bubble the context
         // overlay hid must not stay hidden for the next message in this cell
@@ -304,6 +328,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
         bubbleView.frame = plan.bubbleFrame
         bubbleView.image = BubbleBackground.image(outgoing: plan.isOutgoing, mediaOnly: plan.statusOnMedia)
+        applyMentionWash(plan)
 
         // the tail is a separate image at the bottom corner of the body and sticks out
         // past it; the body (a rounded rectangle) does not depend on showTail, so the
