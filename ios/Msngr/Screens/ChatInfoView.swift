@@ -53,6 +53,9 @@ struct ChatInfoView: View {
 
     private var isGroup: Bool { model.chat?.kind == .group }
     private var isSaved: Bool { model.chat?.kind == .saved }
+    @ObservedObject private var surfaces = ShaderSurfaces.shared
+    @State private var composingBackground = false
+    @State private var composingShaderAvatar = false
     private var myRole: String? { rolesModel.roles[model.ownUserId] }
     private var kind: ChatKind { model.chat?.kind ?? .direct }
     /// Only an admin changes the group's name and avatar; the server checks the same.
@@ -103,6 +106,8 @@ struct ChatInfoView: View {
             }
 
             if isGroup { descriptionSection }
+
+            backgroundSection
 
             Section {
                 NavigationLink {
@@ -331,6 +336,38 @@ struct ChatInfoView: View {
                 })
     }
 
+    /// The chat's shader background: local to this device, set here or from
+    /// a shader message's menu.
+    private var backgroundSection: some View {
+        Section("Background") {
+            if let doc = surfaces.backgrounds[model.chatId] {
+                HStack(spacing: 12) {
+                    ShaderCanvasView(document: doc, running: true, priority: .focus)
+                        .frame(width: 44, height: 72)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    Text(doc.name ?? String(localized: "Shader"))
+                    Spacer()
+                    Button(String(localized: "Remove"), role: .destructive) {
+                        surfaces.setBackground(nil, for: model.chatId)
+                    }
+                    .accessibilityIdentifier("chatInfo.background.remove")
+                }
+            }
+            Button {
+                composingBackground = true
+            } label: {
+                Label(surfaces.backgrounds[model.chatId] == nil ? "Shader background…" : "Change shader…",
+                      systemImage: "sparkles")
+            }
+            .accessibilityIdentifier("chatInfo.background.set")
+        }
+        .sheet(isPresented: $composingBackground) {
+            ShaderComposerScreen(purpose: .background, initial: surfaces.backgrounds[model.chatId]) { doc in
+                surfaces.setBackground(doc, for: model.chatId)
+            }
+        }
+    }
+
     /// Chat avatar: a photo picker for a group admin, a plain picture for everyone else.
     @ViewBuilder
     private var groupAvatar: some View {
@@ -353,6 +390,20 @@ struct ChatInfoView: View {
                 }
             }
             .accessibilityIdentifier("chatInfo.avatar")
+            Button {
+                composingShaderAvatar = true
+            } label: {
+                Label("Shader avatar…", systemImage: "sparkles").font(.footnote)
+            }
+            .accessibilityIdentifier("chatInfo.shaderAvatar")
+            .sheet(isPresented: $composingShaderAvatar) {
+                ShaderComposerScreen(purpose: .avatar) { doc in
+                    Task {
+                        guard (try? await app.api.uploadShaderAvatar(doc, chatId: model.chatId)) != nil else { return }
+                        if isGroup { model.announce(.avatar) }
+                    }
+                }
+            }
         } else {
             avatar
         }

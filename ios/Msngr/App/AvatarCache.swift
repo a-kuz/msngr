@@ -62,6 +62,23 @@ actor AvatarCache {
     }
 }
 
+/// What an avatar blob turned out to be: a picture, or a shader document the
+/// owner put up in its place.
+enum AvatarPicture {
+    case image(UIImage)
+    case shader(ShaderDocument)
+
+    var image: UIImage? {
+        if case .image(let i) = self { return i }
+        return nil
+    }
+
+    var shader: ShaderDocument? {
+        if case .shader(let d) = self { return d }
+        return nil
+    }
+}
+
 /// Decoded avatars for the screen. A chat list scrolls the same faces past the
 /// eye over and over, and reading plus decoding a JPEG per row per appearance
 /// is work with one answer; an id changes only when its owner puts up a new
@@ -69,31 +86,47 @@ actor AvatarCache {
 actor AvatarImageLoader {
     static let shared = AvatarImageLoader()
 
-    private let cache: NSCache<NSString, UIImage> = {
-        let c = NSCache<NSString, UIImage>()
+    private final class Box {
+        let picture: AvatarPicture
+        init(_ p: AvatarPicture) { picture = p }
+    }
+
+    private let cache: NSCache<NSString, Box> = {
+        let c = NSCache<NSString, Box>()
         c.countLimit = 200
         return c
     }()
-    private var inFlight: [String: Task<UIImage?, Never>] = [:]
+    private var inFlight: [String: Task<AvatarPicture?, Never>] = [:]
 
     func image(_ avatarId: String) async -> UIImage? {
-        if let hit = cache.object(forKey: avatarId as NSString) { return hit }
+        await picture(avatarId)?.image
+    }
+
+    /// The avatar as a picture or as a shader: a blob that starts with `{`
+    /// and parses as a document is a shader avatar.
+    func picture(_ avatarId: String) async -> AvatarPicture? {
+        if let hit = cache.object(forKey: avatarId as NSString) { return hit.picture }
         if let running = inFlight[avatarId] { return await running.value }
-        let task = Task<UIImage?, Never> {
+        let task = Task<AvatarPicture?, Never> {
             let api = await AppState.shared.api
             guard let url = await AvatarCache.shared.ensure(avatarId, api: api) else { return nil }
-            guard let data = try? Data(contentsOf: url), let image = UIImage(data: data) else {
+            guard let data = try? Data(contentsOf: url) else { return nil }
+            if data.first == UInt8(ascii: "{"),
+               let doc = try? JSONDecoder().decode(ShaderDocument.self, from: data), doc.image != nil {
+                return .shader(doc)
+            }
+            guard let image = UIImage(data: data) else {
                 // half a file, or bytes that are not an image: keeping it would
                 // answer every later ask with the same nothing
                 await AvatarCache.shared.discard(avatarId)
                 return nil
             }
-            return image
+            return .image(image)
         }
         inFlight[avatarId] = task
-        let image = await task.value
+        let picture = await task.value
         inFlight[avatarId] = nil
-        if let image { cache.setObject(image, forKey: avatarId as NSString) }
-        return image
+        if let picture { cache.setObject(Box(picture), forKey: avatarId as NSString) }
+        return picture
     }
 }

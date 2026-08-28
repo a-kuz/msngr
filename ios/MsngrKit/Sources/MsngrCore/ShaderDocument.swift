@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// A shader as it travels in a message: the passes of a Shadertoy project
 /// (`Image`, `Buffer A`–`D`, `Common`) with the wiring of their texture
@@ -9,10 +10,38 @@ public struct ShaderDocument: Codable, Equatable, Hashable, Sendable {
     /// In render order: buffers first, the image last; `common` anywhere, it
     /// is prepended to every other pass at compile time.
     public var passes: [ShaderPass]
+    /// The shader drives the haptic engine: the image pass writes the
+    /// intensity and sharpness it wants into the texel at fragment (0, 0).
+    /// Set by `#pragma msngr haptics`.
+    public var haptics: Bool?
 
-    public init(name: String? = nil, passes: [ShaderPass]) {
+    public init(name: String? = nil, passes: [ShaderPass], haptics: Bool? = nil) {
         self.name = name
         self.passes = passes
+        self.haptics = haptics
+    }
+
+    /// The identity of a sticker: the same code with the same wiring is the
+    /// same sticker wherever it was saved from.
+    public var contentHash: String {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.sortedKeys]
+        var copy = self
+        copy.name = nil
+        let data = (try? enc.encode(copy)) ?? Data()
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Whether any pass mentions the uniform, so a sensor is started only for
+    /// a shader that reads it.
+    public func references(_ identifier: String) -> Bool {
+        let pattern = "\\b" + NSRegularExpression.escapedPattern(for: identifier) + "\\b"
+        return passes.contains { $0.code.range(of: pattern, options: .regularExpression) != nil }
+    }
+
+    /// The live channel sources the document's passes read.
+    public var liveSources: Set<String> {
+        Set(passes.flatMap { $0.inputs.map(\.source) }.filter(ShaderInput.liveSources.contains))
     }
 
     public enum Failure: Error, Equatable, CustomStringConvertible {
@@ -68,7 +97,8 @@ public struct ShaderDocument: Codable, Equatable, Hashable, Sendable {
     /// One image pass. `#pragma msngr channelN <source>` lines rebind a channel
     /// (Shadertoy ignores unknown pragmas, so the same file runs there); the
     /// defaults are the textures Shadertoy authors reach for most, and the
-    /// shader's own previous frame on channel 3.
+    /// shader's own previous frame on channel 3. `#pragma msngr haptics`
+    /// turns the haptic texel on.
     public static func fromGLSL(_ glsl: String) -> ShaderDocument {
         var inputs = ShaderInput.defaults(selfId: ShaderPass.imageId)
         let re = try! NSRegularExpression(pattern: #"(?m)^[ \t]*#[ \t]*pragma[ \t]+msngr[ \t]+channel([0-3])[ \t]+(\S+)[ \t]*$"#)
@@ -76,15 +106,21 @@ public struct ShaderDocument: Codable, Equatable, Hashable, Sendable {
             guard let c = Range(m.range(at: 1), in: glsl).flatMap({ Int(glsl[$0]) }),
                   let src = Range(m.range(at: 2), in: glsl).map({ String(glsl[$0]) }) else { continue }
             let source = src == "prevframe" ? ShaderInput.buffer(ShaderPass.imageId) : src
-            inputs[c] = ShaderInput(channel: c, source: source, wrap: src == "prevframe" ? "clamp" : "repeat")
+            // a live channel is a picture with an up and a down, and so is a
+            // buffer the shader wrote itself; the noise textures wrap
+            let clamps = src == "prevframe" || ShaderInput.liveSources.contains(src)
+            inputs[c] = ShaderInput(channel: c, source: source, wrap: clamps ? "clamp" : "repeat")
         }
-        return ShaderDocument(passes: [ShaderPass(id: ShaderPass.imageId, kind: .image, code: glsl, inputs: inputs)])
+        let haptics = glsl.range(of: #"(?m)^[ \t]*#[ \t]*pragma[ \t]+msngr[ \t]+haptics[ \t]*$"#, options: .regularExpression) != nil
+        return ShaderDocument(passes: [ShaderPass(id: ShaderPass.imageId, kind: .image, code: glsl, inputs: inputs)],
+                              haptics: haptics ? true : nil)
     }
 
     /// The JSON of a Shadertoy export (`{"ver", "info", "renderpass": [...]}`).
     /// Sound and cubemap passes are left out; an input that is another
-    /// pass's output becomes `buffer:<id>`, a media texture becomes noise, and
-    /// anything live (keyboard, microphone, webcam, video) an empty channel.
+    /// pass's output becomes `buffer:<id>`, a media texture becomes noise, the
+    /// keyboard, the microphone and the webcam become the device's own, and
+    /// a video an empty channel.
     public static func fromShadertoyExport(_ data: Data) throws -> ShaderDocument {
         let export: Export
         do { export = try JSONDecoder().decode(Export.self, from: data) } catch { throw Failure.notAShader }
@@ -118,6 +154,9 @@ public struct ShaderDocument: Codable, Equatable, Hashable, Sendable {
                 switch input.type {
                 case "buffer": source = outputToPass[input.id].map(ShaderInput.buffer) ?? ShaderInput.none
                 case "texture": source = ShaderInput.noise
+                case "keyboard": source = ShaderInput.keyboard
+                case "mic", "music", "musicstream": source = ShaderInput.mic
+                case "webcam": source = ShaderInput.camera
                 default: source = ShaderInput.none
                 }
                 pass.inputs.append(ShaderInput(channel: input.channel, source: source,
@@ -193,11 +232,22 @@ public struct ShaderInput: Codable, Equatable, Hashable, Sendable {
     public static let graynoise = "graynoise"  // 256×256 single-channel white noise
     public static let noise64 = "noise64"      // 64×64 RGBA white noise
     public static let none = "none"            // a 1×1 black texel
+    /// The microphone as Shadertoy's sound texture: 512×2, row 0 the FFT
+    /// magnitudes, row 1 the waveform, in the red channel.
+    public static let mic = "mic"
+    /// The back camera as a picture, and the front one.
+    public static let camera = "camera"
+    public static let cameraFront = "camera:front"
+    /// Shadertoy's keyboard texture: 256×3, a column per key code, row 0 held,
+    /// row 1 pressed this frame, row 2 toggled.
+    public static let keyboard = "keyboard"
+    public static let liveSources: Set<String> = [mic, camera, cameraFront, keyboard]
     public static func buffer(_ passId: String) -> String { "buffer:\(passId)" }
 
     public var channel: Int
-    /// `noise` | `graynoise` | `noise64` | `none` | `buffer:<passId>`; a pass
-    /// that reads its own buffer gets its previous frame.
+    /// `noise` | `graynoise` | `noise64` | `none` | `mic` | `camera` |
+    /// `camera:front` | `keyboard` | `buffer:<passId>`; a pass that reads its
+    /// own buffer gets its previous frame.
     public var source: String
     public var wrap: String    // repeat | clamp
     public var filter: String  // linear | nearest | mipmap

@@ -138,6 +138,7 @@ public enum NotificationContentBuilder {
         case "album": return withCaption(CoreStrings.string("🖼 Album"), caption)
         case "contact": return withCaption(CoreStrings.string("👤 Contact"), caption)
         case "shader": return withCaption(CoreStrings.string("✨ Shader"), caption)
+        case "sticker": return withCaption(CoreStrings.string("✨ Sticker"), caption)
         case "file":
             let name = payload.media?.name?.trimmingCharacters(in: .whitespacesAndNewlines)
             return withCaption("📎 " + (name?.isEmpty == false ? name! : CoreStrings.string("File")), caption)

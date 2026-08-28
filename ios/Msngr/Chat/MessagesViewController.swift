@@ -412,6 +412,12 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         for (i, item) in newItems.enumerated() {
             guard let oldIdx = oldIndex[item.id], !contentEqual(old[oldIdx], item) else { continue }
             refreshItem(at: i, item: item)
+            // a reaction that just landed bursts out of its bubble
+            if case .message(let now, _, _, _, _, _, _) = item, case .message(let was, _, _, _, _, _, _) = old[oldIdx],
+               Self.reactionCount(now) > Self.reactionCount(was),
+               let cell = collectionView.cellForItem(at: IndexPath(item: i, section: 0)) as? MessageCell {
+                ShaderEffectPlayer.play(.reaction, in: view, at: cell.bubbleCenter(in: view))
+            }
         }
         if let nb = newBottom,
            let cell = collectionView.cellForItem(at: IndexPath(item: 0, section: 0)) as? MessageCell {
@@ -419,6 +425,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
                 let point = CGPoint(x: view.bounds.width - 28,
                                     y: view.bounds.height - collectionView.contentInset.top + 22)
                 cell.animateSendFlight(fromScreenPoint: point, in: view)
+                ShaderEffectPlayer.play(.send, in: view, at: point)
             } else {
                 cell.animateAppearance()
             }
@@ -430,6 +437,10 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         }
         // inserts and deletes change the geometry without a scroll event
         updateAtBottom()
+    }
+
+    private static func reactionCount(_ msg: Message) -> Int {
+        msg.reactions.values.reduce(0) { $0 + $1.count }
     }
 
     /// Refreshes a position that already stands in the feed and whose content changed.
@@ -752,6 +763,10 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
 
 enum MessageContextAction {
     case reply, copy, forward, select, edit, editHistory, pin, unpin, delete, resend
+    /// a shader message becomes this chat's background, on this device
+    case setBackground
+    /// a sticker goes into the local pack
+    case saveSticker
 }
 
 extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {

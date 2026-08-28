@@ -362,21 +362,28 @@ asked for it.
 `ContentPayload` (also the plaintext in `skm`):
 
 ```
-{kind, text?, media?, album?, replyTo?, fwd?, shader?, targetMsgId?, emoji?,
- ttlSeconds?, to?, repairSeq?, reason?, attempt?, repairOf?, origSentAt?, orig?,
- keyId?}
+{kind, text?, media?, album?, replyTo?, fwd?, shader?, bubbleShader?, targetMsgId?,
+ emoji?, ttlSeconds?, to?, repairSeq?, reason?, attempt?, repairOf?, origSentAt?,
+ orig?, keyId?}
 ```
 
 - `kind`: `text` | `photo` | `video` | `file` | `voice` | `album` | `contact` |
-  `shader` | `edit` | `reaction` | `disappearing` | `groupEvent` |
+  `shader` | `sticker` | `edit` | `reaction` | `disappearing` | `groupEvent` |
   `repairRequest` | `repair` | `skdAck`;
-- `shader` — `ShaderDocument`: `{name?, passes: [{id, kind, code, inputs}]}`,
+- `shader` — `ShaderDocument`: `{name?, passes: [{id, kind, code, inputs}], haptics?}`,
   a Shadertoy project as user code. `id` is `image`, `A`–`D` or `common`;
   `kind` is `image` | `buffer` | `common`; `code` is GLSL in the Shadertoy
   dialect (`mainImage`, `iTime`, `iResolution`, `iChannelN`); an input is
   `{channel, source, wrap, filter, vflip}` with `source` one of `noise`,
-  `graynoise`, `noise64`, `none` or `buffer:<id>` (a pass reading its own
-  buffer gets its previous frame). The receiver transpiles each pass to MSL
+  `graynoise`, `noise64`, `none`, `buffer:<id>` (a pass reading its own
+  buffer gets its previous frame), or a live source of the receiving device:
+  `mic` (512×2, FFT and waveform), `camera`, `camera:front`, `keyboard`
+  (256×3, Shadertoy's layout). `haptics: true` lets the image pass drive the
+  haptic engine through the texel at fragment (0, 0). The same document is
+  the content of a `sticker` (drawn with its alpha, no bubble behind it) and,
+  as `bubbleShader` on a `text`, the picture behind the bubble. Which device
+  inputs a shader reads follows from its code (`iGyro`, `iLocation`, …), not
+  from the document. The receiver transpiles each pass to MSL
   and renders it on its GPU; the server never sees the code. The whole
   document stays under 64 KB of code: a message is one value of the
   conversation's Durable Object storage, whose ceiling is 128 KiB;

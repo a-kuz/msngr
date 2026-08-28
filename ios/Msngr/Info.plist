@@ -32,7 +32,7 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>MSNGRServer</key>
-	<string></string>
+	<string>${MSNGR_DEVICE_SERVER}</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
@@ -44,6 +44,8 @@
 	<string>Поиск знакомых, которые уже в Msngr</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Разблокировка приложения</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Положение и направление для шейдеров, которые их читают</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Запись голосовых сообщений</string>
 	<key>NSPhotoLibraryUsageDescription</key>

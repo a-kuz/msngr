@@ -276,7 +276,61 @@ top, a monospaced editor below, the compiler's first error line between them.
 Code on the clipboard is picked up on opening; «Send» is enabled once the
 program compiled on this device. A pasted Shadertoy JSON export is imported
 whole: Image, Buffer A–D, Common, the channel wiring, the wrap and filter of
-each sampler.
+each sampler. The same composer serves every other surface below, with the
+preview in that surface's shape (square, circle, phone) and its action word
+(«Прикрепить», «Сохранить», «Установить», «Использовать»); the verdict line
+also names the device inputs the code reads (motion, location, microphone,
+camera, keyboard, haptics).
+
+### Where else a shader lives
+
+- **The chat background.** «Сделать фоном» in a shader message's menu, or
+  «Фон» in the chat info (set, change, remove). Local to this device, per
+  chat, kept in `kv`; it runs under the feed while the chat is in front.
+- **Behind a text bubble.** «Шейдер пузыря» in the attachment menu opens the
+  composer; the chosen shader waits in a strip over the input field with a
+  live thumbnail and goes out with the next text message as `bubbleShader`.
+  The receiver paints it in place of the bubble colour, clipped to the bubble,
+  with white text under a shadow and the time in its capsule.
+- **Stickers.** «Стикер» opens the pack: a grid of live tiles, a tap sends,
+  the plus writes a new one, a long press removes. A sticker is a square with
+  no bubble behind it: the shader's `O.a` decides what shows through. A
+  received sticker is saved with «В стикеры»; the pack is local, keyed by the
+  hash of the document, so the same sticker saved twice is one tile.
+- **The avatar.** «Шейдер-аватар…» in Settings (and in a group's info for an
+  admin) uploads the document as the avatar blob; every peer's app tells it
+  from a picture by the first byte and runs it in the circle, in the chat
+  list, the feed and the info screen. The notification extension shows no
+  picture for a shader avatar.
+- **Effects.** A burst plays out of the send button on every own send and out
+  of a bubble when a reaction lands, in a transparent canvas over the feed for
+  about a second, with `iMouse.xy` at the event. Two are bundled; Settings →
+  «Шейдеры» switches them off or replaces either with the user's code.
+
+### The device as input
+
+Beyond Shadertoy's uniforms a shader reads the phone: `iTouch[5]` (x, y,
+force, id) for every finger, `iGyro`, `iAccel`, `iGravity`, `iMagnet`,
+`iAttitude` (a quaternion), `iLocation` (latitude, longitude, altitude,
+heading), `iPressure`, `iAltitude`, `iProximity`, `iBattery`,
+`iBatteryState`, `iDark`, `iTextScale`, `iPencil` (x, y, force, altitude),
+`iPencilAzimuth`, `iPencilHover`, `iBubble` (where the canvas sits on the
+screen), `iScroll`, `iScreen`, and the palette as `iAccent`, `iBackground`,
+`iBubbleIn`, `iBubbleOut`, `iLabel`. The microphone, the cameras and the
+keyboard are channel textures (`#pragma msngr channelN mic|camera|
+camera:front|keyboard`, or the matching inputs of a Shadertoy export).
+`#pragma msngr haptics` turns fragment (0, 0) into the haptic engine's
+intensity and sharpness. A sensor starts when the first shader that names it
+starts and stops with the last one, so a chat with no such shader asks for
+nothing; location and the microphone and camera ask the system's permission
+the first time.
+
+### The budget
+
+Four shaders animate at once (`ShaderBudget.maxLive`); the rest render one
+frame and hold it. A slot goes by priority (the one the user opened, then the
+background, then the feed, then avatars) and by recency, so the message that
+just scrolled in runs while the one about to leave stands still.
 
 ## The input field
 

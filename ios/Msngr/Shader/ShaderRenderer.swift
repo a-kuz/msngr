@@ -216,16 +216,35 @@ final class ShaderProgram {
     }
 }
 
+/// One finger or the pencil on the canvas, in drawable pixels with y up.
+struct ShaderTouch {
+    var x: Float
+    var y: Float
+    var force: Float
+    /// Stable while the touch lasts, 0 for an empty slot.
+    var id: Float
+}
+
 /// Draws one document into an `MTKView`: runs the buffer passes into their
 /// textures, the image pass into the drawable, keeps time, the frame counter
-/// and the mouse the way Shadertoy defines them.
+/// and the mouse the way Shadertoy defines them, and fills the device inputs
+/// the document reads.
+@MainActor
 final class ShaderRenderer: NSObject, MTKViewDelegate {
-    static let imageFormat: MTLPixelFormat = .bgra8Unorm
+    nonisolated static let imageFormat: MTLPixelFormat = .bgra8Unorm
 
     let program: ShaderProgram
+    /// The view the frames land in; where the shader sits on the screen is
+    /// read from it.
+    weak var host: UIView?
     private var compiled: [ShaderProgram.CompiledPass] = []
     private var observer: UUID?
     private let uniforms: MTLBuffer?
+    /// The device feeds this document reads, held for as long as the renderer lives.
+    private let feeds: Set<DeviceInputs.Feed>
+    private let readsHaptics: Bool
+    /// The texel at fragment (0, 0) of the last image pass, for the haptics.
+    private let hapticTexel: MTLBuffer?
 
     /// One ping-pong pair per pass that is read as a buffer, by pass id.
     private var buffers: [String: (textures: [MTLTexture], size: MTLSize)] = [:]
@@ -242,13 +261,22 @@ final class ShaderRenderer: NSObject, MTKViewDelegate {
     // zw the press position, z > 0 while down, w > 0 on the press frame only.
     private var mouse = SIMD4<Float>(0, 0, 0, 0)
     private var mouseDownThisFrame = false
+    /// Up to five fingers; an ended touch leaves an empty slot.
+    private var touches = [ShaderTouch](repeating: ShaderTouch(x: 0, y: 0, force: 0, id: 0), count: 5)
+    private var pencil = SIMD4<Float>(0, 0, 0, 0)
+    /// azimuth, hover z offset (-1 while the pencil is away)
+    private var pencilMore = SIMD4<Float>(0, -1, 0, 0)
 
     var onFrame: ((Float) -> Void)?
 
     init(program: ShaderProgram) {
         self.program = program
         uniforms = ShaderGPU.shared.device?.makeBuffer(length: ShaderTranspiler.uniformStride, options: .storageModeShared)
+        feeds = DeviceInputs.feeds(for: program.document)
+        readsHaptics = program.document.haptics == true
+        hapticTexel = readsHaptics ? ShaderGPU.shared.device?.makeBuffer(length: 16, options: .storageModeShared) : nil
         super.init()
+        DeviceInputs.shared.retain(feeds)
         observer = program.observe { [weak self] state in
             if case .ready(let passes) = state { self?.compiled = passes }
         }
@@ -256,6 +284,8 @@ final class ShaderRenderer: NSObject, MTKViewDelegate {
 
     deinit {
         if let observer { program.unobserve(observer) }
+        let feeds = self.feeds
+        Task { @MainActor in DeviceInputs.shared.release(feeds) }
     }
 
     var isPaused: Bool { pausedAt != nil }
@@ -263,6 +293,7 @@ final class ShaderRenderer: NSObject, MTKViewDelegate {
     func setPaused(_ paused: Bool) {
         if paused, pausedAt == nil {
             pausedAt = CACurrentMediaTime()
+            if readsHaptics { ShaderHaptics.shared.drive(intensity: 0, sharpness: 0) }
         } else if !paused, let p = pausedAt {
             // the pause is taken out of the clock; before the first frame
             // there is no clock yet
@@ -281,6 +312,8 @@ final class ShaderRenderer: NSObject, MTKViewDelegate {
         time = 0
         buffers = [:]
     }
+
+    // MARK: - Touches
 
     /// A touch in view points with the origin at the top left, as UIKit gives it.
     func touch(_ point: CGPoint?, in size: CGSize, scale: CGFloat, began: Bool) {
@@ -303,14 +336,57 @@ final class ShaderRenderer: NSObject, MTKViewDelegate {
         }
     }
 
-    // MARK: MTKViewDelegate
-
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
-        // buffers follow the drawable; a size change starts the accumulation over
-        buffers = [:]
+    /// Every finger on the canvas this moment: slot by touch identity, so a
+    /// finger keeps its index while others come and go.
+    func touches(_ active: [(id: ObjectIdentifier, point: CGPoint, force: Float)], in size: CGSize, scale: CGFloat) {
+        var next = touches
+        let ids = active.map { Float($0.id.hashValue & 0xFFFFFF) + 1 }
+        // drop slots whose finger is gone
+        for i in 0..<5 where next[i].id != 0 && !ids.contains(next[i].id) {
+            next[i] = ShaderTouch(x: 0, y: 0, force: 0, id: 0)
+        }
+        for (n, t) in active.enumerated() {
+            let id = ids[n]
+            let x = Float(t.point.x * scale), y = Float((size.height - t.point.y) * scale)
+            if let slot = next.firstIndex(where: { $0.id == id }) ?? next.firstIndex(where: { $0.id == 0 }) {
+                next[slot] = ShaderTouch(x: x, y: y, force: t.force, id: id)
+            }
+        }
+        touches = next
     }
 
-    func draw(in view: MTKView) {
+    /// The pencil's tip, or nil when it lifts. Hover comes separately.
+    func pencil(_ point: CGPoint?, force: Float, altitude: Float, azimuth: Float, in size: CGSize, scale: CGFloat) {
+        guard let point else { pencil.z = 0; return }
+        pencil = SIMD4(Float(point.x * scale), Float((size.height - point.y) * scale), force, altitude)
+        pencilMore.x = azimuth
+    }
+
+    func pencilHover(_ point: CGPoint?, zOffset: Float, in size: CGSize, scale: CGFloat) {
+        guard let point else { pencilMore.y = -1; return }
+        if pencil.z == 0 {
+            pencil.x = Float(point.x * scale)
+            pencil.y = Float((size.height - point.y) * scale)
+        }
+        pencilMore.y = zOffset
+    }
+
+    // MARK: MTKViewDelegate
+
+    // MTKView calls its delegate on the main thread, from the display link or
+    // from a `draw()` the canvas issues itself.
+    nonisolated func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+        MainActor.assumeIsolated {
+            // buffers follow the drawable; a size change starts the accumulation over
+            buffers = [:]
+        }
+    }
+
+    nonisolated func draw(in view: MTKView) {
+        MainActor.assumeIsolated { drawFrame(in: view) }
+    }
+
+    private func drawFrame(in view: MTKView) {
         guard !compiled.isEmpty, pausedAt == nil,
               let queue = ShaderGPU.shared.queue, let device = ShaderGPU.shared.device,
               let drawable = view.currentDrawable, let uniforms else { return }
@@ -332,8 +408,9 @@ final class ShaderRenderer: NSObject, MTKViewDelegate {
         }
         renderedThisFrame = []
 
-        writeUniforms(delta: delta, size: size)
+        writeUniforms(delta: delta, size: size, view: view)
         guard let cmd = queue.makeCommandBuffer() else { return }
+        var imageTarget: MTLTexture?
         for cp in compiled {
             let isImage = cp.pass.kind == .image
             let ownBuffer = buffers[cp.pass.id]
@@ -361,20 +438,40 @@ final class ShaderRenderer: NSObject, MTKViewDelegate {
             enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
             enc.endEncoding()
             renderedThisFrame.insert(cp.pass.id)
-            if isImage, target !== drawable.texture, let blit = cmd.makeBlitCommandEncoder() {
-                blit.copy(from: target, to: drawable.texture)
-                blit.endEncoding()
+            if isImage {
+                imageTarget = target
+                if target !== drawable.texture, let blit = cmd.makeBlitCommandEncoder() {
+                    blit.copy(from: target, to: drawable.texture)
+                    blit.endEncoding()
+                }
             }
         }
-        cmd.addCompletedHandler { [weak self] buffer in
+        // the haptic texel is fragment (0, 0), the bottom-left pixel of the
+        // image, which is the top-left texel of the flipped texture's last row
+        if let hapticTexel, let imageTarget, let blit = cmd.makeBlitCommandEncoder() {
+            blit.copy(from: imageTarget, sourceSlice: 0, sourceLevel: 0,
+                      sourceOrigin: MTLOrigin(x: 0, y: imageTarget.height - 1, z: 0),
+                      sourceSize: MTLSize(width: 1, height: 1, depth: 1),
+                      to: hapticTexel, destinationOffset: 0, destinationBytesPerRow: 16, destinationBytesPerImage: 16)
+            blit.endEncoding()
+        }
+        let program = self.program
+        let hapticTexel = self.hapticTexel
+        cmd.addCompletedHandler { buffer in
             if buffer.status == .error {
-                self?.program.fail(buffer.error.map { "\($0)" } ?? "command buffer error")
+                program.fail(buffer.error.map { "\($0)" } ?? "command buffer error")
+            } else if let hapticTexel {
+                // bgra8: blue, green, red, alpha
+                let p = hapticTexel.contents().assumingMemoryBound(to: UInt8.self)
+                let intensity = Float(p[2]) / 255, sharpness = Float(p[1]) / 255
+                Task { @MainActor in ShaderHaptics.shared.drive(intensity: intensity, sharpness: sharpness) }
             }
         }
         cmd.present(drawable)
         cmd.commit()
         frame += 1
         mouseDownThisFrame = false
+        if feeds.contains(.keyboard) { DeviceInputs.shared.frameEnded() }
         onFrame?(time)
     }
 
@@ -405,36 +502,86 @@ final class ShaderRenderer: NSObject, MTKViewDelegate {
     }
 
     /// What a channel reads this frame: a pass already rendered gives its
-    /// fresh texture, one not yet rendered (itself included) its previous one.
+    /// fresh texture, one not yet rendered (itself included) its previous one;
+    /// a live source gives the device's latest picture.
     private func texture(for input: ShaderInput, readingFrom passId: String) -> MTLTexture? {
+        if ShaderInput.liveSources.contains(input.source) {
+            return DeviceInputs.shared.texture(for: input.source) ?? ShaderGPU.shared.texture(for: ShaderInput.none)
+        }
         guard let bufferId = input.bufferId else { return ShaderGPU.shared.texture(for: input.source) }
         guard let pair = buffers[bufferId] else { return ShaderGPU.shared.texture(for: ShaderInput.none) }
         let fresh = renderedThisFrame.contains(bufferId)
         return pair.textures[fresh ? (frame & 1) : ((frame + 1) & 1)]
     }
 
-    private func writeUniforms(delta: Float, size: CGSize) {
+    private func writeUniforms(delta: Float, size: CGSize, view: MTKView) {
         guard let uniforms else { return }
-        var block = [SIMD4<Float>](repeating: .zero, count: 8)
-        block[0] = SIMD4(time, delta, Float(frame), 0)
-        block[1] = SIMD4(Float(size.width), Float(size.height), 1, 0)
+        typealias U = ShaderTranspiler.Uniform
+        var block = [SIMD4<Float>](repeating: .zero, count: ShaderTranspiler.uniformStride / 16)
+        block[U.timeFrame.rawValue] = SIMD4(time, delta, Float(frame), 0)
+        block[U.resolution.rawValue] = SIMD4(Float(size.width), Float(size.height), 1, 0)
         var m = mouse
         if !mouseDownThisFrame { m.w = -abs(m.w) }
-        block[2] = m
+        block[U.mouse.rawValue] = m
         let now = Date()
         let cal = Calendar.current
         let comps = cal.dateComponents([.year, .month, .day], from: now)
         let secs = Float(now.timeIntervalSince(cal.startOfDay(for: now)))
-        block[3] = SIMD4(Float(comps.year ?? 0), Float((comps.month ?? 1) - 1), Float(comps.day ?? 1), secs)
-        for channel in 0..<4 {
-            if let image = compiled.first(where: { $0.pass.kind == .image }) {
+        block[U.date.rawValue] = SIMD4(Float(comps.year ?? 0), Float((comps.month ?? 1) - 1), Float(comps.day ?? 1), secs)
+        if let image = compiled.first(where: { $0.pass.kind == .image }) {
+            for channel in 0..<4 {
                 let input = image.pass.input(channel)
                 let t = texture(for: input, readingFrom: image.pass.id)
-                block[4 + channel] = SIMD4(Float(t?.width ?? 0), Float(t?.height ?? 0), 1, 0)
+                block[U.channel0.rawValue + channel] = SIMD4(Float(t?.width ?? 0), Float(t?.height ?? 0), 1, 0)
             }
         }
+        for i in 0..<5 {
+            let t = touches[i]
+            block[U.touch0.rawValue + i] = SIMD4(t.x, t.y, t.force, t.id)
+        }
+        let inputs = DeviceInputs.shared
+        block[U.gyro.rawValue] = inputs.gyro
+        block[U.accel.rawValue] = inputs.accel
+        block[U.gravity.rawValue] = inputs.gravity
+        block[U.magnet.rawValue] = inputs.magnet
+        block[U.attitude.rawValue] = inputs.attitude
+        block[U.location.rawValue] = inputs.locationVector
+        block[U.environment.rawValue] = inputs.environmentVector
+        let traits = view.traitCollection
+        // the text scale is the bubble font against its size at the default category
+        let textScale = Float(Theme.Text.bubble.uiFont.pointSize / Theme.Text.bubble.size)
+        block[U.device.rawValue] = SIMD4(inputs.batteryState, traits.userInterfaceStyle == .dark ? 1 : 0, textScale, 0)
+        block[U.pencil.rawValue] = pencil
+        block[U.pencilMore.rawValue] = pencilMore
+        // where the canvas sits on the screen, in the screen's pixels with y up,
+        // and how far the feed under it is scrolled
+        let scale = Float(view.contentScaleFactor)
+        let screen = view.window?.screen.bounds.size ?? UIScreen.main.bounds.size
+        if let host, let window = host.window {
+            let r = host.convert(host.bounds, to: window)
+            block[U.bubble.rawValue] = SIMD4(Float(r.minX) * scale, Float(screen.height - r.maxY) * scale,
+                                             Float(r.width) * scale, Float(r.height) * scale)
+        }
+        var scroll: Float = 0
+        var v: UIView? = host
+        while let cur = v {
+            if let sv = cur as? UIScrollView { scroll = Float(sv.contentOffset.y) * scale; break }
+            v = cur.superview
+        }
+        block[U.screen.rawValue] = SIMD4(scroll, Float(screen.width) * scale, Float(screen.height) * scale, 0)
+        block[U.accent.rawValue] = Self.rgba(UIColor(Theme.accent), traits)
+        block[U.background.rawValue] = Self.rgba(UIColor(Theme.chatBackground), traits)
+        block[U.bubbleIn.rawValue] = Self.rgba(UIColor(Theme.incomingBubble), traits)
+        block[U.bubbleOut.rawValue] = Self.rgba(UIColor(Theme.outgoingBubble), traits)
+        block[U.label.rawValue] = Self.rgba(.label, traits)
         block.withUnsafeBytes { raw in
             uniforms.contents().copyMemory(from: raw.baseAddress!, byteCount: min(raw.count, uniforms.length))
         }
+    }
+
+    private static func rgba(_ color: UIColor, _ traits: UITraitCollection) -> SIMD4<Float> {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        color.resolvedColor(with: traits).getRed(&r, green: &g, blue: &b, alpha: &a)
+        return SIMD4(Float(r), Float(g), Float(b), Float(a))
     }
 }

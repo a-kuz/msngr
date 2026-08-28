@@ -3,19 +3,35 @@ import MetalKit
 import MsngrCore
 
 /// A live `MTKView` driven by a `ShaderRenderer`, with the touches of the view
-/// fed to the shader as `iMouse`. Shared by the bubble, the player and the
-/// composer preview.
+/// fed to the shader as `iMouse`. Shared by the bubble, the player, the
+/// composer preview, the chat background, stickers and avatars.
+///
+/// `setRunning` is the owner's wish; whether the canvas animates is decided by
+/// `ShaderBudget`, which hands out the live slots and tells the rest to hold a
+/// frame.
 final class ShaderCanvas: UIView {
+    /// Who gives way when the budget is short: an avatar before a message, a
+    /// message before the background, and the shader the user opened last.
+    enum Priority: Int { case avatar, feed, background, focus }
+
     let metalView = MTKView()
     private(set) var renderer: ShaderRenderer?
     private var observer: UUID?
     private var program: ShaderProgram?
     /// Whether touches reach the shader; off in the feed, where they scroll.
     var acceptsTouches = false
+    var priority: Priority = .feed
     var onState: ((ShaderProgram.State) -> Void)?
+    /// The owner asked for frames; the budget decides whether they come.
+    private(set) var wantsLive = false
+    private(set) var isLive = false
+    /// A held canvas has drawn the one frame it shows.
+    private var heldFrameDrawn = false
 
-    override init(frame: CGRect) {
-        super.init(frame: frame)
+    /// `transparent` keeps the drawable's alpha, so a sticker or an effect
+    /// shows what is under it where the shader writes `O.a < 1`.
+    init(transparent: Bool = false) {
+        super.init(frame: .zero)
         metalView.device = ShaderGPU.shared.device
         metalView.colorPixelFormat = ShaderRenderer.imageFormat
         metalView.framebufferOnly = false
@@ -23,8 +39,11 @@ final class ShaderCanvas: UIView {
         metalView.isPaused = true
         metalView.enableSetNeedsDisplay = false
         metalView.backgroundColor = .clear
-        metalView.isOpaque = true
+        metalView.isOpaque = !transparent
+        metalView.layer.isOpaque = !transparent
         metalView.isUserInteractionEnabled = false
+        isOpaque = !transparent
+        isMultipleTouchEnabled = true
         addSubview(metalView)
     }
 
@@ -44,16 +63,23 @@ final class ShaderCanvas: UIView {
         let p = ShaderProgram.program(for: document)
         program = p
         let r = ShaderRenderer(program: p)
+        r.host = self
         renderer = r
+        heldFrameDrawn = false
         metalView.delegate = r
         observer = p.observe { [weak self] state in
             guard let self else { return }
             self.onState?(state)
-            if case .failed = state { self.setRunning(false) }
+            switch state {
+            case .failed: self.setRunning(false)
+            case .ready: if self.wantsLive, !self.isLive { self.holdFrame() }
+            case .compiling: break
+            }
         }
     }
 
     func clear() {
+        setRunning(false)
         if let observer, let program { program.unobserve(observer) }
         observer = nil
         program = nil
@@ -64,34 +90,137 @@ final class ShaderCanvas: UIView {
 
     func setRunning(_ running: Bool) {
         if running, let program, case .failed = program.state { return }
-        renderer?.setPaused(!running)
-        metalView.isPaused = !running
+        wantsLive = running
+        if running {
+            ShaderBudget.shared.request(self)
+        } else {
+            ShaderBudget.shared.release(self)
+            applyBudget(live: false)
+        }
+    }
+
+    /// The budget's verdict: animate, or stop and show one frame.
+    func applyBudget(live: Bool) {
+        let run = live && wantsLive
+        if run != isLive || run != !metalView.isPaused {
+            isLive = run
+            // a canvas coming back from live holds a fresh frame next time
+            if run { heldFrameDrawn = false }
+            renderer?.setPaused(!run)
+            metalView.isPaused = !run
+        }
+        if !run, wantsLive { holdFrame() }
+    }
+
+    /// One frame for a canvas that wants to run but has no slot: the shader
+    /// is seen standing still instead of as a black rectangle.
+    private func holdFrame() {
+        guard !heldFrameDrawn, let renderer, case .ready = program?.state ?? .compiling,
+              bounds.width > 0, bounds.height > 0 else { return }
+        heldFrameDrawn = true
+        renderer.setPaused(false)
+        metalView.draw()
+        renderer.setPaused(true)
     }
 
     deinit {
         if let observer, let program { program.unobserve(observer) }
     }
 
-    // MARK: touches → iMouse
+    // MARK: touches → iMouse, iTouch, iPencil; keys → the keyboard texture
+
+    override var canBecomeFirstResponder: Bool { acceptsTouches }
+
+    /// Every finger down on the canvas right now.
+    private var fingers: [UITouch] = []
+    private lazy var hover: UIHoverGestureRecognizer = {
+        let h = UIHoverGestureRecognizer(target: self, action: #selector(hovered(_:)))
+        return h
+    }()
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil, acceptsTouches {
+            if hover.view == nil { addGestureRecognizer(hover) }
+            becomeFirstResponder()
+        }
+    }
+
+    private func feedTouches() {
+        let scale = metalView.contentScaleFactor
+        let list = fingers.filter { $0.phase != .ended && $0.phase != .cancelled }.map {
+            (id: ObjectIdentifier($0), point: $0.location(in: self),
+             force: Float($0.maximumPossibleForce > 0 ? $0.force / $0.maximumPossibleForce : 1))
+        }
+        renderer?.touches(list, in: bounds.size, scale: scale)
+        if let p = fingers.first(where: { $0.type == .pencil && $0.phase != .ended && $0.phase != .cancelled }) {
+            renderer?.pencil(p.location(in: self), force: Float(p.maximumPossibleForce > 0 ? p.force / p.maximumPossibleForce : 0),
+                             altitude: Float(p.altitudeAngle), azimuth: Float(p.azimuthAngle(in: self)),
+                             in: bounds.size, scale: scale)
+        } else {
+            renderer?.pencil(nil, force: 0, altitude: 0, azimuth: 0, in: bounds.size, scale: scale)
+        }
+    }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard acceptsTouches, let t = touches.first else { return super.touchesBegan(touches, with: event) }
-        renderer?.touch(t.location(in: self), in: bounds.size, scale: metalView.contentScaleFactor, began: true)
+        guard acceptsTouches else { return super.touchesBegan(touches, with: event) }
+        for t in touches where !fingers.contains(t) { fingers.append(t) }
+        if let t = fingers.first {
+            renderer?.touch(t.location(in: self), in: bounds.size, scale: metalView.contentScaleFactor, began: touches.contains(t))
+        }
+        feedTouches()
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard acceptsTouches, let t = touches.first else { return super.touchesMoved(touches, with: event) }
-        renderer?.touch(t.location(in: self), in: bounds.size, scale: metalView.contentScaleFactor, began: false)
+        guard acceptsTouches else { return super.touchesMoved(touches, with: event) }
+        if let t = fingers.first {
+            renderer?.touch(t.location(in: self), in: bounds.size, scale: metalView.contentScaleFactor, began: false)
+        }
+        feedTouches()
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard acceptsTouches else { return super.touchesEnded(touches, with: event) }
-        renderer?.touch(nil, in: bounds.size, scale: metalView.contentScaleFactor, began: false)
+        lift(touches)
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard acceptsTouches else { return super.touchesCancelled(touches, with: event) }
-        renderer?.touch(nil, in: bounds.size, scale: metalView.contentScaleFactor, began: false)
+        lift(touches)
+    }
+
+    private func lift(_ touches: Set<UITouch>) {
+        let liftedFirst = fingers.first.map(touches.contains) ?? false
+        fingers.removeAll(where: touches.contains)
+        if liftedFirst || fingers.isEmpty {
+            renderer?.touch(nil, in: bounds.size, scale: metalView.contentScaleFactor, began: false)
+        }
+        feedTouches()
+    }
+
+    @objc private func hovered(_ g: UIHoverGestureRecognizer) {
+        let scale = metalView.contentScaleFactor
+        switch g.state {
+        case .began, .changed:
+            renderer?.pencilHover(g.location(in: self), zOffset: Float(g.zOffset), in: bounds.size, scale: scale)
+        default:
+            renderer?.pencilHover(nil, zOffset: -1, in: bounds.size, scale: scale)
+        }
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard acceptsTouches else { return super.pressesBegan(presses, with: event) }
+        for p in presses { DeviceInputs.shared.keyboard.keyDown(p) }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard acceptsTouches else { return super.pressesEnded(presses, with: event) }
+        for p in presses { DeviceInputs.shared.keyboard.keyUp(p) }
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard acceptsTouches else { return super.pressesCancelled(presses, with: event) }
+        for p in presses { DeviceInputs.shared.keyboard.keyUp(p) }
     }
 }
 
@@ -99,23 +228,26 @@ final class ShaderCanvas: UIView {
 /// program compiles or once it has failed. Runs only while its cell is on
 /// screen; the collection view drives that through `setActive`.
 final class ShaderMessageView: UIView {
-    private let canvas = ShaderCanvas()
+    private let canvas: ShaderCanvas
     private let stateLabel = UILabel()
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let nameLabel = UILabel()
     private var active = false
     private var failed = false
 
-    override init(frame: CGRect) {
-        super.init(frame: frame)
+    /// A transparent view is a sticker: no black behind the shader, and the
+    /// state label reads over the chat instead of over black.
+    init(transparent: Bool = false) {
+        canvas = ShaderCanvas(transparent: transparent)
+        super.init(frame: .zero)
         clipsToBounds = true
-        layer.cornerRadius = Theme.bubbleCorner
+        layer.cornerRadius = transparent ? 0 : Theme.bubbleCorner
         layer.cornerCurve = .continuous
-        backgroundColor = .black
+        backgroundColor = transparent ? .clear : .black
         addSubview(canvas)
 
         stateLabel.textAlignment = .center
-        stateLabel.textColor = .white.withAlphaComponent(0.85)
+        stateLabel.textColor = transparent ? .secondaryLabel : .white.withAlphaComponent(0.85)
         stateLabel.numberOfLines = 2
         stateLabel.isHidden = true
         addSubview(stateLabel)
