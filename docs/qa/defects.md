@@ -707,3 +707,15 @@ Closed: `DateSeparatorCell` now shifts the capsule half the series gap toward
 the older day, which makes both sides come out equal (~9 pt).
 `DateSeparatorSpacingTests` holds the shift; verified live on the Bravo chat
 with «Сегодня» between yesterday's and today's messages.
+
+## 2026-08-28 — a bubble shader behind a long text crashed the app
+
+Reported by the owner from the simulator log: `CAMetalLayer ignoring invalid
+setDrawableSize width=915 height=37350`, then Metal's assertion
+`MTLTextureDescriptor has height (37350) greater than the maximum allowed size
+of 8192`. A text message thousands of lines long carried a `bubbleShader`; the
+canvas took the bubble's full height, MTKView resized the drawable to match,
+and the renderer asked for a feedback buffer of the same size. Fixed in the
+same day: the canvas sizes its own drawable under a ceiling (8192 px, 2048 px
+for the backdrop of a text bubble) keeping the aspect, and the renderer skips a
+frame whose drawable is past the limit instead of allocating.

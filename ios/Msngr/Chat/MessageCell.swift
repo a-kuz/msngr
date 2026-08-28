@@ -89,6 +89,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         contentView.addSubview(bubbleView)
         bubbleShaderCanvas.isHidden = true
         bubbleShaderCanvas.isUserInteractionEnabled = false
+        bubbleShaderCanvas.drawableCeiling = 2048
         bubbleShaderCanvas.clipsToBounds = true
         bubbleShaderCanvas.layer.cornerRadius = Theme.bubbleCorner
         bubbleShaderCanvas.layer.cornerCurve = .continuous
