@@ -6,6 +6,18 @@ with the commit that closed it.
 
 ## Open
 
+### The server smoke test fails on push timing, on a different check per run
+Found 2026-08-28 by the gate after the shader-messages merge
+(`.claude/gates/main-shader.log`): `no push for own echo` was red on the
+gate's throwaway stand. On a second throwaway stand (`wrangler dev --port
+8811`, a fresh persist dir with the migrations applied) that check passed and
+`cmid swept behind the sender's ack` failed instead, with the same code:
+neither merge touched `server/`. Both checks wait for a push or an alarm with
+a fixed timeout, so a loaded host is the first suspect, but two different
+checks red on two stands is not yet shown to be the host. To investigate:
+run the smoke test alone on an idle host, and if it stays red, read the
+push and alarm timings the DO logs against the timeouts the test uses.
+
 ### A silent identity rotation is not re-checked by TOFU while a device list is cached
 Found 2026-08-27 in passing during the multi-device TOFU run
 (qa/runs/2026-08-27-multidevice-tofu-run.md). `/keys-update` (the identity
