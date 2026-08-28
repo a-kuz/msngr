@@ -39,11 +39,13 @@ enum ShaderEffects {
                 float d = length(p - c);
                 float r = 0.004 + 0.006 * hash(fi * 5.7);
                 float g = r / (d + 1e-4);
-                g = g * g * fade * smoothstep(0.0, 0.05, t);
+                // the sparks are one point at t = 0: the first frames are held
+                // back so the overlap does not flash white
+                g = g * g * fade * smoothstep(0.0, 0.15, t);
                 col += iAccent.rgb * g + vec3(1.0) * g * 0.35;
                 a += g;
             }
-            O = vec4(col, clamp(a, 0.0, 1.0));
+            O = vec4(min(col, vec3(1.0)), clamp(a, 0.0, 1.0));
         }
         """, inputs: []),
     ])

@@ -320,6 +320,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
             items = newItems
             for (i, item) in newItems.enumerated() where !contentEqual(old[i], item) {
                 refreshItem(at: i, item: item)
+                burstIfReactionLanded(was: old[i], now: item, at: i)
             }
             // an edit can change a height, so the geometry is different
             updateAtBottom(layoutFirst: true)
@@ -412,12 +413,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         for (i, item) in newItems.enumerated() {
             guard let oldIdx = oldIndex[item.id], !contentEqual(old[oldIdx], item) else { continue }
             refreshItem(at: i, item: item)
-            // a reaction that just landed bursts out of its bubble
-            if case .message(let now, _, _, _, _, _, _) = item, case .message(let was, _, _, _, _, _, _) = old[oldIdx],
-               Self.reactionCount(now) > Self.reactionCount(was),
-               let cell = collectionView.cellForItem(at: IndexPath(item: i, section: 0)) as? MessageCell {
-                ShaderEffectPlayer.play(.reaction, in: view, at: cell.bubbleCenter(in: view))
-            }
+            burstIfReactionLanded(was: old[oldIdx], now: item, at: i)
         }
         if let nb = newBottom,
            let cell = collectionView.cellForItem(at: IndexPath(item: 0, section: 0)) as? MessageCell {
@@ -441,6 +437,14 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
 
     private static func reactionCount(_ msg: Message) -> Int {
         msg.reactions.values.reduce(0) { $0 + $1.count }
+    }
+
+    /// A reaction that just landed on a visible bubble bursts out of it.
+    private func burstIfReactionLanded(was: ChatFeedItem, now: ChatFeedItem, at index: Int) {
+        guard case .message(let after, _, _, _, _, _, _) = now, case .message(let before, _, _, _, _, _, _) = was,
+              Self.reactionCount(after) > Self.reactionCount(before),
+              let cell = collectionView.cellForItem(at: IndexPath(item: index, section: 0)) as? MessageCell else { return }
+        ShaderEffectPlayer.play(.reaction, in: view, at: cell.bubbleCenter(in: view))
     }
 
     /// Refreshes a position that already stands in the feed and whose content changed.
