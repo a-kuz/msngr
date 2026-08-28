@@ -73,11 +73,13 @@ public enum ShaderGallery {
             // the bottom seen through the water, nudged by the surface
             vec2 q = uv + n.xy * 0.05;
             float rr = length(q) / rad;
-            // sand at the rim, deep teal toward the middle
+            // sand at the rim, deep teal toward the middle; the dark theme
+            // dims the sand so the pond stays water, not a moon
             float sand = noise(q * 24.0) * 0.55 + noise(q * 52.0 + 3.7) * 0.45;
-            vec3 bottom = vec3(0.78, 0.68, 0.50) * (0.8 + 0.3 * sand);
+            vec3 bottom = vec3(0.78, 0.68, 0.50) * (0.8 + 0.3 * sand) * mix(1.0, 0.55, iDark);
             float depth = smoothstep(1.02, 0.3, rr);
-            vec3 col = mix(bottom, vec3(0.05, 0.33, 0.45), 0.2 + 0.7 * depth);
+            vec3 water = mix(vec3(0.05, 0.33, 0.45), vec3(0.02, 0.17, 0.28), iDark);
+            vec3 col = mix(bottom, water, 0.25 + 0.65 * depth);
             // the rings: a lit crest, a shaded trough
             col += vec3(0.7, 0.95, 0.9) * clamp(h * 2.2, 0.0, 0.8);
             col -= vec3(0.10, 0.18, 0.20) * clamp(-h * 2.0, 0.0, 0.6);
