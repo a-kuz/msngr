@@ -55,7 +55,18 @@ final class ShaderCanvas: UIView {
         isOpaque = !transparent
         isMultipleTouchEnabled = true
         addSubview(metalView)
+        scaleObserver = NotificationCenter.default.addObserver(forName: ShaderSurfaces.scaleChanged,
+                                                               object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                // a held frame is re-drawn at the new size
+                self.heldFrameDrawn = false
+                self.setNeedsLayout()
+            }
+        }
     }
+
+    private var scaleObserver: NSObjectProtocol?
 
     required init?(coder: NSCoder) { fatalError() }
 
@@ -71,7 +82,11 @@ final class ShaderCanvas: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         metalView.frame = bounds
-        let scale = metalView.contentScaleFactor
+        // the half-scale setting covers the feed, the chat list and the
+        // backgrounds; a focused canvas (the player, the composer, an effect)
+        // always draws every pixel
+        let half = priority != .focus && ShaderSurfaces.shared.halfScale
+        let scale = metalView.contentScaleFactor * (half ? 0.5 : 1)
         let ceiling = min(drawableCeiling, Self.maxDrawableSide)
         var w = max(bounds.width * scale, 0), h = max(bounds.height * scale, 0)
         // over the ceiling the drawable keeps its aspect and the layer stretches it
@@ -154,6 +169,7 @@ final class ShaderCanvas: UIView {
 
     deinit {
         if let observer, let program { program.unobserve(observer) }
+        if let scaleObserver { NotificationCenter.default.removeObserver(scaleObserver) }
     }
 
     // MARK: touches → iMouse, iTouch, iPencil; keys → the keyboard texture

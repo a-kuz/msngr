@@ -1394,6 +1394,17 @@
         }
       }
     },
+    "Half resolution in chats" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Половинное разрешение в чатах"
+          }
+        }
+      }
+    },
     "Effects on send and reaction" : {
       "extractionState" : "manual",
       "localizations" : {

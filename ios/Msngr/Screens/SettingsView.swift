@@ -316,6 +316,10 @@ struct SettingsView: View {
                 Label("Effects on send and reaction", systemImage: "wand.and.stars")
             }
             .accessibilityIdentifier("settings.shaderEffects")
+            Toggle(isOn: $surfaces.halfScale) {
+                Label("Half resolution in chats", systemImage: "square.resize.down")
+            }
+            .accessibilityIdentifier("settings.shaderHalfScale")
             ForEach(ShaderSurfaces.Effect.allCases, id: \.rawValue) { effect in
                 HStack {
                     Button {

@@ -300,13 +300,14 @@ A ✅ goes in only together with a link to the evidence.
     backgrounds, the avatar and the effects keep their own «write your own»
     entry, and a received shader message still opens in the player and is
     still previewed in the chat list and in the push
-  - ⬜ a drawable scale setting in Settings → «Шейдеры»: full, or half the
-    view's scale for the feed, the chat list and the backgrounds. The design
-    promised half scale in the feed and the canvas draws every pixel at
-    60 fps today (`ShaderCanvas`); the player and the composer preview stay
-    at full scale whatever the setting. A run on a device with the frame
-    time and the thermal state before and after, since the simulator says
-    nothing about either
+  - ✅ a drawable scale setting in Settings → «Шейдеры»: «Половинное
+    разрешение в чатах» halves the drawable of the feed, the chat list and
+    the backgrounds; the player, the composer preview and the effects stay
+    at full scale (`ShaderSurfaces.halfScale`; run live 2026-08-28:
+    540×540/915×513 → 270×270/457×256 in the feed while the player kept
+    1206×2622 — qa/runs/2026-08-28-shader-half-scale-run.md). What half
+    scale buys in frame time and thermal state is still a device question:
+    the simulator says nothing about either
   - ✅ a shader message: Shadertoy code or a JSON export pasted into the
     composer, a live preview, the bubble animating in the peer's feed, a
     full-screen player with touches as `iMouse` and the source to copy;
