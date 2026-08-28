@@ -47,6 +47,26 @@ final class NotificationDecisionTests: XCTestCase {
         XCTAssertEqual(ws(appActive: false, chatOpen: true, apnsAvailable: false), .localNotification)
     }
 
+    func testMutedChatStillNotifiesAboutAReplyToYou() {
+        XCTAssertEqual(NotificationDecision.forIncomingWS(
+            appActive: true, chatOpen: false, isOwn: false, isService: false,
+            muted: true, alreadyShown: false, repliesToMe: true), .inAppBanner)
+        XCTAssertEqual(NotificationDecision.forIncomingWS(
+            appActive: false, chatOpen: false, isOwn: false, isService: false,
+            muted: true, alreadyShown: false, apnsAvailable: false,
+            repliesToMe: true), .localNotification)
+        // the exception lifts the mute alone, not the other reasons to stay silent
+        XCTAssertEqual(NotificationDecision.forIncomingWS(
+            appActive: true, chatOpen: true, isOwn: false, isService: false,
+            muted: true, alreadyShown: false, repliesToMe: true), .none)
+        XCTAssertTrue(NotificationDecision.shouldPresentSystemPush(
+            chatOpen: false, alreadyShown: false, messageInDB: false,
+            messageRead: false, muted: true, repliesToMe: true))
+        XCTAssertFalse(NotificationDecision.shouldPresentSystemPush(
+            chatOpen: false, alreadyShown: false, messageInDB: false,
+            messageRead: false, muted: true, repliesToMe: false))
+    }
+
     func testAlreadyShownMsgIdShowsNothing() {
         // the system push got shown before the WS frame arrived
         XCTAssertEqual(ws(alreadyShown: true), .none)

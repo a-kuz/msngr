@@ -91,7 +91,8 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
             isService: ev.isService,
             muted: info?.muted ?? false,
             alreadyShown: shownKeys.contains(key),
-            apnsAvailable: apnsAvailable)
+            apnsAvailable: apnsAvailable,
+            repliesToMe: info?.repliesToMe ?? false)
         guard action != .none, let info, let content = info.content else { return }
         // the claim on the message is what stops the push about it from showing
         // a second banner; the extension takes the same one
@@ -190,6 +191,8 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         var isGroup: Bool
         var chatAvatarId: String?
         var muted: Bool
+        /// the message quotes one of yours: a muted chat still notifies about it
+        var repliesToMe: Bool = false
         /// group members other than self: this is how the system tells the conversation is a group one
         var groupMembers: [NotificationContentBuilder.SenderInfo] = []
     }
@@ -223,6 +226,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
             }
             let message = try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE chatId = ? AND seq = ?",
                                                arguments: [chatId, seq])
+            info.repliesToMe = message?.replyTo?.authorId == ownUserId
             // a request before it is accepted: the sender's name shows, the content does not
             if hidden {
                 info.content = NotificationContentBuilder.requestContent(
@@ -306,21 +310,26 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         var messageInDB = false
         var messageRead = false
         var muted = false
+        var repliesToMe = false
         if let db {
-            let state = try? await db.read { dbc -> (Bool, Bool, Bool) in
+            let ownUserId = AppState.shared.session?.userId ?? ""
+            let state = try? await db.read { dbc -> (Bool, Bool, Bool, Bool) in
                 let muted = try Bool.fetchOne(dbc, sql: "SELECT muted FROM chat WHERE id = ?",
                                               arguments: [chatId]) ?? false
-                guard let seq else { return (false, false, muted) }
+                guard let seq else { return (false, false, muted, false) }
                 let row = try Row.fetchOne(dbc, sql: """
-                    SELECT m.seq AS seq, c.myReadUpTo AS readUpTo
+                    SELECT m.seq AS seq, m.replyTo AS replyTo, c.myReadUpTo AS readUpTo
                     FROM message m JOIN chat c ON c.id = m.chatId
                     WHERE m.chatId = ? AND m.seq = ?
                     """, arguments: [chatId, seq])
                 let inDB = row != nil
                 let read = row.map { ($0["seq"] as? Int ?? Int.max) <= ($0["readUpTo"] as Int) } ?? false
-                return (inDB, read, muted)
+                let reply = (row?["replyTo"] as String?).flatMap {
+                    try? JSONDecoder().decode(ReplyPreview.self, from: Data($0.utf8))
+                }
+                return (inDB, read, muted, reply?.authorId == ownUserId)
             }
-            (messageInDB, messageRead, muted) = state ?? (false, false, false)
+            (messageInDB, messageRead, muted, repliesToMe) = state ?? (false, false, false, false)
         }
 
         let key = seq.map { Message.feedId(chatId: chatId, seq: $0) }
@@ -330,7 +339,8 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
             alreadyShown: key.map(shownKeys.contains) ?? false,
             messageInDB: messageInDB,
             messageRead: messageRead,
-            muted: muted)
+            muted: muted,
+            repliesToMe: repliesToMe)
         MsngrLog.notifications.debug("""
             willPresent chat=\(chatId, privacy: .public) seq=\(seq ?? -1, privacy: .public) \
             local=\(isLocal) open=\(self.activeChatId == chatId) inDB=\(messageInDB) \
