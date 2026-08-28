@@ -107,6 +107,31 @@ final class MessageRepairTests: XCTestCase {
         XCTAssertTrue(outbox.isEmpty, "a request went out over the per-peer ceiling")
     }
 
+    /// Twenty repairs on the same sender have spent every attempt: they are not
+    /// in flight — nothing will ever answer them — so a fresh unreadable frame
+    /// still gets its request instead of waiting a week for them to expire.
+    func testSpentRepairsDoNotHoldTheCeilingShut() async throws {
+        let db = try AppDatabase.openInMemory()
+        try await makeDirectChat(db)
+        let engine = try makeEngine(db: db)
+        try await db.write { dbc in
+            for seq in 100..<(100 + MessageRepair.maxInFlightRepairsPerPeer) {
+                try dbc.execute(sql: """
+                    INSERT INTO pendingDecrypt (chatId, seq, fromUserId, fromDevice, sentAt, ts,
+                                                body, reason, attempts, firstSeenAt, lastTriedAt,
+                                                repairAttempts, repairAskedAt)
+                    VALUES ('c1', ?, 'peer', 'd1', 1, 1, x'00', 'no_session', 1, 1, 1, ?, 1)
+                    """, arguments: [seq, MessageRepair.maxAttempts])
+            }
+        }
+
+        await engine.apply(try brokenFrame(seq: 1))
+
+        let outbox = try await outboxContents(db)
+        XCTAssertEqual(outbox.count, 1, "spent repairs kept the ceiling shut")
+        XCTAssertEqual(outbox[0].id, MessageRepair.requestId(chatId: "c1", seq: 1, attempt: 1))
+    }
+
     /// A missing key is not a defect by itself: the envelope is parked and the
     /// sender is left alone until the grace period runs out.
     func testRetryableFailureWaitsBeforeAsking() async throws {
