@@ -132,6 +132,41 @@ final class MessageRepairTests: XCTestCase {
         XCTAssertEqual(outbox[0].id, MessageRepair.requestId(chatId: "c1", seq: 1, attempt: 1))
     }
 
+    /// A standing pile of stale prekey envelopes triggers the republish from
+    /// the sweep itself: the store's signed prekey is regenerated even though
+    /// no fresh envelope arrived. The upload fails (nothing listens), so the
+    /// republish marker stays unset and the next sweep retries.
+    func testSweepRepublishesOverAStandingStalePile() async throws {
+        let db = try AppDatabase.openInMemory()
+        try await makeDirectChat(db)
+        let api = APIClient(baseURL: URL(string: "http://localhost:1")!)
+        let store = try IdentityStore(db: db, masterKeyProvider: StaticMasterKey())
+        _ = try store.generatePrekeys(count: 1)
+        let e2ee = E2EEManager(store: store, api: api, ownUserId: "me", ownDeviceId: "dev")
+        let engine = SyncEngine(db: db, api: api, e2ee: e2ee,
+                                wsURL: URL(string: "ws://localhost:1/ws")!,
+                                ownUserId: "me", ownDeviceId: "dev")
+        let now = Date().timeIntervalSince1970
+        try await db.write { dbc in
+            for seq in 1...MessageRepair.republishAfterStaleFailures {
+                try dbc.execute(sql: """
+                    INSERT INTO pendingDecrypt (chatId, seq, fromUserId, fromDevice, sentAt, ts,
+                                                body, reason, attempts, firstSeenAt, lastTriedAt)
+                    VALUES ('c1', ?, 'peer', 'd1', 1, 1, x'00', 'pk_decrypt_failed', 1, ?, ?)
+                    """, arguments: [seq, now, now])
+            }
+        }
+
+        await engine.sweepUnreadable()
+
+        XCTAssertNil(try store.signedPrekey(id: 1), "the stale signed prekey half survived the sweep")
+        XCTAssertNotNil(try store.signedPrekey(id: 2), "no regenerated signed prekey after the sweep")
+        let marker = try await db.read { dbc in
+            try String.fetchOne(dbc, sql: "SELECT value FROM kv WHERE key = 'lastPrekeyRepublish'")
+        }
+        XCTAssertNil(marker, "the marker must wait for a successful upload")
+    }
+
     /// The republish decision: enough distinct stale envelopes, and not too
     /// soon after the previous republish.
     func testRepublishPolicy() {
