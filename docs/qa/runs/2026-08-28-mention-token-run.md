@@ -84,7 +84,19 @@ token in the text.
   unread. Fixed first (see defects.md «An own service frame drags myReadUpTo
   over the peer's unread messages»), then the button verified live.
 
+## The wash under the bubble (seventh slice)
+
+- An incoming message carrying your mention keeps an accent wash under its
+  bubble for as long as it is on screen: the layout plan decides
+  (`mentionsMe`), the cell lays a tinted view under every other subview, so a
+  photo covers it and only the bubble background is tinted.
+- MentionWashTests, 6/6: incoming mention of you, a mention of a neighbouring
+  id (`u12` against `u1`), plain text, your own message, a deleted message,
+  and an empty own id before bootstrap. MsngrTests as a whole 39/39.
+- Live in «Design»: «Финал: @Alfa, первый» and «Wash check: @Alfa Service look
+  here» sit on the warm tint while «и снова обычная строка» between them stays
+  white.
+
 ## Left for the next slices
 
-- Your own mention marked in the feed and the chat list row; the
-  unread-mention counter and the jump.
+- @all in a group, and who is allowed to use it.
