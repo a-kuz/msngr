@@ -180,8 +180,16 @@ from fifth to second place, above chats whose last message was hours newer;
 its own time label kept saying 21.08.26. Earlier the same session «Design»
 rose above «Bravo Service» while showing «Сообщение ещё не загружено» as its
 last row, again with no content message of its own. The list is ordered by
-`chat.lastActivityAt`; which write moved it in these two cases is not
-established.
+`chat.lastActivityAt`.
+The reaction case is closed: `applySentAck` stamped `lastActivityAt`
+unconditionally on every own ack — a reaction, an edit, a repair answer all
+lifted the chat — and now stamps it only for a send with a message row
+(`testAServiceAckDoesNotLiftTheChat`). Live on the alfa fixture: a 👍 put on
+a message in «Standup» landed on the bubble while the row stayed in place
+and its `lastActivityAt` kept its old timestamp. The «Design» sighting fits the same
+write (the repair answers the fixture kept acking), with one alternative
+still open: an incoming unreadable envelope also moves `lastActivityAt`,
+which is arguably right — it is a real message, merely unreadable yet.
 
 ### A row moving up the chat list flies through the rows above it
 Seen 2026-08-27 in the README demo recording (simulator, alfa fixture). When a
@@ -768,7 +776,15 @@ has no slot, and a canvas leaving the window gives its slot back. Seen live:
 the avatar in Settings and on the peer's chat list.
 
 ### The context menu shows a shader message as a black rectangle
-Open. The long-press preview is UIKit's snapshot of the cell, and the Metal
-layer is not in it: the preview of a shader message (and a sticker) is the
-canvas's black background. A `UITargetedPreview` built from a texture
-readback, or the last held frame as an image, would fix it.
+Reported by the owner on 2026-08-28 for the bubble shader too: a long-press
+on a text over a shader lifted the bubble with the shader missing. The
+overlay's snapshot is `layer.render`, which a Metal layer contributes nothing
+to. Closed: the overlay now lays a live `ShaderCanvas` with the same document
+over the lifted snapshot — the bubble shader under the selectable text, the
+shader message and the sticker in their frames (`MessageContextOverlay.LiveShader`).
+
+### The pond sticker's bottom read as a dot grid
+Reported by the owner on 2026-08-28 («некрасиво сетчатый фон»): the bundled
+Pond sticker drew its pebbles on a visible square lattice. Closed: the bottom
+is mottled sand under a caustic web, both from value noise with no lattice
+(`ShaderGallery.pond`).

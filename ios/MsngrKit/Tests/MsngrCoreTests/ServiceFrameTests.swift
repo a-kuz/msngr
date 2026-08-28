@@ -51,6 +51,49 @@ final class ServiceFrameTests: XCTestCase {
         XCTAssertEqual(row["unreadCount"] as Int, 1)
     }
 
+    /// The ack of an own service frame must not lift the chat in the list: a
+    /// reaction is not a conversation, and a row that climbs with no new
+    /// message in it reads as a glitch. An ordinary send still lifts it.
+    func testAServiceAckDoesNotLiftTheChat() async throws {
+        let db = try AppDatabase.openInMemory()
+        let engine = try makeEngine(db: db)
+        try await db.write { dbc in
+            try dbc.execute(sql: """
+                INSERT INTO chat (id, kind, createdBy, createdAt, lastActivityAt)
+                VALUES ('c1','group','peer',0,100)
+                """)
+            var msg = Message(id: "orig1", chatId: "c1", fromUserId: "peer", sentAt: 50,
+                              kind: .text, text: "hi", status: .sent, isOutgoing: false)
+            msg.seq = 1
+            try msg.save(dbc)
+        }
+
+        var reaction = ContentPayload(kind: "reaction")
+        reaction.targetLocalId = "orig1"
+        reaction.emoji = "❤️"
+        try await engine.enqueue(content: reaction, chatId: "c1", clientMsgId: "r1")
+        let rAck = """
+        {"t":"sent","chatId":"c1","clientMsgId":"r1","seq":2,"ts":200}
+        """
+        await engine.apply(try JSONDecoder().decode(WSIncoming.self, from: Data(rAck.utf8)))
+        var at = try await db.read { dbc in
+            try Double.fetchOne(dbc, sql: "SELECT lastActivityAt FROM chat WHERE id = 'c1'")!
+        }
+        XCTAssertEqual(at, 100, "a reaction's ack lifted the chat")
+
+        var text = ContentPayload(kind: "text")
+        text.text = "a real message"
+        try await engine.enqueue(content: text, chatId: "c1", clientMsgId: "t1")
+        let tAck = """
+        {"t":"sent","chatId":"c1","clientMsgId":"t1","seq":3,"ts":300}
+        """
+        await engine.apply(try JSONDecoder().decode(WSIncoming.self, from: Data(tAck.utf8)))
+        at = try await db.read { dbc in
+            try Double.fetchOne(dbc, sql: "SELECT lastActivityAt FROM chat WHERE id = 'c1'")!
+        }
+        XCTAssertEqual(at, 300, "an ordinary send must lift the chat to its ack ts")
+    }
+
     /// A reaction and an edit for a message not yet in the database (the
     /// original is waiting for its key) are buffered and applied once the row
     /// appears.
