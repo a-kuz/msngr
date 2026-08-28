@@ -50,6 +50,18 @@ struct ChatRowView: View {
                         .frame(minHeight: ceil(Theme.Text.rowPreview.lineHeight) * 2,
                                alignment: .topLeading)
                     Spacer(minLength: 4)
+                    if item.hasUnreadMention, visibleUnread > 0 {
+                        Text("@")
+                            .textRole(Theme.Text.rowBadge)
+                            .foregroundStyle(.white)
+                            .frame(minWidth: badgeSide, minHeight: badgeSide)
+                            .background(Theme.accent)
+                            .clipShape(Circle())
+                            .fixedSize()
+                            .layoutPriority(1)
+                            .transition(.scale.combined(with: .opacity))
+                            .accessibilityIdentifier("chatRow.mention")
+                    }
                     if visibleUnread > 0 {
                         Text("\(visibleUnread)")
                             .textRole(Theme.Text.rowBadge)
