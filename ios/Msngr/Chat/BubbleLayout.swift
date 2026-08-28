@@ -83,6 +83,8 @@ enum BubbleLayout {
     static var tickWidth: CGFloat { TypeScale.scaled(20, relativeTo: .caption1, max: 34) }
     /// Sender avatar beside an incoming group bubble.
     static var avatarSize: CGFloat { TypeScale.scaled(30, max: 42) }
+    /// A shader sticker's square.
+    static var stickerSide: CGFloat { TypeScale.scaled(180, max: 260) }
     /// Horizontal room the avatar column takes: the picture plus its gap.
     static var avatarSpan: CGFloat { avatarSize + 6 }
 
@@ -230,6 +232,16 @@ enum BubbleLayout {
             shaderFrame = CGRect(x: 0, y: bare ? 0 : y, width: mw, height: mh)
             mediaFrame = shaderFrame
             contentWidth = mw - 2 * hPadding
+            y = shaderFrame!.maxY
+            statusOnMedia = true
+        case .sticker:
+            // a sticker is a square with no bubble behind it: the shader's own
+            // alpha decides what shows; the time sits in its capsule as on a photo
+            let side = min(stickerSide, maxBubbleWidth)
+            let bare = authorNameFrame == nil && forwardFrame == nil && replyFrame == nil
+            shaderFrame = CGRect(x: 0, y: bare ? 0 : y, width: side, height: side)
+            mediaFrame = shaderFrame
+            contentWidth = side - 2 * hPadding
             y = shaderFrame!.maxY
             statusOnMedia = true
         default:
@@ -455,6 +467,7 @@ enum BubbleLayout {
         case .file: return "📎 " + (reply.text.isEmpty ? String(localized: "File") : reply.text)
         case .album: return String(localized: "🖼 Album")
         case .shader: return "✨ " + (reply.text.isEmpty ? String(localized: "Shader") : reply.text)
+        case .sticker: return "✨ " + (reply.text.isEmpty ? String(localized: "Sticker") : reply.text)
         default: return reply.text.isEmpty ? String(localized: "Message") : reply.text
         }
     }

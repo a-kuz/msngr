@@ -56,6 +56,8 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var typingUsers: [String] = []
     @Published var replyingTo: Message?
     @Published var editing: Message?
+    /// A shader chosen for the next text message, painted behind its bubble.
+    @Published var pendingBubbleShader: ShaderDocument?
     /// The pinned rows in pin order, the newest pin last.
     @Published var pinnedMessages: [Message] = []
     /// Which pin the bar shows: an index into `pinnedMessages`. Reset to the
@@ -835,6 +837,8 @@ final class ChatViewModel: ObservableObject {
         }
         var c = ContentPayload(kind: "text")
         c.text = tokenized
+        c.bubbleShader = pendingBubbleShader
+        pendingBubbleShader = nil
         c.replyTo = replyingTo.map {
             ReplyPreview(seq: $0.seq, authorId: $0.fromUserId,
                          text: Self.previewText($0), kind: $0.kind.rawValue)
@@ -883,6 +887,7 @@ final class ChatViewModel: ObservableObject {
         case .file: return m.media?.name ?? String(localized: "File")
         case .album: return String(localized: "Album")
         case .shader: return m.shader?.name ?? String(localized: "Shader")
+        case .sticker: return m.shader?.name ?? String(localized: "Sticker")
         default: return String(MessageMarkdown.mentionsStripped(m.text ?? "").prefix(80))
         }
     }
@@ -959,6 +964,7 @@ final class ChatViewModel: ObservableObject {
         c.album = msg.album
         c.replyTo = msg.replyTo
         c.shader = msg.shader
+        c.bubbleShader = msg.bubbleShader
         c.fwd = msg.forward ?? ForwardInfo(fromUserId: msg.fromUserId, fromName: authorName)
         return c
     }

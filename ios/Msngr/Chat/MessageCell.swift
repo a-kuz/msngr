@@ -48,6 +48,10 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private var reactionViews: [ReactionCapsuleView] = []
     private let voiceView = VoiceMessageView()
     private let shaderView = ShaderMessageView()
+    /// A sticker: the same live view with nothing painted behind the shader.
+    private let stickerView = ShaderMessageView(transparent: true)
+    /// The shader a sender put behind a text bubble, under every other subview.
+    private let bubbleShaderCanvas = ShaderCanvas()
     /// Between willDisplay and didEndDisplaying: what a live shader configured
     /// into this cell in the meantime has to know to start.
     private var onScreen = false
@@ -83,6 +87,12 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
         bubbleView.isUserInteractionEnabled = true
         contentView.addSubview(bubbleView)
+        bubbleShaderCanvas.isHidden = true
+        bubbleShaderCanvas.isUserInteractionEnabled = false
+        bubbleShaderCanvas.clipsToBounds = true
+        bubbleShaderCanvas.layer.cornerRadius = Theme.bubbleCorner
+        bubbleShaderCanvas.layer.cornerCurve = .continuous
+        bubbleView.addSubview(bubbleShaderCanvas)
         // the tail is a subview of the body: it inherits the body's transform and alpha
         // through every animation (appearance, swipe-to-reply, the flight out of the send
         // button) for free, and since bubbleView does not clip to bounds the part of the
@@ -113,6 +123,10 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         shaderView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(shaderTapped)))
         // under the status capsule, like a photo: the time reads over the picture
         bubbleView.insertSubview(shaderView, belowSubview: statusBackdrop)
+        stickerView.isHidden = true
+        stickerView.isUserInteractionEnabled = true
+        stickerView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(shaderTapped)))
+        bubbleView.insertSubview(stickerView, belowSubview: statusBackdrop)
         // the rings follow the sender's progress store rather than polling it
         progressCancellable = MediaProgress.shared.$fractions
             .receive(on: DispatchQueue.main)
@@ -259,6 +273,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         super.prepareForReuse()
         teardownAutoplay()
         shaderView.setActive(false)
+        stickerView.setActive(false)
+        bubbleShaderCanvas.setRunning(false)
         reactionViews.forEach { $0.removeFromSuperview() }
         reactionViews = []
         bubbleView.viewWithTag(Self.highlightTag)?.removeFromSuperview()
@@ -327,7 +343,19 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         timeLabel.font = BubbleLayout.timeFont
 
         bubbleView.frame = plan.bubbleFrame
-        bubbleView.image = BubbleBackground.image(outgoing: plan.isOutgoing, mediaOnly: plan.statusOnMedia)
+        // a bubble shader takes the place of the bubble colour; the tail keeps it
+        let bubbleShader = msg.kind == .text && !msg.deletedForAll ? msg.bubbleShader : nil
+        bubbleView.image = BubbleBackground.image(outgoing: plan.isOutgoing,
+                                                  mediaOnly: plan.statusOnMedia || bubbleShader != nil)
+        if let bubbleShader {
+            bubbleShaderCanvas.isHidden = false
+            bubbleShaderCanvas.frame = bubbleView.bounds
+            bubbleShaderCanvas.show(bubbleShader)
+            bubbleShaderCanvas.setRunning(onScreen)
+        } else {
+            bubbleShaderCanvas.isHidden = true
+            bubbleShaderCanvas.setRunning(false)
+        }
         applyMentionWash(plan)
 
         // the tail is a separate image at the bottom corner of the body and sticks out
@@ -350,9 +378,14 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         if let tf = plan.textFrame, let text = plan.text {
             textView.isHidden = false
             textView.frame = tf
-            let colors = Self.textColors(plan: plan, deleted: msg.deletedForAll)
+            let colors = Self.textColors(plan: plan, deleted: msg.deletedForAll, overShader: bubbleShader != nil)
             textView.configure(text, color: colors.text, linkColor: colors.link,
                                codeBackground: Self.codeBackground(outgoing: plan.isOutgoing))
+            // over a shader the text is white and carries a shadow, whatever the picture
+            textView.layer.shadowColor = UIColor.black.cgColor
+            textView.layer.shadowOpacity = bubbleShader != nil ? 0.9 : 0
+            textView.layer.shadowRadius = 2
+            textView.layer.shadowOffset = .zero
         } else {
             textView.isHidden = true
         }
@@ -401,8 +434,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             voiceView.isHidden = true
         }
 
-        // shader
-        if let sf = plan.shaderFrame, let document = msg.shader {
+        // shader and sticker
+        if let sf = plan.shaderFrame, let document = msg.shader, msg.kind == .shader {
             shaderView.isHidden = false
             shaderView.frame = sf
             shaderView.configure(document: document)
@@ -411,13 +444,22 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             shaderView.isHidden = true
             shaderView.setActive(false)
         }
+        if let sf = plan.shaderFrame, let document = msg.shader, msg.kind == .sticker {
+            stickerView.isHidden = false
+            stickerView.frame = sf
+            stickerView.configure(document: document)
+            stickerView.setActive(onScreen)
+        } else {
+            stickerView.isHidden = true
+            stickerView.setActive(false)
+        }
 
         // status: time and ticks
         timeLabel.text = (plan.edited ? BubbleLayout.editedMark : "") + plan.timeString
-        timeLabel.textColor = plan.statusOnMedia ? .white
+        timeLabel.textColor = plan.statusOnMedia || bubbleShader != nil ? .white
             : (plan.isOutgoing ? UIColor(Theme.outgoingMeta) : .secondaryLabel)
-        statusBackdrop.isHidden = !plan.statusOnMedia
-        if plan.statusOnMedia {
+        statusBackdrop.isHidden = !(plan.statusOnMedia || bubbleShader != nil)
+        if plan.statusOnMedia || bubbleShader != nil {
             statusBackdrop.frame = plan.statusFrame.insetBy(dx: -6, dy: -1)
             statusBackdrop.layer.cornerRadius = statusBackdrop.bounds.height / 2
         }
@@ -435,7 +477,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             // read keeps its own colour over media too: the white the rest of the
             // capsule uses would make a read photo look the same as a delivered one
             tickView.tintColor = msg.status == .read ? UIColor(Theme.outgoingTickRead)
-                : (plan.statusOnMedia ? .white : UIColor(Theme.outgoingMeta))
+                : (plan.statusOnMedia || bubbleShader != nil ? .white : UIColor(Theme.outgoingMeta))
         } else {
             tickView.isHidden = true
         }
@@ -665,6 +707,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     func setAutoplayActive(_ active: Bool) {
         onScreen = active
         shaderView.setActive(active && !shaderView.isHidden)
+        stickerView.setActive(active && !stickerView.isHidden)
+        bubbleShaderCanvas.setRunning(active && !bubbleShaderCanvas.isHidden)
         for (layer, _) in autoplay {
             if active { layer.player?.play() } else { layer.player?.pause() }
         }
@@ -760,8 +804,14 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         onTapLink?(url)
     }
 
+    /// Where the bubble is on the screen, for an effect that starts from it.
+    func bubbleCenter(in view: UIView) -> CGPoint {
+        bubbleView.convert(CGPoint(x: bubbleView.bounds.midX, y: bubbleView.bounds.midY), to: view)
+    }
+
     /// The bubble's text colours; the lifted menu paints its live text with the same ones.
-    static func textColors(plan: BubbleLayoutPlan, deleted: Bool) -> (text: UIColor, link: UIColor) {
+    static func textColors(plan: BubbleLayoutPlan, deleted: Bool, overShader: Bool = false) -> (text: UIColor, link: UIColor) {
+        if overShader { return (.white, .white) }
         let text: UIColor = deleted
             ? (plan.isOutgoing ? UIColor(Theme.outgoingMeta) : .secondaryLabel)
             : (plan.isOutgoing ? UIColor(Theme.outgoingText) : .label)
@@ -1044,6 +1094,8 @@ final class FeedAvatarView: UIView {
     private let gradient = CAGradientLayer()
     private let initialsLabel = UILabel()
     private let imageView = UIImageView()
+    /// A shader avatar runs here, at the avatar priority of the budget.
+    private let canvas = ShaderCanvas()
     /// What the view currently shows: a repeated set for the same sender and
     /// picture is a no-op, so a reused cell does not restart the load.
     private var shownKey: String?
@@ -1058,6 +1110,9 @@ final class FeedAvatarView: UIView {
         addSubview(initialsLabel)
         imageView.contentMode = .scaleAspectFill
         addSubview(imageView)
+        canvas.priority = .avatar
+        canvas.isHidden = true
+        addSubview(canvas)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -1072,6 +1127,7 @@ final class FeedAvatarView: UIView {
         initialsLabel.frame = bounds
         initialsLabel.font = .systemFont(ofSize: bounds.width * 0.4, weight: .semibold)
         imageView.frame = bounds
+        canvas.frame = bounds
     }
 
     func set(_ avatar: FeedAvatar) {
@@ -1081,13 +1137,27 @@ final class FeedAvatarView: UIView {
         initialsLabel.text = AvatarStyle.initials(avatar.name)
         gradient.colors = AvatarStyle.gradient(for: avatar.name).map { UIColor($0).cgColor }
         imageView.image = nil
+        canvas.isHidden = true
+        canvas.setRunning(false)
         guard let avatarId = avatar.avatarId, !avatarId.isEmpty else { return }
         Task { [weak self] in
-            let image = await AvatarImageLoader.shared.image(avatarId)
+            let picture = await AvatarImageLoader.shared.picture(avatarId)
             // the cell may have moved on to another sender while the file loaded
             guard let self, self.shownKey == key else { return }
-            self.imageView.image = image
+            switch picture {
+            case .image(let image): self.imageView.image = image
+            case .shader(let doc):
+                self.canvas.isHidden = false
+                self.canvas.show(doc)
+                self.canvas.setRunning(self.window != nil)
+            case nil: break
+            }
         }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if !canvas.isHidden { canvas.setRunning(window != nil) }
     }
 }
 
@@ -1250,6 +1320,18 @@ extension MessageCell {
         if msg.isOutgoing && msg.kind == .text {
             items.append(.init(title: String(localized: "Edit"), icon: "pencil") { [weak self] in
                 self?.onContextAction?(.edit)
+            })
+        }
+        if msg.kind == .shader, msg.shader != nil {
+            items.append(.init(title: String(localized: "Set as background"), icon: "photo.artframe",
+                               id: "chat.menu.setBackground") { [weak self] in
+                self?.onContextAction?(.setBackground)
+            })
+        }
+        if msg.kind == .sticker, let doc = msg.shader, !ShaderSurfaces.shared.hasSticker(doc) {
+            items.append(.init(title: String(localized: "Add to stickers"), icon: "plus.square.on.square",
+                               id: "chat.menu.saveSticker") { [weak self] in
+                self?.onContextAction?(.saveSticker)
             })
         }
         if msg.edited {

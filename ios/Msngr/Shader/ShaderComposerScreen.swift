@@ -1,11 +1,79 @@
 import SwiftUI
 import MsngrCore
 
-/// Where a shader is written or pasted before it is sent: the live preview on
-/// top, the code below, the compiler's verdict between them. «Send» opens
+/// What the shader written in the composer is for. The purpose sets the
+/// preview's shape, the title and the word on the action button; the code
+/// and the verdict are the same for all of them.
+enum ShaderComposerPurpose: Hashable, Identifiable {
+    case message
+    case bubble
+    case sticker
+    case background
+    case effect(ShaderSurfaces.Effect)
+    case avatar
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .message: return String(localized: "Shader")
+        case .bubble: return String(localized: "Bubble shader")
+        case .sticker: return String(localized: "Shader sticker")
+        case .background: return String(localized: "Chat background")
+        case .effect(.send): return String(localized: "Send effect")
+        case .effect(.reaction): return String(localized: "Reaction effect")
+        case .avatar: return String(localized: "Shader avatar")
+        }
+    }
+
+    var action: String {
+        switch self {
+        case .message: return String(localized: "Send")
+        case .bubble: return String(localized: "Attach")
+        case .sticker: return String(localized: "Save")
+        case .background, .avatar: return String(localized: "Set")
+        case .effect: return String(localized: "Use")
+        }
+    }
+
+    /// The preview's aspect: a bubble is a wide picture, a sticker and an
+    /// avatar are square, the background is a phone screen.
+    var aspect: CGFloat {
+        switch self {
+        case .message, .bubble: return 16.0 / 9.0
+        case .sticker, .avatar: return 1
+        case .background, .effect: return 9.0 / 16.0
+        }
+    }
+
+    /// Transparent surfaces show the chat under the preview, so `O.a` reads.
+    var transparent: Bool {
+        switch self {
+        case .sticker, .effect: return true
+        default: return false
+        }
+    }
+
+    var hint: String {
+        switch self {
+        case .message, .bubble, .background, .avatar:
+            return String(localized: "Shadertoy code or a Shadertoy JSON export. iTime, iResolution, iMouse, iChannel0–3, Buffer A–D.")
+        case .sticker:
+            return String(localized: "Shadertoy code. Write the alpha you want into O.a: where it is 0 the chat shows through.")
+        case .effect:
+            return String(localized: "Shadertoy code with alpha in O.a. iMouse.xy is where the event happened; the effect lasts about a second.")
+        }
+    }
+}
+
+/// Where a shader is written or pasted before it is used: the live preview on
+/// top, the code below, the compiler's verdict between them. The action opens
 /// once the program compiled on this device.
 struct ShaderComposerScreen: View {
-    let onSend: (ShaderDocument) -> Void
+    var purpose: ShaderComposerPurpose = .message
+    /// Code to start from, when the composer edits something that exists.
+    var initial: ShaderDocument? = nil
+    let onDone: (ShaderDocument) -> Void
     @Environment(\.dismiss) private var dismiss
 
     @State private var text = ""
@@ -26,14 +94,18 @@ struct ShaderComposerScreen: View {
             VStack(spacing: 0) {
                 preview
                     .frame(maxWidth: .infinity)
-                    .aspectRatio(16.0 / 9.0, contentMode: .fit)
-                    .background(Color.black)
+                    .frame(maxHeight: 320)
+                    .aspectRatio(purpose.aspect, contentMode: .fit)
+                    .background(previewBackdrop)
+                    .clipShape(previewShape)
+                    .padding(.horizontal, purpose.aspect == 1 || purpose.aspect < 1 ? 60 : 0)
+                    .padding(.vertical, purpose.aspect == 1 || purpose.aspect < 1 ? 8 : 0)
                 verdict
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                 editor
             }
-            .navigationTitle(document?.name ?? String(localized: "Shader"))
+            .navigationTitle(document?.name ?? purpose.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -42,10 +114,10 @@ struct ShaderComposerScreen: View {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         guard let document else { return }
-                        onSend(document)
+                        onDone(document)
                         dismiss()
                     } label: {
-                        Text("Send").bold()
+                        Text(purpose.action).bold()
                     }
                     .disabled(!ready)
                     .accessibilityIdentifier("shader.composer.send")
@@ -58,6 +130,11 @@ struct ShaderComposerScreen: View {
             }
         }
         .onAppear {
+            if let initial, text.isEmpty {
+                text = initial.passes.count == 1 ? initial.displaySource : Self.json(initial)
+                reparse()
+                return
+            }
             // the usual way in: the code is already on the clipboard
             if text.isEmpty, let clip = UIPasteboard.general.string,
                clip.contains("mainImage") || clip.trimmingCharacters(in: .whitespaces).hasPrefix("{") {
@@ -69,16 +146,36 @@ struct ShaderComposerScreen: View {
     }
 
     @ViewBuilder
+    private var previewBackdrop: some View {
+        if purpose.transparent {
+            // a checkerboard shows where the shader left the alpha at zero
+            Checkerboard().foregroundStyle(.secondary.opacity(0.25))
+        } else {
+            Color.black
+        }
+    }
+
+    private var previewShape: AnyShape {
+        switch purpose {
+        case .avatar: return AnyShape(Circle())
+        case .sticker, .bubble: return AnyShape(RoundedRectangle(cornerRadius: Theme.bubbleCorner, style: .continuous))
+        case .background: return AnyShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        case .message, .effect: return AnyShape(Rectangle())
+        }
+    }
+
+    @ViewBuilder
     private var preview: some View {
         if let document {
             ShaderCanvasView(document: document, running: true, acceptsTouches: true,
+                             transparent: purpose.transparent, priority: .focus,
                              onState: { state = $0 })
                 .id(document)
                 .accessibilityIdentifier("shader.composer.preview")
         } else {
             VStack(spacing: 10) {
                 Image(systemName: "sparkles").font(Theme.glyph(34, max: 44))
-                Text("Shadertoy code or a Shadertoy JSON export. iTime, iResolution, iMouse, iChannel0–3, Buffer A–D.")
+                Text(purpose.hint)
                     .font(Theme.Text.caption.font)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 24)
@@ -86,7 +183,7 @@ struct ShaderComposerScreen: View {
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("shader.composer.paste")
             }
-            .foregroundStyle(.white.opacity(0.8))
+            .foregroundStyle(purpose.transparent ? AnyShapeStyle(.secondary) : AnyShapeStyle(.white.opacity(0.8)))
         }
     }
 
@@ -109,9 +206,19 @@ struct ShaderComposerScreen: View {
         }
     }
 
+    /// The passes, and the device inputs the code reads, so the author sees
+    /// what the shader will ask the phone for.
     private var passesLine: String {
         guard let document else { return "" }
-        return document.passes.map(\.title).joined(separator: " · ")
+        var parts = document.passes.map(\.title)
+        let feeds = DeviceInputs.feeds(for: document)
+        if feeds.contains(.motion) { parts.append(String(localized: "motion")) }
+        if feeds.contains(.location) { parts.append(String(localized: "location")) }
+        if feeds.contains(.mic) { parts.append(String(localized: "microphone")) }
+        if feeds.contains(.camera(front: false)) || feeds.contains(.camera(front: true)) { parts.append(String(localized: "camera")) }
+        if feeds.contains(.keyboard) { parts.append(String(localized: "keyboard")) }
+        if document.haptics == true { parts.append(String(localized: "haptics")) }
+        return parts.joined(separator: " · ")
     }
 
     private var editor: some View {
@@ -164,5 +271,31 @@ struct ShaderComposerScreen: View {
                 document = nil
             }
         }
+    }
+
+    static func json(_ document: ShaderDocument) -> String {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return (try? enc.encode(document)).flatMap { String(data: $0, encoding: .utf8) } ?? document.displaySource
+    }
+}
+
+/// Squares behind a transparent preview.
+struct Checkerboard: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        let s: CGFloat = 12
+        var y = rect.minY
+        var row = 0
+        while y < rect.maxY {
+            var x = rect.minX + (row % 2 == 0 ? 0 : s)
+            while x < rect.maxX {
+                p.addRect(CGRect(x: x, y: y, width: s, height: s))
+                x += 2 * s
+            }
+            y += s
+            row += 1
+        }
+        return p
     }
 }

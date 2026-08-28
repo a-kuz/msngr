@@ -526,6 +526,14 @@ public final class APIClient: @unchecked Sendable {
         let raw = try await request("api/avatar", method: "POST", rawBody: jpeg, contentType: "image/jpeg")
         return try JSONDecoder().decode(AvatarResponse.self, from: raw).avatarId
     }
+    /// A shader as the avatar: the document's JSON in the same blob slot; a
+    /// peer's app tells it from a picture by the first byte.
+    public func uploadShaderAvatar(_ document: ShaderDocument, chatId: String? = nil) async throws -> String {
+        let body = try JSONEncoder().encode(document)
+        let path = chatId.map { "api/avatar?chatId=\($0)" } ?? "api/avatar"
+        let raw = try await request(path, method: "POST", rawBody: body, contentType: "application/json")
+        return try JSONDecoder().decode(AvatarResponse.self, from: raw).avatarId
+    }
     /// Chat avatar: the same blob path, except the server stores the id in the chat settings
     /// rather than in our own profile. Permissions match /chats/:id/settings.
     public func uploadChatAvatar(chatId: String, jpeg: Data) async throws -> String {

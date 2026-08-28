@@ -136,6 +136,7 @@ struct ChatRowView: View {
                 case .file: Label(last.media?.name ?? String(localized: "File"), systemImage: "doc.fill").labelStyle(PreviewLabelStyle())
                 case .album: Label("Album", systemImage: "photo.on.rectangle").labelStyle(PreviewLabelStyle())
                 case .shader: Label(last.shader?.name ?? String(localized: "Shader"), systemImage: "sparkles").labelStyle(PreviewLabelStyle())
+                case .sticker: Label(last.shader?.name ?? String(localized: "Sticker"), systemImage: "sparkles").labelStyle(PreviewLabelStyle())
                 default: Text(MessageMarkdown.mentionsStripped(last.text ?? ""))
                 }
             }
@@ -224,6 +225,7 @@ struct AvatarView: View {
     /// A system image drawn in place of the picture and the initials.
     var glyph: String? = nil
     @State private var image: UIImage?
+    @State private var shader: ShaderDocument?
 
     var body: some View {
         GeometryReader { geo in
@@ -231,6 +233,9 @@ struct AvatarView: View {
                 Group {
                     if let glyph {
                         glyphView(glyph, side: geo.size.width)
+                    } else if let shader {
+                        // a shader avatar: live while the budget allows, a held frame in a long list
+                        ShaderCanvasView(document: shader, running: true, priority: .avatar)
                     } else if let image {
                         Image(uiImage: image).resizable().scaledToFill()
                     } else {
@@ -252,8 +257,13 @@ struct AvatarView: View {
         .animation(Theme.springFast, value: online)
         .task(id: avatarId) {
             image = nil
+            shader = nil
             guard let avatarId else { return }
-            image = await AvatarImageLoader.shared.image(avatarId)
+            switch await AvatarImageLoader.shared.picture(avatarId) {
+            case .image(let i): image = i
+            case .shader(let d): shader = d
+            case nil: break
+            }
         }
     }
 

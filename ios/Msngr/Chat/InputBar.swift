@@ -10,6 +10,8 @@ struct InputBar: View {
     var onAttachPhoto: () -> Void
     var onAttachFile: () -> Void
     var onAttachShader: () -> Void
+    var onAttachSticker: () -> Void
+    var onAttachBubbleShader: () -> Void
     var onSendVoice: (URL, TimeInterval, [Int]) -> Void
     var onSendImages: ([UIImage], String) -> Void
 
@@ -55,6 +57,7 @@ struct InputBar: View {
     private var composer: some View {
         VStack(spacing: 0) {
             replyEditBanner
+            bubbleShaderStrip
             mentionBar
             pendingImagesBar
             HStack(alignment: .bottom, spacing: 8) {
@@ -73,6 +76,14 @@ struct InputBar: View {
                             Label("Shader", systemImage: "sparkles")
                         }
                         .accessibilityIdentifier("chat.attach.shader")
+                        Button { onAttachSticker() } label: {
+                            Label("Sticker", systemImage: "sparkles.rectangle.stack")
+                        }
+                        .accessibilityIdentifier("chat.attach.sticker")
+                        Button { onAttachBubbleShader() } label: {
+                            Label("Bubble shader", systemImage: "bubble.left.fill")
+                        }
+                        .accessibilityIdentifier("chat.attach.bubbleShader")
                         if pasteboardHasImage && text.isEmpty {
                             Button { pasteImages() } label: {
                                 Label("Paste", systemImage: "doc.on.clipboard")
@@ -197,6 +208,35 @@ struct InputBar: View {
         .background(.regularMaterial, in: Capsule())
         .shadow(color: .black.opacity(0.1), radius: 4, y: 2)
         .allowsHitTesting(false)
+    }
+
+    /// The shader waiting to go behind the next text message: a live thumbnail
+    /// and a cross that lets it go.
+    @ViewBuilder
+    private var bubbleShaderStrip: some View {
+        if let doc = model.pendingBubbleShader {
+            HStack(spacing: 8) {
+                ShaderCanvasView(document: doc, running: true, priority: .focus)
+                    .frame(width: 44, height: 26)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Bubble shader").font(.footnote.weight(.semibold)).foregroundStyle(Theme.accent)
+                    Text(doc.name ?? String(localized: "Behind the next message"))
+                        .font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer()
+                Button {
+                    withAnimation(Theme.springFast) { model.pendingBubbleShader = nil }
+                } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+                }
+                .accessibilityIdentifier("chat.strip.bubbleShader.cancel")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .accessibilityIdentifier("chat.strip.bubbleShader")
+        }
     }
 
     @ViewBuilder

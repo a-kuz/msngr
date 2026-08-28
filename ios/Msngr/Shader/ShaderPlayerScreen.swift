@@ -45,19 +45,24 @@ struct ShaderCanvasView: UIViewRepresentable {
     let document: ShaderDocument
     var running: Bool = true
     var acceptsTouches: Bool = false
+    var transparent: Bool = false
+    var priority: ShaderCanvas.Priority = .focus
     var restartToken: Int = 0
     var onState: ((ShaderProgram.State) -> Void)? = nil
     var onFrame: ((Float) -> Void)? = nil
 
     func makeUIView(context: Context) -> ShaderCanvas {
-        let v = ShaderCanvas()
-        v.backgroundColor = .black
+        let v = ShaderCanvas(transparent: transparent)
+        v.backgroundColor = transparent ? .clear : .black
+        v.priority = priority
+        v.acceptsTouches = acceptsTouches
         context.coordinator.restartToken = restartToken
         return v
     }
 
     func updateUIView(_ v: ShaderCanvas, context: Context) {
         v.acceptsTouches = acceptsTouches
+        v.priority = priority
         v.onState = onState
         v.show(document)
         v.renderer?.onFrame = onFrame

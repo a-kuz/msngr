@@ -12,6 +12,17 @@
         }
       }
     },
+    "✨ Sticker" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "✨ Стикер"
+          }
+        }
+      }
+    },
     "%@ added you" : {
       "extractionState" : "manual",
       "localizations" : {

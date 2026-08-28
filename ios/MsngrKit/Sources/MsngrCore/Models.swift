@@ -110,7 +110,7 @@ public enum MessageStatus: Int, Codable, Comparable {
 }
 
 public enum MessageKind: String, Codable {
-    case text, photo, video, file, voice, album, contact, system, shader
+    case text, photo, video, file, voice, album, contact, system, shader, sticker
 }
 
 public struct MediaInfo: Codable, Equatable {
@@ -198,8 +198,10 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
     public var album: [MediaInfo]?
     public var replyTo: ReplyPreview?
     public var forward: ForwardInfo?
-    /// kind == .shader: the passes and their channel wiring
+    /// kind == .shader or .sticker: the passes and their channel wiring
     public var shader: ShaderDocument?
+    /// A shader the sender chose to paint behind the bubble of a text message.
+    public var bubbleShader: ShaderDocument?
     public var edited: Bool = false
     /// Superseded texts, oldest first; the original text is [0] once edited.
     public var editHistory: [EditVersion] = []
@@ -229,7 +231,7 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
     // JSON columns
     enum CodingKeys: String, CodingKey {
         case id, chatId, seq, clientMsgId, fromUserId, sentAt, serverTs,
-             kind, text, media, album, replyTo, forward, shader, edited, editHistory,
+             kind, text, media, album, replyTo, forward, shader, bubbleShader, edited, editHistory,
              editedAt, deletedForAll, status, isOutgoing, reactions, expiresAt,
              failReason
     }
@@ -269,8 +271,10 @@ public struct ContentPayload: Codable {
     public var album: [MediaInfo]?
     public var replyTo: ReplyPreview?
     public var fwd: ForwardInfo?
-    /// shader: the passes and their channel wiring, rendered on the receiver
+    /// shader / sticker: the passes and their channel wiring, rendered on the receiver
     public var shader: ShaderDocument?
+    /// text: a shader painted behind the bubble, the sender's choice
+    public var bubbleShader: ShaderDocument?
     /// edit / reaction: seq of the message the event lands on. Filled at send
     /// time from the local row (`targetLocalId`); the peer applies by it.
     public var targetSeq: Int?

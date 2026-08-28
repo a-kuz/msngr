@@ -23,6 +23,9 @@ struct SettingsView: View {
     @State private var nameError: String?
     @State private var phone = ""
     @State private var phoneError: String?
+    @ObservedObject private var surfaces = ShaderSurfaces.shared
+    /// the shader composer, open for the avatar or one of the effects
+    @State private var shaderComposer: ShaderComposerPurpose?
 
     var body: some View {
         NavigationStack {
@@ -95,6 +98,8 @@ struct SettingsView: View {
                     }
                     .padding(.vertical, 4)
                 }
+
+                shadersSection
 
                 Section {
                     // the language is the system's per-app setting: the bundle
@@ -201,6 +206,15 @@ struct SettingsView: View {
                 guard let item else { return }
                 Task { await uploadAvatar(item) }
             }
+            .sheet(item: $shaderComposer) { purpose in
+                ShaderComposerScreen(purpose: purpose, initial: composerInitial(purpose)) { doc in
+                    switch purpose {
+                    case .avatar: Task { await uploadShaderAvatar(doc) }
+                    case .effect(let e): surfaces.setEffect(doc, for: e)
+                    default: break
+                    }
+                }
+            }
             .confirmationDialog("Log out of the account?", isPresented: $showLogoutConfirm,
                                 titleVisibility: .visible) {
                 Button("Log out", role: .destructive) {
@@ -285,6 +299,62 @@ struct SettingsView: View {
             }
         }
         dismiss()
+    }
+
+    /// Shaders on this device's own surfaces: the avatar the peers see, and
+    /// the effects played on a send and on a reaction (the bundled ones, or
+    /// the user's code in their place).
+    private var shadersSection: some View {
+        Section("Shaders") {
+            Button {
+                shaderComposer = .avatar
+            } label: {
+                Label("Shader avatar…", systemImage: "sparkles")
+            }
+            .accessibilityIdentifier("settings.shaderAvatar")
+            Toggle(isOn: $surfaces.effectsEnabled) {
+                Label("Effects on send and reaction", systemImage: "wand.and.stars")
+            }
+            .accessibilityIdentifier("settings.shaderEffects")
+            ForEach(ShaderSurfaces.Effect.allCases, id: \.rawValue) { effect in
+                HStack {
+                    Button {
+                        shaderComposer = .effect(effect)
+                    } label: {
+                        Label(effect == .send ? "Send effect" : "Reaction effect", systemImage: "chevron.left.forwardslash.chevron.right")
+                    }
+                    Spacer()
+                    if surfaces.effects[effect] != nil {
+                        Button(String(localized: "Default")) { surfaces.setEffect(nil, for: effect) }
+                            .font(.footnote).buttonStyle(.bordered)
+                    } else {
+                        Text("Default").font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityIdentifier("settings.shaderEffect.\(effect.rawValue)")
+            }
+        }
+        .onAppear { surfaces.load() }
+    }
+
+    /// The composer opens on the code in use, so an effect is edited rather
+    /// than written from nothing.
+    private func composerInitial(_ purpose: ShaderComposerPurpose) -> ShaderDocument? {
+        if case .effect(let e) = purpose { return ShaderEffects.document(for: e) }
+        return nil
+    }
+
+    private func uploadShaderAvatar(_ doc: ShaderDocument) async {
+        uploadingAvatar = true
+        defer { uploadingAvatar = false }
+        guard let avatarId = try? await app.api.uploadShaderAvatar(doc) else { return }
+        if let id = app.session?.userId {
+            try? await app.db.write { dbc in
+                try dbc.execute(sql: "UPDATE user SET avatarId = ? WHERE id = ?",
+                                arguments: [avatarId, id])
+            }
+        }
+        await loadMe()
     }
 
     private func uploadAvatar(_ item: PhotosPickerItem) async {

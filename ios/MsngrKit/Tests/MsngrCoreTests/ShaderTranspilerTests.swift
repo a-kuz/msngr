@@ -209,6 +209,88 @@ final class ShaderTranspilerTests: XCTestCase {
         XCTAssertEqual(doc.image?.inputs.map(\.source), ["buffer:image", "none", "noise64", "buffer:image"])
     }
 
+    // MARK: the device as input
+
+    func testDeviceUniformsAreVisible() throws {
+        try compile("""
+        void mainImage(out vec4 O, in vec2 F) {
+            vec3 g = iGyro + iAccel + iGravity + iMagnet;
+            vec4 q = iAttitude + iLocation + iPencil + iBubble;
+            float f = iPressure + iAltitude + iProximity + iBattery + float(iBatteryState)
+                    + iDark + iTextScale + iPencilAzimuth + iPencilHover + iScroll + iScreen.x;
+            vec4 t = iTouch[0] + iTouch[4];
+            vec4 c = iAccent + iBackground + iBubbleIn + iBubbleOut + iLabel;
+            O = vec4(g, f) + q + t + c;
+        }
+        """)
+    }
+
+    func testUniformBlockMatchesTheSlots() {
+        // the MSL struct is laid out slot by slot; the stride must hold every slot
+        XCTAssertEqual(ShaderTranspiler.Uniform.allCases.count * 16, 480)
+        XCTAssertLessThanOrEqual(ShaderTranspiler.Uniform.allCases.count * 16, ShaderTranspiler.uniformStride)
+        XCTAssertEqual(ShaderTranspiler.Uniform.label.offset, 464)
+        // the emitted struct names the same fields in the same order
+        let fields = ["timeFrame", "resolution", "mouse", "date", "channelResolution[4]", "touch[5]",
+                      "gyro", "accel", "gravity", "magnet", "attitude", "location", "environment",
+                      "deviceState", "pencil", "pencilMore", "bubble", "screen", "accent", "background",
+                      "bubbleIn", "bubbleOut", "label"]
+        var last = ShaderTranspiler.prelude.startIndex
+        for f in fields {
+            let r = ShaderTranspiler.prelude.range(of: "float4 \(f);", range: last..<ShaderTranspiler.prelude.endIndex)
+            XCTAssertNotNil(r, "\(f) missing or out of order in MsngrShaderUniforms")
+            if let r { last = r.upperBound }
+        }
+    }
+
+    func testLivePragmasAndHaptics() throws {
+        let doc = ShaderDocument.fromGLSL("""
+        #pragma msngr channel0 mic
+        #pragma msngr channel1 camera:front
+        #pragma msngr channel2 keyboard
+        #pragma msngr haptics
+        void mainImage(out vec4 O, in vec2 F) {
+            float fft = texture(iChannel0, vec2(F.x / iResolution.x, 0.25)).x;
+            vec4 cam = texture(iChannel1, F / iResolution.xy);
+            float key = texelFetch(iChannel2, ivec2(32, 0), 0).x;
+            O = vec4(fft, key, 0.0, 1.0) + cam;
+            if (F.x < 1.0 && F.y < 1.0) O = vec4(fft, 0.5, 0.0, 1.0);
+        }
+        """)
+        XCTAssertEqual(doc.image?.input(0).source, ShaderInput.mic)
+        XCTAssertEqual(doc.image?.input(1).source, ShaderInput.cameraFront)
+        XCTAssertEqual(doc.image?.input(2).source, ShaderInput.keyboard)
+        XCTAssertEqual(doc.image?.input(0).wrap, "clamp")
+        XCTAssertEqual(doc.haptics, true)
+        XCTAssertEqual(doc.liveSources, [ShaderInput.mic, ShaderInput.cameraFront, ShaderInput.keyboard])
+        XCTAssertTrue(doc.references("iResolution"))
+        XCTAssertFalse(doc.references("iGyro"))
+        try compile(doc.image!.code)
+    }
+
+    func testShadertoyLiveInputsMapToTheDevice() throws {
+        let json = """
+        {"ver":"0.1","info":{"name":"live"},"renderpass":[{"name":"Image","type":"image",
+         "code":"void mainImage(out vec4 O, in vec2 F){O=texture(iChannel0,F/iResolution.xy)+texture(iChannel1,F/iResolution.xy)+texelFetch(iChannel2,ivec2(0),0);}",
+         "inputs":[{"id":"a","type":"mic","channel":0},{"id":"b","type":"webcam","channel":1},{"id":"c","type":"keyboard","channel":2}],
+         "outputs":[{"id":"o","channel":0}]}]}
+        """
+        let doc = try ShaderDocument.parse(json)
+        XCTAssertEqual(doc.image?.inputs.map(\.source), [ShaderInput.mic, ShaderInput.camera, ShaderInput.keyboard])
+        try compile(doc.image!.code)
+    }
+
+    func testContentHashIgnoresTheName() throws {
+        var a = ShaderDocument.fromGLSL("void mainImage(out vec4 O, in vec2 F){O=vec4(1.0);}")
+        var b = a
+        a.name = "one"
+        b.name = "two"
+        XCTAssertEqual(a.contentHash, b.contentHash)
+        XCTAssertEqual(a.contentHash.count, 64)
+        b.passes[0].code += " "
+        XCTAssertNotEqual(a.contentHash, b.contentHash)
+    }
+
     func testDocumentRoundTripsThroughJSON() throws {
         let doc = try ShaderDocument.parse(try fixture("flower-evening.shadertoy", ext: "json"))
         let data = try JSONEncoder().encode(doc)

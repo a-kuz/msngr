@@ -280,15 +280,25 @@ A ✅ goes in only together with a link to the evidence.
     multipass (Image + Buffer A–D, a pass reading its own previous frame)
     (qa/runs/2026-08-28-shader-messages-run; ShaderTranspilerTests compile the
     emitted MSL, including the owner's 300-line sample)
-  - ⬜ a shader as the chat background, and «Set as background» from a
-    received shader message; local, no sync
-  - ⬜ a shader behind a text bubble, chosen by the sender
-  - ⬜ a shader avatar, seen by the peers
-  - ⬜ shader stickers: a transparent bubble that honours `O.a`, packs kept
-    by the hash of the source so a sticker is transferred once and then
-    referenced
-  - ⬜ shader effects on events: the send animation, a reaction burst
-  - ⬜ the device as input, each a uniform or a channel texture: multitouch
+  - 🟡 a shader as the chat background, and «Set as background» from a
+    received shader message; local, no sync (built: `ShaderSurfaces`, the
+    chat info's «Фон» section, the message menu; the app builds and opens a
+    fixture home on the new schema, the scenario itself is not yet run live)
+  - 🟡 a shader behind a text bubble, chosen by the sender (`bubbleShader`
+    on a text message, the strip over the input field, white text under a
+    shadow in the cell; not yet run live)
+  - 🟡 a shader avatar, seen by the peers (the document as the avatar blob,
+    told from a picture by the first byte; chat list, feed and info draw it
+    live under the budget; not yet run live)
+  - 🟡 shader stickers: a transparent bubble that honours `O.a`, a local pack
+    keyed by the hash of the document, «В стикеры» on a received one. The
+    document travels inline in every sticker message: a reference the
+    receiver might not hold would be an unreadable message (not yet run live)
+  - 🟡 shader effects on events: the send burst and the reaction burst, two
+    bundled shaders the user replaces from Settings → «Шейдеры» (not yet run live)
+  - 🟡 the device as input, each a uniform or a channel texture (the uniform
+    block and the feeds are built, `ShaderTranspilerTests` compile a shader
+    reading every one; sensors need a device to be seen moving): multitouch
     (`iTouch[5]` with pressure), gyroscope, accelerometer, magnetometer and
     the attitude quaternion, the microphone as an FFT and waveform texture
     (Shadertoy's Music/Mic channel), the cameras as a channel texture,
@@ -297,7 +307,9 @@ A ✅ goes in only together with a link to the evidence.
     dark theme with the palette colours, the text size, and where the bubble
     sits on the screen with the feed's scroll offset; haptics as an output a
     shader writes into a texel
-  - ⬜ a budget of live shaders on one screen; the rest hold a frame
+  - 🟡 a budget of live shaders on one screen; the rest hold a frame
+    (`ShaderBudget`, four live slots by priority and recency; not yet
+    measured live)
 - Other
   - ⬜ contact and location
   - 🟡 GIFs: an animated one is sent unchanged and plays in the feed and the

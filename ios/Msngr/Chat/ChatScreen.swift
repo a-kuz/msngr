@@ -40,6 +40,14 @@ struct ChatScreen: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             Theme.chatBackground.ignoresSafeArea()
+            // the chat's shader background, this device's own choice; it runs
+            // only while the chat is in front
+            if let background = surfaces.backgrounds[chatId] {
+                ShaderCanvasView(document: background, running: backgroundRunning, priority: .background)
+                    .ignoresSafeArea()
+                    .id(background)
+                    .accessibilityIdentifier("chat.shaderBackground")
+            }
             VStack(spacing: 0) {
                 // pending request: a profile card with the two buttons stands in for the feed
                 if model.contentHidden {
@@ -85,7 +93,9 @@ struct ChatScreen: View {
                         InputBar(model: model, text: $text,
                                  onAttachPhoto: { photoPickerPresented = true },
                                  onAttachFile: { showFilePicker = true },
-                                 onAttachShader: { showShaderComposer = true },
+                                 onAttachShader: { shaderComposer = .message },
+                                 onAttachSticker: { showStickers = true },
+                                 onAttachBubbleShader: { shaderComposer = .bubble },
                                  onSendVoice: sendVoice,
                                  onSendImages: { images, caption in
                                      Task { await sendImages(images, caption: caption) }
@@ -219,9 +229,21 @@ struct ChatScreen: View {
                 Task { await sendFile(url) }
             }
         }
-        .sheet(isPresented: $showShaderComposer) {
-            ShaderComposerScreen { document in sendShader(document) }
+        .sheet(item: $shaderComposer) { purpose in
+            ShaderComposerScreen(purpose: purpose) { document in
+                switch purpose {
+                case .message: sendShader(document)
+                case .bubble: withAnimation(Theme.springFast) { model.pendingBubbleShader = document }
+                case .background: surfaces.setBackground(document, for: chatId)
+                default: break
+                }
+            }
         }
+        .sheet(isPresented: $showStickers) {
+            StickerPanelSheet { document in sendSticker(document) }
+        }
+        .onAppear { backgroundRunning = true }
+        .onDisappear { backgroundRunning = false }
         // palette change: bubble colours are read in the cell's configure, so force a reload
         .onReceive(NotificationCenter.default.publisher(for: .paletteChanged)) { _ in
             guard messagesVC.isViewLoaded else { return }
@@ -345,7 +367,12 @@ struct ChatScreen: View {
     }
 
     @State private var photoPickerPresented = false
-    @State private var showShaderComposer = false
+    /// the shader composer, open for a message, a bubble or the background
+    @State private var shaderComposer: ShaderComposerPurpose?
+    @State private var showStickers = false
+    @ObservedObject private var surfaces = ShaderSurfaces.shared
+    /// the background animates while the chat is the screen in front
+    @State private var backgroundRunning = false
     @State private var showChatInfo = false
     /// the calendar over the history, opened from a date separator or the
     /// floating day capsule
@@ -1078,6 +1105,13 @@ struct ChatScreen: View {
         Haptics.light()
     }
 
+    private func sendSticker(_ document: ShaderDocument) {
+        var c = ContentPayload(kind: "sticker")
+        c.shader = document
+        model.enqueue(c)
+        Haptics.light()
+    }
+
     private func sendVoice(_ url: URL, duration: TimeInterval, waveform: [Int]) {
         Task {
             guard let data = try? Data(contentsOf: url),
@@ -1196,6 +1230,16 @@ struct MessagesView: UIViewControllerRepresentable {
             case .forward: NotificationCenter.default.post(name: .forwardRequested, object: msg)
             case .select: withAnimation(Theme.springFast) { model.beginSelection(with: msg) }
             case .resend: model.resend(msg)
+            case .setBackground:
+                if let doc = msg.shader {
+                    ShaderSurfaces.shared.setBackground(doc, for: msg.chatId)
+                    Haptics.success()
+                }
+            case .saveSticker:
+                if let doc = msg.shader {
+                    ShaderSurfaces.shared.addSticker(doc)
+                    Haptics.success()
+                }
             case .delete:
                 withAnimation(Theme.springFast) {
                     model.beginSelection(with: msg, confirmingDelete: true)

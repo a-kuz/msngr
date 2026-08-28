@@ -52,6 +52,8 @@ targets:
         UILaunchScreen: {}
         NSMicrophoneUsageDescription: "Запись голосовых сообщений"
         NSCameraUsageDescription: "Фото и видео для отправки в чаты"
+        # a shader that reads iLocation asks for this the first time it runs
+        NSLocationWhenInUseUsageDescription: "Положение и направление для шейдеров, которые их читают"
         # a device build points at the dev stand over the LAN; empty otherwise
         MSNGRServer: ${MSNGR_DEVICE_SERVER}
         # the stand speaks plain http, which ATS only tolerates for local hosts

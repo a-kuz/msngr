@@ -488,6 +488,19 @@ public enum AppDatabase {
                 t.add(column: "shader", .text)
             }
         }
+        m.registerMigration("v26-shader-surfaces") { db in
+            // the shader a sender put behind a text bubble, as JSON
+            try db.alter(table: "message") { t in
+                t.add(column: "bubbleShader", .text)
+            }
+            // the user's sticker pack: one row per distinct shader, by the hash
+            // of its document, so the same sticker saved twice is one row
+            try db.create(table: "savedSticker") { t in
+                t.column("hash", .text).primaryKey()
+                t.column("document", .text).notNull()
+                t.column("addedAt", .double).notNull()
+            }
+        }
         return m
     }
 }
@@ -521,6 +534,7 @@ extension Message {
         replyTo = (row["replyTo"] as String?).flatMap { try? dec.decode(ReplyPreview.self, from: Data($0.utf8)) }
         forward = (row["forward"] as String?).flatMap { try? dec.decode(ForwardInfo.self, from: Data($0.utf8)) }
         shader = (row["shader"] as String?).flatMap { try? dec.decode(ShaderDocument.self, from: Data($0.utf8)) }
+        bubbleShader = (row["bubbleShader"] as String?).flatMap { try? dec.decode(ShaderDocument.self, from: Data($0.utf8)) }
         edited = row["edited"]
         editHistory = (row["editHistory"] as String?).flatMap { try? dec.decode([EditVersion].self, from: Data($0.utf8)) } ?? []
         editedAt = row["editedAt"]
@@ -552,6 +566,7 @@ extension Message {
         container["replyTo"] = js(replyTo)
         container["forward"] = js(forward)
         container["shader"] = js(shader)
+        container["bubbleShader"] = js(bubbleShader)
         container["edited"] = edited
         container["editHistory"] = js(editHistory) ?? "[]"
         container["editedAt"] = editedAt

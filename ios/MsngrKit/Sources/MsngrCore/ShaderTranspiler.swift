@@ -34,11 +34,41 @@ public enum ShaderTranspiler {
     }
 
     /// The uniform block the fragment function reads from `buffer(0)`; the
-    /// app fills a matching struct of `SIMD4<Float>`s:
-    /// `(iTime, iTimeDelta, iFrame, 0)`, `(iResolution.xyz, 0)`, `iMouse`, `iDate`,
-    /// then `iChannelResolution[0..3]` as four `(w, h, 1, 0)`. The four texture
-    /// channels arrive as `texture(0..3)` with their samplers as `sampler(0..3)`.
-    public static let uniformStride = 128
+    /// app fills a matching array of `SIMD4<Float>`s, one per `Uniform` slot.
+    /// The four texture channels arrive as `texture(0..3)` with their
+    /// samplers as `sampler(0..3)`.
+    public static let uniformStride = 512
+
+    /// The slot of every `float4` in the uniform block, in order. The device
+    /// inputs after the Shadertoy set are what the ROADMAP calls "the device
+    /// as input": each is a uniform the shader reads by name.
+    public enum Uniform: Int, CaseIterable {
+        case timeFrame          // iTime, iTimeDelta, iFrame, 0
+        case resolution         // iResolution.xyz, 0
+        case mouse              // iMouse
+        case date               // iDate
+        case channel0, channel1, channel2, channel3   // iChannelResolution[i].xyz, 0
+        case touch0, touch1, touch2, touch3, touch4   // iTouch[i]: x, y, force, id (0 = none)
+        case gyro               // iGyro: rotation rate rad/s, w = 1 while the sensor runs
+        case accel              // iAccel: user acceleration in g
+        case gravity            // iGravity: the gravity vector in g
+        case magnet             // iMagnet: microtesla
+        case attitude           // iAttitude: quaternion xyzw
+        case location           // iLocation: latitude, longitude, altitude m, heading °
+        case environment        // iPressure kPa, iAltitude m, iProximity, iBattery
+        case device             // iBatteryState, iDark, iTextScale, 0
+        case pencil             // iPencil: x, y, force, altitude
+        case pencilMore         // iPencilAzimuth, iPencilHover (z offset, -1 away), 0, 0
+        case bubble             // iBubble: x, y, w, h of the canvas on the screen, px, y up
+        case screen             // iScroll px, iScreen.xy px, 0
+        case accent             // iAccent rgba
+        case background         // iBackground rgba
+        case bubbleIn           // iBubbleIn rgba
+        case bubbleOut          // iBubbleOut rgba
+        case label              // iLabel rgba
+
+        public var offset: Int { rawValue * 16 }
+    }
 
     /// One pass of a document into MSL. `common` is the shared code of a
     /// multipass shader, placed ahead of the pass's own.
@@ -89,7 +119,15 @@ public enum ShaderTranspiler {
         out += "  float iSampleRate = 44100.0;\n"
         out += "  MsngrChannel iChannel0, iChannel1, iChannel2, iChannel3;\n"
         out += "  float3 iChannelResolution[4];\n"
-        out += "  float iChannelTime[4] = {0.0, 0.0, 0.0, 0.0};\n\n"
+        out += "  float iChannelTime[4] = {0.0, 0.0, 0.0, 0.0};\n"
+        out += "  // the device as input\n"
+        out += "  float4 iTouch[5];\n"
+        out += "  float3 iGyro; float3 iAccel; float3 iGravity; float3 iMagnet; float4 iAttitude;\n"
+        out += "  float4 iLocation; float iPressure; float iAltitude; float iProximity; float iBattery;\n"
+        out += "  int iBatteryState; float iDark; float iTextScale;\n"
+        out += "  float4 iPencil; float iPencilAzimuth; float iPencilHover;\n"
+        out += "  float4 iBubble; float iScroll; float2 iScreen;\n"
+        out += "  float4 iAccent; float4 iBackground; float4 iBubbleIn; float4 iBubbleOut; float4 iLabel;\n\n"
         out += body.joined(separator: "\n") + "\n"
         out += "};\n\n"
         out += epilogue
@@ -475,6 +513,24 @@ public enum ShaderTranspiler {
         float4 mouse;
         float4 date;
         float4 channelResolution[4];
+        float4 touch[5];
+        float4 gyro;
+        float4 accel;
+        float4 gravity;
+        float4 magnet;
+        float4 attitude;
+        float4 location;
+        float4 environment; // pressure, altitude, proximity, battery
+        float4 deviceState; // battery state, dark, text scale, 0
+        float4 pencil;
+        float4 pencilMore;  // azimuth, hover, 0, 0
+        float4 bubble;
+        float4 screen;      // scroll, screen w, screen h, 0
+        float4 accent;
+        float4 background;
+        float4 bubbleIn;
+        float4 bubbleOut;
+        float4 label;
     };
 
 
@@ -506,6 +562,17 @@ public enum ShaderTranspiler {
         s.iChannel0 = MsngrChannel{t0, s0}; s.iChannel1 = MsngrChannel{t1, s1};
         s.iChannel2 = MsngrChannel{t2, s2}; s.iChannel3 = MsngrChannel{t3, s3};
         for (int i = 0; i < 4; i++) s.iChannelResolution[i] = u.channelResolution[i].xyz;
+        for (int i = 0; i < 5; i++) s.iTouch[i] = u.touch[i];
+        s.iGyro = u.gyro.xyz; s.iAccel = u.accel.xyz; s.iGravity = u.gravity.xyz; s.iMagnet = u.magnet.xyz;
+        s.iAttitude = u.attitude;
+        s.iLocation = u.location;
+        s.iPressure = u.environment.x; s.iAltitude = u.environment.y;
+        s.iProximity = u.environment.z; s.iBattery = u.environment.w;
+        s.iBatteryState = int(u.deviceState.x); s.iDark = u.deviceState.y; s.iTextScale = u.deviceState.z;
+        s.iPencil = u.pencil; s.iPencilAzimuth = u.pencilMore.x; s.iPencilHover = u.pencilMore.y;
+        s.iBubble = u.bubble; s.iScroll = u.screen.x; s.iScreen = u.screen.yz;
+        s.iAccent = u.accent; s.iBackground = u.background;
+        s.iBubbleIn = u.bubbleIn; s.iBubbleOut = u.bubbleOut; s.iLabel = u.label;
         float4 O = float4(0.0, 0.0, 0.0, 1.0);
         float2 F = float2(in.position.x, u.resolution.y - in.position.y);
         s.mainImage(O, F);
