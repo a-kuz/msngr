@@ -366,6 +366,34 @@ final class MessageRepairTests: XCTestCase {
         XCTAssertTrue(outbox.isEmpty, "an old message went out to a member who joined later")
     }
 
+    /// A repair frame never earns a repair copy of itself: the copy would take
+    /// a fresh seq, fail in the same broken session and be asked about in turn,
+    /// so every answered wave would seed the next one. The request is left to
+    /// run out of attempts instead.
+    func testSenderDoesNotAnswerRepairForARepairFrame() async throws {
+        let db = try AppDatabase.openInMemory()
+        try await makeDirectChat(db)
+        let engine = try makeEngine(db: db)
+        var earlier = ContentPayload(kind: "repair")
+        earlier.to = "peer"
+        earlier.repairSeq = 3
+        earlier.orig = SyncEngine.payloadJSON(ContentPayload(kind: "text"))
+        let payload = try JSONEncoder().encode(earlier)
+        try await db.write { dbc in
+            try dbc.execute(sql: "INSERT INTO sentServiceFrame (chatId, seq, payload, sentAt) VALUES ('c1', 9, ?, 42)",
+                            arguments: [payload])
+        }
+
+        var request = ContentPayload(kind: "repairRequest")
+        request.repairSeq = 9
+        request.reason = "no_session"
+        request.attempt = 1
+        await engine.handleRepairContent(request, chatId: "c1", from: "peer", fromDevice: "d1")
+
+        let outbox = try await outboxContents(db)
+        XCTAssertTrue(outbox.isEmpty, "a repair of a repair went out: the recursion is open again")
+    }
+
     /// Confirming a sender key delivery closes that address: the next message to
     /// the group does not redistribute the chain to it.
     func testSenderKeyConfirmationClosesDistribution() async throws {
