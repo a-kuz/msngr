@@ -125,8 +125,9 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         // under the status capsule, like a photo: the time reads over the picture
         bubbleView.insertSubview(shaderView, belowSubview: statusBackdrop)
         stickerView.isHidden = true
+        // a sticker keeps its touches: a tap is the shader's to react to, and
+        // the full screen is in the context menu
         stickerView.isUserInteractionEnabled = true
-        stickerView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(shaderTapped)))
         bubbleView.insertSubview(stickerView, belowSubview: statusBackdrop)
         // the rings follow the sender's progress store rather than polling it
         progressCancellable = MediaProgress.shared.$fractions
@@ -1329,11 +1330,17 @@ extension MessageCell {
                 self?.onContextAction?(.setBackground)
             })
         }
-        if msg.kind == .sticker, let doc = msg.shader, !ShaderSurfaces.shared.hasSticker(doc) {
-            items.append(.init(title: String(localized: "Add to stickers"), icon: "plus.square.on.square",
-                               id: "chat.menu.saveSticker") { [weak self] in
-                self?.onContextAction?(.saveSticker)
+        if msg.kind == .sticker, let doc = msg.shader {
+            items.append(.init(title: String(localized: "Open"), icon: "arrow.up.left.and.arrow.down.right",
+                               id: "chat.menu.openSticker") { [weak self] in
+                self?.onTapShader?()
             })
+            if !ShaderSurfaces.shared.hasSticker(doc) {
+                items.append(.init(title: String(localized: "Add to stickers"), icon: "plus.square.on.square",
+                                   id: "chat.menu.saveSticker") { [weak self] in
+                    self?.onContextAction?(.saveSticker)
+                })
+            }
         }
         if msg.edited {
             items.append(.init(title: String(localized: "Edit history"),

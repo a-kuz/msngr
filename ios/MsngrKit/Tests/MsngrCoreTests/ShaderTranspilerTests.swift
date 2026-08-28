@@ -299,6 +299,18 @@ final class ShaderTranspilerTests: XCTestCase {
 
     // MARK: refusals
 
+    /// `p.xz *= rot2(a)` — a compound assignment on a swizzle, with a matrix
+    /// on the right — is rewritten to a plain assignment, which MSL accepts.
+    func testCompoundAssignmentOnASwizzleCompiles() throws {
+        let msl = try compile(try fixture("torus-flame"))
+        XCTAssertTrue(msl.contains("p.xz = p.xz * (rot2(-iTime*0.3));"))
+        XCTAssertTrue(msl.contains("p.zy = p.zy * (rot2(0.5));"))
+        XCTAssertFalse(msl.contains(".xz *="))
+        let scalar = try ShaderTranspiler.transpile("void mainImage(out vec4 O, in vec2 F) { vec3 p = vec3(F, 1.0); p.x *= 2.0; p.xy += 1.0; O = vec4(p, 1.0); }")
+        XCTAssertTrue(scalar.contains("p.x *= 2.0;"))
+        XCTAssertTrue(scalar.contains("p.xy = p.xy + (1.0);"))
+    }
+
     func testNoMainImage() {
         XCTAssertThrowsError(try ShaderTranspiler.transpile("void main() {}")) { error in
             XCTAssertEqual(error as? ShaderTranspiler.Failure, .noMainImage)

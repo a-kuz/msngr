@@ -5,267 +5,184 @@ import MsngrCore
 /// and everything outside the figure stays clear. They are seeded into
 /// `savedSticker` once and from then on live like any sticker the user added.
 enum ShaderStickers {
-    static let bundled: [ShaderDocument] = [gloop, flameHeart, orb, sparkle]
+    static let bundled: [ShaderDocument] = [heart, sparkle]
 
-    /// A gelatinous creature: a wobbling glossy body that hops in place, eyes
-    /// that wander and blink, and follow the finger while it is down.
-    static let gloop = ShaderDocument(name: "Gloop", passes: [
-        ShaderPass(id: ShaderPass.imageId, kind: .image, code: """
-        float hash(float n) { return fract(sin(n) * 43758.5453); }
-        float noise1(float x) {
-            float i = floor(x), f = fract(x);
-            return mix(hash(i), hash(i + 1.0), f * f * (3.0 - 2.0 * f));
-        }
-        float disc(vec2 p, float r, float px) { return smoothstep(px, -px, length(p) - r); }
-
-        void mainImage(out vec4 O, in vec2 F) {
-            vec2 uv = (F - 0.5 * iResolution.xy) / iResolution.y;
-            float px = 1.5 / iResolution.y;
-            float t = iTime;
-
-            // the hop: airborne on the top of the sine, squashed at the bottom
-            float hop = abs(sin(t * 2.6));
-            float squash = 1.0 + 0.14 * (0.5 - hop) * (1.0 + 0.6 * smoothstep(0.15, 0.0, hop));
-            vec2 p = uv - vec2(0.0, -0.06 + 0.12 * hop);
-            p.x /= squash;
-            p.y *= squash;
-
-            // the body: a disc with two slow waves running around its edge
-            float ang = atan(p.y, p.x);
-            float wob = 0.018 * sin(ang * 5.0 + t * 4.0) + 0.010 * sin(ang * 8.0 - t * 6.3);
-            float r = 0.30 + wob;
-            float d = length(p) - r;
-            float body = smoothstep(px, -px, d);
-
-            // shading as a soft sphere
-            vec3 base = mix(iAccent.rgb, vec3(0.35, 0.85, 0.65), 0.6);
-            vec2 q = p / r;
-            vec3 n = normalize(vec3(q, sqrt(max(0.0, 1.0 - dot(q, q)))));
-            vec3 light = normalize(vec3(-0.5, 0.75, 0.6));
-            float diff = 0.55 + 0.45 * dot(n, light);
-            vec3 col = base * diff;
-            col = mix(base * 1.35, col, smoothstep(0.0, 0.22, -d));
-            float spec = pow(max(dot(reflect(-light, n), vec3(0.0, 0.0, 1.0)), 0.0), 48.0);
-            col += vec3(1.0) * spec * 0.85;
-            // a wide soft gleam on the top left
-            col += vec3(0.25) * disc(p - vec2(-0.11, 0.17), 0.05, 0.05) * 0.6;
-
-            // eyes: a wandering gaze, the finger's when it is down, a blink every few seconds
-            vec2 look = (vec2(noise1(t * 0.6), noise1(t * 0.8 + 11.0)) - 0.5) * 0.05;
-            if (iMouse.z > 0.0) {
-                vec2 m = (iMouse.xy - 0.5 * iResolution.xy) / iResolution.y;
-                look = clamp(m * 0.16, vec2(-0.035), vec2(0.035));
-            }
-            float blink = smoothstep(0.0, 0.04, abs(fract(t * 0.29) - 0.5));
-            blink = max(blink, 0.06);
-            for (int i = 0; i < 2; i++) {
-                float s = float(i) * 2.0 - 1.0;
-                vec2 e = p - vec2(s * 0.115, 0.075);
-                vec2 es = e;
-                es.y /= blink;
-                float white = disc(es, 0.072, px);
-                float pupil = disc(es - look * vec2(1.0, 1.0 / blink), 0.036, px);
-                float glint = disc(es - look - vec2(-0.014, 0.016), 0.011, px);
-                vec3 eye = mix(vec3(0.98), vec3(0.08, 0.07, 0.1), pupil);
-                eye = mix(eye, vec3(1.0), glint);
-                col = mix(col, eye, white * body);
-            }
-
-            // cheeks and a smile
-            for (int i = 0; i < 2; i++) {
-                float s = float(i) * 2.0 - 1.0;
-                float blush = disc(p - vec2(s * 0.19, -0.03), 0.045, 0.04);
-                col = mix(col, vec3(1.0, 0.45, 0.55), blush * 0.45 * body);
-            }
-            float mouth = abs(length(p - vec2(0.0, 0.0)) - 0.125) - 0.009;
-            float smile = smoothstep(px, -px, mouth) * smoothstep(-0.04, -0.07, p.y);
-            col = mix(col, vec3(0.12, 0.05, 0.1), smile * body);
-
-            // the shadow on the ground, small while it is up in the air
-            vec2 g = (uv - vec2(0.0, -0.40)) * vec2(1.0, 3.2);
-            float shadow = smoothstep(0.24, 0.02, length(g)) * (0.42 - 0.22 * hop);
-
-            float a = max(body, shadow);
-            vec3 rgb = col * body;
-            O = vec4(rgb, a);
-        }
-        """, inputs: []),
-    ])
-
-    /// A glossy heart beating in a fire: the flames are noise sheared upward
-    /// and cut by the distance to the heart, with embers drifting off the top.
-    static let flameHeart = ShaderDocument(name: "Flame heart", passes: [
-        ShaderPass(id: ShaderPass.imageId, kind: .image, code: """
-        float hash21(vec2 p) {
-            p = fract(p * vec2(123.34, 456.21));
-            p += dot(p, p + 45.32);
-            return fract(p.x * p.y);
-        }
-        float hash(float n) { return fract(sin(n) * 43758.5453); }
-        float vnoise(vec2 p) {
-            vec2 i = floor(p), f = fract(p);
-            f = f * f * (3.0 - 2.0 * f);
-            return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
-                       mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
-        }
-        float fbm(vec2 p) {
-            float v = 0.0, a = 0.5;
-            mat2 m = mat2(1.6, 1.2, -1.2, 1.6);
-            for (int i = 0; i < 5; i++) { v += a * vnoise(p); p = m * p; a *= 0.5; }
-            return v;
-        }
+    /// A raymarched heart that beats when tapped. Buffer A holds its state in
+    /// one texel: how excited it is and how long ago the last beat began. A tap
+    /// starts a beat at once and adds excitement; excitement makes the beats
+    /// come faster and stronger, lights a glow and lets small hearts float off,
+    /// then fades over a few seconds. The beat drives the haptics too.
+    static let heart = ShaderDocument(name: "Heart", passes: [
+        ShaderPass(id: "common", kind: .common, code: """
         float dot2(vec2 v) { return dot(v, v); }
+        // iq's heart: the tip at the origin, the lobes up to y ≈ 1.1, x within ±0.6
         float sdHeart(vec2 p) {
             p.x = abs(p.x);
             if (p.y + p.x > 1.0) return sqrt(dot2(p - vec2(0.25, 0.75))) - sqrt(2.0) / 4.0;
             return sqrt(min(dot2(p - vec2(0.0, 1.0)), dot2(p - 0.5 * max(p.x + p.y, 0.0)))) * sign(p.x - p.y);
         }
-        vec3 ramp(float x) {
-            vec3 c = mix(vec3(0.55, 0.02, 0.0), vec3(1.0, 0.38, 0.02), smoothstep(0.0, 0.55, x));
-            return mix(c, vec3(1.0, 0.96, 0.7), smoothstep(0.6, 1.0, x));
+        // one contraction: rises to 1 at t = w, then relaxes
+        float thump(float t, float w) { t = max(t, 0.0) / w; return t * exp(1.0 - t); }
+        // a beat is the lub and the dub, stronger when excited
+        float pulse(float beatT, float energy) {
+            return (thump(beatT, 0.09) + 0.6 * thump(beatT - 0.21, 0.08)) * (0.45 + 0.55 * energy);
+        }
+        """, inputs: []),
+        // The state, carried from frame to frame in texel (0, 0):
+        // x excitement 0…1, y seconds since the last beat began,
+        // w = 2 marks a written texel.
+        ShaderPass(id: "A", kind: .buffer, code: """
+        void mainImage(out vec4 O, in vec2 F) {
+            vec4 s = texelFetch(iChannel3, ivec2(0, 0), 0);
+            float energy = s.x, beatT = s.y;
+            if (s.w < 1.5) { energy = 0.0; beatT = 0.0; }
+            float dt = clamp(iTimeDelta, 0.0, 0.1);
+            beatT += dt;
+            energy *= exp(-dt / 2.8);
+            // iMouse.w is positive on the frame a tap lands
+            if (iMouse.w > 0.0) {
+                beatT = 0.0;
+                energy = min(1.0, energy + 0.4);
+            }
+            // resting the heart beats slowly, excited it races
+            float interval = mix(1.5, 0.42, energy);
+            if (beatT > interval) beatT = 0.0;
+            O = vec4(energy, beatT, 0.0, 2.0);
+        }
+        """, inputs: [ShaderInput(channel: 3, source: ShaderInput.buffer("A"), wrap: "clamp", filter: "nearest")]),
+        ShaderPass(id: ShaderPass.imageId, kind: .image, code: """
+        float hash(float n) { return fract(sin(n) * 43758.5453); }
+        mat2 rot(float a) { float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
+        float dot3(vec3 v) { return dot(v, v); }
+        float smin(float a, float b, float k) {
+            float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+            return mix(b, a, h) - k * h * (1.0 - h);
+        }
+        float sdRoundCone(vec3 p, vec3 a, vec3 b, float r1, float r2) {
+            vec3 ba = b - a;
+            float l2 = dot(ba, ba), rr = r1 - r2, a2 = l2 - rr * rr, il2 = 1.0 / l2;
+            vec3 pa = p - a;
+            float y = dot(pa, ba), z = y - l2;
+            float x2 = dot3(pa * l2 - ba * y), y2 = y * y * l2, z2 = z * z * l2;
+            float k = sign(rr) * rr * rr * x2;
+            if (sign(z) * a2 * z2 > k) return sqrt(x2 + z2) * il2 - r2;
+            if (sign(y) * a2 * y2 < k) return sqrt(x2 + y2) * il2 - r1;
+            return (sqrt(x2 * a2 * il2) + y * rr) * il2 - r1;
+        }
+
+        // the heart in three dimensions: two lobes blended into a tapering
+        // body, the whole flattened front to back
+        float map(vec3 p, float scale) {
+            p /= scale;
+            p.z *= 1.45;
+            float lobes = smin(length(p - vec3(0.30, 0.28, 0.0)) - 0.46,
+                               length(p - vec3(-0.30, 0.28, 0.0)) - 0.46, 0.05);
+            float body = sdRoundCone(p, vec3(0.0, 0.15, 0.0), vec3(0.0, -0.72, 0.0), 0.50, 0.06);
+            return smin(lobes, body, 0.2) / 1.45 * scale;
+        }
+        vec3 calcNormal(vec3 p, float scale) {
+            vec2 e = vec2(0.002, 0.0);
+            return normalize(vec3(map(p + e.xyy, scale) - map(p - e.xyy, scale),
+                                  map(p + e.yxy, scale) - map(p - e.yxy, scale),
+                                  map(p + e.yyx, scale) - map(p - e.yyx, scale)));
         }
 
         void mainImage(out vec4 O, in vec2 F) {
             vec2 uv = (F - 0.5 * iResolution.xy) / iResolution.y;
             float px = 1.5 / iResolution.y;
-            float t = iTime;
+            vec4 s = texelFetch(iChannel0, ivec2(0, 0), 0);
+            float energy = s.x, beatT = s.y;
+            float beat = pulse(beatT, energy);
+            float scale = 1.0 + 0.11 * beat;
 
-            // the beat: a thump and a lighter one right after, then rest
-            float ph = fract(t * 1.15);
-            float beat = exp(-ph * 9.0) * 0.6 + exp(-abs(ph - 0.28) * 14.0) * 0.4;
-            float size = 0.5 * (1.0 + 0.09 * beat);
-            vec2 hp = (uv + vec2(0.0, 0.30)) / size;
-            float dh = sdHeart(hp) * size;
-
-            // flames: noise blown upward, fed by the heart's edge, thinning with height
-            vec2 fp = vec2(uv.x * 4.2, uv.y * 3.0 - t * 2.4);
-            float n = fbm(fp + 0.35 * fbm(fp * 1.7 + vec2(0.0, -t * 1.2)));
-            float above = max(uv.y + 0.02, 0.0);
-            float fire = n * 1.35 - dh * 3.2 - above * 1.6 - 0.15;
-            fire *= smoothstep(-0.02, 0.10, dh);
-            fire = clamp(fire, 0.0, 1.0);
-            float fa = smoothstep(0.02, 0.35, fire);
-            vec3 col = ramp(fire) * fa;
-
-            // embers off the top
-            for (int i = 0; i < 14; i++) {
-                float fi = float(i);
-                float life = fract(t * (0.25 + 0.2 * hash(fi * 3.1)) + hash(fi * 7.7));
-                vec2 c = vec2((hash(fi * 1.3) - 0.5) * 0.5 + 0.05 * sin(t * 2.0 + fi), -0.05 + life * 0.6);
-                c.x += 0.03 * sin(life * 12.0 + fi);
-                float d = length(uv - c);
-                float g = (0.0025 + 0.002 * hash(fi)) / (d + 1e-4);
-                g = g * g * (1.0 - life) * smoothstep(0.0, 0.1, life);
-                col += vec3(1.0, 0.55, 0.15) * g;
-                fa = max(fa, clamp(g, 0.0, 1.0));
+            // the camera: a slow sway, a turn toward the finger while it is down
+            float yaw = 0.30 * sin(iTime * 0.7), pitch = 0.10 + 0.08 * sin(iTime * 0.5);
+            if (iMouse.z > 0.0) {
+                vec2 m = (iMouse.xy - 0.5 * iResolution.xy) / iResolution.y;
+                yaw += m.x * 0.8;
+                pitch -= m.y * 0.6;
             }
+            vec3 ro = vec3(0.0, 0.0, 3.0);
+            vec3 rd = normalize(vec3(uv, -1.5));
+            ro.yz = rot(pitch) * ro.yz; rd.yz = rot(pitch) * rd.yz;
+            ro.xz = rot(yaw) * ro.xz; rd.xz = rot(yaw) * rd.xz;
 
-            // the heart itself: red glass with a sphere's light on it
-            float heart = smoothstep(px, -px, dh);
-            vec2 q = hp - vec2(0.0, 0.55);
-            vec3 nn = normalize(vec3(q * 0.9, sqrt(max(0.0, 1.0 - dot(q * 0.9, q * 0.9)))));
-            vec3 light = normalize(vec3(-0.5, 0.8, 0.6));
-            float diff = 0.5 + 0.5 * dot(nn, light);
-            vec3 hc = mix(vec3(0.62, 0.02, 0.08), vec3(1.0, 0.25, 0.3), diff);
-            hc = mix(hc * 1.4, hc, smoothstep(0.0, 0.08, -dh));
-            float spec = pow(max(dot(reflect(-light, nn), vec3(0.0, 0.0, 1.0)), 0.0), 36.0);
-            hc += vec3(1.0, 0.9, 0.9) * spec * 0.9;
-            // the fire's light through the edge on every beat
-            hc += vec3(1.0, 0.5, 0.2) * smoothstep(0.06, 0.0, -dh) * (0.25 + 0.5 * beat);
-
-            col = mix(col, hc, heart);
-            float a = max(fa, heart);
-            O = vec4(col, a);
-        }
-        """, inputs: []),
-    ])
-
-    /// A raymarched drop of liquid metal: four spheres blended into one core,
-    /// lit with two lights, a fresnel rim and an iridescent film, turning on its
-    /// own and under the finger.
-    static let orb = ShaderDocument(name: "Orb", passes: [
-        ShaderPass(id: ShaderPass.imageId, kind: .image, code: """
-        float smin(float a, float b, float k) {
-            float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
-            return mix(b, a, h) - k * h * (1.0 - h);
-        }
-        float map(vec3 q) {
-            float t = iTime;
-            float d = length(q) - 0.5;
-            for (int i = 0; i < 4; i++) {
-                float fi = float(i);
-                vec3 c = vec3(sin(t * 0.9 + fi * 1.7), cos(t * 1.1 + fi * 2.3), sin(t * 0.7 + fi * 0.9)) * 0.42;
-                d = smin(d, length(q - c) - 0.28, 0.3);
-            }
-            return d;
-        }
-        vec3 calcNormal(vec3 p) {
-            vec2 e = vec2(0.002, 0.0);
-            return normalize(vec3(map(p + e.xyy) - map(p - e.xyy),
-                                  map(p + e.yxy) - map(p - e.yxy),
-                                  map(p + e.yyx) - map(p - e.yyx)));
-        }
-        vec3 pal(float h) { return 0.5 + 0.5 * cos(6.2831 * (h + vec3(0.0, 0.33, 0.67))); }
-        mat2 rot(float a) { float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
-
-        void mainImage(out vec4 O, in vec2 F) {
-            vec2 uv = (F - 0.5 * iResolution.xy) / iResolution.y;
-            float t = iTime;
-
-            // the camera: a slow turn, plus whatever the finger dragged
-            vec2 spin = vec2(t * 0.35, 0.35 + 0.15 * sin(t * 0.5));
-            if (iMouse.z > 0.0) spin += (iMouse.xy - iMouse.zw) / iResolution.y * 4.0 * vec2(1.0, -1.0);
-            vec3 ro = vec3(0.0, 0.0, 3.2);
-            vec3 rd = normalize(vec3(uv, -1.7));
-            ro.yz = rot(spin.y) * ro.yz; rd.yz = rot(spin.y) * rd.yz;
-            ro.xz = rot(spin.x) * ro.xz; rd.xz = rot(spin.x) * rd.xz;
-
-            float dist = 0.0, near = 1e3;
+            float t = 1.2, near = 1e3;
             bool hit = false;
-            for (int i = 0; i < 72; i++) {
-                vec3 p = ro + rd * dist;
-                float d = map(p);
+            for (int i = 0; i < 96; i++) {
+                vec3 p = ro + rd * t;
+                float d = map(p, scale);
                 near = min(near, d);
                 if (d < 0.0015) { hit = true; break; }
-                dist += d * 0.9;
-                if (dist > 6.0) break;
+                if (t > 5.0) break;
+                t += d * 0.9;
             }
 
             vec3 col = vec3(0.0);
             float a = 0.0;
             if (hit) {
-                vec3 p = ro + rd * dist;
-                vec3 n = calcNormal(p);
+                vec3 p = ro + rd * t;
+                vec3 n = calcNormal(p, scale);
+                vec3 key = normalize(vec3(-0.55, 0.85, 0.9));
+                vec3 fill = normalize(vec3(0.8, -0.2, 0.6));
+                float ndl = dot(n, key);
+                float dif = max(ndl, 0.0) * 0.85 + max(dot(n, fill), 0.0) * 0.25;
                 float fres = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
-                vec3 l1 = normalize(vec3(-0.6, 0.8, 0.7));
-                vec3 l2 = normalize(vec3(0.7, -0.4, 0.5));
-                vec3 base = pal(n.y * 0.35 + n.x * 0.2 + t * 0.08) * 0.6 + 0.35;
-                base = mix(base, iAccent.rgb, 0.2);
-                float dif = max(dot(n, l1), 0.0) * 0.75 + max(dot(n, l2), 0.0) * 0.4 + 0.35;
-                col = base * dif;
+                // red glass over a warm core: light leaks through where the key is behind
+                vec3 deep = vec3(0.55, 0.01, 0.06);
+                vec3 skin = vec3(0.95, 0.12, 0.2);
+                vec3 base = mix(deep, skin, dif);
+                base += vec3(0.9, 0.15, 0.2) * pow(clamp(-ndl, 0.0, 1.0), 2.0) * 0.5;
+                base += vec3(1.0, 0.4, 0.5) * fres * 0.6;
+                // the pink flush of excitement
+                base = mix(base, vec3(1.0, 0.35, 0.5), energy * 0.35 * (0.5 + 0.5 * beat));
                 vec3 r = reflect(rd, n);
-                vec3 env = mix(vec3(0.35, 0.25, 0.6), vec3(1.0), smoothstep(-0.5, 0.9, r.y));
-                col += env * (0.15 + 0.8 * fres);
-                col += vec3(1.0) * pow(max(dot(r, l1), 0.0), 70.0) * 1.3;
-                col += vec3(0.9, 0.95, 1.0) * pow(max(dot(r, l2), 0.0), 30.0) * 0.5;
-                // the film: a thin iridescent sheen turning with the view
-                col += pal(fres * 1.5 + t * 0.1) * fres * 0.5;
-                col = pow(clamp(col, 0.0, 1.0), vec3(0.85));
+                vec3 env = mix(vec3(0.25, 0.05, 0.1), vec3(1.0, 0.95, 0.95), smoothstep(-0.3, 0.9, r.y));
+                col = base + env * (0.05 + 0.5 * fres);
+                col += vec3(1.0) * pow(max(dot(r, key), 0.0), 90.0) * 1.4;
+                col += vec3(1.0, 0.9, 0.9) * pow(max(dot(r, key), 0.0), 12.0) * 0.25;
+                col += vec3(1.0) * pow(max(dot(r, fill), 0.0), 40.0) * 0.35;
+                col = pow(clamp(col, 0.0, 1.0), vec3(0.9));
                 a = 1.0;
+            } else {
+                // the glow around it, brighter with excitement and on each beat
+                float glow = exp(-near * 5.0) * (0.15 + 0.85 * energy) * (0.5 + 0.5 * beat);
+                // gone before the canvas edge, so the square never shows
+                glow *= smoothstep(0.5, 0.28, max(abs(uv.x), abs(uv.y)));
+                col = vec3(1.0, 0.3, 0.45) * glow;
+                a = glow;
+                // the rim: a ray that only just missed softens the silhouette
+                float edge = smoothstep(0.006, 0.0, near);
+                col = mix(col, vec3(0.8, 0.05, 0.15), edge);
+                a = max(a, edge);
             }
-            // a soft edge where a ray only just missed
-            float edge = smoothstep(0.02, 0.0, near) * 0.5;
-            if (!hit) { a = edge; col = vec3(0.8, 0.85, 1.0) * edge; }
 
-            // the shadow under it
-            vec2 g = (uv - vec2(0.0, -0.42)) * vec2(1.0, 3.6);
-            float shadow = smoothstep(0.30, 0.04, length(g)) * 0.4;
+            // small hearts floating off while it is excited
+            for (int i = 0; i < 9; i++) {
+                float fi = float(i);
+                float life = fract(iTime * (0.35 + 0.25 * hash(fi * 3.7)) + hash(fi * 9.1));
+                vec2 c = vec2((hash(fi * 1.7) - 0.5) * 0.5 + 0.04 * sin(iTime * 3.0 + fi * 2.0), -0.15 + life * 0.75);
+                float size = 0.035 + 0.03 * hash(fi * 5.3);
+                vec2 q = (uv - c) / size;
+                q = rot(0.4 * sin(iTime * 2.0 + fi)) * q;
+                float d = sdHeart(q + vec2(0.0, 0.5)) * size;
+                float show = smoothstep(px, -px, d) * energy * smoothstep(0.0, 0.15, life) * (1.0 - life);
+                vec3 pink = mix(vec3(1.0, 0.35, 0.5), vec3(1.0, 0.7, 0.8), hash(fi * 2.9));
+                col = mix(col, pink, show);
+                a = max(a, show);
+            }
+
+            // the shadow under it, closer and darker when it swells
+            vec2 g = (uv - vec2(0.0, -0.44)) * vec2(1.0, 3.4);
+            float shadow = smoothstep(0.34 * scale, 0.05, length(g)) * 0.35;
             a = max(a, shadow);
 
+            // texel (0, 0) is read by the haptics: the beat as intensity
+            if (F.x < 1.0 && F.y < 1.0) { O = vec4(beat * 0.9, 0.35, 0.0, 0.0); return; }
             O = vec4(col, a);
         }
-        """, inputs: []),
-    ])
+        """, inputs: [ShaderInput(channel: 0, source: ShaderInput.buffer("A"), wrap: "clamp", filter: "nearest")]),
+    ], haptics: true)
 
     /// An app icon embossed with the Claude sparkle, raymarched and orbiting
     /// under the finger, the rays running in a wave. The sparkle's shape is a

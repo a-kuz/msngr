@@ -9,7 +9,7 @@ import MsngrCore
 final class BundledStickersTests: XCTestCase {
     func testEveryBundledStickerCompiles() throws {
         guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("no Metal device") }
-        XCTAssertEqual(ShaderStickers.bundled.count, 4)
+        XCTAssertEqual(ShaderStickers.bundled.count, 2)
         for doc in ShaderStickers.bundled {
             for pass in doc.passes where pass.kind != .common {
                 let msl = try ShaderTranspiler.transpile(pass.code, common: doc.common)
