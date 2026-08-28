@@ -309,12 +309,17 @@ func answer(dir: URL, base: URL, name: String, text: String, seconds: Double) as
 }
 
 /// Sends one text into the existing direct chat with a named peer, so a
-/// one-simulator scenario can receive a message it did not ask for.
-func send(dir: URL, base: URL, name: String, peer: String, text: String, repeatCount: Int = 1) async throws {
-    guard let member = cast.first(where: { $0.name == name }) else {
+/// one-simulator scenario can receive a message it did not ask for. With
+/// `shader` (a file: Shadertoy GLSL or a JSON export) the message carries
+/// that document instead, as `kind` — "shader" or "sticker".
+func send(dir: URL, base: URL, name: String, peer: String, text: String, repeatCount: Int = 1,
+          shader: URL? = nil, kind: String = "shader") async throws {
+    // a seeded account, or one `knock` registered under the same directory
+    let display = cast.first(where: { $0.name == name })?.display ?? name
+    guard FileManager.default.fileExists(atPath: dir.appendingPathComponent(name).appendingPathComponent("meta.json").path) else {
         throw FixtureError("unknown account \(name)")
     }
-    let p = try await openPerson(name: member.name, display: member.display, dir: dir, base: base)
+    let p = try await openPerson(name: name, display: display, dir: dir, base: base)
     let peerMetaURL = dir.appendingPathComponent(peer).appendingPathComponent("meta.json")
     let chatId: String?
     if let data = try? Data(contentsOf: peerMetaURL),
@@ -349,9 +354,16 @@ func send(dir: URL, base: URL, name: String, peer: String, text: String, repeatC
         guard replyTo != nil else { throw FixtureError("no incoming message to reply to") }
     }
     await startEngine(p, base: base)
+    let document = try shader.map { try ShaderDocument.parse(String(contentsOf: $0, encoding: .utf8)) }
     for i in 1...max(1, repeatCount) {
-        var content = ContentPayload(kind: "text")
-        content.text = repeatCount > 1 ? "\(text) \(i)" : text
+        var content: ContentPayload
+        if let document {
+            content = ContentPayload(kind: kind)
+            content.shader = document
+        } else {
+            content = ContentPayload(kind: "text")
+            content.text = repeatCount > 1 ? "\(text) \(i)" : text
+        }
         content.replyTo = replyTo
         try await p.engine.enqueue(content: content, chatId: chatId)
     }
@@ -361,7 +373,7 @@ func send(dir: URL, base: URL, name: String, peer: String, text: String, repeatC
         } == 0
     }
     await p.engine.stop()
-    print("· sent «\(text)» ×\(max(1, repeatCount)) to \(peer) in \(chatId)")
+    print("· sent \(document == nil ? "«\(text)»" : "a \(kind)") ×\(max(1, repeatCount)) to \(peer) in \(chatId)")
 }
 
 /// Reacts to the peer's latest message in their direct chat.
@@ -530,7 +542,9 @@ do {
             name: try arg("as", default: "bravo"),
             peer: try arg("to", default: "alfa"),
             text: try arg("text", default: "Checking in."),
-            repeatCount: Int(try arg("repeat", default: "1")) ?? 1)
+            repeatCount: Int(try arg("repeat", default: "1")) ?? 1,
+            shader: (try? arg("shader")).map { URL(fileURLWithPath: $0) },
+            kind: try arg("kind", default: "shader"))
     case "react":
         try await react(
             dir: URL(fileURLWithPath: try arg("dir")),
@@ -572,6 +586,7 @@ do {
           msngrfixture seed --dir <fixtures> [--base http://localhost:8787] [--reset]
           msngrfixture show --dir <fixtures>
           msngrfixture send --dir <fixtures> [--as bravo] [--to alfa | --to <group title>] [--base …] [--text …]
+          msngrfixture send --dir <fixtures> --shader <file.glsl|export.json> [--kind shader|sticker] [--as bravo] [--to alfa]
           msngrfixture knock --dir <fixtures> [--as delta] [--name "Delta Service"] [--to alfa] [--base …] [--text …]
           msngrfixture typing --dir <fixtures> [--as charlie] [--to alfa] [--base …] [--seconds 10]
           msngrfixture answer --dir <fixtures> [--as alfa] [--base …] [--text …] [--timeout 180]

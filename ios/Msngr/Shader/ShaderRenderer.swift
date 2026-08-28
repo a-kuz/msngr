@@ -240,6 +240,11 @@ final class ShaderRenderer: NSObject, MTKViewDelegate {
     private var compiled: [ShaderProgram.CompiledPass] = []
     private var observer: UUID?
     private let uniforms: MTLBuffer?
+    /// Whether the document may read the device: the sensors, the location,
+    /// the microphone, the cameras and the keyboard. Off for a document that
+    /// came from a peer, which then sees zeros and empty channels in their
+    /// place; time, touch and the palette are there either way.
+    let deviceInputs: Bool
     /// The device feeds this document reads, held for as long as the renderer lives.
     private let feeds: Set<DeviceInputs.Feed>
     private let readsHaptics: Bool
@@ -269,10 +274,11 @@ final class ShaderRenderer: NSObject, MTKViewDelegate {
 
     var onFrame: ((Float) -> Void)?
 
-    init(program: ShaderProgram) {
+    init(program: ShaderProgram, deviceInputs: Bool) {
         self.program = program
+        self.deviceInputs = deviceInputs
         uniforms = ShaderGPU.shared.device?.makeBuffer(length: ShaderTranspiler.uniformStride, options: .storageModeShared)
-        feeds = DeviceInputs.feeds(for: program.document)
+        feeds = deviceInputs ? DeviceInputs.feeds(for: program.document) : []
         readsHaptics = program.document.haptics == true
         hapticTexel = readsHaptics ? ShaderGPU.shared.device?.makeBuffer(length: 16, options: .storageModeShared) : nil
         super.init()
@@ -512,6 +518,7 @@ final class ShaderRenderer: NSObject, MTKViewDelegate {
     /// a live source gives the device's latest picture.
     private func texture(for input: ShaderInput, readingFrom passId: String) -> MTLTexture? {
         if ShaderInput.liveSources.contains(input.source) {
+            guard deviceInputs else { return ShaderGPU.shared.texture(for: ShaderInput.none) }
             return DeviceInputs.shared.texture(for: input.source) ?? ShaderGPU.shared.texture(for: ShaderInput.none)
         }
         guard let bufferId = input.bufferId else { return ShaderGPU.shared.texture(for: input.source) }
@@ -545,18 +552,24 @@ final class ShaderRenderer: NSObject, MTKViewDelegate {
             let t = touches[i]
             block[U.touch0.rawValue + i] = SIMD4(t.x, t.y, t.force, t.id)
         }
-        let inputs = DeviceInputs.shared
-        block[U.gyro.rawValue] = inputs.gyro
-        block[U.accel.rawValue] = inputs.accel
-        block[U.gravity.rawValue] = inputs.gravity
-        block[U.magnet.rawValue] = inputs.magnet
-        block[U.attitude.rawValue] = inputs.attitude
-        block[U.location.rawValue] = inputs.locationVector
-        block[U.environment.rawValue] = inputs.environmentVector
+        var batteryState: Float = 0
+        if deviceInputs {
+            let inputs = DeviceInputs.shared
+            block[U.gyro.rawValue] = inputs.gyro
+            block[U.accel.rawValue] = inputs.accel
+            block[U.gravity.rawValue] = inputs.gravity
+            block[U.magnet.rawValue] = inputs.magnet
+            block[U.attitude.rawValue] = inputs.attitude
+            block[U.location.rawValue] = inputs.locationVector
+            block[U.environment.rawValue] = inputs.environmentVector
+            batteryState = inputs.batteryState
+        } else {
+            block[U.attitude.rawValue] = SIMD4(0, 0, 0, 1)
+        }
         let traits = view.traitCollection
         // the text scale is the bubble font against its size at the default category
         let textScale = Float(Theme.Text.bubble.uiFont.pointSize / Theme.Text.bubble.size)
-        block[U.device.rawValue] = SIMD4(inputs.batteryState, traits.userInterfaceStyle == .dark ? 1 : 0, textScale, 0)
+        block[U.device.rawValue] = SIMD4(batteryState, traits.userInterfaceStyle == .dark ? 1 : 0, textScale, 0)
         block[U.pencil.rawValue] = pencil
         block[U.pencilMore.rawValue] = pencilMore
         // where the canvas sits on the screen, in the screen's pixels with y up,

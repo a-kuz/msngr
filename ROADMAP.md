@@ -276,7 +276,36 @@ A ✅ goes in only together with a link to the evidence.
     messages, worded for the actor, for the member it touches and for everyone else
     (qa/runs/2026-08-17-groups-run)
 - Shaders (user code, the Shadertoy dialect of GLSL, transpiled to MSL on the
-  device; design in `docs/plans/2026-08-28-shader-messages-design.md`)
+  device; design in `docs/plans/2026-08-28-shader-messages-design.md`). The
+  product here is the procedural format under stickers, effects, backgrounds
+  and avatars: a document weighs kilobytes, draws at any size and reacts to
+  the finger, the clock and the theme. The shader message with the code in the
+  composer is the owner's debugging tool, not a scenario for users
+  (the owner, 2026-08-28).
+  - ✅ a peer's document reads no sensor. In the feed a document that came
+    from the peer gets time, touch and the palette only; the sensors, the
+    microphone, the cameras and the location open for the stickers of the
+    user's own pack (adding a sticker is the act of trust), for the user's
+    own surfaces and in the full-screen player the user opened — a denied
+    feed reads as zeros and an empty channel texture
+    (`ShaderRenderer.deviceInputs`; run live 2026-08-28: an incoming shader
+    message and sticker reading the camera, the location and the gyroscope
+    started no feed and raised no prompt in the feed, and opening the player
+    turned motion, location and the camera on and closing it turned them
+    off — qa/runs/2026-08-28-shader-sensor-isolation-run.md)
+  - ⬜ the shader composer behind a switch in Settings → «Шейдеры»: off by
+    default, the «Shader» and «Bubble shader» items leave the attachment
+    menu and the strip over the input field; the sticker panel, the
+    backgrounds, the avatar and the effects keep their own «write your own»
+    entry, and a received shader message still opens in the player and is
+    still previewed in the chat list and in the push
+  - ⬜ a drawable scale setting in Settings → «Шейдеры»: full, or half the
+    view's scale for the feed, the chat list and the backgrounds. The design
+    promised half scale in the feed and the canvas draws every pixel at
+    60 fps today (`ShaderCanvas`); the player and the composer preview stay
+    at full scale whatever the setting. A run on a device with the frame
+    time and the thermal state before and after, since the simulator says
+    nothing about either
   - ✅ a shader message: Shadertoy code or a JSON export pasted into the
     composer, a live preview, the bubble animating in the peer's feed, a
     full-screen player with touches as `iMouse` and the source to copy;

@@ -89,6 +89,7 @@ enum ShaderEffectPlayer {
         let document = ShaderEffects.document(for: effect)
         let canvas = ShaderCanvas(transparent: true)
         canvas.priority = .focus
+        canvas.deviceInputs = true
         canvas.isUserInteractionEnabled = false
         canvas.frame = host.bounds
         canvas.autoresizingMask = [.flexibleWidth, .flexibleHeight]

@@ -168,7 +168,7 @@ struct ShaderComposerScreen: View {
     private var preview: some View {
         if let document {
             ShaderCanvasView(document: document, running: true, acceptsTouches: true,
-                             transparent: purpose.transparent, priority: .focus,
+                             transparent: purpose.transparent, deviceInputs: true, priority: .focus,
                              onState: { state = $0 })
                 .id(document)
                 .accessibilityIdentifier("shader.composer.preview")

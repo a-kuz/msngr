@@ -24,6 +24,11 @@ final class ShaderCanvas: UIView {
     /// Whether the canvas also takes the keyboard (the keyboard feed). Off in
     /// the feed: becoming first responder there would dismiss the composer.
     var acceptsKeys = true
+    /// Whether the shader may read the device (sensors, location, microphone,
+    /// cameras, keyboard). On for the user's own documents: the pack, the
+    /// surfaces, the composer and the player they opened. Off for a peer's
+    /// document in the feed, which is what the renderer defaults to.
+    var deviceInputs = false
     var priority: Priority = .feed
     var onState: ((ShaderProgram.State) -> Void)?
     /// The owner asked for frames; the budget decides whether they come.
@@ -82,11 +87,11 @@ final class ShaderCanvas: UIView {
     var isRunning: Bool { !metalView.isPaused }
 
     func show(_ document: ShaderDocument) {
-        if program?.document == document { return }
+        if program?.document == document, renderer?.deviceInputs == deviceInputs { return }
         if let observer, let program { program.unobserve(observer) }
         let p = ShaderProgram.program(for: document)
         program = p
-        let r = ShaderRenderer(program: p)
+        let r = ShaderRenderer(program: p, deviceInputs: deviceInputs)
         r.host = self
         renderer = r
         heldFrameDrawn = false
@@ -312,11 +317,14 @@ final class ShaderMessageView: UIView {
         nameLabel.frame = CGRect(x: 10, y: 8, width: bounds.width - 20, height: 18)
     }
 
-    func configure(document: ShaderDocument) {
+    /// `deviceInputs` opens the sensors to the shader; the feed passes it for
+    /// a sticker of the user's own pack and leaves it off for a peer's document.
+    func configure(document: ShaderDocument, deviceInputs: Bool = false) {
         stateLabel.font = Theme.Text.feedNote.uiFont
         nameLabel.font = Theme.Text.thumbnailCaption.uiFont
         nameLabel.text = document.name
         nameLabel.isHidden = document.name == nil
+        canvas.deviceInputs = deviceInputs
         canvas.show(document)
         canvas.setRunning(active)
     }
