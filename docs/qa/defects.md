@@ -51,10 +51,13 @@ bravo in `pendingDecrypt` with every repair attempt spent, `no_session` (299)
 and `pk_decrypt_failed` (144), the newest 3 minutes old. The repair protocol
 does ask the sender for a fresh copy, but the sender here is the `msngrfixture`
 CLI, which is not online to answer. The cause of the failures themselves is
-unconfirmed: the shape (bursts of a hundred within a minute, in a chat this
-agent was not sending to) fits the documented trap of one fixture home driven
-by two processes at once, which forks the sending ratchet, and a second agent
-was working in the same tree. Not reproduced on demand.
+unknown. The shape — bursts of a hundred within a minute, in a chat this agent
+was not sending to — fits the documented trap of one fixture home driven by two
+processes at once, which forks the sending ratchet, but nothing supports it:
+the other agent in the tree says it drove no fixture and had pulled its homes
+back, and at the time of the check no `msngrfixture` process was running and
+only one simulator was booted. Not reproduced on demand, and whoever sent those
+envelopes is not established.
 
 ### A silent identity rotation is not re-checked by TOFU while a device list is cached
 Found 2026-08-27 in passing during the multi-device TOFU run
