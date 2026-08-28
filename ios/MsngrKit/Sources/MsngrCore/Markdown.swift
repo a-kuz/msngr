@@ -251,6 +251,59 @@ public enum MessageMarkdown {
         return out
     }
 
+    /// A user the tokenizer may turn a typed "@username" into a mention of.
+    public struct MentionCandidate: Equatable, Sendable {
+        public var userId: String
+        public var username: String
+        public var displayName: String
+
+        public init(userId: String, username: String, displayName: String) {
+            self.userId = userId
+            self.username = username
+            self.displayName = displayName
+        }
+    }
+
+    /// Replaces every typed "@username" of a known user with the mention token.
+    /// The match is case-insensitive and takes the whole handle word; text
+    /// inside code spans is left alone by virtue of the token being introduced
+    /// only where a bare "@" stood.
+    public static func tokenizeMentions(_ text: String, users: [MentionCandidate]) -> String {
+        guard text.contains("@"), !users.isEmpty else { return text }
+        let byHandle = Dictionary(users.map { ($0.username.lowercased(), $0) },
+                                  uniquingKeysWith: { a, _ in a })
+        let s = Array(text)
+        var out = ""
+        var i = 0
+        while i < s.count {
+            // an existing token passes through untouched
+            if s[i] == "[", let m = mentionToken(s, at: i) {
+                out += String(s[i..<m.end])
+                i = m.end
+                continue
+            }
+            guard s[i] == "@", i == 0 || !isHandleChar(s[i - 1]) else {
+                out.append(s[i])
+                i += 1
+                continue
+            }
+            var j = i + 1
+            while j < s.count, isHandleChar(s[j]) { j += 1 }
+            let handle = String(s[(i + 1)..<j]).lowercased()
+            if j > i + 1, let user = byHandle[handle] {
+                out += "[@\(user.displayName)](user:\(user.userId))"
+            } else {
+                out += String(s[i..<j])
+            }
+            i = j
+        }
+        return out
+    }
+
+    private static func isHandleChar(_ c: Character) -> Bool {
+        c.isLetter || c.isNumber || c == "_"
+    }
+
     /// Length of the run of identical characters starting at the position.
     private static func runLength(_ s: [Character], at i: Int) -> Int {
         var n = 0

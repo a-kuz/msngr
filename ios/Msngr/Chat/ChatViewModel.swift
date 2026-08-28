@@ -807,16 +807,17 @@ final class ChatViewModel: ObservableObject {
         guard !trimmed.isEmpty else { return }
         PerfTrace.shared.mark("send.tap")
         dismissUnreadMarker()
+        let tokenized = MessageMarkdown.tokenizeMentions(trimmed, users: mentionCandidates)
         if let editing {
             var c = ContentPayload(kind: "edit")
             c.targetLocalId = editing.id
-            c.text = trimmed
+            c.text = tokenized
             enqueue(c)
             self.editing = nil
             return
         }
         var c = ContentPayload(kind: "text")
-        c.text = trimmed
+        c.text = tokenized
         c.replyTo = replyingTo.map {
             ReplyPreview(seq: $0.seq, authorId: $0.fromUserId,
                          text: Self.previewText($0), kind: $0.kind.rawValue)
@@ -825,6 +826,32 @@ final class ChatViewModel: ObservableObject {
         saveDraft(nil, immediately: true)
         enqueue(c)
         Haptics.light()
+    }
+
+    /// Whom a typed "@handle" may resolve to: everyone in the chat but yourself.
+    var mentionCandidates: [MessageMarkdown.MentionCandidate] {
+        members.compactMap { user in
+            guard user.id != ownUserId, !user.username.isEmpty else { return nil }
+            return MessageMarkdown.MentionCandidate(userId: user.id, username: user.username,
+                                                    displayName: user.displayName)
+        }
+    }
+
+    /// Members matching the "@prefix" the field ends with; empty when the text
+    /// ends with no open handle. The panel above the input runs on this.
+    func mentionSuggestions(for text: String) -> [MessageMarkdown.MentionCandidate] {
+        guard let at = text.lastIndex(of: "@") else { return [] }
+        // the "@" must start a word, and everything after it must be handle characters
+        if at > text.startIndex {
+            let before = text[text.index(before: at)]
+            guard !(before.isLetter || before.isNumber || before == "_") else { return [] }
+        }
+        let prefix = String(text[text.index(after: at)...]).lowercased()
+        guard prefix.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { return [] }
+        return mentionCandidates.filter {
+            prefix.isEmpty || $0.username.lowercased().hasPrefix(prefix)
+                || $0.displayName.lowercased().hasPrefix(prefix)
+        }
     }
 
     nonisolated static func movesFeedToEnd(kind: String, target: String, chatId: String) -> Bool {
