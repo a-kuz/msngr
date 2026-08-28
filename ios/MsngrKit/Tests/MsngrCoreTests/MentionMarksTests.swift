@@ -39,6 +39,26 @@ final class MentionMarksTests: XCTestCase {
         XCTAssertFalse(try mark(db, readUpTo: 2))
     }
 
+    func testTheCounterAndTheEarliestTarget() throws {
+        let db = try AppDatabase.openInMemory()
+        try seed(db)
+        try db.write { dbc in
+            try message(dbc, seq: 1, text: "старое [@Я](user:me)")
+            try message(dbc, seq: 2, text: "plain")
+            try message(dbc, seq: 3, text: "и ещё [@Я](user:me)")
+        }
+        let all = try db.read { try MentionMarks.unreadMentions($0, chatId: "c1",
+                                                                myReadUpTo: 0, ownUserId: "me") }
+        XCTAssertEqual(all?.count, 2)
+        XCTAssertEqual(all?.earliestId, "m1")
+        let tail = try db.read { try MentionMarks.unreadMentions($0, chatId: "c1",
+                                                                 myReadUpTo: 1, ownUserId: "me") }
+        XCTAssertEqual(tail?.count, 1)
+        XCTAssertEqual(tail?.earliestId, "m3")
+        XCTAssertNil(try db.read { try MentionMarks.unreadMentions($0, chatId: "c1",
+                                                                   myReadUpTo: 3, ownUserId: "me") })
+    }
+
     func testPlainUnreadAndForeignMentionsStayDark() throws {
         let db = try AppDatabase.openInMemory()
         try seed(db)

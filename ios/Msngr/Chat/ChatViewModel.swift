@@ -73,6 +73,9 @@ final class ChatViewModel: ObservableObject {
     @Published var sendFailure: String?
     /// My send counter: each one scrolls the feed to the end of the chat.
     @Published private(set) var sendTick = 0
+    /// Unread messages that mention you: the «@» button over the feed and
+    /// where its tap lands. nil while nothing unread mentions you.
+    @Published private(set) var unreadMentions: (count: Int, earliestId: String)?
 
     /// Unread banner: the state lives from the moment the chat is opened, and the
     /// feed is rebuilt from the last database snapshot whenever it changes.
@@ -210,6 +213,29 @@ final class ChatViewModel: ObservableObject {
     /// envelope moving `lastSeq` and a peer's read receipt all land on this one row,
     /// and inside the window fetch each of them re-read, rebuilt and re-diffed the
     /// whole feed.
+    /// Recounts the unread mentions of this user whenever the chat row moves:
+    /// a new message and a read receipt both come through it.
+    private func refreshUnreadMentions(_ chat: Chat?) {
+        guard let chat, chat.unreadCount > 0, let db = app.db else {
+            if unreadMentions != nil { unreadMentions = nil }
+            return
+        }
+        let ownId = ownUserId
+        Task { [weak self] in
+            let found = try? await db.read { dbc in
+                try MentionMarks.unreadMentions(dbc, chatId: chat.id,
+                                                myReadUpTo: chat.myReadUpTo, ownUserId: ownId)
+            }
+            await MainActor.run {
+                guard let self else { return }
+                if self.unreadMentions?.count != found?.count
+                    || self.unreadMentions?.earliestId != found?.earliestId {
+                    self.unreadMentions = found ?? nil
+                }
+            }
+        }
+    }
+
     private func observeChatRow() {
         guard let db = app.db else { return }
         let chatId = self.chatId
@@ -237,6 +263,7 @@ final class ChatViewModel: ObservableObject {
             if chat.unreadCount == 0 { publishSavedReadingPosition() }
         }
         if let chat { reconcileUnreadMarker(chat) }
+        refreshUnreadMentions(chat)
         if cancellable == nil {
             observeChat()
         } else if contentHidden != wasHidden {
