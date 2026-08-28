@@ -748,6 +748,14 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ⬜ a video call
 - ⬜ a group call
 - ⬜ CallKit and PushKit
+- ⬜ ringback while dialing, and the callee's ringtone
+- ⬜ a push for an incoming call, and a missed-call notification with a way back
+- ⬜ the in-app call bar: the call keeps going behind the interface, a timer on
+  the bar, a tap returns to the call screen
+- ⬜ picture-in-picture for a video call, including the call minimized to the
+  system PiP window
+- ⬜ a second incoming call during a call: decline, or hold and switch
+- ⬜ the call log: outgoing, answered and missed in the chat and in a list
 
 ## Settings
 
