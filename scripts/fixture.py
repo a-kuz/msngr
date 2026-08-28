@@ -39,6 +39,9 @@ GRANT_BLOB = ROOT / "scripts" / "assets" / "notification-grant.bplist"
 BUNDLE_ID = os.environ.get("MSNGR_APP_ID", "msngr.msngr")
 GROUP_ID = "group.msngr.msngr"
 NAMES = ["alfa", "bravo", "charlie"]
+# the shader showcase's accounts (docs/demo/shaders-showcase.md), built by
+# `msngrfixture showcase`
+SHOWCASE = ["demo", "nova", "iris"]
 # what the app keeps in the group container; the journal is checkpointed into
 # the database before a home is written, so these three files are the whole state
 STATE_FILES = ["msngr.sqlite", ".masterkey", "session.json"]
@@ -186,7 +189,7 @@ def seed(base, reset):
 
 
 def show():
-    for name in NAMES:
+    for name in NAMES + SHOWCASE:
         meta = FIXTURES / name / "meta.json"
         if not meta.exists():
             print(f"{name}: not seeded")
@@ -205,7 +208,7 @@ def main():
     s.add_argument("--reset", action="store_true", help="throw the current trio away first")
 
     i = sub.add_parser("install", help="log a simulator in as one of them")
-    i.add_argument("name", choices=NAMES)
+    i.add_argument("name", choices=NAMES + SHOWCASE)
     i.add_argument("udid")
     i.add_argument("--launch", action="store_true", help="start the app straight away")
 
@@ -213,7 +216,7 @@ def main():
     g.add_argument("udid")
 
     u = sub.add_parser("pull", help="take a simulator's state back into the fixture")
-    u.add_argument("name", choices=NAMES)
+    u.add_argument("name", choices=NAMES + SHOWCASE)
     u.add_argument("udid")
 
     sub.add_parser("show", help="what is seeded")

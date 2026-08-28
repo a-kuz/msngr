@@ -5,7 +5,7 @@ import MsngrCore
 /// and everything outside the figure stays clear. They are seeded into
 /// `savedSticker` once and from then on live like any sticker the user added.
 enum ShaderStickers {
-    static let bundled: [ShaderDocument] = [heart, sparkle]
+    static let bundled: [ShaderDocument] = [heart, sparkle] + ShaderGallery.stickers
 
     /// A raymarched heart that beats when tapped. Buffer A holds its state in
     /// one texel: how excited it is and how long ago the last beat began. A tap
