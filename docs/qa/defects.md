@@ -63,8 +63,10 @@ side gives no repair copy of a repair frame
 (`testSenderDoesNotAnswerRepairForARepairFrame`), and the asking side lets at
 most 20 unanswered repairs stand per sender before new requests wait
 (`testRepairCeilingHoldsNewRequestsBack`). The pile already accumulated in
-the alfa fixture stays as history holes; a live pass of the fixed CLI against
-that home is still owed once the bravo home frees up. Why the original
+the alfa fixture stays as history holes. Watched live over the server stand:
+the fixed CLI's first run answered the standing backlog once (Design lastSeq
+12159 → 12649), and its second run added zero — the wave no longer seeds the
+next one. Why the original
 session forked is still unestablished (one fixture home driven by two
 processes remains the best-fitting shape).
 
