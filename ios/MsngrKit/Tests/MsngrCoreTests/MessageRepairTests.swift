@@ -79,6 +79,34 @@ final class MessageRepairTests: XCTestCase {
         XCTAssertEqual(outbox[0].content.attempt, 1)
     }
 
+    /// Twenty repairs already wait on the same sender: the next unreadable
+    /// frame is kept, but no new request joins the queue until those resolve —
+    /// a session broken past healing must not grow the queue with every answer.
+    func testRepairCeilingHoldsNewRequestsBack() async throws {
+        let db = try AppDatabase.openInMemory()
+        try await makeDirectChat(db)
+        let engine = try makeEngine(db: db)
+        try await db.write { dbc in
+            for seq in 100..<(100 + MessageRepair.maxInFlightRepairsPerPeer) {
+                try dbc.execute(sql: """
+                    INSERT INTO pendingDecrypt (chatId, seq, fromUserId, fromDevice, sentAt, ts,
+                                                body, reason, attempts, firstSeenAt, lastTriedAt,
+                                                repairAttempts, repairAskedAt)
+                    VALUES ('c1', ?, 'peer', 'd1', 1, 1, x'00', 'no_session', 1, 1, 1, 1, 1)
+                    """, arguments: [seq])
+            }
+        }
+
+        await engine.apply(try brokenFrame(seq: 1))
+
+        let kept = try await db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingDecrypt WHERE chatId = 'c1' AND seq = 1")!
+        }
+        XCTAssertEqual(kept, 1, "the envelope itself must still be kept")
+        let outbox = try await outboxContents(db)
+        XCTAssertTrue(outbox.isEmpty, "a request went out over the per-peer ceiling")
+    }
+
     /// A missing key is not a defect by itself: the envelope is parked and the
     /// sender is left alone until the grace period runs out.
     func testRetryableFailureWaitsBeforeAsking() async throws {

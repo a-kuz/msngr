@@ -1139,6 +1139,22 @@ public actor SyncEngine {
                               arguments: [pending.chatId]) ?? false
         }) ?? false
         guard !isRequest else { return }
+        // a new repair joins the queue only while the sender's unanswered ones
+        // fit under the ceiling; a broken session otherwise turns every answer
+        // into the next request, and the queue grows instead of draining
+        if pending.repairAttempts == 0 {
+            let inFlight = (try? await db.read { dbc in
+                try Int.fetchOne(dbc, sql: """
+                    SELECT COUNT(*) FROM pendingDecrypt
+                    WHERE fromUserId = ? AND repairAttempts > 0
+                    """, arguments: [pending.from]) ?? 0
+            }) ?? 0
+            guard inFlight < MessageRepair.maxInFlightRepairsPerPeer else {
+                MsngrLog.repair.notice(
+                    "repair ceiling reached for \(pending.from, privacy: .public), not asking seq=\(pending.seq, privacy: .public)")
+                return
+            }
+        }
         let attempt = pending.repairAttempts + 1
         // the session failed to open his envelope and the request would leave
         // through that same session; marking it for rebuild sends the request
