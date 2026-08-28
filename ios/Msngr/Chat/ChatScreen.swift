@@ -43,7 +43,9 @@ struct ChatScreen: View {
             // the chat's shader background, this device's own choice; it runs
             // only while the chat is in front
             if let background = surfaces.backgrounds[chatId] {
-                ShaderCanvasView(document: background, running: backgroundRunning, deviceInputs: true, priority: .background)
+                // transparent, so the theme background stays under it while
+                // the program compiles instead of a black flash on first open
+                ShaderCanvasView(document: background, running: backgroundRunning, transparent: true, deviceInputs: true, priority: .background)
                     .ignoresSafeArea()
                     .id(background)
                     .accessibilityIdentifier("chat.shaderBackground")

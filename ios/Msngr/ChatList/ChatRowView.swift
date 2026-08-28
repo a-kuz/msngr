@@ -230,12 +230,22 @@ struct AvatarView: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .bottomTrailing) {
+                if let shader {
+                    // a shader avatar owns more than its circle: the canvas is
+                    // transparent and twice the circle's size, the document
+                    // draws the disc itself and may send its moons and glow
+                    // past the edge. Live while the budget allows, a held
+                    // frame in a long list.
+                    ShaderCanvasView(document: shader, running: true, transparent: true, priority: .avatar)
+                        .frame(width: geo.size.width * 2, height: geo.size.height * 2)
+                        .position(x: geo.size.width / 2, y: geo.size.height / 2)
+                        .allowsHitTesting(false)
+                }
                 Group {
                     if let glyph {
                         glyphView(glyph, side: geo.size.width)
-                    } else if let shader {
-                        // a shader avatar: live while the budget allows, a held frame in a long list
-                        ShaderCanvasView(document: shader, running: true, priority: .avatar)
+                    } else if shader != nil {
+                        Color.clear
                     } else if let image {
                         Image(uiImage: image).resizable().scaledToFill()
                     } else {

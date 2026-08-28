@@ -28,6 +28,18 @@ final class MessageContextOverlay: UIView {
         let codeBackground: UIColor
     }
 
+    /// A shader drawn live over the lifted snapshot: the snapshot is
+    /// `layer.render`, which a Metal layer contributes nothing to, so the
+    /// canvas of a shader message, a sticker or a bubble shader would lift as
+    /// a black (or empty) rectangle. The overlay runs its own canvas instead.
+    struct LiveShader {
+        let document: ShaderDocument
+        /// frame in bubble coordinates
+        let frame: CGRect
+        var cornerRadius: CGFloat = 0
+        var transparent = false
+    }
+
     static let quickReactions = ["❤️", "👍", "🔥", "😂", "😮", "😢"]
 
     private let blurView = UIVisualEffectView(effect: nil)
@@ -74,6 +86,7 @@ final class MessageContextOverlay: UIView {
 
     static func present(over bubble: UIView, in window: UIWindow, isOutgoing: Bool,
                         myReaction: String?, items: [Item], selectableText: SelectableText? = nil,
+                        liveShaders: [LiveShader] = [],
                         showsReactions: Bool = true,
                         onReact: @escaping (String) -> Void) {
         // rendered into an image, because snapshotView returns nil or nothing for bubbles
@@ -94,6 +107,7 @@ final class MessageContextOverlay: UIView {
         let overlay = MessageContextOverlay(snapshot: snap, originFrame: frame, isOutgoing: isOutgoing,
                                             myReaction: myReaction, items: items,
                                             selectableText: selectableText,
+                                            liveShaders: liveShaders,
                                             showsReactions: showsReactions,
                                             pressScale: min(max(lift, 0.8), 1), onReact: onReact)
         overlay.sourceBubble = bubble
@@ -109,6 +123,7 @@ final class MessageContextOverlay: UIView {
 
     private init(snapshot: UIView, originFrame: CGRect, isOutgoing: Bool,
                  myReaction: String?, items: [Item], selectableText: SelectableText?,
+                 liveShaders: [LiveShader] = [],
                  showsReactions: Bool, pressScale: CGFloat,
                  onReact: @escaping (String) -> Void) {
         self.snapshot = snapshot
@@ -140,6 +155,22 @@ final class MessageContextOverlay: UIView {
             snapshot.transform = CGAffineTransform(scaleX: pressScale, y: pressScale)
         }
         addSubview(snapshot)
+        // the live canvases go over the image; the selectable text below goes
+        // over them, so a text on a bubble shader stays readable and selectable
+        for spec in liveShaders {
+            let canvas = ShaderCanvas(transparent: spec.transparent)
+            canvas.priority = .focus
+            canvas.isUserInteractionEnabled = false
+            canvas.clipsToBounds = true
+            canvas.layer.cornerRadius = spec.cornerRadius
+            canvas.layer.cornerCurve = .continuous
+            canvas.drawableCeiling = 2048
+            canvas.frame = spec.frame
+            snapshot.isUserInteractionEnabled = true
+            snapshot.addSubview(canvas)
+            canvas.show(spec.document)
+            canvas.setRunning(true)
+        }
         if let selectableText { buildSelectableText(selectableText) }
 
         if showsReactions { buildReactionBar() }
