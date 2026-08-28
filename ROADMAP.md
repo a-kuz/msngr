@@ -503,7 +503,12 @@ A ✅ goes in only together with a link to the evidence.
   - 🟡 capsules widen the bubble and wrap into rows (BubbleLayoutTests units)
   - ✅ a list of who reacted: a capsule tap in a group opens the sheet, in a direct
     chat it keeps toggling (ReactionRosterTests units, run 13)
-  - ⬜ particles when a reaction appears
+  - ✅ particles when a reaction appears: the burst plays when a visible
+    message's reaction count grows — a first incoming reaction live, with the
+    peer's emoji swaps and retractions correctly silent; the paths log their
+    verdicts in the `shader` category
+    (qa/runs/2026-08-29-reaction-burst-run.md, frames in
+    qa/runs/2026-08-29-reaction-burst/)
 - The context menu
   - ✅ opening on a long press: the blur, the bubble snapshot, the emoji cascade (anim-review, scenario 2)
   - ✅ closing with the bubble returning into place (anim-review)

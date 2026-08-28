@@ -85,7 +85,10 @@ enum ShaderEffects {
 @MainActor
 enum ShaderEffectPlayer {
     static func play(_ effect: ShaderSurfaces.Effect, in host: UIView, at point: CGPoint) {
-        guard ShaderSurfaces.shared.effectsEnabled else { return }
+        guard ShaderSurfaces.shared.effectsEnabled else {
+            MsngrLog.shader.info("effect \(effect.rawValue, privacy: .public) skipped: effects are off")
+            return
+        }
         let document = ShaderEffects.document(for: effect)
         let canvas = ShaderCanvas(transparent: true)
         canvas.priority = .focus
@@ -94,6 +97,14 @@ enum ShaderEffectPlayer {
         canvas.frame = host.bounds
         canvas.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         host.addSubview(canvas)
+        MsngrLog.shader.info("effect \(effect.rawValue, privacy: .public) starts")
+        canvas.onState = { state in
+            switch state {
+            case .ready: MsngrLog.shader.info("effect \(effect.rawValue, privacy: .public) ready")
+            case .failed(let why): MsngrLog.shader.error("effect \(effect.rawValue, privacy: .public) failed: \(why, privacy: .public)")
+            case .compiling: break
+            }
+        }
         canvas.show(document)
         // iMouse: the point of the event, in the canvas's pixels with y up
         canvas.renderer?.touch(point, in: host.bounds.size, scale: canvas.metalView.contentScaleFactor, began: true)
