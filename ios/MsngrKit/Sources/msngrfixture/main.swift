@@ -685,6 +685,94 @@ func showcase(dir: URL, base: URL) async throws {
     for p in people { print("  \(p.username) — \(p.userId) — \(p.home.path)") }
 }
 
+/// Waits until the person's outbox is empty: with a guest on a real device
+/// there is no second database to watch, so the send is done when it left.
+func flush(_ p: Person, _ what: String) async throws {
+    try await settle("\(what) to leave \(p.username)'s outbox", seconds: 120) {
+        try await p.db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM outbox") ?? 0
+        } == 0
+    }
+}
+
+/// Dresses an existing account — a phone that registered itself — the way the
+/// showcase dresses `demo`: nova opens a chat (it arrives as a message
+/// request), sends every sticker and both bubble shaders, and the aurora as a
+/// shader message to set as the background from its long-press menu; the
+/// guest is added to the «Showcase» group. Run `showcase` itself first: the
+/// avatars and the group are its work.
+func showcaseGuest(dir: URL, base: URL, handle: String) async throws {
+    let nova = try await openPerson(name: "nova", display: "Nova", dir: dir, base: base)
+    let iris = try await openPerson(name: "iris", display: "Iris", dir: dir, base: base)
+    for p in [nova, iris] { await startEngine(p, base: base) }
+
+    let found = try await nova.api.searchUsers(handle)
+    guard let guest = found.first(where: { $0.username == handle }) else {
+        throw FixtureError("no user with the handle \(handle) on the stand")
+    }
+    print("· guest: \(guest.username) — \(guest.id)")
+
+    let chatId = try await nova.api.createChat(kind: "direct", memberIds: [guest.id], title: nil)
+    print("· direct nova ↔ \(guest.username): \(chatId)")
+
+    if try await kindCount(nova, chatId, "sticker") < ShaderGallery.stickers.count {
+        var hello = ContentPayload(kind: "text")
+        hello.text = "Every one of these is a tiny program. Tap them."
+        try await nova.engine.enqueue(content: hello, chatId: chatId)
+        let captions = [
+            "Pond": "Drop a finger in.",
+            "Fireworks": "Tap where the next one should go.",
+            "Eye": "It follows your finger. Tap to make it blink.",
+            "Ink": "Stir it.",
+            "Clock": "This one knows the time.",
+        ]
+        for doc in ShaderGallery.stickers {
+            var sticker = ContentPayload(kind: "sticker")
+            sticker.shader = doc
+            try await nova.engine.enqueue(content: sticker, chatId: chatId)
+            if let caption = captions[doc.name ?? ""] {
+                var line = ContentPayload(kind: "text")
+                line.text = caption
+                try await nova.engine.enqueue(content: line, chatId: chatId)
+            }
+        }
+        var foil = ContentPayload(kind: "text")
+        foil.text = "This text sits on holographic foil. Scroll, and the card tilts."
+        foil.bubbleShader = ShaderGallery.foil
+        try await nova.engine.enqueue(content: foil, chatId: chatId)
+        var ember = ContentPayload(kind: "text")
+        ember.text = "And this one is written over embers."
+        ember.bubbleShader = ShaderGallery.ember
+        try await nova.engine.enqueue(content: ember, chatId: chatId)
+        var sky = ContentPayload(kind: "shader")
+        sky.shader = ShaderGallery.aurora
+        try await nova.engine.enqueue(content: sky, chatId: chatId)
+        var setIt = ContentPayload(kind: "text")
+        setIt.text = "Long-press the sky and set it as this chat's background. Then tilt the phone."
+        try await nova.engine.enqueue(content: setIt, chatId: chatId)
+        var close = ContentPayload(kind: "text")
+        close.text = "Send me one back. The pack is under the sticker button."
+        try await nova.engine.enqueue(content: close, chatId: chatId)
+        try await flush(nova, "the guest set")
+    }
+
+    if let groupId = try await iris.db.read({ dbc in
+        try String.fetchOne(dbc, sql: "SELECT id FROM chat WHERE kind = 'group' AND title = 'Showcase'")
+    }) {
+        try await iris.api.updateMembers(groupId, add: [guest.id], remove: [])
+        print("· \(guest.username) is in «Showcase»")
+    }
+
+    for p in [nova, iris] {
+        await p.engine.stop()
+        try await p.db.writeWithoutTransaction { dbc in
+            try dbc.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
+        }
+    }
+    print("")
+    print("Done. On the phone: accept nova's message request and follow her chat.")
+}
+
 func show(dir: URL) throws {
     for (name, _) in cast {
         let metaURL = dir.appendingPathComponent(name).appendingPathComponent("meta.json")
@@ -711,8 +799,14 @@ do {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try await seed(dir: dir, base: base)
     case "showcase":
-        try await showcase(dir: URL(fileURLWithPath: try arg("dir")),
-                           base: URL(string: try arg("base", default: "http://localhost:8787"))!)
+        if let handle = try? arg("to") {
+            try await showcaseGuest(dir: URL(fileURLWithPath: try arg("dir")),
+                                    base: URL(string: try arg("base", default: "http://localhost:8787"))!,
+                                    handle: handle)
+        } else {
+            try await showcase(dir: URL(fileURLWithPath: try arg("dir")),
+                               base: URL(string: try arg("base", default: "http://localhost:8787"))!)
+        }
     case "show":
         try show(dir: URL(fileURLWithPath: try arg("dir")))
     case "send":
@@ -766,6 +860,7 @@ do {
           msngrfixture seed --dir <fixtures> [--base http://localhost:8787] [--reset]
           msngrfixture show --dir <fixtures>
           msngrfixture showcase --dir <fixtures> [--base …]   the shader gallery on fresh demo accounts
+          msngrfixture showcase --dir <fixtures> --to <handle> [--base …]   nova dresses an existing account (a phone)
           msngrfixture send --dir <fixtures> [--as bravo] [--to alfa | --to <group title>] [--base …] [--text …]
           msngrfixture send --dir <fixtures> --shader <file.glsl|export.json> [--kind shader|sticker] [--as bravo] [--to alfa]
           msngrfixture knock --dir <fixtures> [--as delta] [--name "Delta Service"] [--to alfa] [--base …] [--text …]
