@@ -850,11 +850,11 @@ ch.send({ t: "send", chatId: bchat.chatId, clientMsgId: "cm-b3", sentAt: Date.no
   body: { v: 1, mode: "pw", msgs: {} } });
 const b3 = await ch.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-b3");
 check("block: delivery resumes after unblock",
-  !!(await ci.waitFor((f) => f.t === "msg" && f.chatId === bchat.chatId && f.seq === b3.seq)));
+  !!b3 && !!(await ci.waitFor((f) => f.t === "msg" && f.chatId === bchat.chatId && f.seq === b3.seq)));
 const irisHist2 = await api(`/api/chats/${bchat.chatId}/history?fromSeq=0`, { token: iris.token });
 check("block: blocked msg stays hidden after unblock",
   !irisHist2.msgs.some((m) => m.seq === b1.seq)
-  && irisHist2.msgs.some((m) => m.seq === b3.seq));
+  && irisHist2.msgs.some((m) => m.seq === b3?.seq));
 ch.ws.close(); ci.ws.close(); ci2.ws.close();
 
 // 21. Logout and device revocation
@@ -986,6 +986,20 @@ check("a peer sees both devices under one identity key",
   JSON.stringify(lk_devices));
 check("linking bumped the device-set version",
   lk_devices.versions[lk_owner.userId] === 2, JSON.stringify(lk_devices.versions));
+
+// the identity heal rotates a device's keys in place: peers cache the device
+// set by version, so a rotation that left the version alone would keep TOFU
+// trusting the replaced key until an unrelated cache drop
+const lk_heal = await api("/api/identity", { token: lk_owner.token, body: {
+  identityKey: "ik_rotated", identitySignKey: "isk_rotated", identityKeySig: "iksig_rotated",
+} });
+check("identity heal accepted", lk_heal.ok === true, JSON.stringify(lk_heal));
+const lk_devices2 = await api(`/api/devices?ids=${lk_owner.userId}`, { token: alice.token });
+check("identity heal bumped the device-set version",
+  lk_devices2.versions[lk_owner.userId] === 3, JSON.stringify(lk_devices2.versions));
+check("the rotated key is what peers now read",
+  lk_devices2.devices.some((d) => d.identitySignKey === "isk_rotated"),
+  JSON.stringify(lk_devices2.devices.map((d) => d.identitySignKey)));
 check("a spent session cannot be claimed twice",
   (await provisionPost(lk_start.provisionId, "claim", lk_start.provisionToken,
     { ...lk_ownerKeys })).error === "provision_claimed");
@@ -1008,7 +1022,7 @@ check("a revoked device leaves the peer's device list",
   && lk_devicesAfter.devices[0].deviceId === lk_owner.deviceId,
   JSON.stringify(lk_devicesAfter));
 check("revocation bumped the version again",
-  lk_devicesAfter.versions[lk_owner.userId] === 3, JSON.stringify(lk_devicesAfter.versions));
+  lk_devicesAfter.versions[lk_owner.userId] === 4, JSON.stringify(lk_devicesAfter.versions));
 const lk_bundlesAfter = await api(`/api/users/${lk_owner.userId}/prekeys`, { token: alice.token });
 check("a revoked device hands out no more prekey bundles",
   lk_bundlesAfter.bundles.length === 1
@@ -1027,7 +1041,7 @@ cver.send({ t: "sync", cursors: {},
   deviceVersions: { [lk_owner.userId]: 1, "01NOBODYEVERHADTHISUSERID0": 4 } });
 const verFrame = await cver.waitFor((f) => f.t === "deviceVersions");
 check("sync answers the current device-set version",
-  verFrame?.versions?.[lk_owner.userId] === 3, JSON.stringify(verFrame));
+  verFrame?.versions?.[lk_owner.userId] === 4, JSON.stringify(verFrame));
 check("an unknown user is absent from the versions answer",
   !!verFrame && !("01NOBODYEVERHADTHISUSERID0" in verFrame.versions), JSON.stringify(verFrame));
 cver.ws.close();

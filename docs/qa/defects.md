@@ -68,6 +68,18 @@ that home is still owed once the bravo home frees up. Why the original
 session forked is still unestablished (one fixture home driven by two
 processes remains the best-fitting shape).
 
+### A service storm in one chat stalls the whole sync
+Observed by another agent 2026-08-28 on the alfa fixture home while the
+repair avalanche (above) stood in the queue: bravo↔alfa `syncedSeq` froze at
+2576 with `lastSeq` 3215, the app answered repair requests for the flooded
+group at about one per 6 seconds, and even a brand-new chat from a fresh
+account stayed at 3/0 — the backlog of one chat's service frames starved
+every other chat's catch-up. The avalanche itself is closed (24d0dc6,
+8cff769); left open here: why one frame costs ~6 s (the suspicion is a
+session reset with a network round-trip per request), and that the sync
+should drain chats fairly instead of letting one chat's backlog block the
+rest.
+
 ### A silent identity rotation is not re-checked by TOFU while a device list is cached
 Found 2026-08-27 in passing during the multi-device TOFU run
 (qa/runs/2026-08-27-multidevice-tofu-run.md). `/keys-update` (the identity
@@ -79,9 +91,11 @@ its identity after a peer cached it is not caught until the cache drops for an
 unrelated reason (a genuine link/revoke, or a reconnect where the version did
 change). Reachability is behind preconditions — a warmed cache and an existing
 session, since a fresh session pulls a prekey bundle and would compare — so
-this is a gap to investigate, not a confirmed break. Two candidate fixes to
-weigh: bump `devicesVersion` on `keys-update`, or verify the identity binding
-against the cached key on each send.
+this was a gap, not a confirmed break. Closed: `/keys-update` now bumps
+`devicesVersion` and broadcasts the change the way revoke and linking do, so
+peers drop the cached set and the per-send TOFU check reads the rotated key
+(smoke `identity heal bumped the device-set version`, `the rotated key is
+what peers now read`).
 
 ### A read message's own banner shows over the open chat and stays in the shade
 Found 2026-08-27 during the notification-withdraw run
