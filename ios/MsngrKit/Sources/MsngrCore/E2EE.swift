@@ -195,6 +195,13 @@ public final class E2EEManager: @unchecked Sendable {
         try store.requestSessionReset(peerUserId: userId)
     }
 
+    /// A fresh prekey set replacing the stored one whole. Run when the device
+    /// keeps failing to open prekey envelopes addressed to it: the bundle the
+    /// server hands out no longer matches the private halves this store holds.
+    public func regeneratePrekeys(count: Int = 100) throws -> IdentityStore.GeneratedPrekeys {
+        try gate.withLock { _ in try store.regeneratePrekeys(count: count) }
+    }
+
     /// More one-time prekeys, private halves stored. The extension spends them
     /// on the other side — a prekey envelope that arrives by push consumes one
     /// — so the two of them meet over this blob.

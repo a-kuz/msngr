@@ -241,6 +241,29 @@ public final class IdentityStore: @unchecked Sendable {
         return out
     }
 
+    /// Replaces the whole prekey set: a fresh signed prekey under the next id
+    /// and a fresh one-time set, the old private halves dropped. This is the
+    /// device's answer to a stale published bundle — peers keep building
+    /// sessions it cannot open, so the halves it holds are worthless anyway.
+    public func regeneratePrekeys(count: Int = 100) throws -> GeneratedPrekeys {
+        let id = try identity()
+        let old = try loadBlob("prekeys", as: StoredPrekeys.self)
+        let spk = try SignedPreKey(id: (old?.signedPrekeyId ?? 0) + 1, identity: id)
+        var stored = StoredPrekeys(signedPrekeyId: spk.id,
+                                   signedPrekeyRaw: spk.key.rawRepresentation,
+                                   oneTime: [:],
+                                   nextOneTimeId: old?.nextOneTimeId ?? 1)
+        var oneTime: [OneTimePreKey] = []
+        for _ in 0..<count {
+            let otp = OneTimePreKey(id: stored.nextOneTimeId)
+            stored.oneTime[otp.id] = otp.key.rawRepresentation
+            stored.nextOneTimeId += 1
+            oneTime.append(otp)
+        }
+        try saveBlob("prekeys", stored)
+        return GeneratedPrekeys(signedPrekey: spk, oneTime: oneTime)
+    }
+
     public func signedPrekey(id: UInt32) throws -> Curve25519.KeyAgreement.PrivateKey? {
         guard let stored = try loadBlob("prekeys", as: StoredPrekeys.self),
               stored.signedPrekeyId == id else { return nil }
