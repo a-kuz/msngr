@@ -59,6 +59,17 @@ final class MentionMarksTests: XCTestCase {
                                                                    myReadUpTo: 3, ownUserId: "me") })
     }
 
+    /// An unread «@все» lights the mark the way a personal mention does.
+    func testTheGroupWideMentionLightsTheMark() throws {
+        let db = try AppDatabase.openInMemory()
+        try seed(db)
+        try db.write { dbc in
+            try message(dbc, seq: 1, text: "собрание, [@все](user:all)")
+        }
+        XCTAssertTrue(try mark(db, readUpTo: 0))
+        XCTAssertFalse(try mark(db, readUpTo: 1))
+    }
+
     func testPlainUnreadAndForeignMentionsStayDark() throws {
         let db = try AppDatabase.openInMemory()
         try seed(db)

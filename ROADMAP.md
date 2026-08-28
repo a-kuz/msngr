@@ -207,7 +207,10 @@ A ✅ goes in only together with a link to the evidence.
     button above the way down, its tap lands the feed on the earliest unread
     mention (qa/runs/2026-08-28-mention-token; MentionMarksTests)
   - ⬜ a mention survives a rename: it carries the userId, not the handle
-  - ⬜ @all in a group, and who is allowed to use it
+  - ✅ «@все» in a group: the token addresses every member, only an admin gets
+    it offered and it pierces the mute like a personal mention; its tap leads
+    nowhere (qa/runs/2026-08-28-mention-token; ChatSettingsTests
+    `canMentionAll`, MentionMarkdownTests, MentionMarksTests)
 - Photo
   - ✅ sending, downscale to 1280 + JPEG 0.8, a preview in the feed (media-run, case 21)
   - ✅ the bubble is in the feed the moment of the confirm tap — placeholder in

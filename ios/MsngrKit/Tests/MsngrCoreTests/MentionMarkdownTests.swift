@@ -66,6 +66,16 @@ final class MentionMarkdownTests: XCTestCase {
         XCTAssertFalse(MessageMarkdown.mentionsUser(text, userId: ""))
     }
 
+    /// «@все» addresses every member: mentionsUser answers true for any id.
+    func testTheGroupWideTokenMentionsEverybody() {
+        let text = "собрание в три, [@все](user:all)"
+        XCTAssertTrue(MessageMarkdown.mentionsUser(text, userId: "u1"))
+        XCTAssertTrue(MessageMarkdown.mentionsUser(text, userId: "someoneElse"))
+        XCTAssertFalse(MessageMarkdown.mentionsUser(text, userId: ""))
+        // a user whose id merely starts with "all" is not the group token
+        XCTAssertFalse(MessageMarkdown.mentionsUser("эй [@X](user:allan)", userId: "u1"))
+    }
+
     func testStrippingLeavesTheVisibleName() {
         XCTAssertEqual(MessageMarkdown.mentionsStripped("эй [@Bravo](user:u1), глянь"),
                        "эй @Bravo, глянь")

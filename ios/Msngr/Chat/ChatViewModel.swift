@@ -849,13 +849,21 @@ final class ChatViewModel: ObservableObject {
         Haptics.light()
     }
 
-    /// Whom a typed "@handle" may resolve to: everyone in the chat but yourself.
+    /// Whom a typed "@handle" may resolve to: everyone in the chat but
+    /// yourself, plus «@все» for a group admin.
     var mentionCandidates: [MessageMarkdown.MentionCandidate] {
-        members.compactMap { user in
+        var out: [MessageMarkdown.MentionCandidate] = members.compactMap { user in
             guard user.id != ownUserId, !user.username.isEmpty else { return nil }
             return MessageMarkdown.MentionCandidate(userId: user.id, username: user.username,
                                                     displayName: user.displayName)
         }
+        if ChatPermissions.canMentionAll(kind: kind, role: myRole) {
+            out.insert(MessageMarkdown.MentionCandidate(
+                userId: MessageMarkdown.allMentionId,
+                username: MessageMarkdown.allMentionId,
+                displayName: String(localized: "everyone")), at: 0)
+        }
+        return out
     }
 
     /// Members matching the "@prefix" the field ends with; empty when the text

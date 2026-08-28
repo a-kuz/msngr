@@ -517,7 +517,8 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         // server for a direct chat with your own id hands back someone else's
         if url.scheme?.lowercased() == "user" {
             let userId = String(url.absoluteString.dropFirst("user:".count))
-            guard !userId.isEmpty else { return }
+            // «@все» names no person, so there is nowhere to go
+            guard !userId.isEmpty, userId != MessageMarkdown.allMentionId else { return }
             Task {
                 let chatId: String?
                 if userId == ownUserId {

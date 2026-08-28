@@ -95,6 +95,12 @@ public enum ChatPermissions {
         return invitePolicy != adminPolicy || role == adminRole
     }
 
+    /// The group-wide «@все»: it pierces every member's mute, so only an
+    /// admin may send it.
+    public static func canMentionAll(kind: ChatKind, role: String?) -> Bool {
+        kind == .group && role == adminRole
+    }
+
     /// Only an admin can grant and revoke admin rights.
     public static func canManageAdmins(kind: ChatKind, role: String?) -> Bool {
         kind == .group && role == adminRole
