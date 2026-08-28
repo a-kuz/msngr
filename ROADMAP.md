@@ -644,9 +644,10 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   - ⬜ separate defaults for direct chats and for groups
   - ⬜ a sound of its own for a person, applied wherever they write
   - ⬜ a sound of its own for a mention, louder than the chat's own
-  - 🟡 a muted chat still notifying on a reply to you
-    (qa/runs/2026-08-28-mute-reply; NotificationDecisionTests; the mention half
-    waits for mentions to exist at all)
+  - ✅ a muted chat still notifying on a mention or a reply to you
+    (qa/runs/2026-08-28-mute-reply; NotificationDecisionTests,
+    MentionMarkdownTests `mentionsUser`; the mention live run in
+    qa/runs/2026-08-28-mention-token)
   - ⬜ a set of sounds to pick from, and a silent choice
   - ⬜ the sound travels with the push (`apns-sound`) so the extension does not
     have to be running for it to be right

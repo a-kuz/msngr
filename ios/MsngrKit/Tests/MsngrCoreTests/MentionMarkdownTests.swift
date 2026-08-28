@@ -57,6 +57,15 @@ final class MentionMarkdownTests: XCTestCase {
                        "[@X](user:u9) и [@Bravo Service](user:u1)")
     }
 
+    func testMentionsUserFindsOnlyTheExactId() {
+        let text = "эй [@Анна](user:u1), скажи [@Пётр](user:u12)"
+        XCTAssertTrue(MessageMarkdown.mentionsUser(text, userId: "u1"))
+        XCTAssertTrue(MessageMarkdown.mentionsUser(text, userId: "u12"))
+        XCTAssertFalse(MessageMarkdown.mentionsUser(text, userId: "u2"))
+        XCTAssertFalse(MessageMarkdown.mentionsUser("без токена u1", userId: "u1"))
+        XCTAssertFalse(MessageMarkdown.mentionsUser(text, userId: ""))
+    }
+
     func testStrippingLeavesTheVisibleName() {
         XCTAssertEqual(MessageMarkdown.mentionsStripped("эй [@Bravo](user:u1), глянь"),
                        "эй @Bravo, глянь")

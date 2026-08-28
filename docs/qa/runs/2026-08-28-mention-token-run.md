@@ -42,7 +42,17 @@ token in the text.
 - Seen in passing, pre-existing: the Design fixture still shows one
   «Сообщение ещё не загружено» placeholder from an old repair gap.
 
+## Mute-piercing (same day, third slice)
+
+- A mention of you lifts the mute the way a reply to you already does: both
+  notification paths feed `repliesToMe` with
+  `replyTo.authorId == me || MessageMarkdown.mentionsUser(text, me)`.
+  `mentionsUser` matches the exact id only (`u1` does not match `u12`) —
+  MentionMarkdownTests, 7/7.
+- Live: with the «Design» group muted, a plain message from bravo raised
+  nothing; a message carrying [@Alfa](user:…) raised the banner.
+
 ## Left for the next slices
 
-- Your own mention marked in the feed and the chat list, piercing mute the way
-  a reply already does; the unread-mention counter and the jump.
+- Your own mention marked in the feed and the chat list row; the
+  unread-mention counter and the jump.

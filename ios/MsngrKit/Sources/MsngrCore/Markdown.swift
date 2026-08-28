@@ -300,6 +300,12 @@ public enum MessageMarkdown {
         return out
     }
 
+    /// Whether the text carries a mention token of this user.
+    public static func mentionsUser(_ source: String, userId: String) -> Bool {
+        guard !userId.isEmpty else { return false }
+        return source.contains("](user:\(userId))")
+    }
+
     private static func isHandleChar(_ c: Character) -> Bool {
         c.isLetter || c.isNumber || c == "_"
     }
