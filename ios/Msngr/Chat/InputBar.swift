@@ -16,6 +16,7 @@ struct InputBar: View {
     var onSendImages: ([UIImage], String) -> Void
 
     @StateObject private var recorder = VoiceRecorder()
+    @ObservedObject private var surfaces = ShaderSurfaces.shared
     @ObservedObject private var theme = ThemeStore.shared
     /// where the take is in its life: asked for, running, locked, dropped
     @State private var gesture = RecordingGesture()
@@ -72,18 +73,24 @@ struct InputBar: View {
                         Button { onAttachFile() } label: {
                             Label("File", systemImage: "doc")
                         }
-                        Button { onAttachShader() } label: {
-                            Label("Shader", systemImage: "sparkles")
+                        // the shader composer is the owner's debugging tool:
+                        // its entries appear only when switched on in Settings
+                        if surfaces.composerEnabled {
+                            Button { onAttachShader() } label: {
+                                Label("Shader", systemImage: "sparkles")
+                            }
+                            .accessibilityIdentifier("chat.attach.shader")
                         }
-                        .accessibilityIdentifier("chat.attach.shader")
                         Button { onAttachSticker() } label: {
                             Label("Sticker", systemImage: "sparkles.rectangle.stack")
                         }
                         .accessibilityIdentifier("chat.attach.sticker")
-                        Button { onAttachBubbleShader() } label: {
-                            Label("Bubble shader", systemImage: "bubble.left.fill")
+                        if surfaces.composerEnabled {
+                            Button { onAttachBubbleShader() } label: {
+                                Label("Bubble shader", systemImage: "bubble.left.fill")
+                            }
+                            .accessibilityIdentifier("chat.attach.bubbleShader")
                         }
-                        .accessibilityIdentifier("chat.attach.bubbleShader")
                         if pasteboardHasImage && text.isEmpty {
                             Button { pasteImages() } label: {
                                 Label("Paste", systemImage: "doc.on.clipboard")

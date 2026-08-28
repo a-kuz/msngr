@@ -1394,6 +1394,17 @@
         }
       }
     },
+    "Shader composer in chats" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Композер шейдеров в чатах"
+          }
+        }
+      }
+    },
     "Half resolution in chats" : {
       "extractionState" : "manual",
       "localizations" : {

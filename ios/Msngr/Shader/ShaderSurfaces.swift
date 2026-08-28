@@ -33,6 +33,14 @@ final class ShaderSurfaces: ObservableObject {
         }
     }
     static let scaleChanged = Notification.Name("msngr.shaderScaleChanged")
+    /// The shader composer in the chat: the «Shader» and «Bubble shader»
+    /// items of the attachment menu. Off by default — writing a shader in
+    /// place of a message is a debugging tool, not the everyday path; the
+    /// sticker panel, the backgrounds, the avatar and the effects keep their
+    /// own composer entries whatever this says.
+    @Published var composerEnabled: Bool {
+        didSet { UserDefaults.standard.set(composerEnabled, forKey: "shaderComposerEnabled") }
+    }
     /// the sticker pack, newest first
     @Published private(set) var stickers: [ShaderDocument] = []
 
@@ -43,6 +51,7 @@ final class ShaderSurfaces: ObservableObject {
     private init() {
         effectsEnabled = UserDefaults.standard.object(forKey: "shaderEffectsEnabled") as? Bool ?? true
         halfScale = UserDefaults.standard.object(forKey: "shaderHalfScale") as? Bool ?? false
+        composerEnabled = UserDefaults.standard.object(forKey: "shaderComposerEnabled") as? Bool ?? false
     }
 
     private var db: DatabaseQueue? { AppState.shared.db }

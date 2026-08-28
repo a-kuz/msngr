@@ -320,6 +320,10 @@ struct SettingsView: View {
                 Label("Half resolution in chats", systemImage: "square.resize.down")
             }
             .accessibilityIdentifier("settings.shaderHalfScale")
+            Toggle(isOn: $surfaces.composerEnabled) {
+                Label("Shader composer in chats", systemImage: "chevron.left.forwardslash.chevron.right")
+            }
+            .accessibilityIdentifier("settings.shaderComposer")
             ForEach(ShaderSurfaces.Effect.allCases, id: \.rawValue) { effect in
                 HStack {
                     Button {
