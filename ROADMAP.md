@@ -270,9 +270,12 @@ A ✅ goes in only together with a link to the evidence.
     (qa/runs/2026-08-17-groups-run)
 - Shaders (user code, the Shadertoy dialect of GLSL, transpiled to MSL on the
   device; design in `docs/plans/2026-08-28-shader-messages-design.md`)
-  - ⬜ a shader message: the source pasted into the composer, a live preview,
-    the bubble animating in the peer's feed, a full-screen player with the
-    source reachable
+  - ✅ a shader message: Shadertoy code or a JSON export pasted into the
+    composer, a live preview, the bubble animating in the peer's feed, a
+    full-screen player with touches as `iMouse` and the source to copy;
+    multipass (Image + Buffer A–D, a pass reading its own previous frame)
+    (qa/runs/2026-08-28-shader-messages-run; ShaderTranspilerTests compile the
+    emitted MSL, including the owner's 300-line sample)
   - ⬜ a shader as the chat background, and «Set as background» from a
     received shader message; local, no sync
   - ⬜ a shader behind a text bubble, chosen by the sender
