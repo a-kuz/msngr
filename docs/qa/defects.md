@@ -87,7 +87,11 @@ never-asked rows could send its first request — repair to that peer was dead
 until the envelopes expire a week on. Held live for a 240 s window with the
 bravo CLI online: pendingDecrypt stayed at 2937 exactly. Fixed in 5707283:
 a row with spent attempts is not in flight
-(`testSpentRepairsDoNotHoldTheCeilingShut`).
+(`testSpentRepairsDoNotHoldTheCeilingShut`). Verified live on the same home
+with the fixed build: within a minute of launch twenty fresh requests were
+out (`repairAttempts = 1` on 20 rows next to the 2516 spent ones), and the
+never-asked pool was growing again (421 → 1482) as catch-up resumed pulling
+envelopes.
 
 ### A service storm in one chat stalls the whole sync
 Observed by another agent 2026-08-28 on the alfa fixture home while the
