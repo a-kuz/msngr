@@ -1087,6 +1087,10 @@ public actor SyncEngine {
             }
             await requestRepairIfDue(pending, now: now)
         }
+        // a debt of stale prekey envelopes may predate the code that acts on
+        // them: the sweep gives the standing pile the same answer a fresh
+        // envelope gets, or the device would wait for someone to write again
+        await republishPrekeysIfDue(now: now)
     }
 
     /// One attempt at a stored envelope. Success moves it into the feed and
