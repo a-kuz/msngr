@@ -1370,10 +1370,25 @@ extension MessageCell {
                                linkColor: colors.link,
                                codeBackground: Self.codeBackground(outgoing: plan.isOutgoing))
         }
+        // the snapshot is layer.render, which a Metal layer stays out of: the
+        // shader behind a text, a shader message and a sticker lift as their
+        // own live canvas over the image
+        var liveShaders: [MessageContextOverlay.LiveShader] = []
+        if !msg.deletedForAll {
+            if msg.kind == .text, let doc = msg.bubbleShader {
+                liveShaders.append(.init(document: doc, frame: bubbleView.bounds,
+                                         cornerRadius: Theme.bubbleCorner))
+            } else if let sf = plan?.shaderFrame, let doc = msg.shader, msg.kind == .shader {
+                liveShaders.append(.init(document: doc, frame: sf, cornerRadius: Theme.bubbleCorner))
+            } else if let sf = plan?.shaderFrame, let doc = msg.shader, msg.kind == .sticker {
+                liveShaders.append(.init(document: doc, frame: sf, transparent: true))
+            }
+        }
         let textWasHidden = textView.isHidden
         textView.isHidden = selectable != nil || textWasHidden
         MessageContextOverlay.present(over: bubbleView, in: window, isOutgoing: msg.isOutgoing,
                                       myReaction: mine, items: items, selectableText: selectable,
+                                      liveShaders: liveShaders,
                                       showsReactions: showsReactions,
                                       onReact: { [weak self] emoji in self?.onReact?(emoji) })
         textView.isHidden = textWasHidden
