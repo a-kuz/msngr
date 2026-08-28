@@ -48,6 +48,9 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private var reactionViews: [ReactionCapsuleView] = []
     private let voiceView = VoiceMessageView()
     private let shaderView = ShaderMessageView()
+    /// Between willDisplay and didEndDisplaying: what a live shader configured
+    /// into this cell in the meantime has to know to start.
+    private var onScreen = false
     private let avatarView = FeedAvatarView()
     private var msg: Message?
     private var plan: BubbleLayoutPlan?
@@ -108,7 +111,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         shaderView.isHidden = true
         shaderView.isUserInteractionEnabled = true
         shaderView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(shaderTapped)))
-        bubbleView.addSubview(shaderView)
+        // under the status capsule, like a photo: the time reads over the picture
+        bubbleView.insertSubview(shaderView, belowSubview: statusBackdrop)
         // the rings follow the sender's progress store rather than polling it
         progressCancellable = MediaProgress.shared.$fractions
             .receive(on: DispatchQueue.main)
@@ -377,6 +381,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             shaderView.isHidden = false
             shaderView.frame = sf
             shaderView.configure(document: document)
+            shaderView.setActive(onScreen)
         } else {
             shaderView.isHidden = true
             shaderView.setActive(false)
@@ -633,7 +638,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     /// Off-screen cells stop their players; the collection view drives this
     /// from willDisplay/didEndDisplaying.
     func setAutoplayActive(_ active: Bool) {
-        if !shaderView.isHidden { shaderView.setActive(active) }
+        onScreen = active
+        shaderView.setActive(active && !shaderView.isHidden)
         for (layer, _) in autoplay {
             if active { layer.player?.play() } else { layer.player?.pause() }
         }
