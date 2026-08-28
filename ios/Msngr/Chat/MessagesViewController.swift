@@ -912,6 +912,12 @@ final class DateSeparatorCell: UICollectionViewCell {
     private let capsule = DateCapsuleView()
     private var text = ""
 
+    /// The first message of the day carries its own series gap
+    /// (`BubbleLayout.normalGap`) between itself and the capsule, while the last
+    /// message of the previous day adjoins the cell directly. Half that gap
+    /// moves the capsule toward the older day, so the air on both sides matches.
+    static let olderSideShift: CGFloat = BubbleLayout.normalGap / 2
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         contentView.transform = CGAffineTransform(scaleX: 1, y: -1)
@@ -924,7 +930,8 @@ final class DateSeparatorCell: UICollectionViewCell {
         self.text = text
         capsule.set(text: text, maxWidth: contentView.bounds.width - 40,
                     height: contentView.bounds.height - 10)
-        capsule.center = CGPoint(x: contentView.bounds.midX, y: contentView.bounds.midY)
+        capsule.center = CGPoint(x: contentView.bounds.midX,
+                                 y: contentView.bounds.midY + Self.olderSideShift)
     }
 
     override func layoutSubviews() {
