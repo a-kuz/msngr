@@ -296,7 +296,11 @@ camera, keyboard, haptics).
   the plus writes a new one, a long press removes. A sticker is a square with
   no bubble behind it: the shader's `O.a` decides what shows through. A
   received sticker is saved with «В стикеры»; the pack is local, keyed by the
-  hash of the document, so the same sticker saved twice is one tile.
+  hash of the document, so the same sticker saved twice is one tile. A new
+  pack starts with the four bundled stickers (`ShaderStickers`: Gloop, Flame
+  heart, Orb, Sparkle), seeded once into the same table, so they are removed
+  and re-added like any other; Gloop and Orb follow the finger through
+  `iMouse`, Sparkle bakes its polygon's distance field in a buffer pass.
 - **The avatar.** «Шейдер-аватар…» in Settings (and in a group's info for an
   admin) uploads the document as the avatar blob; every peer's app tells it
   from a picture by the first byte and runs it in the circle, in the chat

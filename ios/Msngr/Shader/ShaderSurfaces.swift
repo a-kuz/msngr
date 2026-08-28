@@ -54,10 +54,31 @@ final class ShaderSurfaces: ObservableObject {
                 }
             }
         }
+        seedStickers(db)
         if let rows = try? db.read({ dbc in
             try String.fetchAll(dbc, sql: "SELECT document FROM savedSticker ORDER BY addedAt DESC")
         }) {
             stickers = rows.compactMap { try? dec.decode(ShaderDocument.self, from: Data($0.utf8)) }
+        }
+    }
+
+    /// Puts the bundled stickers into a pack that has never had them, once per
+    /// database: a sticker the user removed stays removed.
+    private func seedStickers(_ db: DatabaseQueue) {
+        let key = "shader.stickers.seeded"
+        let seeded = (try? db.read { dbc in
+            try String.fetchOne(dbc, sql: "SELECT value FROM kv WHERE key = ?", arguments: [key])
+        }) != nil
+        if seeded { return }
+        // oldest first, so the pack reads in the bundled order under the user's own
+        let base = Date().timeIntervalSince1970 - Double(ShaderStickers.bundled.count)
+        try? db.write { dbc in
+            for (i, doc) in ShaderStickers.bundled.enumerated() {
+                guard let json = Self.json(doc) else { continue }
+                try dbc.execute(sql: "INSERT OR IGNORE INTO savedSticker (hash, document, addedAt) VALUES (?, ?, ?)",
+                                arguments: [doc.contentHash, json, base + Double(ShaderStickers.bundled.count - i)])
+            }
+            try KVRow(key: key, value: "1").save(dbc)
         }
     }
 
