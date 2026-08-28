@@ -24,6 +24,10 @@ let package = Package(
         ),
         .executableTarget(name: "msngrfixture", dependencies: ["MsngrCore"]),
         .testTarget(name: "MsngrCryptoTests", dependencies: ["MsngrCrypto"]),
-        .testTarget(name: "MsngrCoreTests", dependencies: ["MsngrCore"]),
+        .testTarget(
+            name: "MsngrCoreTests",
+            dependencies: ["MsngrCore"],
+            resources: [.copy("Fixtures")]
+        ),
     ]
 )
