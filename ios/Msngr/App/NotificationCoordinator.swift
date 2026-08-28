@@ -227,6 +227,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
             let message = try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE chatId = ? AND seq = ?",
                                                arguments: [chatId, seq])
             info.repliesToMe = message?.replyTo?.authorId == ownUserId
+                || MessageMarkdown.mentionsUser(message?.text ?? "", userId: ownUserId)
             // a request before it is accepted: the sender's name shows, the content does not
             if hidden {
                 info.content = NotificationContentBuilder.requestContent(
@@ -318,7 +319,8 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
                                               arguments: [chatId]) ?? false
                 guard let seq else { return (false, false, muted, false) }
                 let row = try Row.fetchOne(dbc, sql: """
-                    SELECT m.seq AS seq, m.replyTo AS replyTo, c.myReadUpTo AS readUpTo
+                    SELECT m.seq AS seq, m.replyTo AS replyTo, m.text AS text,
+                           c.myReadUpTo AS readUpTo
                     FROM message m JOIN chat c ON c.id = m.chatId
                     WHERE m.chatId = ? AND m.seq = ?
                     """, arguments: [chatId, seq])
@@ -327,7 +329,9 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
                 let reply = (row?["replyTo"] as String?).flatMap {
                     try? JSONDecoder().decode(ReplyPreview.self, from: Data($0.utf8))
                 }
-                return (inDB, read, muted, reply?.authorId == ownUserId)
+                let toMe = reply?.authorId == ownUserId
+                    || MessageMarkdown.mentionsUser(row?["text"] as String? ?? "", userId: ownUserId)
+                return (inDB, read, muted, toMe)
             }
             (messageInDB, messageRead, muted, repliesToMe) = state ?? (false, false, false, false)
         }
