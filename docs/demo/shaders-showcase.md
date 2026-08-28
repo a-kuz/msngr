@@ -52,6 +52,31 @@ A home belongs to one device at a time: `pull` it back before installing it
 elsewhere, and never run `msngrfixture` as `demo` while a device holds that
 home.
 
+## On a phone
+
+A fixture home is a simulator mechanism; a phone joins as itself. Once:
+
+```bash
+make device TEAM=<team id>        # builds, signs and installs on the connected phone
+```
+
+(`TEAM` and `DEVICE_APP_ID` can live in `local.mk`; the app talks to the
+shared stand by default.) On the phone, register any account — say `boss` —
+then dress it from here:
+
+```bash
+cd ios/MsngrKit && .build/debug/msngrfixture showcase \
+  --dir ../../.claude/fixtures --to boss --base https://msngr.a-kuz.online
+```
+
+Nova's chat arrives as a message request: accept it and the whole set is
+there, plus the aurora as a shader message — long-press it and «Сделать
+фоном», then tilt the phone. The guest is added to the «Showcase» group, so
+both shader avatars are on the list. The sticker pack is bundled, so the
+phone can send every sticker back; the heart's beat lands on the haptics
+there, which no simulator shows. Run `showcase` without `--to` first if the
+stand has never been seeded: the avatars and the group are its work.
+
 ## The script
 
 1. **The chat list.** Nova's avatar is turning: a nebula with a comet
