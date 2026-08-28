@@ -14,4 +14,6 @@ public enum MsngrLog {
     /// Undecryptable messages: the reason, the attempt counter, the request sent to the
     /// sender and its outcome. An undecryptable message is a defect, so it never stays silent.
     public static let repair = Logger(subsystem: subsystem, category: "repair")
+    /// Notifications: what willPresent decided about a push and from which inputs.
+    public static let notifications = Logger(subsystem: subsystem, category: "notifications")
 }

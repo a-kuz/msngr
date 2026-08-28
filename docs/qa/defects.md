@@ -643,3 +643,14 @@ touch — the list's own field sits behind the sheet and is not hittable, which
 is what tells the two apart, and no placeholder is named. Verified live: the
 sheet's field is the only hittable one in the tree on a ru simulator
 (`newchat` accessibility dump, 2026-08-21).
+
+### The date capsule sits closer to the previous day than to its own
+Reported by the owner 2026-08-28 with a screenshot: the «Сегодня»/«Вчера»
+capsule hugs the last message of the previous day (~5 pt) while the first
+message of the new day stands ~13 pt away — the message brings its own series
+gap (`BubbleLayout.normalGap`) on that side and the capsule's padding is
+symmetric, so the air is not.
+Closed: `DateSeparatorCell` now shifts the capsule half the series gap toward
+the older day, which makes both sides come out equal (~9 pt).
+`DateSeparatorSpacingTests` holds the shift; verified live on the Bravo chat
+with «Сегодня» between yesterday's and today's messages.

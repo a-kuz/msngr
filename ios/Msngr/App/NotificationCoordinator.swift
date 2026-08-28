@@ -296,7 +296,10 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         // an APNs push carries a UNPushNotificationTrigger here, our own local one has nil
         let isLocal = notification.request.trigger == nil
         let userInfo = notification.request.content.userInfo
-        guard let chatId = userInfo["chatId"] as? String else { return [.banner] }
+        guard let chatId = userInfo["chatId"] as? String else {
+            MsngrLog.notifications.debug("willPresent: no chatId, showing as is")
+            return [.banner]
+        }
         let seq = userInfo["seq"] as? Int
 
         // the message's state in the local database: already in over WS, already read
@@ -328,6 +331,11 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
             messageInDB: messageInDB,
             messageRead: messageRead,
             muted: muted)
+        MsngrLog.notifications.debug("""
+            willPresent chat=\(chatId, privacy: .public) seq=\(seq ?? -1, privacy: .public) \
+            local=\(isLocal) open=\(self.activeChatId == chatId) inDB=\(messageInDB) \
+            read=\(messageRead) muted=\(muted) -> \(show ? "show" : "suppress", privacy: .public)
+            """)
         guard show else { return [] } // the badge arrives as its own number in the push
         if let key { shownKeys.insert(key) }
         return [.banner, .list]
