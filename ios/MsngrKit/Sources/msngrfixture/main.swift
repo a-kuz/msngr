@@ -378,30 +378,40 @@ func send(dir: URL, base: URL, name: String, peer: String, text: String, repeatC
 
 /// Reacts to the peer's latest message in their direct chat.
 func react(dir: URL, base: URL, name: String, peer: String, emoji: String) async throws {
-    guard let member = cast.first(where: { $0.name == name }) else {
+    // a seeded account, or one `knock` registered under the same directory
+    let display = cast.first(where: { $0.name == name })?.display ?? name
+    guard FileManager.default.fileExists(atPath: dir.appendingPathComponent(name).appendingPathComponent("meta.json").path) else {
         throw FixtureError("unknown account \(name)")
     }
-    let p = try await openPerson(name: member.name, display: member.display, dir: dir, base: base)
+    let p = try await openPerson(name: name, display: display, dir: dir, base: base)
     let peerMetaURL = dir.appendingPathComponent(peer).appendingPathComponent("meta.json")
     guard let data = try? Data(contentsOf: peerMetaURL),
           let peerMeta = try? JSONDecoder().decode(Meta.self, from: data) else {
         throw FixtureError("no meta for \(peer)")
     }
-    let target: (chatId: String, id: String, text: String?)? = try await p.db.read { dbc in
-        guard let chatId = try String.fetchOne(dbc, sql: """
-            SELECT c.id FROM chat c
-            JOIN member m ON m.chatId = c.id AND m.userId = ?
-            WHERE c.kind = 'direct'
-            """, arguments: [peerMeta.userId]) else { return nil }
-        guard let row = try Row.fetchOne(dbc, sql: """
-            SELECT id, text FROM message
-            WHERE chatId = ? AND isOutgoing = 0 AND seq IS NOT NULL
-            ORDER BY seq DESC LIMIT 1
-            """, arguments: [chatId]) else { return nil }
-        return (chatId, row["id"], row["text"])
-    }
-    guard let target else { throw FixtureError("no incoming message from \(peer) to react to") }
+    // the engine first: the latest message may not have been synced yet
     await startEngine(p, base: base)
+    func latest() async throws -> (chatId: String, id: String, text: String?)? {
+        try await p.db.read { dbc in
+            guard let chatId = try String.fetchOne(dbc, sql: """
+                SELECT c.id FROM chat c
+                JOIN member m ON m.chatId = c.id AND m.userId = ?
+                WHERE c.kind = 'direct'
+                """, arguments: [peerMeta.userId]) else { return nil }
+            guard let row = try Row.fetchOne(dbc, sql: """
+                SELECT id, text FROM message
+                WHERE chatId = ? AND isOutgoing = 0 AND seq IS NOT NULL
+                ORDER BY seq DESC LIMIT 1
+                """, arguments: [chatId]) else { return nil }
+            return (chatId, row["id"], row["text"])
+        }
+    }
+    var found: (chatId: String, id: String, text: String?)?
+    try await settle("a message from \(peer) to react to", seconds: 30) {
+        found = try await latest()
+        return found != nil
+    }
+    guard let target = found else { throw FixtureError("no incoming message from \(peer) to react to") }
     var content = ContentPayload(kind: "reaction")
     content.targetLocalId = target.id
     content.emoji = emoji

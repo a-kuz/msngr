@@ -441,9 +441,14 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
 
     /// A reaction that just landed on a visible bubble bursts out of it.
     private func burstIfReactionLanded(was: ChatFeedItem, now: ChatFeedItem, at index: Int) {
-        guard case .message(let after, _, _, _, _, _, _) = now, case .message(let before, _, _, _, _, _, _) = was,
-              Self.reactionCount(after) > Self.reactionCount(before),
-              let cell = collectionView.cellForItem(at: IndexPath(item: index, section: 0)) as? MessageCell else { return }
+        guard case .message(let after, _, _, _, _, _, _) = now, case .message(let before, _, _, _, _, _, _) = was else { return }
+        let counts = (before: Self.reactionCount(before), after: Self.reactionCount(after))
+        guard counts.after > counts.before else { return }
+        guard let cell = collectionView.cellForItem(at: IndexPath(item: index, section: 0)) as? MessageCell else {
+            MsngrLog.shader.info("reaction landed \(counts.before)→\(counts.after) but the cell is off screen")
+            return
+        }
+        MsngrLog.shader.info("reaction landed \(counts.before)→\(counts.after), bursting")
         ShaderEffectPlayer.play(.reaction, in: view, at: cell.bubbleCenter(in: view))
     }
 
