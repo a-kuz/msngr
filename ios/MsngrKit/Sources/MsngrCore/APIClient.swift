@@ -361,6 +361,18 @@ public final class APIClient: @unchecked Sendable {
                                             identityKeySig: identityKeySig))
     }
 
+    /// Replaces this device's published prekey bundle whole: a fresh signed
+    /// prekey and a fresh one-time set; the server drops the stale one-times.
+    public func republishPrekeys(signedPrekey: RegisterRequest.SignedPrekeyDTO,
+                                 oneTimePrekeys: [RegisterRequest.OneTimePrekeyDTO]) async throws {
+        struct Body: Encodable {
+            let signedPrekey: RegisterRequest.SignedPrekeyDTO
+            let oneTimePrekeys: [RegisterRequest.OneTimePrekeyDTO]
+        }
+        _ = try await request("api/prekeys/republish", method: "POST",
+                              jsonBody: Body(signedPrekey: signedPrekey, oneTimePrekeys: oneTimePrekeys))
+    }
+
     public func uploadPrekeys(_ keys: [RegisterRequest.OneTimePrekeyDTO]) async throws {
         struct Body: Encodable { let oneTimePrekeys: [RegisterRequest.OneTimePrekeyDTO] }
         _ = try await request("api/prekeys", method: "POST", jsonBody: Body(oneTimePrekeys: keys))

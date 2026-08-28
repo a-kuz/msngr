@@ -87,6 +87,44 @@ final class PrekeyEnvelopeTests: XCTestCase {
         return try encoder.encode(session)
     }
 
+    /// Republishing the bundle replaces every private half: an envelope built
+    /// on the old bundle no longer opens (its signed prekey id is gone), and a
+    /// peer who fetches the fresh bundle builds a session that works.
+    func testARegeneratedBundleOpensFreshEnvelopesAndDropsTheOldOnes() throws {
+        let (store, decryptor) = try makeStore()
+        var (oldPeer, oldSpkId) = try makePeer(against: store)
+        let staleBox = try oldPeer.message("from the old bundle", spkId: oldSpkId)
+
+        let fresh = try store.regeneratePrekeys(count: 2)
+        XCTAssertEqual(fresh.signedPrekey.id, oldSpkId + 1)
+        XCTAssertNil(try store.signedPrekey(id: oldSpkId), "the old signed prekey half survived")
+        XCTAssertNotNil(try store.signedPrekey(id: fresh.signedPrekey.id))
+        XCTAssertNotNil(try store.oneTimePrekey(id: fresh.oneTime[0].id))
+
+        let stale = try decryptor.decrypt(envelopeJSON: try envelope(staleBox), chatId: "c1",
+                                          fromUserId: peerUserId, fromDeviceId: peerDeviceId)
+        XCTAssertEqual(reason(stale), "bad_pk", "an old-bundle envelope should miss the new keys")
+
+        let ours = try store.identity()
+        let bundle = PreKeyBundle(identity: try ours.publicKeys,
+                                  signedPreKeyId: fresh.signedPrekey.id,
+                                  signedPreKey: fresh.signedPrekey.key.publicKey.rawRepresentation,
+                                  signedPreKeySignature: fresh.signedPrekey.signature,
+                                  oneTimePreKeyId: nil, oneTimePreKey: nil)
+        let identity = IdentityKeyPair()
+        let x3dh = try X3DH.initiate(our: identity, their: bundle)
+        var newPeer = Peer(identity: identity,
+                           session: try DoubleRatchetSession.initAlice(
+                               sharedSecret: x3dh.sharedSecret,
+                               theirRatchetPub: fresh.signedPrekey.key.publicKey.rawRepresentation,
+                               ad: x3dh.associatedData),
+                           ephemeral: x3dh.ephemeralPublic)
+        let freshBox = try newPeer.message("on the fresh bundle", spkId: fresh.signedPrekey.id)
+        let opened = try decryptor.decrypt(envelopeJSON: try envelope(freshBox), chatId: "c1",
+                                           fromUserId: peerUserId, fromDeviceId: peerDeviceId)
+        XCTAssertEqual(text(opened), "on the fresh bundle")
+    }
+
     /// The signing key is the peer's real one, the DH key is somebody else's.
     /// The pair is not signed as one, so the envelope opens nothing and the
     /// peer's trusted identity is not written on the strength of it.

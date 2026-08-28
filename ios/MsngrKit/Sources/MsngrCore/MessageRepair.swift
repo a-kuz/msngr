@@ -77,6 +77,28 @@ public enum MessageRepair {
     /// handed out again.
     public static let redistributeAfter: TimeInterval = 60
 
+    /// Failures that say this device's own published bundle is stale: a peer
+    /// built an X3DH session on prekeys whose private halves this store does
+    /// not hold (`pk_decrypt_failed`), or named a signed prekey id this store
+    /// has never had (`bad_pk`). No repair fixes these from the peer's side —
+    /// the bundle itself has to be republished.
+    public static let staleBundleReasons: Set<String> = ["pk_decrypt_failed", "bad_pk"]
+
+    /// Distinct failed prekey envelopes before the bundle is republished. One
+    /// can be a duplicate or a corrupt frame; a repeat says the bundle.
+    public static let republishAfterStaleFailures = 3
+
+    /// Shortest wait between two republishes, so a burst of stale envelopes
+    /// already in flight does not roll the bundle again and again.
+    public static let republishInterval: TimeInterval = 3600
+
+    /// True when the device should republish its prekey bundle now.
+    public static func republishDue(staleFailures: Int, lastRepublishAt: Double,
+                                    now: Double) -> Bool {
+        staleFailures >= republishAfterStaleFailures
+            && now - lastRepublishAt >= republishInterval
+    }
+
     public static func retryDue(lastTriedAt: Double, now: Double) -> Bool {
         now - lastTriedAt >= retryInterval
     }

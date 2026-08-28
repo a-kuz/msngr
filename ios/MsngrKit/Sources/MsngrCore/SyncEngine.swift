@@ -946,6 +946,9 @@ public actor SyncEngine {
         }) ?? 1
         MsngrLog.repair.error(
             "unreadable chat=\(chatId, privacy: .public) seq=\(seq, privacy: .public) reason=\(reason, privacy: .public) attempts=\(attempts, privacy: .public)")
+        if MessageRepair.staleBundleReasons.contains(reason) {
+            await republishPrekeysIfDue(now: now)
+        }
         // a reason that will not clear on its own: ask the sender for a copy now
         guard !MessageRepair.retryableReasons.contains(reason) else { return }
         let pending = PendingEnvelope(chatId: chatId, seq: seq, from: from,
@@ -953,6 +956,48 @@ public actor SyncEngine {
                                       reason: reason, attempts: attempts, firstSeenAt: now,
                                       lastTriedAt: now, repairAttempts: 0, repairAskedAt: 0)
         await requestRepairIfDue(pending, now: now)
+    }
+
+    /// The device keeps failing to open prekey envelopes addressed to it: the
+    /// published bundle no longer matches the private halves in its own store,
+    /// and no peer-side repair can fix that. Once enough distinct envelopes
+    /// have said so, the bundle is republished whole — a fresh signed prekey,
+    /// a fresh one-time set — and peers rebuild their sessions on keys this
+    /// device actually holds.
+    private func republishPrekeysIfDue(now: Double) async {
+        let state = (try? await db.read { dbc -> (Int, Double) in
+            let failures = try Int.fetchOne(dbc, sql: """
+                SELECT COUNT(*) FROM pendingDecrypt
+                WHERE reason IN ('pk_decrypt_failed', 'bad_pk')
+                """) ?? 0
+            let last = try Double.fetchOne(
+                dbc, sql: "SELECT CAST(value AS REAL) FROM kv WHERE key = 'lastPrekeyRepublish'") ?? 0
+            return (failures, last)
+        }) ?? (0, 0)
+        guard MessageRepair.republishDue(staleFailures: state.0, lastRepublishAt: state.1,
+                                         now: now) else { return }
+        do {
+            let fresh = try e2ee.regeneratePrekeys()
+            try await api.republishPrekeys(
+                signedPrekey: .init(id: fresh.signedPrekey.id,
+                                    key: fresh.signedPrekey.key.publicKey.rawRepresentation.base64urlEncodedString(),
+                                    sig: fresh.signedPrekey.signature.base64urlEncodedString()),
+                oneTimePrekeys: fresh.oneTime.map {
+                    .init(id: $0.id, key: $0.key.publicKey.rawRepresentation.base64urlEncodedString())
+                })
+            try? await db.write { dbc in
+                try dbc.execute(sql: "INSERT OR REPLACE INTO kv (key, value) VALUES ('lastPrekeyRepublish', ?)",
+                                arguments: [String(now)])
+            }
+            MsngrLog.repair.notice(
+                "prekey bundle republished after \(state.0, privacy: .public) stale envelopes")
+        } catch {
+            // the store may hold the fresh set while the upload failed; the next
+            // stale envelope retries the upload, and until then the server keeps
+            // handing out the old bundle — no worse than before the attempt
+            MsngrLog.repair.error(
+                "prekey republish failed: \(String(describing: error), privacy: .public)")
+        }
     }
 
     /// Whether the feed already holds this message, whoever wrote it.

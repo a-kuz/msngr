@@ -576,6 +576,39 @@ export class UserDO implements DurableObject {
         return json({ ok: true, version });
       }
 
+      case "/keys-republish": {
+        // The device found out its published bundle is stale: peers build
+        // X3DH sessions it cannot open (its own prekey private halves are
+        // missing). It hands in a fresh signed prekey and a fresh set of
+        // one-time prekeys; the old one-times are dropped whole — every one
+        // of them is from the generation that does not open.
+        const b = (await req.json()) as {
+          deviceId: string;
+          signedPrekey: { id: number; key: string; sig: string };
+          oneTimePrekeys?: PrekeyUpload[];
+        };
+        const rec = await this.state.storage.get<IdentityRecord>(ikKey(b.deviceId));
+        if (!rec) return err("not_found", 404);
+        rec.signedPrekeyId = b.signedPrekey.id;
+        rec.signedPrekey = b.signedPrekey.key;
+        rec.signedPrekeySig = b.signedPrekey.sig;
+        const stale = [...(await this.state.storage.list({ prefix: otpPrefix(b.deviceId) })).keys()];
+        for (let i = 0; i < stale.length; i += STORAGE_BATCH) {
+          await this.state.storage.delete(stale.slice(i, i + STORAGE_BATCH));
+        }
+        const puts: Record<string, unknown> = { [ikKey(b.deviceId)]: rec };
+        for (const k of (b.oneTimePrekeys ?? []).slice(0, 200)) {
+          puts[otpKey(b.deviceId, k.id)] = k.key;
+        }
+        await this.putBatched(puts);
+        // peers holding a cached device set would keep building sessions on
+        // the stale bundle; the bump makes them refetch
+        const version = ((await this.state.storage.get<number>("devicesVersion")) ?? 1) + 1;
+        await this.state.storage.put("devicesVersion", version);
+        await this.broadcastDevicesChanged(version);
+        return json({ ok: true, version });
+      }
+
       case "/dev-fault": {
         const b = (await req.json()) as { failEvents?: number };
         this.devFailEvents = Math.max(0, Math.floor(b.failEvents ?? 0));

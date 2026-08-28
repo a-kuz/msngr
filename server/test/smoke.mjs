@@ -143,6 +143,25 @@ check("prekey bundle", bundle.ok && bundle.bundles[0].oneTimePrekey?.key === "ot
 const bundle2 = await api(`/api/users/${bob.userId}/prekeys`, { token: alice.token });
 check("one-time prekey consumed", bundle2.bundles[0].oneTimePrekey?.key === "otp2_b");
 
+// A device that keeps failing to open prekey envelopes republishes its bundle
+// whole: the signed prekey is replaced and the stale one-times are dropped.
+const repub = await api("/api/prekeys/republish", { token: bob.token, body: {
+  signedPrekey: { id: 2, key: "spk2_b", sig: "sig2_b" },
+  oneTimePrekeys: [{ id: 10, key: "otp10_b" }],
+} });
+check("prekey republish accepted", repub.ok === true, JSON.stringify(repub));
+const bundle3 = await api(`/api/users/${bob.userId}/prekeys`, { token: alice.token });
+check("republished bundle carries the new signed prekey",
+  bundle3.bundles[0].signedPrekey?.key === "spk2_b", JSON.stringify(bundle3.bundles));
+check("republished bundle hands out the new one-time",
+  bundle3.bundles[0].oneTimePrekey?.key === "otp10_b");
+const bundle4 = await api(`/api/users/${bob.userId}/prekeys`, { token: alice.token });
+check("stale one-times are gone after the republish",
+  bundle4.bundles[0].oneTimePrekey === null, JSON.stringify(bundle4.bundles));
+// top the count back up so later checks see a live bundle
+await api("/api/prekeys", { token: bob.token, body: {
+  oneTimePrekeys: [{ id: 11, key: "otp11_b" }, { id: 12, key: "otp12_b" }] } });
+
 // 3. Direct chat (+ dedupe)
 const chat = await api("/api/chats", { token: alice.token,
   body: { kind: "direct", memberIds: [bob.userId] } });

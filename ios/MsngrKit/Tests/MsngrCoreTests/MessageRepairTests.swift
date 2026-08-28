@@ -132,6 +132,22 @@ final class MessageRepairTests: XCTestCase {
         XCTAssertEqual(outbox[0].id, MessageRepair.requestId(chatId: "c1", seq: 1, attempt: 1))
     }
 
+    /// The republish decision: enough distinct stale envelopes, and not too
+    /// soon after the previous republish.
+    func testRepublishPolicy() {
+        let n = MessageRepair.republishAfterStaleFailures
+        XCTAssertFalse(MessageRepair.republishDue(staleFailures: n - 1, lastRepublishAt: 0, now: 10_000),
+                       "republished on fewer failures than the threshold")
+        XCTAssertTrue(MessageRepair.republishDue(staleFailures: n, lastRepublishAt: 0, now: 10_000))
+        XCTAssertFalse(MessageRepair.republishDue(staleFailures: n * 10,
+                                                  lastRepublishAt: 10_000 - MessageRepair.republishInterval + 1,
+                                                  now: 10_000),
+                       "republished again inside the interval")
+        XCTAssertTrue(MessageRepair.republishDue(staleFailures: n,
+                                                 lastRepublishAt: 10_000 - MessageRepair.republishInterval,
+                                                 now: 10_000))
+    }
+
     /// A missing key is not a defect by itself: the envelope is parked and the
     /// sender is left alone until the grace period runs out.
     func testRetryableFailureWaitsBeforeAsking() async throws {

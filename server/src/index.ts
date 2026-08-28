@@ -465,6 +465,26 @@ app.post("/api/identity", async (c) => {
   return new Response(r.body, r);
 });
 
+// The device republishes its whole prekey bundle: a fresh signed prekey and a
+// fresh one-time set replace what the server held. This is the self-heal for a
+// stale bundle — the device kept failing to open prekey envelopes addressed to
+// it, which means the published halves no longer match its own store.
+app.post("/api/prekeys/republish", async (c) => {
+  const { userId, deviceId } = c.get("auth");
+  const b = await c.req.json<{
+    signedPrekey?: { id: number; key: string; sig: string };
+    oneTimePrekeys?: Array<{ id: number; key: string }>;
+  }>();
+  if (!b.signedPrekey) return err("bad_keys");
+  const r = await userStub(c.env, userId).fetch("https://do/keys-republish", {
+    method: "POST",
+    body: JSON.stringify({
+      deviceId, signedPrekey: b.signedPrekey, oneTimePrekeys: b.oneTimePrekeys ?? [],
+    }),
+  });
+  return new Response(r.body, r);
+});
+
 app.post("/api/prekeys", async (c) => {
   const { userId, deviceId } = c.get("auth");
   const b = await c.req.json<{ oneTimePrekeys: Array<{ id: number; key: string }> }>();
