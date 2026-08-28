@@ -60,6 +60,12 @@ public enum MessageRepair {
     /// Repair requests spent on one message before the device stops asking.
     public static let maxAttempts = 5
 
+    /// Unanswered repairs allowed to one sender at a time. A session broken
+    /// past healing turns every answer into a new unreadable frame; without a
+    /// ceiling each answered wave would seed a bigger one. New requests wait
+    /// until the in-flight ones resolve or expire.
+    public static let maxInFlightRepairsPerPeer = 20
+
     /// Wait before repair attempt n+1, counted from the previous request.
     static let backoff: [TimeInterval] = [30, 120, 600, 1800, 7200]
 
