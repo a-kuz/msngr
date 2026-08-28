@@ -1356,6 +1356,83 @@
         }
       }
     },
+    "Shader" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шейдер"
+          }
+        }
+      }
+    },
+    "Could not be shown" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось отобразить"
+          }
+        }
+      }
+    },
+    "Paste shader code" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вставьте код шейдера"
+          }
+        }
+      }
+    },
+    "Source" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исходник"
+          }
+        }
+      }
+    },
+    "Copied" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скопировано"
+          }
+        }
+      }
+    },
+    "Compiling…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Компиляция…"
+          }
+        }
+      }
+    },
+    "Shadertoy code or a Shadertoy JSON export. iTime, iResolution, iMouse, iChannel0–3, Buffer A–D." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Код Shadertoy или его JSON-экспорт. iTime, iResolution, iMouse, iChannel0–3, Buffer A–D."
+          }
+        }
+      }
+    },
     "Files" : {
       "extractionState" : "manual",
       "localizations" : {

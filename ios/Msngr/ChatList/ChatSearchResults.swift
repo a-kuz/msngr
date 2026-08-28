@@ -174,6 +174,7 @@ struct MessageHitRow: View {
         case .file: return "doc.fill"
         case .album: return "photo.on.rectangle"
         case .voice: return "mic.fill"
+        case .shader: return "sparkles"
         default: return nil
         }
     }

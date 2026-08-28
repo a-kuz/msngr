@@ -8,42 +8,54 @@ import Metal
 final class ShaderTranspilerTests: XCTestCase {
     static let device = MTLCreateSystemDefaultDevice()
 
-    /// Compiles the program and returns the pipeline, or fails the test with
-    /// the compiler's own message and the emitted MSL for reading.
+    /// Compiles one pass and returns the MSL, or fails the test with the
+    /// compiler's own message and the emitted source for reading.
     @discardableResult
-    func compile(_ glsl: String, file: StaticString = #filePath, line: UInt = #line) throws -> ShaderTranspiler.Program {
-        let program = try ShaderTranspiler.transpile(glsl)
-        guard let device = Self.device else {
-            throw XCTSkip("no Metal device on this host")
-        }
+    func compile(_ glsl: String, common: String = "", file: StaticString = #filePath, line: UInt = #line) throws -> String {
+        let msl = try ShaderTranspiler.transpile(glsl, common: common)
+        guard let device = Self.device else { throw XCTSkip("no Metal device on this host") }
         do {
-            let lib = try device.makeLibrary(source: program.msl, options: nil)
+            let lib = try device.makeLibrary(source: msl, options: nil)
             let desc = MTLRenderPipelineDescriptor()
             desc.vertexFunction = lib.makeFunction(name: ShaderTranspiler.vertexFunction)
             desc.fragmentFunction = lib.makeFunction(name: ShaderTranspiler.fragmentFunction)
             desc.colorAttachments[0].pixelFormat = .bgra8Unorm
             _ = try device.makeRenderPipelineState(descriptor: desc)
         } catch {
-            XCTFail("MSL did not compile: \(error)\n--- emitted ---\n\(program.msl)", file: file, line: line)
+            XCTFail("MSL did not compile: \(error)\n--- emitted ---\n\(msl)", file: file, line: line)
         }
-        return program
+        return msl
     }
 
-    func fixture(_ name: String) throws -> String {
-        let url = try XCTUnwrap(Bundle.module.url(forResource: name, withExtension: "glsl", subdirectory: "Fixtures"))
+    func fixture(_ name: String, ext: String = "glsl") throws -> String {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: name, withExtension: ext, subdirectory: "Fixtures"))
         return try String(contentsOf: url, encoding: .utf8)
     }
 
-    // MARK: the owner's sample
+    // MARK: the owner's samples
 
     func testMacPaintSampleCompiles() throws {
-        let program = try compile(try fixture("macpaint"))
-        XCTAssertEqual(program.channels, ShaderTranspiler.defaultChannels)
+        let doc = try ShaderDocument.parse(try fixture("macpaint"))
+        XCTAssertEqual(doc.passes.count, 1)
+        XCTAssertEqual(doc.image?.inputs.map(\.source), ["noise", "graynoise", "noise64", "buffer:image"])
+        let msl = try compile(doc.image!.code)
         // lookup tables are hoisted as constant globals, not per-thread copies
-        XCTAssertTrue(program.msl.contains("constant int FONT_ROWS[] = {"))
-        XCTAssertTrue(program.msl.contains("constant float2 PTS[] = {"))
-        XCTAssertTrue(program.msl.contains("constant float LOOP = 44.0;"))
-        XCTAssertTrue(program.msl.contains("void mainImage(thread float4& O, float2 F)"))
+        XCTAssertTrue(msl.contains("constant int FONT_ROWS[] = {"))
+        XCTAssertTrue(msl.contains("constant float2 PTS[] = {"))
+        XCTAssertTrue(msl.contains("constant float LOOP = 44.0;"))
+        XCTAssertTrue(msl.contains("void mainImage(thread float4& O, float2 F)"))
+    }
+
+    func testFlowerEveningExportCompilesBothPasses() throws {
+        let doc = try ShaderDocument.parse(try fixture("flower-evening.shadertoy", ext: "json"))
+        XCTAssertEqual(doc.name, "flower evening")
+        XCTAssertEqual(doc.passes.map(\.id), ["A", "image"])
+        // Buffer A reads itself (the previous frame), Image reads Buffer A
+        XCTAssertEqual(doc.passes[0].input(0).source, "buffer:A")
+        XCTAssertEqual(doc.passes[0].input(0).wrap, "clamp")
+        XCTAssertEqual(doc.image?.input(0).source, "buffer:A")
+        XCTAssertEqual(doc.image?.input(1).source, "none")
+        for pass in doc.passes { try compile(pass.code, common: doc.common) }
     }
 
     // MARK: dialect probes
@@ -61,12 +73,18 @@ final class ShaderTranspilerTests: XCTestCase {
         try compile("""
         #version 300 es
         precision highp float;
+        #pragma msngr channel0 prevframe
         // a comment with mainImage( in it
         /* block
            comment */
         #define TAU 6.2831
         void mainImage(out vec4 O, in vec2 F) { O = vec4(sin(TAU * F.x / iResolution.x)); }
         """)
+    }
+
+    func testCommonCodeIsSharedByThePass() throws {
+        try compile("void mainImage(out vec4 O, in vec2 F) { O = vec4(palette(iTime), 1.0); }",
+                    common: "vec3 palette(float t) { return 0.5 + 0.5 * cos(t + vec3(0, 2, 4)); }")
     }
 
     func testHelpersCallEachOtherOutOfOrder() throws {
@@ -128,8 +146,8 @@ final class ShaderTranspilerTests: XCTestCase {
         """)
     }
 
-    func testTexturesOnDefaultChannels() throws {
-        let program = try compile("""
+    func testTexturesOnChannels() throws {
+        try compile("""
         void mainImage(out vec4 O, in vec2 F) {
             vec2 uv = F / iResolution.xy;
             vec4 n = texture(iChannel0, uv * 4.0);
@@ -139,26 +157,6 @@ final class ShaderTranspilerTests: XCTestCase {
             O = mix(prev, n * g + f, 0.1) + iChannelResolution[0].x * 0.0 + iChannelTime[1];
         }
         """)
-        XCTAssertEqual(program.channels, [.noise, .graynoise, .noise64, .prevframe])
-    }
-
-    func testPragmaRebindsChannel() throws {
-        let program = try compile("""
-        #pragma msngr channel0 prevframe
-        #pragma msngr channel1 none
-        void mainImage(out vec4 O, in vec2 F) { O = texture(iChannel0, F / iResolution.xy) * 0.99; }
-        """)
-        XCTAssertEqual(program.channels, [.prevframe, .none, .noise64, .prevframe])
-        XCTAssertFalse(program.msl.contains("pragma msngr"))
-    }
-
-    func testBadPragmaIsAnError() {
-        XCTAssertThrowsError(try ShaderTranspiler.transpile("""
-        #pragma msngr channel9 noise
-        void mainImage(out vec4 O, in vec2 F) { O = vec4(1); }
-        """)) { error in
-            guard case ShaderTranspiler.Failure.badPragma = error else { return XCTFail("\(error)") }
-        }
     }
 
     func testReservedIdentifiersAreRenamed() throws {
@@ -200,18 +198,39 @@ final class ShaderTranspilerTests: XCTestCase {
         """)
     }
 
+    // MARK: the document
+
+    func testPragmaRebindsChannels() throws {
+        let doc = try ShaderDocument.parse("""
+        #pragma msngr channel0 prevframe
+        #pragma msngr channel1 none
+        void mainImage(out vec4 O, in vec2 F) { O = texture(iChannel0, F / iResolution.xy) * 0.99; }
+        """)
+        XCTAssertEqual(doc.image?.inputs.map(\.source), ["buffer:image", "none", "noise64", "buffer:image"])
+    }
+
+    func testDocumentRoundTripsThroughJSON() throws {
+        let doc = try ShaderDocument.parse(try fixture("flower-evening.shadertoy", ext: "json"))
+        let data = try JSONEncoder().encode(doc)
+        XCTAssertEqual(try JSONDecoder().decode(ShaderDocument.self, from: data), doc)
+    }
+
     // MARK: refusals
 
     func testNoMainImage() {
         XCTAssertThrowsError(try ShaderTranspiler.transpile("void main() {}")) { error in
             XCTAssertEqual(error as? ShaderTranspiler.Failure, .noMainImage)
         }
+        XCTAssertThrowsError(try ShaderDocument.parse("hello there")) { error in
+            XCTAssertEqual(error as? ShaderDocument.Failure, .notAShader)
+        }
     }
 
     func testTooLarge() {
         let big = String(repeating: "// x\n", count: ShaderTranspiler.maxSourceBytes / 5 + 1)
-        XCTAssertThrowsError(try ShaderTranspiler.transpile(big)) { error in
-            guard case ShaderTranspiler.Failure.tooLarge = error else { return XCTFail("\(error)") }
+            + "void mainImage(out vec4 O, in vec2 F) {}"
+        XCTAssertThrowsError(try ShaderDocument.parse(big)) { error in
+            guard case ShaderDocument.Failure.tooLarge = error else { return XCTFail("\(error)") }
         }
     }
 

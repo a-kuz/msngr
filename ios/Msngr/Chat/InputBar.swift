@@ -9,6 +9,7 @@ struct InputBar: View {
     @Binding var text: String
     var onAttachPhoto: () -> Void
     var onAttachFile: () -> Void
+    var onAttachShader: () -> Void
     var onSendVoice: (URL, TimeInterval, [Int]) -> Void
     var onSendImages: ([UIImage], String) -> Void
 
@@ -68,7 +69,10 @@ struct InputBar: View {
                         Button { onAttachFile() } label: {
                             Label("File", systemImage: "doc")
                         }
+                        Button { onAttachShader() } label: {
+                            Label("Shader", systemImage: "sparkles")
                         }
+                        .accessibilityIdentifier("chat.attach.shader")
                         if pasteboardHasImage && text.isEmpty {
                             Button { pasteImages() } label: {
                                 Label("Paste", systemImage: "doc.on.clipboard")

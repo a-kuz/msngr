@@ -16,4 +16,6 @@ public enum MsngrLog {
     public static let repair = Logger(subsystem: subsystem, category: "repair")
     /// Notifications: what willPresent decided about a push and from which inputs.
     public static let notifications = Logger(subsystem: subsystem, category: "notifications")
+    /// compiling and running user shaders
+    public static let shader = Logger(subsystem: subsystem, category: "shader")
 }

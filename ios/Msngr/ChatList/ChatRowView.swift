@@ -123,6 +123,7 @@ struct ChatRowView: View {
                 case .voice: Label("Voice message", systemImage: "mic.fill").labelStyle(PreviewLabelStyle())
                 case .file: Label(last.media?.name ?? String(localized: "File"), systemImage: "doc.fill").labelStyle(PreviewLabelStyle())
                 case .album: Label("Album", systemImage: "photo.on.rectangle").labelStyle(PreviewLabelStyle())
+                case .shader: Label(last.shader?.name ?? String(localized: "Shader"), systemImage: "sparkles").labelStyle(PreviewLabelStyle())
                 default: Text(MessageMarkdown.mentionsStripped(last.text ?? ""))
                 }
             }

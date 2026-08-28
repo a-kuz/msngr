@@ -17,6 +17,7 @@ enum AttachmentSeed {
             sendFile(chatId: chatId, round: round)
             await sendVoice(chatId: chatId, round: round)
             sendLinks(chatId: chatId, round: round)
+            sendShader(chatId: chatId, round: round)
         }
     }
 
@@ -132,6 +133,23 @@ enum AttachmentSeed {
         content.media = media
         try? await AppState.shared.engine?.enqueue(content: content, chatId: chatId)
         try? FileManager.default.removeItem(at: url)
+    }
+
+    /// A small plasma, a different hue per round, so the feed holds several
+    /// live shaders at once.
+    private static func sendShader(chatId: String, round: Int) {
+        let glsl = """
+        void mainImage(out vec4 O, in vec2 F) {
+            vec2 uv = (F - 0.5 * iResolution.xy) / iResolution.y;
+            float t = iTime * 0.7 + \(round).0;
+            float v = sin(uv.x * 6.0 + t) + sin((uv.y + uv.x) * 5.0 - t) + sin(length(uv) * 9.0 - t * 2.0);
+            vec3 col = 0.5 + 0.5 * cos(v + vec3(0.0, 2.1, 4.2) + \(round).0 * 0.9);
+            O = vec4(col, 1.0);
+        }
+        """
+        var content = ContentPayload(kind: "shader")
+        content.shader = ShaderDocument(name: "Plasma \(round)", passes: ShaderDocument.fromGLSL(glsl).passes)
+        Task { try? await AppState.shared.engine?.enqueue(content: content, chatId: chatId) }
     }
 
     private static func sendLinks(chatId: String, round: Int) {
