@@ -831,12 +831,12 @@ shader message and the sticker in their frames (`MessageContextOverlay.LiveShade
 Seen 2026-08-29 in the showcase chat: on first open the two bubble shaders
 (and the header's avatar canvas) stayed invisible while four other canvases
 held the live slots; a scroll — anything that relayouts or rebalances —
-drew them. The Settings fix (layoutSubviews holds a frame) covers a canvas
-that gets a layout pass after its program compiles; a canvas already laid
-out, denied a slot, whose program compiles later, is only served by the
-`.ready` observer and that path missed at least these cells. Open: make the
-held frame a guarantee — on `.ready`, draw it regardless of what layout has
-or has not happened since.
+drew them. The draw the `.ready` observer and layoutSubviews issue can run
+before the layer has a drawable, and the one-shot flag then kept anyone from
+trying again. Closed in 6b60939: the renderer's frame counter says whether
+the draw produced anything, and an empty one is retried on the next turn of
+the runloop. Seen live: the sticker panel's seven tiles and the bubble
+shaders on a chat's first open all draw without a scroll.
 
 ### A theme switch leaves one bubble light with unreadable text
 Seen 2026-08-29 in passing during the showcase run: switching the appearance
