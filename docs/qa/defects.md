@@ -46,18 +46,23 @@ and the feed made one placeholder per contiguous run, about ninety of them.
 Closed by 37841a3: a hole between two messages of the feed is one placeholder
 carrying the number of messages behind it
 (`testHoleBrokenBySkippedSeqsIsStillOnePlaceholder`).
-Open underneath it, and the reason the hole is there at all: 443 envelopes from
-bravo in `pendingDecrypt` with every repair attempt spent, `no_session` (299)
-and `pk_decrypt_failed` (144), the newest 3 minutes old. The repair protocol
-does ask the sender for a fresh copy, but the sender here is the `msngrfixture`
-CLI, which is not online to answer. The cause of the failures themselves is
-unknown. The shape — bursts of a hundred within a minute, in a chat this agent
-was not sending to — fits the documented trap of one fixture home driven by two
-processes at once, which forks the sending ratchet, but nothing supports it:
-the other agent in the tree says it drove no fixture and had pulled its homes
-back, and at the time of the check no `msngrfixture` process was running and
-only one simulator was booted. Not reproduced on demand, and whoever sent those
-envelopes is not established.
+Open underneath it: the repair protocol recurses without a ceiling once a
+pairwise session is broken past healing. Watched over 2026-08-28 on the alfa
+fixture against the bravo CLI: 443 unopenable envelopes grew to 908 and then
+to 2575 (`no_session`), in bursts of 200–400 a minute that coincide exactly
+with each `msngrfixture send --as bravo` run — the CLI's first run even timed
+out with «waiting for the messages to leave the outbox», its queue stuffed
+with repair replies. The cycle: alfa's repair requests wait for the sender;
+the CLI comes online and answers every one with a `repair` copy; each copy
+takes a fresh seq, fails to open in the same broken session, and earns its
+own repairRequest with a full budget of 5 attempts — so every answered wave
+seeds the next, bigger one. `resetPairwiseSession` does not stop it: the
+session is rebuilt per request while the answering side keeps encrypting into
+its own fork. The fix needs a cycle-breaker — a repair frame must never earn
+a repair copy of itself (the answering side can see the target seq is a
+`repair` frame in `sentServiceFrame`), and likely a per-peer ceiling on
+in-flight repairs. Why the original session forked is still unestablished
+(one fixture home driven by two processes remains the best-fitting shape).
 
 ### A silent identity rotation is not re-checked by TOFU while a device list is cached
 Found 2026-08-27 in passing during the multi-device TOFU run

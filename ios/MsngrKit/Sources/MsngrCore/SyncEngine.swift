@@ -1268,6 +1268,15 @@ public actor SyncEngine {
                 "repair asked for a message we do not hold chat=\(chatId, privacy: .public) seq=\(target, privacy: .public)")
             return
         }
+        // a repair frame never earns a repair copy of itself: the copy would
+        // take a fresh seq, fail in the same broken session and be asked about
+        // in turn — every answered wave would seed the next, bigger one. The
+        // asker's attempts run out and the seq closes as a gap.
+        guard !SyncEngine.repairKinds.contains(original.kind) else {
+            MsngrLog.repair.notice(
+                "repair asked for a repair frame, not answering chat=\(chatId, privacy: .public) seq=\(target, privacy: .public)")
+            return
+        }
         let sentAt: Double = stored["sentAt"]
         // the same membership rule as for a feed message: a copy only goes to
         // someone the frame was addressed to in the first place
