@@ -70,6 +70,15 @@ next one. Why the original
 session forked is still unestablished (one fixture home driven by two
 processes remains the best-fitting shape).
 
+The ceiling deadlocked itself a day later, seen 2026-08-29 on the same
+fixture: 2515 of bravo's pending rows had spent all 5 attempts, the in-flight
+count took them as unanswered, and with 2516 ≥ 20 not one of the 421
+never-asked rows could send its first request — repair to that peer was dead
+until the envelopes expire a week on. Held live for a 240 s window with the
+bravo CLI online: pendingDecrypt stayed at 2937 exactly. Fixed in 5707283:
+a row with spent attempts is not in flight
+(`testSpentRepairsDoNotHoldTheCeilingShut`).
+
 ### A service storm in one chat stalls the whole sync
 Observed by another agent 2026-08-28 on the alfa fixture home while the
 repair avalanche (above) stood in the queue: bravo↔alfa `syncedSeq` froze at
@@ -86,6 +95,30 @@ one network round-trip per frame over the tunnel is the right order for the
 observed ~6 s. Candidates: collapse the resets (one rebuild per peer per
 window instead of per request), answer a batch under one session, and drain
 chats fairly so one chat's backlog does not starve the rest.
+
+Seen again 2026-08-29 on the same home: bravo↔alfa `syncedSeq` frozen at 3958
+with `lastSeq` 4569 while the app sat foreground for over ten minutes — a
+message sent to alfa during that window never arrived even as an envelope
+(`pendingDecrypt` tops out at seq 3965), so the starvation covers live
+delivery of the same chat, not only other chats' catch-up.
+
+### A severed pairwise session never heals: both sides ask, neither answer arrives
+Found 2026-08-29 while walking the repair debt on the alfa fixture. The
+alfa↔bravo pair is broken symmetrically: alfa holds 2937 of bravo's envelopes
+(`no_session`), and bravo's own home holds 2947 of alfa's (`no_session`) plus
+221 `pk_decrypt_failed` — alfa's repair requests, sent over what alfa believes
+is a fresh X3DH, arrive at bravo as prekey envelopes bravo cannot open. That
+shape means the prekey bundles the server hands out for bravo no longer match
+the private halves in bravo's store (the fixture-home fork again), so every
+new session either side builds is stillborn, and all five repair attempts per
+message were spent into the void while the peer was genuinely online. The
+engine has no move for this state: `replenishPrekeysIfNeeded` only tops up
+the one-time count, nothing republishes the signed prekey or drops the
+poisoned one-times when the device's own `pk_decrypt_failed` keeps repeating.
+A device that repeatedly fails to open prekey envelopes addressed to it holds
+the strongest possible signal that its published bundle is stale — republishing
+identity and prekeys at that point is the missing self-heal. Until then the
+alfa↔bravo fixture pair cannot exchange new readable messages at all.
 
 ### A silent identity rotation is not re-checked by TOFU while a device list is cached
 Found 2026-08-27 in passing during the multi-device TOFU run
@@ -117,9 +150,12 @@ banner too when its chat is open or its message is read (the isLocal bypass
 kept only against the self-dedup — NotificationDecisionTests, the two
 own-local suppression cases), and the local-notification `add` re-runs
 `dropReadNotifications` after it lands, closing the race with the read's
-sweep. A live pass of the original scenario (background with the chat open
-behind, WS message, return to foreground) is owed once a fixture home frees
-up.
+sweep. A live pass was attempted 2026-08-29 on the alfa fixture and came back
+inconclusive for this defect: the message from bravo never reached the feed
+at all (the severed alfa↔bravo pair, its own entry above), so no notification
+existed to present or withdraw — nothing showed over the open chat and the
+shade stayed empty, but that proves delivery was broken, not that the banner
+logic held. The live pass is still owed, on a chat pair whose sessions work.
 
 ### A held swipe on a chat row stutters
 Reported by the owner 2026-08-27: swiping a row sideways in the chat list
