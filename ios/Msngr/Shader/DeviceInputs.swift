@@ -139,6 +139,8 @@ final class DeviceInputs {
     // MARK: - Snapshots for the uniform block
 
     var locationVector: SIMD4<Float> {
+        // a CLLocationManager exists only for a shader that reads the location
+        guard (holds[.location] ?? 0) > 0 else { return SIMD4(0, 0, 0, heading) }
         let l = location.last
         return SIMD4(Float(l?.coordinate.latitude ?? 0), Float(l?.coordinate.longitude ?? 0),
                      Float(l?.altitude ?? 0), location.heading ?? heading)
