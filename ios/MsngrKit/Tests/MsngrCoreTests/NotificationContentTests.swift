@@ -115,8 +115,13 @@ final class NotificationContentTests: XCTestCase {
     }
 
     func testUnknownKindFallsBackToTextOrPlaceholder() {
-        XCTAssertEqual(build(payload("sticker", text: "y"))?.body, "y")
-        XCTAssertEqual(build(payload("sticker"))?.body, NotificationContentBuilder.hiddenTextBody)
+        XCTAssertEqual(build(payload("hologram", text: "y"))?.body, "y")
+        XCTAssertEqual(build(payload("hologram"))?.body, NotificationContentBuilder.hiddenTextBody)
+    }
+
+    func testStickerUsesItsPlaceholder() {
+        XCTAssertEqual(build(payload("sticker"))?.body, s("✨ Sticker"))
+        XCTAssertEqual(build(payload("sticker", text: "y"))?.body, s("✨ Sticker") + ": y")
     }
 
     // MARK: - Silent kinds
