@@ -354,6 +354,11 @@ A ✅ goes in only together with a link to the evidence.
     message, three stickers: four animate and one heart stands still, 13
     pixels changed between two frames 0.7 s apart against thousands on
     the others)
+  - ✅ the showcase: a gallery with one shader per surface (`ShaderGallery`:
+    five tap-reactive stickers, the aurora background, two bubble shaders,
+    two avatars), the stickers in every new pack, `msngrfixture showcase`
+    dressing fresh demo accounts on the stand, and the script of the demo in
+    `docs/demo/shaders-showcase.md`
 - Other
   - ⬜ contact and location
   - 🟡 GIFs: an animated one is sent unchanged and plays in the feed and the
@@ -611,7 +616,10 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ✅ acceptance lifts the restriction (smoke `accept request`)
 - ✅ the «… хочет вам написать» screen instead of the feed, with «Принять» and «Заблокировать» buttons (request-privacy-run)
 - ✅ the requests section in the list with no preview and no counter (request-privacy-run)
-- 🟡 accepting offline through the action queue (not verified live)
+- ✅ accepting offline through the action queue: the accept and the read wait
+  in `pendingAction` while the stand is down and drain on reconnect, and the
+  requester's next message arrives as an ordinary one
+  (qa/runs/2026-08-28-offline-accept-run)
 - ✅ the recipient's presence is not given out before acceptance over the REST profile either (smoke `no presence before accept`)
 - ⬜ a push for a request with no preview: the server carries no plaintext, the NSE fills the text in from the shared database
 
