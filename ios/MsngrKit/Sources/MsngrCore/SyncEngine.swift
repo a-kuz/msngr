@@ -852,16 +852,19 @@ public actor SyncEngine {
                             isOwn: Bool, isService: Bool) throws {
         if isService {
             // in a chat that is fully read, myReadUpTo swallows the seq, so the
-            // catch-up resumes past a frame that leaves no row behind
+            // catch-up resumes past a frame that leaves no row behind. Only a
+            // contiguous read may swallow it: an own service frame (a sender
+            // key handout, a reaction echo) lands on top of the peer's unread
+            // messages and must not mark them read on its way
             try dbc.execute(
                 sql: """
                 UPDATE chat SET
                   lastSeq = MAX(lastSeq, ?),
                   syncedSeq = CASE WHEN ? = syncedSeq + 1 THEN ? ELSE syncedSeq END,
-                  myReadUpTo = CASE WHEN ? OR myReadUpTo >= ? - 1 THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END
+                  myReadUpTo = CASE WHEN myReadUpTo >= ? - 1 THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END
                 WHERE id = ?
                 """,
-                arguments: [seq, seq, seq, isOwn, seq, seq, chatId])
+                arguments: [seq, seq, seq, seq, seq, chatId])
         } else {
             // The number counts messages, not seqs. A frame that shows nothing —
             // an edit, a reaction, the sender key handed out after the roster
@@ -1600,6 +1603,11 @@ public actor SyncEngine {
                 arguments: [seq, f.ts,
                             ttl > 0 ? Date().timeIntervalSince1970 + Double(ttl) : nil,
                             clientMsgId])
+            // a send the reader can see: only that one marks the chat read up
+            // to itself below. A service frame — a sender key handout, a
+            // reaction — has no row here, and its ack must not swallow the
+            // peer's unread messages standing under its seq
+            let visibleSend = dbc.changesCount > 0
             // a service frame leaves no message row, so its payload is kept
             // under the seq this ack assigned: a peer that could not open the
             // frame is answered with a copy from this record. The target is
@@ -1640,10 +1648,12 @@ public actor SyncEngine {
                 sql: """
                 UPDATE chat SET
                   syncedSeq = CASE WHEN ? = syncedSeq + 1 THEN ? ELSE syncedSeq END,
-                  lastSeq = MAX(lastSeq, ?), myReadUpTo = MAX(myReadUpTo, ?),
+                  lastSeq = MAX(lastSeq, ?),
+                  myReadUpTo = CASE WHEN ? THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END,
                   lastActivityAt = ? WHERE id = ?
                 """,
-                arguments: [seq, seq, seq, seq, f.ts ?? Date().timeIntervalSince1970, chatId])
+                arguments: [seq, seq, seq, visibleSend, seq,
+                            f.ts ?? Date().timeIntervalSince1970, chatId])
         }
         outboxWakeup.continuation.yield()
     }
