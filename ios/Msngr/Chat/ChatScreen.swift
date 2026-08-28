@@ -386,8 +386,8 @@ struct ChatScreen: View {
         MessagesView(vc: messagesVC, model: model, items: model.feed,
                      sendTick: model.sendTick,
                      selecting: model.selecting, selectedIds: model.selection.ids,
-                     onTapMedia: { (msg: Message, idx: Int, _: UIView) in
-                         MediaViewerPresenter.present(message: msg, startIndex: idx)
+                     onTapMedia: { (msg: Message, idx: Int, view: UIView) in
+                         MediaViewerPresenter.present(message: msg, startIndex: idx, from: view)
                      },
                      onTapShader: { (msg: Message) in
                          if let document = msg.shader { ShaderPlayerPresenter.present(document: document) }

@@ -2,6 +2,14 @@ import SwiftUI
 import AVKit
 import MsngrCore
 
+/// What the viewer flies out of: the tapped thumbnail's picture and where it
+/// sits on the screen, so the hero transition starts and ends in that frame.
+struct MediaViewerHero {
+    let frame: CGRect
+    let image: UIImage
+    let cornerRadius: CGFloat
+}
+
 /// Presents the viewer in its own UIWindow above the whole app UI: the window covers both
 /// the chat's nav bar and the status bar.
 @MainActor
@@ -9,30 +17,46 @@ enum MediaViewerPresenter {
     private static var window: UIWindow?
     private static weak var previousKeyWindow: UIWindow?
 
-    static func present(message: Message, startIndex: Int) {
+    /// `sourceView` is the tapped thumbnail; when it carries a picture the
+    /// viewer opens with a hero flight from its frame instead of a fade.
+    static func present(message: Message, startIndex: Int, from sourceView: UIView? = nil) {
         guard window == nil,
               let scene = UIApplication.shared.connectedScenes
                   .compactMap({ $0 as? UIWindowScene })
                   .first(where: { $0.activationState == .foregroundActive }) else { return }
         previousKeyWindow = scene.windows.first { $0.isKeyWindow }
+        var hero: MediaViewerHero?
+        if let iv = sourceView as? UIImageView, let image = iv.image, let win = iv.window {
+            hero = MediaViewerHero(frame: iv.convert(iv.bounds, to: win),
+                                   image: image,
+                                   cornerRadius: iv.layer.cornerRadius)
+        }
         let host = UIHostingController(
-            rootView: MediaViewerView(message: message, startIndex: startIndex) { dismiss() })
+            rootView: MediaViewerView(message: message, startIndex: startIndex, hero: hero)
+            { animatedOut in dismiss(fade: !animatedOut) })
         host.view.backgroundColor = .clear
         let w = UIWindow(windowScene: scene)
         w.windowLevel = UIWindow.Level(rawValue: UIWindow.Level.statusBar.rawValue + 1)
         w.rootViewController = host
-        w.alpha = 0
         w.makeKeyAndVisible()
-        UIView.animate(withDuration: 0.2) { w.alpha = 1 }
+        // with a hero the flight itself is the appearance; without one, a fade
+        if hero == nil {
+            w.alpha = 0
+            UIView.animate(withDuration: 0.2) { w.alpha = 1 }
+        }
         window = w
     }
 
-    static func dismiss() {
+    static func dismiss(fade: Bool = true) {
         guard let w = window else { return }
         window = nil
-        UIView.animate(withDuration: 0.2) {
-            w.alpha = 0
-        } completion: { _ in
+        if fade {
+            UIView.animate(withDuration: 0.2) {
+                w.alpha = 0
+            } completion: { _ in
+                w.isHidden = true
+            }
+        } else {
             w.isHidden = true
         }
         previousKeyWindow?.makeKey()
@@ -40,18 +64,30 @@ enum MediaViewerPresenter {
 }
 
 /// Full-screen photo and video viewer: zoom, swipe down to close, paging through an album.
+/// With a hero source the thumbnail's picture flies from its bubble frame into the fitted
+/// full-screen frame on open, and back on close — including a close by the swipe down,
+/// which returns from wherever the drag left the picture.
 struct MediaViewerView: View {
     let message: Message
     let startIndex: Int
-    let onDismiss: () -> Void
+    let hero: MediaViewerHero?
+    /// `true` — the hero already animated the window out; `false` — fade the window.
+    let onDismiss: (Bool) -> Void
     @State private var index: Int
     @State private var dragOffset: CGSize = .zero
+    /// The flight state: expanded means the picture stands at its full-screen frame.
+    @State private var heroExpanded = false
+    /// Once the flight in has finished, the real pages take over from the overlay.
+    @State private var heroDone: Bool
+    @State private var closing = false
 
-    init(message: Message, startIndex: Int, onDismiss: @escaping () -> Void) {
+    init(message: Message, startIndex: Int, hero: MediaViewerHero?, onDismiss: @escaping (Bool) -> Void) {
         self.message = message
         self.startIndex = startIndex
+        self.hero = hero
         self.onDismiss = onDismiss
         _index = State(initialValue: startIndex)
+        _heroDone = State(initialValue: hero == nil)
     }
 
     private var medias: [MediaInfo] {
@@ -59,10 +95,29 @@ struct MediaViewerView: View {
     }
 
     var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                Color.black
+                    .opacity((hero == nil || heroExpanded ? 1 : 0) * (1 - Double(abs(dragOffset.height)) / 500))
+                    .ignoresSafeArea()
+                content
+                    .opacity(heroDone && !closing ? 1 : 0)
+                if let hero, !heroDone || closing {
+                    heroOverlay(hero, in: geo)
+                }
+            }
+            .onAppear {
+                guard hero != nil else { return }
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { heroExpanded = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) { heroDone = true }
+            }
+        }
+        .ignoresSafeArea()
+        .statusBarHidden()
+    }
+
+    private var content: some View {
         ZStack {
-            Color.black
-                .opacity(1 - Double(abs(dragOffset.height)) / 500)
-                .ignoresSafeArea()
             TabView(selection: $index) {
                 ForEach(Array(medias.enumerated()), id: \.offset) { i, media in
                     MediaPage(media: media)
@@ -81,7 +136,7 @@ struct MediaViewerView: View {
                     }
                     .onEnded { v in
                         if abs(v.translation.height) > 120 {
-                            onDismiss()
+                            close()
                         } else {
                             withAnimation(Theme.springFast) { dragOffset = .zero }
                         }
@@ -91,7 +146,7 @@ struct MediaViewerView: View {
             VStack {
                 HStack {
                     Button {
-                        onDismiss()
+                        close()
                     } label: {
                         Image(systemName: "xmark")
                             .font(Theme.glyph(17, max: 24).weight(.semibold))
@@ -117,7 +172,58 @@ struct MediaViewerView: View {
             }
             .opacity(dragOffset == .zero ? 1 : 0)
         }
-        .statusBarHidden()
+    }
+
+    /// The flying picture: the thumbnail scaled between its bubble frame and the
+    /// full-screen fit. While the drag is dismissing, the flight starts from the
+    /// dragged position instead of the resting one.
+    private func heroOverlay(_ hero: MediaViewerHero, in geo: GeometryProxy) -> some View {
+        let container = geo.frame(in: .global)
+        var rect: CGRect
+        if heroExpanded {
+            rect = Self.fitted(hero.image.size, in: container)
+            if closing {
+                rect = rect.offsetBy(dx: dragOffset.width, dy: dragOffset.height)
+                let s = 1 - abs(dragOffset.height) / 1500
+                rect = CGRect(x: rect.midX - rect.width * s / 2, y: rect.midY - rect.height * s / 2,
+                              width: rect.width * s, height: rect.height * s)
+            }
+        } else {
+            rect = hero.frame
+        }
+        let local = rect.offsetBy(dx: -container.minX, dy: -container.minY)
+        return Image(uiImage: hero.image)
+            .resizable()
+            .scaledToFill()
+            .frame(width: local.width, height: local.height)
+            .clipShape(RoundedRectangle(cornerRadius: heroExpanded ? 0 : hero.cornerRadius, style: .continuous))
+            .position(x: local.midX, y: local.midY)
+            .allowsHitTesting(false)
+    }
+
+    /// Aspect-fit of the picture in the container: where the full-screen page shows it.
+    private static func fitted(_ size: CGSize, in container: CGRect) -> CGRect {
+        guard size.width > 0, size.height > 0 else { return container }
+        let s = min(container.width / size.width, container.height / size.height)
+        let w = size.width * s, h = size.height * s
+        return CGRect(x: container.minX + (container.width - w) / 2,
+                      y: container.minY + (container.height - h) / 2,
+                      width: w, height: h)
+    }
+
+    /// Close with the hero flight back into the bubble when the picture on screen is
+    /// still the one that flew in; otherwise the plain fade.
+    private func close() {
+        guard hero != nil, index == startIndex, !closing else {
+            onDismiss(false)
+            return
+        }
+        closing = true
+        withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
+            heroExpanded = false
+            dragOffset = .zero
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.38) { onDismiss(true) }
     }
 
     private var cachedURL: URL? {
