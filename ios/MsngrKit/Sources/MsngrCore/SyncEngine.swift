@@ -1235,6 +1235,7 @@ public actor SyncEngine {
         original.album = row.album
         original.replyTo = row.replyTo
         original.fwd = row.forward
+        original.shader = row.shader
         var reply = ContentPayload(kind: "repair")
         reply.to = from
         reply.repairSeq = target
@@ -1417,6 +1418,7 @@ public actor SyncEngine {
             msg.album = content.album
             msg.replyTo = content.replyTo
             msg.forward = content.fwd
+            msg.shader = content.shader
             let ttl = try Int.fetchOne(dbc, sql: "SELECT ttlSeconds FROM chat WHERE id = ?", arguments: [chatId]) ?? 0
             if ttl > 0 { msg.expiresAt = Date().timeIntervalSince1970 + Double(ttl) }
             try msg.save(dbc)
@@ -1488,6 +1490,7 @@ public actor SyncEngine {
                 msg.album = content.album
                 msg.replyTo = content.replyTo
                 msg.forward = content.fwd
+                msg.shader = content.shader
                 // a historic copy of a disappearing message is stamped the same way
                 // as one that arrived live: otherwise paging up would bring back
                 // what has already expired, and it would stay forever
@@ -1818,6 +1821,7 @@ public actor SyncEngine {
         msg.album = content.album
         msg.replyTo = content.replyTo
         msg.forward = content.fwd
+        msg.shader = content.shader
         let payload = try JSONEncoder().encode(content)
         try await db.write { [msg] dbc in
             let visible = !SyncEngine.rowlessKinds.contains(content.kind)

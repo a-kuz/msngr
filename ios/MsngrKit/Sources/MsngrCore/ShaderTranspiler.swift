@@ -23,51 +23,30 @@ public enum ShaderTranspiler {
         case tooLarge(bytes: Int)
         case noMainImage
         case unsupported(String)
-        case badPragma(String)
 
         public var description: String {
             switch self {
             case .tooLarge(let n): return "source is \(n) bytes, the limit is \(maxSourceBytes)"
             case .noMainImage: return "mainImage(out vec4, in vec2) not found"
             case .unsupported(let what): return "\(what) is not supported"
-            case .badPragma(let line): return "unknown pragma: \(line)"
             }
         }
-    }
-
-    /// What a texture channel is bound to. The defaults reproduce the
-    /// textures Shadertoy authors reach for most, so a pasted shader that
-    /// samples `iChannel0` for noise runs unchanged; a shader that wants to
-    /// read its own previous frame binds a channel to `prevframe` with
-    /// `#pragma msngr channelN prevframe`, which Shadertoy itself ignores.
-    public enum ChannelSource: String, Codable, CaseIterable {
-        case noise        // 256×256 RGBA white noise
-        case graynoise    // 256×256 single-channel white noise
-        case noise64      // 64×64 RGBA white noise
-        case prevframe    // this shader's previous frame, black on the first
-        case none         // a 1×1 black pixel
-    }
-
-    public static let defaultChannels: [ChannelSource] = [.noise, .graynoise, .noise64, .prevframe]
-
-    public struct Program: Equatable {
-        public let msl: String
-        public let channels: [ChannelSource]
     }
 
     /// The uniform block the fragment function reads from `buffer(0)`; the
     /// app fills a matching struct of `SIMD4<Float>`s:
     /// `(iTime, iTimeDelta, iFrame, 0)`, `(iResolution.xyz, 0)`, `iMouse`, `iDate`,
-    /// then `iChannelResolution[0..3]` as four `(w, h, 1, 0)`.
+    /// then `iChannelResolution[0..3]` as four `(w, h, 1, 0)`. The four texture
+    /// channels arrive as `texture(0..3)` with their samplers as `sampler(0..3)`.
     public static let uniformStride = 128
 
-    public static func transpile(_ glsl: String) throws -> Program {
-        let bytes = glsl.utf8.count
+    /// One pass of a document into MSL. `common` is the shared code of a
+    /// multipass shader, placed ahead of the pass's own.
+    public static func transpile(_ glsl: String, common: String = "") throws -> String {
+        let bytes = glsl.utf8.count + common.utf8.count
         if bytes > maxSourceBytes { throw Failure.tooLarge(bytes: bytes) }
 
-        var s = stripComments(glsl)
-        var channels = defaultChannels
-        s = try takePragmas(s, channels: &channels)
+        var s = stripComments(common.isEmpty ? glsl : common + "\n" + glsl)
         s = dropDirectives(s)
         if matches(#"\bmainSound\s*\(|\bmainVR\s*\("#, in: s) {
             throw Failure.unsupported("mainSound / mainVR")
@@ -89,12 +68,16 @@ public enum ShaderTranspiler {
         let items = splitTopLevel(s)
         var hoisted: [String] = []
         var body: [String] = []
+        // names of program-scope constants that stayed inside the struct: a
+        // constant built from one of them cannot be hoisted either
+        var memberConstants: Set<String> = []
         for item in items {
             let t = item.trimmingCharacters(in: .whitespacesAndNewlines)
             if t.isEmpty || isPrototype(t) { continue }
-            if isHoistableConstant(t) {
+            if isHoistableConstant(t, memberConstants: memberConstants) {
                 hoisted.append("constant " + String(t.dropFirst("const".count)).trimmingCharacters(in: .whitespaces))
             } else {
+                if t.hasPrefix("const"), let name = declaredName(t) { memberConstants.insert(name) }
                 body.append(t)
             }
         }
@@ -104,36 +87,16 @@ public enum ShaderTranspiler {
         out += "struct MsngrShaderToy {\n"
         out += "  float iTime; float iTimeDelta; int iFrame; float3 iResolution; float4 iMouse; float4 iDate;\n"
         out += "  float iSampleRate = 44100.0;\n"
-        out += "  texture2d<float> iChannel0, iChannel1, iChannel2, iChannel3;\n"
+        out += "  MsngrChannel iChannel0, iChannel1, iChannel2, iChannel3;\n"
         out += "  float3 iChannelResolution[4];\n"
         out += "  float iChannelTime[4] = {0.0, 0.0, 0.0, 0.0};\n\n"
         out += body.joined(separator: "\n") + "\n"
         out += "};\n\n"
         out += epilogue
-        return Program(msl: out, channels: channels)
+        return out
     }
 
     // MARK: - Passes
-
-    /// `#pragma msngr channelN <source>` binds a texture channel; the line is
-    /// removed from the source. Any other pragma stays for the preprocessor.
-    static func takePragmas(_ s: String, channels: inout [ChannelSource]) throws -> String {
-        let re = try! NSRegularExpression(pattern: #"(?m)^[ \t]*#[ \t]*pragma[ \t]+msngr\b([^\n]*)$"#)
-        let out = NSMutableString(string: s)
-        for m in re.matches(in: s, range: NSRange(s.startIndex..., in: s)).reversed() {
-            let line = out.substring(with: m.range).trimmingCharacters(in: .whitespaces)
-            let words = out.substring(with: m.range(at: 1))
-                .split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
-            guard words.count == 2, words[0].hasPrefix("channel"),
-                  let idx = Int(words[0].dropFirst("channel".count)), (0..<4).contains(idx),
-                  let src = ChannelSource(rawValue: words[1]) else {
-                throw Failure.badPragma(line)
-            }
-            channels[idx] = src
-            out.replaceCharacters(in: m.range, with: "")
-        }
-        return String(out)
-    }
 
     static func stripComments(_ s: String) -> String {
         var out = ""
@@ -164,7 +127,7 @@ public enum ShaderTranspiler {
     /// `#version` and `precision` are GLSL-only; `#define`, `#if` and the
     /// rest are the same preprocessor and stay.
     static func dropDirectives(_ s: String) -> String {
-        var out = replace(#"(?m)^[ \t]*#[ \t]*(version|extension)\b[^\n]*$"#, in: s, with: "")
+        var out = replace(#"(?m)^[ \t]*#[ \t]*(version|extension|pragma[ \t]+msngr)\b[^\n]*$"#, in: s, with: "")
         out = replace(#"(?m)^[ \t]*precision\s+(lowp|mediump|highp)\s+\w+\s*;[ \t]*$"#, in: out, with: "")
         out = replace(#"\b(lowp|mediump|highp)\s+"#, in: out, with: "")
         return out
@@ -327,11 +290,32 @@ public enum ShaderTranspiler {
         "float3x4", "float4x2", "float4x3", "float4x4",
     ]
 
-    static func isHoistableConstant(_ item: String) -> Bool {
+    /// A program-scope `const` of a builtin type whose initializer is a
+    /// constant expression: literals, arithmetic, vector and matrix
+    /// constructors, other hoisted constants. Metal rejects a `constant`
+    /// global built by a function call (`normalize(...)` is a global
+    /// constructor), so such a constant stays a struct member and is computed
+    /// per fragment, exactly as GLSL would.
+    static func isHoistableConstant(_ item: String, memberConstants: Set<String>) -> Bool {
         guard item.hasPrefix("const"), item.hasSuffix(";") else { return false }
         let words = item.split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "_" })
-        guard words.count >= 2, words[0] == "const" else { return false }
-        return builtinTypes.contains(String(words[1]))
+        guard words.count >= 2, words[0] == "const", builtinTypes.contains(String(words[1])) else { return false }
+        guard let eq = item.firstIndex(of: "=") else { return true }
+        let initializer = String(item[item.index(after: eq)...])
+        let calls = try! NSRegularExpression(pattern: #"\b([A-Za-z_]\w*)\s*\("#)
+            .matches(in: initializer, range: NSRange(initializer.startIndex..., in: initializer))
+            .compactMap { Range($0.range(at: 1), in: initializer).map { String(initializer[$0]) } }
+        if calls.contains(where: { !builtinTypes.contains($0) }) { return false }
+        let names = try! NSRegularExpression(pattern: #"\b([A-Za-z_]\w*)\b"#)
+            .matches(in: initializer, range: NSRange(initializer.startIndex..., in: initializer))
+            .compactMap { Range($0.range(at: 1), in: initializer).map { String(initializer[$0]) } }
+        return !names.contains(where: memberConstants.contains)
+    }
+
+    /// The name a `const T name...` declaration introduces.
+    static func declaredName(_ item: String) -> String? {
+        let words = item.split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "_" })
+        return words.count >= 3 ? String(words[2]) : nil
     }
 
     // MARK: - Regex helpers
@@ -470,16 +454,20 @@ public enum ShaderTranspiler {
     inline float3 uintBitsToFloat(uint3 x) { return as_type<float3>(x); }
     inline float4 uintBitsToFloat(uint4 x) { return as_type<float4>(x); }
 
-    // Texture channels. GLSL's sampling functions become free functions over
-    // the channel's texture; the sampler repeats and filters like Shadertoy's
-    // default channel settings.
-    constexpr sampler msngrSampler(address::repeat, filter::linear, mip_filter::linear);
-    inline float4 texture(texture2d<float> t, float2 uv) { return t.sample(msngrSampler, uv); }
-    inline float4 texture(texture2d<float> t, float2 uv, float b) { return t.sample(msngrSampler, uv, bias(b)); }
-    inline float4 textureLod(texture2d<float> t, float2 uv, float lod) { return t.sample(msngrSampler, uv, level(lod)); }
-    inline float4 textureGrad(texture2d<float> t, float2 uv, float2 dx, float2 dy) { return t.sample(msngrSampler, uv, gradient2d(dx, dy)); }
-    inline float4 texelFetch(texture2d<float> t, int2 p, int lod) { return t.read(uint2(p), uint(lod)); }
-    inline int2 textureSize(texture2d<float> t, int lod) { return int2(t.get_width(uint(lod)), t.get_height(uint(lod))); }
+    // Texture channels: a texture with the sampler the document asked for.
+    // GLSL's sampling functions become free functions over the channel. The
+    // vertical flip keeps the y-up fragment coordinates consistent between a
+    // pass writing a buffer and a pass reading it: texel (x, y) read here is
+    // the texel fragment (x, y) wrote.
+    struct MsngrChannel { texture2d<float> tex; sampler smp; };
+    inline float2 msngrFlip(float2 uv) { return float2(uv.x, 1.0 - uv.y); }
+    inline uint2 msngrFlip(MsngrChannel c, int2 p) { return uint2(uint(p.x), c.tex.get_height() - 1u - uint(p.y)); }
+    inline float4 texture(MsngrChannel c, float2 uv) { return c.tex.sample(c.smp, msngrFlip(uv)); }
+    inline float4 texture(MsngrChannel c, float2 uv, float b) { return c.tex.sample(c.smp, msngrFlip(uv), bias(b)); }
+    inline float4 textureLod(MsngrChannel c, float2 uv, float lod) { return c.tex.sample(c.smp, msngrFlip(uv), level(lod)); }
+    inline float4 textureGrad(MsngrChannel c, float2 uv, float2 dx, float2 dy) { return c.tex.sample(c.smp, msngrFlip(uv), gradient2d(dx, dy)); }
+    inline float4 texelFetch(MsngrChannel c, int2 p, int lod) { return c.tex.read(msngrFlip(c, p), uint(lod)); }
+    inline int2 textureSize(MsngrChannel c, int lod) { return int2(c.tex.get_width(uint(lod)), c.tex.get_height(uint(lod))); }
 
     struct MsngrShaderUniforms {
         float4 timeFrame;   // iTime, iTimeDelta, iFrame, 0
@@ -504,10 +492,10 @@ public enum ShaderTranspiler {
 
     fragment float4 \(fragmentFunction)(MsngrVOut in [[stage_in]],
                                         constant MsngrShaderUniforms& u [[buffer(0)]],
-                                        texture2d<float> ch0 [[texture(0)]],
-                                        texture2d<float> ch1 [[texture(1)]],
-                                        texture2d<float> ch2 [[texture(2)]],
-                                        texture2d<float> ch3 [[texture(3)]]) {
+                                        texture2d<float> t0 [[texture(0)]], sampler s0 [[sampler(0)]],
+                                        texture2d<float> t1 [[texture(1)]], sampler s1 [[sampler(1)]],
+                                        texture2d<float> t2 [[texture(2)]], sampler s2 [[sampler(2)]],
+                                        texture2d<float> t3 [[texture(3)]], sampler s3 [[sampler(3)]]) {
         MsngrShaderToy s;
         s.iTime = u.timeFrame.x;
         s.iTimeDelta = u.timeFrame.y;
@@ -515,7 +503,8 @@ public enum ShaderTranspiler {
         s.iResolution = u.resolution.xyz;
         s.iMouse = u.mouse;
         s.iDate = u.date;
-        s.iChannel0 = ch0; s.iChannel1 = ch1; s.iChannel2 = ch2; s.iChannel3 = ch3;
+        s.iChannel0 = MsngrChannel{t0, s0}; s.iChannel1 = MsngrChannel{t1, s1};
+        s.iChannel2 = MsngrChannel{t2, s2}; s.iChannel3 = MsngrChannel{t3, s3};
         for (int i = 0; i < 4; i++) s.iChannelResolution[i] = u.channelResolution[i].xyz;
         float4 O = float4(0.0, 0.0, 0.0, 1.0);
         float2 F = float2(in.position.x, u.resolution.y - in.position.y);

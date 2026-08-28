@@ -482,6 +482,12 @@ public enum AppDatabase {
                 t.primaryKey(["chatId", "seq"])
             }
         }
+        m.registerMigration("v25-shader") { db in
+            // a shader message keeps its passes and channel wiring as JSON
+            try db.alter(table: "message") { t in
+                t.add(column: "shader", .text)
+            }
+        }
         return m
     }
 }
@@ -514,6 +520,7 @@ extension Message {
         album = (row["album"] as String?).flatMap { try? dec.decode([MediaInfo].self, from: Data($0.utf8)) }
         replyTo = (row["replyTo"] as String?).flatMap { try? dec.decode(ReplyPreview.self, from: Data($0.utf8)) }
         forward = (row["forward"] as String?).flatMap { try? dec.decode(ForwardInfo.self, from: Data($0.utf8)) }
+        shader = (row["shader"] as String?).flatMap { try? dec.decode(ShaderDocument.self, from: Data($0.utf8)) }
         edited = row["edited"]
         editHistory = (row["editHistory"] as String?).flatMap { try? dec.decode([EditVersion].self, from: Data($0.utf8)) } ?? []
         editedAt = row["editedAt"]
@@ -544,6 +551,7 @@ extension Message {
         container["album"] = js(album)
         container["replyTo"] = js(replyTo)
         container["forward"] = js(forward)
+        container["shader"] = js(shader)
         container["edited"] = edited
         container["editHistory"] = js(editHistory) ?? "[]"
         container["editedAt"] = editedAt

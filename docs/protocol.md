@@ -362,13 +362,24 @@ asked for it.
 `ContentPayload` (also the plaintext in `skm`):
 
 ```
-{kind, text?, media?, album?, replyTo?, fwd?, targetMsgId?, emoji?, ttlSeconds?,
- to?, repairSeq?, reason?, attempt?, repairOf?, origSentAt?, orig?, keyId?}
+{kind, text?, media?, album?, replyTo?, fwd?, shader?, targetMsgId?, emoji?,
+ ttlSeconds?, to?, repairSeq?, reason?, attempt?, repairOf?, origSentAt?, orig?,
+ keyId?}
 ```
 
 - `kind`: `text` | `photo` | `video` | `file` | `voice` | `album` | `contact` |
-  `edit` | `reaction` | `disappearing` | `groupEvent` | `repairRequest` |
-  `repair` | `skdAck`;
+  `shader` | `edit` | `reaction` | `disappearing` | `groupEvent` |
+  `repairRequest` | `repair` | `skdAck`;
+- `shader` — `ShaderDocument`: `{name?, passes: [{id, kind, code, inputs}]}`,
+  a Shadertoy project as user code. `id` is `image`, `A`–`D` or `common`;
+  `kind` is `image` | `buffer` | `common`; `code` is GLSL in the Shadertoy
+  dialect (`mainImage`, `iTime`, `iResolution`, `iChannelN`); an input is
+  `{channel, source, wrap, filter, vflip}` with `source` one of `noise`,
+  `graynoise`, `noise64`, `none` or `buffer:<id>` (a pass reading its own
+  buffer gets its previous frame). The receiver transpiles each pass to MSL
+  and renders it on its GPU; the server never sees the code. The whole
+  document stays under 64 KB of code: a message is one value of the
+  conversation's Durable Object storage, whose ceiling is 128 KiB;
 - `media` / `album` — `MediaInfo`: `type, mediaId, key, hash, size, mime, name?,
   w?, h?, dur?, waveform?, blurhash?, thumbMediaId?, thumbKey?, thumbHash?`;
 - `replyTo` — `{msgId, authorId, text, kind}`, `fwd` — `{fromUserId, fromName}`;

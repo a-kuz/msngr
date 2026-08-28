@@ -1,6 +1,17 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "✨ Shader" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "✨ Шейдер"
+          }
+        }
+      }
+    },
     "%@ added you" : {
       "extractionState" : "manual",
       "localizations" : {

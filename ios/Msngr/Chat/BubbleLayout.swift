@@ -14,6 +14,8 @@ struct BubbleLayoutPlan: Equatable {
     var mediaFrame: CGRect?
     var albumRects: [MosaicRect]
     var voiceFrame: CGRect?
+    /// the live shader of a shader message, in the bubble's coordinates
+    var shaderFrame: CGRect?
     var replyFrame: CGRect?
     var replyAuthor: String?
     var replyText: String?
@@ -135,6 +137,7 @@ enum BubbleLayout {
         var mediaFrame: CGRect?
         var albumRects: [MosaicRect] = []
         var voiceFrame: CGRect?
+        var shaderFrame: CGRect?
         var replyFrame: CGRect?
         var forwardFrame: CGRect?
         var authorNameFrame: CGRect?
@@ -215,6 +218,17 @@ enum BubbleLayout {
             voiceFrame = CGRect(x: hPadding, y: y, width: w, height: h) // a file borrows the voiceFrame slot
             contentWidth = max(contentWidth, w)
             y += h
+        case .shader:
+            // the shader takes a photo's width at 16:9, full bleed like a photo
+            // with nothing above it, with the status capsule over the picture
+            let mw = maxBubbleWidth
+            let mh = floor(mw * 9 / 16)
+            let bare = authorNameFrame == nil && forwardFrame == nil && replyFrame == nil
+            shaderFrame = CGRect(x: 0, y: bare ? 0 : y, width: mw, height: mh)
+            mediaFrame = shaderFrame
+            contentWidth = mw - 2 * hPadding
+            y = shaderFrame!.maxY
+            statusOnMedia = true
         default:
             let display = msg.deletedForAll ? String(localized: "Message deleted") : (msg.text ?? "")
             let (f, a) = measureText(display, maxWidth: maxBubbleWidth - 2 * hPadding, startY: y)
@@ -402,6 +416,7 @@ enum BubbleLayout {
             statusFrame: statusFrame, statusOnMedia: statusOnMedia,
             mediaFrame: mediaFrame, albumRects: albumRects,
             voiceFrame: voiceFrame,
+            shaderFrame: shaderFrame,
             replyFrame: replyFrame,
             replyAuthor: msg.replyTo != nil ? replyAuthorName : nil,
             replyText: msg.replyTo.map(Self.replyPreviewText),
@@ -434,6 +449,7 @@ enum BubbleLayout {
         case .voice: return String(localized: "🎤 Voice message")
         case .file: return "📎 " + (reply.text.isEmpty ? String(localized: "File") : reply.text)
         case .album: return String(localized: "🖼 Album")
+        case .shader: return "✨ " + (reply.text.isEmpty ? String(localized: "Shader") : reply.text)
         default: return reply.text.isEmpty ? String(localized: "Message") : reply.text
         }
     }

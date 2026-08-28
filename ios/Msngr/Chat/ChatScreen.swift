@@ -85,6 +85,7 @@ struct ChatScreen: View {
                         InputBar(model: model, text: $text,
                                  onAttachPhoto: { photoPickerPresented = true },
                                  onAttachFile: { showFilePicker = true },
+                                 onAttachShader: { showShaderComposer = true },
                                  onSendVoice: sendVoice,
                                  onSendImages: { images, caption in
                                      Task { await sendImages(images, caption: caption) }
@@ -215,6 +216,9 @@ struct ChatScreen: View {
                 Task { await sendFile(url) }
             }
         }
+        .sheet(isPresented: $showShaderComposer) {
+            ShaderComposerScreen { document in sendShader(document) }
+        }
         // palette change: bubble colours are read in the cell's configure, so force a reload
         .onReceive(NotificationCenter.default.publisher(for: .paletteChanged)) { _ in
             guard messagesVC.isViewLoaded else { return }
@@ -338,6 +342,7 @@ struct ChatScreen: View {
     }
 
     @State private var photoPickerPresented = false
+    @State private var showShaderComposer = false
     @State private var showChatInfo = false
     /// the calendar over the history, opened from a date separator or the
     /// floating day capsule
@@ -351,6 +356,9 @@ struct ChatScreen: View {
                      selecting: model.selecting, selectedIds: model.selection.ids,
                      onTapMedia: { (msg: Message, idx: Int, _: UIView) in
                          MediaViewerPresenter.present(message: msg, startIndex: idx)
+                     },
+                     onTapShader: { (msg: Message) in
+                         if let document = msg.shader { ShaderPlayerPresenter.present(document: document) }
                      },
                      showScrollDown: $showScrollDown,
                      onSwipeBack: { dismiss() },
@@ -1021,6 +1029,15 @@ struct ChatScreen: View {
         model.enqueue(c)
     }
 
+    /// A shader is text-sized and needs no upload: the document goes straight
+    /// into the send queue.
+    private func sendShader(_ document: ShaderDocument) {
+        var c = ContentPayload(kind: "shader")
+        c.shader = document
+        model.enqueue(c)
+        Haptics.light()
+    }
+
     private func sendVoice(_ url: URL, duration: TimeInterval, waveform: [Int]) {
         Task {
             guard let data = try? Data(contentsOf: url),
@@ -1068,6 +1085,7 @@ struct MessagesView: UIViewControllerRepresentable {
     let selecting: Bool
     let selectedIds: Set<String>
     var onTapMedia: (Message, Int, UIView) -> Void
+    var onTapShader: (Message) -> Void
     @Binding var showScrollDown: Bool
     var onSwipeBack: () -> Void
     var onCapsuleTap: (Message, String) -> Void
@@ -1086,6 +1104,7 @@ struct MessagesView: UIViewControllerRepresentable {
         }
         vc.onReact = { [weak model] msg, emoji in model?.react(msg, emoji: emoji) }
         vc.onTapMedia = onTapMedia
+        vc.onTapShader = onTapShader
         // tapping a quote jumps to the original; if it lies deeper than the loaded
         // page, history is fetched first
         vc.onTapReplyQuote = { [weak model, weak vc] msg in

@@ -22,6 +22,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     /// to take the pin off instead of putting it on again.
     var pinnedSeqs: Set<Int> = []
     var onTapMedia: ((Message, Int, UIView) -> Void)?
+    var onTapShader: ((Message) -> Void)?
     /// Tap on the quote inside a reply bubble, which jumps to the original.
     var onTapReplyQuote: ((Message) -> Void)?
     /// Tap on a row while multi-select is on.
@@ -483,6 +484,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         cell.onCapsuleTap = { [weak self] emoji in self?.onReactionCapsuleTap?(msg, emoji) }
         cell.onContextAction = { [weak self] action in self?.onContextAction?(msg, action) }
         cell.onTapMedia = { [weak self] index, view in self?.onTapMedia?(msg, index, view) }
+        cell.onTapShader = { [weak self] in self?.onTapShader?(msg) }
         cell.onTapLink = { [weak self] url in self?.open(url) }
         cell.onTapReplyQuote = { [weak self] in self?.onTapReplyQuote?(msg) }
         cell.onToggleSelection = { [weak self] in self?.onToggleSelection?(msg) }

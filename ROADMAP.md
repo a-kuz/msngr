@@ -281,7 +281,15 @@ A ✅ goes in only together with a link to the evidence.
     by the hash of the source so a sticker is transferred once and then
     referenced
   - ⬜ shader effects on events: the send animation, a reaction burst
-  - ⬜ `iChannel` textures and multipass buffers
+  - ⬜ the device as input, each a uniform or a channel texture: multitouch
+    (`iTouch[5]` with pressure), gyroscope, accelerometer, magnetometer and
+    the attitude quaternion, the microphone as an FFT and waveform texture
+    (Shadertoy's Music/Mic channel), the cameras as a channel texture,
+    compass heading and GPS, barometer, proximity, battery, the keyboard as
+    Shadertoy's Keyboard texture, Pencil hover and pressure, the light and
+    dark theme with the palette colours, the text size, and where the bubble
+    sits on the screen with the feed's scroll offset; haptics as an output a
+    shader writes into a texel
   - ⬜ a budget of live shaders on one screen; the rest hold a frame
 - Other
   - ⬜ contact and location

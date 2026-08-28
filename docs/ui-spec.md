@@ -245,6 +245,39 @@ up when they return. The plate of the message being played shows a pause icon
 and a speed button stepping ×1 → ×1,5 → ×2; the speed belongs to the player and
 carries on to the next message.
 
+## Shader messages
+
+A shader is user code in the Shadertoy dialect of GLSL, carried as a
+`ShaderDocument` (the passes of a Shadertoy project with the wiring of their
+channels; `docs/protocol.md`). On the device each pass is transpiled to MSL by
+`ShaderTranspiler` and compiled once per distinct document (`ShaderProgram`);
+`ShaderRenderer` runs the buffer passes into float textures and the image pass
+into the drawable, with `iTime`, `iTimeDelta`, `iFrame`, `iResolution`,
+`iMouse`, `iDate` and `iChannel0–3` as Shadertoy defines them. A pass reading
+its own buffer gets the previous frame; the noise channels are generated on
+the device from a fixed seed, so a shader looks the same to the sender and
+the peer.
+
+The bubble takes a photo's width at 16:9 with the status capsule over the
+picture, and the shader runs at the screen's own scale at 60 fps for as long
+as the cell is on screen: `willDisplay` starts it, `didEndDisplaying` and
+`prepareForReuse` stop it. While the program compiles the bubble shows a
+spinner; a program that failed to compile, or whose command buffer the GPU
+gave up on, shows «Не удалось отобразить» and stays that way for the process.
+
+A tap opens the player in a `UIWindow` above the status bar, the way the media
+viewer opens: the shader fills the screen, touches become `iMouse`, a tap
+toggles the controls (close, source, restart, pause, the clock). The source
+sheet shows every pass and copies a one-pass shader as GLSL, a multipass one
+as the document's JSON, which the composer accepts back.
+
+The composer opens from «Shader» in the attachment menu: the live preview on
+top, a monospaced editor below, the compiler's first error line between them.
+Code on the clipboard is picked up on opening; «Send» is enabled once the
+program compiled on this device. A pasted Shadertoy JSON export is imported
+whole: Image, Buffer A–D, Common, the channel wiring, the wrap and filter of
+each sampler.
+
 ## The input field
 
 A growing `UITextView` (17 pt, corner radius 18) from 36 pt up to six lines

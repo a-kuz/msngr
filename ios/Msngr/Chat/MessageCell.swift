@@ -14,6 +14,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     /// Whether this message is the pinned one, asked at the moment the menu opens.
     var isPinned: (() -> Bool)?
     var onTapMedia: ((Int, UIView) -> Void)?
+    var onTapShader: (() -> Void)?
     var onTapLink: ((URL) -> Void)?
     var onTapReplyQuote: (() -> Void)?
     var onToggleSelection: (() -> Void)?
@@ -46,6 +47,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private var playGlyphs: [Int: UIImageView] = [:]
     private var reactionViews: [ReactionCapsuleView] = []
     private let voiceView = VoiceMessageView()
+    private let shaderView = ShaderMessageView()
     private let avatarView = FeedAvatarView()
     private var msg: Message?
     private var plan: BubbleLayoutPlan?
@@ -103,6 +105,10 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         tickView.contentMode = .scaleAspectFit
         bubbleView.addSubview(tickView)
         bubbleView.addSubview(voiceView)
+        shaderView.isHidden = true
+        shaderView.isUserInteractionEnabled = true
+        shaderView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(shaderTapped)))
+        bubbleView.addSubview(shaderView)
         // the rings follow the sender's progress store rather than polling it
         progressCancellable = MediaProgress.shared.$fractions
             .receive(on: DispatchQueue.main)
@@ -225,6 +231,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     override func prepareForReuse() {
         super.prepareForReuse()
         teardownAutoplay()
+        shaderView.setActive(false)
         reactionViews.forEach { $0.removeFromSuperview() }
         reactionViews = []
         bubbleView.viewWithTag(Self.highlightTag)?.removeFromSuperview()
@@ -363,6 +370,16 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             voiceView.configure(msg: msg, outgoing: plan.isOutgoing)
         } else {
             voiceView.isHidden = true
+        }
+
+        // shader
+        if let sf = plan.shaderFrame, let document = msg.shader {
+            shaderView.isHidden = false
+            shaderView.frame = sf
+            shaderView.configure(document: document)
+        } else {
+            shaderView.isHidden = true
+            shaderView.setActive(false)
         }
 
         // status: time and ticks
@@ -616,6 +633,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     /// Off-screen cells stop their players; the collection view drives this
     /// from willDisplay/didEndDisplaying.
     func setAutoplayActive(_ active: Bool) {
+        if !shaderView.isHidden { shaderView.setActive(active) }
         for (layer, _) in autoplay {
             if active { layer.player?.play() } else { layer.player?.pause() }
         }
@@ -693,6 +711,10 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     @objc private func mediaTapped(_ g: UITapGestureRecognizer) {
         guard let v = g.view else { return }
         onTapMedia?(v.tag, v)
+    }
+
+    @objc private func shaderTapped() {
+        onTapShader?()
     }
 
     @objc private func handleDoubleTap() {

@@ -865,6 +865,7 @@ final class ChatViewModel: ObservableObject {
         case .voice: return String(localized: "Voice message")
         case .file: return m.media?.name ?? String(localized: "File")
         case .album: return String(localized: "Album")
+        case .shader: return m.shader?.name ?? String(localized: "Shader")
         default: return String(MessageMarkdown.mentionsStripped(m.text ?? "").prefix(80))
         }
     }
@@ -940,6 +941,7 @@ final class ChatViewModel: ObservableObject {
         c.media = msg.media
         c.album = msg.album
         c.replyTo = msg.replyTo
+        c.shader = msg.shader
         c.fwd = msg.forward ?? ForwardInfo(fromUserId: msg.fromUserId, fromName: authorName)
         return c
     }
