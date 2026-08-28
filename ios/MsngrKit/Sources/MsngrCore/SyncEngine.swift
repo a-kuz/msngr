@@ -1672,15 +1672,18 @@ public actor SyncEngine {
             // the row its seq: whatever waited on it lands now
             try SyncEngine.applyBuffered(dbc, chatId: chatId, seq: seq)
             // what we sent counts as read by us, so the badge does not pile up
+            // only a send the reader sees moves the chat up the list: the ack
+            // of a reaction, an edit or a repair answer is not a conversation
             try dbc.execute(
                 sql: """
                 UPDATE chat SET
                   syncedSeq = CASE WHEN ? = syncedSeq + 1 THEN ? ELSE syncedSeq END,
                   lastSeq = MAX(lastSeq, ?),
                   myReadUpTo = CASE WHEN ? THEN MAX(myReadUpTo, ?) ELSE myReadUpTo END,
-                  lastActivityAt = ? WHERE id = ?
+                  lastActivityAt = CASE WHEN ? THEN ? ELSE lastActivityAt END
+                WHERE id = ?
                 """,
-                arguments: [seq, seq, seq, visibleSend, seq,
+                arguments: [seq, seq, seq, visibleSend, seq, visibleSend,
                             f.ts ?? Date().timeIntervalSince1970, chatId])
         }
         outboxWakeup.continuation.yield()
