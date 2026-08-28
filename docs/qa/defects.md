@@ -77,10 +77,15 @@ repair avalanche (above) stood in the queue: bravo↔alfa `syncedSeq` froze at
 group at about one per 6 seconds, and even a brand-new chat from a fresh
 account stayed at 3/0 — the backlog of one chat's service frames starved
 every other chat's catch-up. The avalanche itself is closed (24d0dc6,
-8cff769); left open here: why one frame costs ~6 s (the suspicion is a
-session reset with a network round-trip per request), and that the sync
-should drain chats fairly instead of letting one chat's backlog block the
-rest.
+8cff769); left open here: the per-frame cost and the fairness. Read from the
+code (not yet measured): every incoming repairRequest with a session reason
+marks the pairwise session for a rebuild (`resetPairwiseSession`), so each
+answer's `encryptPairwise` misses the session, fetches a fresh prekey bundle
+over the network, runs X3DH under the CryptoGate flock and only then sends —
+one network round-trip per frame over the tunnel is the right order for the
+observed ~6 s. Candidates: collapse the resets (one rebuild per peer per
+window instead of per request), answer a batch under one session, and drain
+chats fairly so one chat's backlog does not starve the rest.
 
 ### A silent identity rotation is not re-checked by TOFU while a device list is cached
 Found 2026-08-27 in passing during the multi-device TOFU run
