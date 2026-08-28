@@ -352,6 +352,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         if let bubbleShader {
             bubbleShaderCanvas.isHidden = false
             bubbleShaderCanvas.frame = bubbleView.bounds
+            // the sender's own choice may read their device; a peer's may not
+            bubbleShaderCanvas.deviceInputs = plan.isOutgoing
             bubbleShaderCanvas.show(bubbleShader)
             bubbleShaderCanvas.setRunning(onScreen)
         } else {
@@ -449,7 +451,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         if let sf = plan.shaderFrame, let document = msg.shader, msg.kind == .sticker {
             stickerView.isHidden = false
             stickerView.frame = sf
-            stickerView.configure(document: document)
+            // a sticker of the user's own pack may read the device; a peer's may not
+            stickerView.configure(document: document, deviceInputs: ShaderSurfaces.shared.hasSticker(document))
             stickerView.setActive(onScreen)
         } else {
             stickerView.isHidden = true

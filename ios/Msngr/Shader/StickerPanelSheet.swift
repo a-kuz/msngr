@@ -76,7 +76,7 @@ struct StickerTile: View {
     let document: ShaderDocument
 
     var body: some View {
-        ShaderCanvasView(document: document, running: true, transparent: true, priority: .avatar)
+        ShaderCanvasView(document: document, running: true, transparent: true, deviceInputs: true, priority: .avatar)
             .aspectRatio(1, contentMode: .fit)
             .background(Checkerboard().foregroundStyle(.secondary.opacity(0.15)))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))

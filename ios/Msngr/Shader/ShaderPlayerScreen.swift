@@ -46,6 +46,7 @@ struct ShaderCanvasView: UIViewRepresentable {
     var running: Bool = true
     var acceptsTouches: Bool = false
     var transparent: Bool = false
+    var deviceInputs: Bool = false
     var priority: ShaderCanvas.Priority = .focus
     var restartToken: Int = 0
     var onState: ((ShaderProgram.State) -> Void)? = nil
@@ -62,6 +63,7 @@ struct ShaderCanvasView: UIViewRepresentable {
 
     func updateUIView(_ v: ShaderCanvas, context: Context) {
         v.acceptsTouches = acceptsTouches
+        v.deviceInputs = deviceInputs
         v.priority = priority
         v.onState = onState
         v.show(document)
@@ -95,7 +97,7 @@ struct ShaderPlayerScreen: View {
     var body: some View {
         ZStack {
             ShaderCanvasView(document: document, running: running, acceptsTouches: true,
-                             restartToken: restartToken,
+                             deviceInputs: true, restartToken: restartToken,
                              onState: { state = $0 },
                              onFrame: { t in time = t })
                 .ignoresSafeArea()

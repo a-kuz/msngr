@@ -44,14 +44,23 @@ final class DeviceInputs {
     func retain(_ feeds: Set<Feed>) {
         for f in feeds {
             holds[f, default: 0] += 1
-            if holds[f] == 1 { start(f) }
+            if holds[f] == 1 {
+                MsngrLog.shader.info("device feed on: \(String(describing: f), privacy: .public)")
+                start(f)
+            }
         }
     }
 
     func release(_ feeds: Set<Feed>) {
         for f in feeds {
             guard let n = holds[f] else { continue }
-            if n <= 1 { holds[f] = nil; stop(f) } else { holds[f] = n - 1 }
+            if n <= 1 {
+                holds[f] = nil
+                MsngrLog.shader.info("device feed off: \(String(describing: f), privacy: .public)")
+                stop(f)
+            } else {
+                holds[f] = n - 1
+            }
         }
     }
 

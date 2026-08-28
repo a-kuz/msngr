@@ -342,7 +342,7 @@ struct ChatInfoView: View {
         Section("Background") {
             if let doc = surfaces.backgrounds[model.chatId] {
                 HStack(spacing: 12) {
-                    ShaderCanvasView(document: doc, running: true, priority: .focus)
+                    ShaderCanvasView(document: doc, running: true, deviceInputs: true, priority: .focus)
                         .frame(width: 44, height: 72)
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     Text(doc.name ?? String(localized: "Shader"))

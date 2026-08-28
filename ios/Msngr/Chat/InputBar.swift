@@ -216,7 +216,7 @@ struct InputBar: View {
     private var bubbleShaderStrip: some View {
         if let doc = model.pendingBubbleShader {
             HStack(spacing: 8) {
-                ShaderCanvasView(document: doc, running: true, priority: .focus)
+                ShaderCanvasView(document: doc, running: true, deviceInputs: true, priority: .focus)
                     .frame(width: 44, height: 26)
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 VStack(alignment: .leading, spacing: 1) {
