@@ -508,6 +508,173 @@ func safety(dir: URL, base: URL, name: String, peer: String) async throws {
         theirUserId: peerMeta.userId))
 }
 
+// MARK: - The shader showcase
+
+/// The accounts the showcase runs on. They are registered fresh, apart from
+/// the service trio, so the history in the frame holds nothing but the demo.
+let showcaseCast: [(name: String, display: String)] = [
+    ("demo", "Demo"),
+    ("nova", "Nova"),
+    ("iris", "Iris"),
+]
+
+/// The direct chat between two people, opened and accepted if it is not there yet.
+func directChat(_ a: Person, _ b: Person) async throws -> String {
+    if let existing = try await a.db.read({ dbc in
+        try String.fetchOne(dbc, sql: """
+            SELECT c.id FROM chat c
+            JOIN member m ON m.chatId = c.id AND m.userId = ?
+            WHERE c.kind = 'direct'
+            """, arguments: [b.userId])
+    }) { return existing }
+    let chatId = try await a.api.createChat(kind: "direct", memberIds: [b.userId], title: nil)
+    try await settle("\(b.username) to see the chat with \(a.username)") { try await chatExists(b, chatId) }
+    await b.engine.acceptChatRequest(chatId: chatId)
+    return chatId
+}
+
+func kindCount(_ p: Person, _ chatId: String, _ kind: String) async throws -> Int {
+    try await p.db.read { dbc in
+        try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM message WHERE chatId = ? AND kind = ?",
+                         arguments: [chatId, kind]) ?? 0
+    }
+}
+
+/// One message of any kind, done when every other member holds one more row of it.
+func deliver(_ content: ContentPayload, from sender: Person, in chatId: String, to others: [Person]) async throws {
+    var before: [String: Int] = [:]
+    for p in others { before[p.username] = try await kindCount(p, chatId, content.kind) }
+    try await sender.engine.enqueue(content: content, chatId: chatId)
+    let label = content.text ?? content.shader?.name ?? content.kind
+    try await settle("«\(label)» to reach \(others.map(\.username).joined(separator: ", "))", seconds: 60) {
+        for p in others {
+            if try await kindCount(p, chatId, content.kind) <= (before[p.username] ?? 0) { return false }
+        }
+        return true
+    }
+}
+
+/// Puts the shader gallery onto the stand: `nova` and the «Showcase» group
+/// wear shader avatars, the demo chat with `nova` holds every sticker and a
+/// text on each bubble shader, and `demo`'s own home gets the aurora as that
+/// chat's background. Running it again adds nothing to a chat already dressed.
+func showcase(dir: URL, base: URL) async throws {
+    var people: [Person] = []
+    for (name, display) in showcaseCast {
+        people.append(try await openPerson(name: name, display: display, dir: dir, base: base))
+    }
+    let demo = people[0], nova = people[1], iris = people[2]
+    for p in people { await startEngine(p, base: base) }
+
+    let novaChat = try await directChat(nova, demo)
+    let irisChat = try await directChat(iris, demo)
+    print("· direct demo ↔ nova: \(novaChat)")
+    print("· direct demo ↔ iris: \(irisChat)")
+
+    let groupTitle = "Showcase"
+    var group = try await iris.db.read { dbc in
+        try String.fetchOne(dbc, sql: "SELECT id FROM chat WHERE kind = 'group' AND title = ?", arguments: [groupTitle])
+    }
+    if group == nil {
+        let id = try await iris.api.createChat(kind: "group", memberIds: [demo.userId, nova.userId], title: groupTitle)
+        for p in [demo, nova] { try await settle("\(p.username) to see «\(groupTitle)»") { try await chatExists(p, id) } }
+        group = id
+    }
+    let groupId = group!
+    print("· group «\(groupTitle)»: \(groupId)")
+
+    // the avatars: nova's own, and the group's
+    let novaAvatar = try await nova.api.uploadShaderAvatar(ShaderGallery.nebula)
+    try await nova.db.write { dbc in
+        try dbc.execute(sql: "UPDATE user SET avatarId = ? WHERE id = ?", arguments: [novaAvatar, nova.userId])
+    }
+    let groupAvatar = try await iris.api.uploadShaderAvatar(ShaderGallery.orbit, chatId: groupId)
+    print("· avatars: nova \(novaAvatar), «\(groupTitle)» \(groupAvatar)")
+
+    // the demo chat: every sticker, a text on each bubble shader
+    if try await kindCount(demo, novaChat, "sticker") < ShaderGallery.stickers.count {
+        var hello = ContentPayload(kind: "text")
+        hello.text = "Every one of these is a tiny program. Tap them."
+        try await deliver(hello, from: nova, in: novaChat, to: [demo])
+        let captions = [
+            "Pond": "Drop a finger in.",
+            "Fireworks": "Tap where the next one should go.",
+            "Eye": "It follows your finger. Tap to make it blink.",
+            "Ink": "Stir it.",
+            "Clock": "This one knows the time.",
+        ]
+        for doc in ShaderGallery.stickers {
+            var sticker = ContentPayload(kind: "sticker")
+            sticker.shader = doc
+            try await deliver(sticker, from: nova, in: novaChat, to: [demo])
+            if let caption = captions[doc.name ?? ""] {
+                var line = ContentPayload(kind: "text")
+                line.text = caption
+                try await deliver(line, from: nova, in: novaChat, to: [demo])
+            }
+        }
+        var foil = ContentPayload(kind: "text")
+        foil.text = "This text sits on holographic foil. Scroll, and the card tilts."
+        foil.bubbleShader = ShaderGallery.foil
+        try await deliver(foil, from: nova, in: novaChat, to: [demo])
+        var ember = ContentPayload(kind: "text")
+        ember.text = "And this one is written over embers."
+        ember.bubbleShader = ShaderGallery.ember
+        try await deliver(ember, from: nova, in: novaChat, to: [demo])
+        var close = ContentPayload(kind: "text")
+        close.text = "Send me one back. The pack is under the sticker button."
+        try await deliver(close, from: nova, in: novaChat, to: [demo])
+    }
+    if try await kindCount(demo, irisChat, "text") < 1 {
+        var line = ContentPayload(kind: "text")
+        line.text = "Hi. Nova has the good stuff, I just hold the group."
+        try await deliver(line, from: iris, in: irisChat, to: [demo])
+    }
+    if try await kindCount(demo, groupId, "sticker") < 1 {
+        var welcome = ContentPayload(kind: "text")
+        welcome.text = "Opened this one for the three of us."
+        try await deliver(welcome, from: iris, in: groupId, to: [demo, nova])
+        var burst = ContentPayload(kind: "sticker")
+        burst.shader = ShaderGallery.fireworks
+        try await deliver(burst, from: nova, in: groupId, to: [demo, iris])
+    }
+
+    // the peers' avatars land in demo's home with the snapshot
+    try? await demo.engine.refreshSnapshot()
+    try await settle("nova's avatar to reach demo") {
+        try await demo.db.read { dbc in
+            try String.fetchOne(dbc, sql: "SELECT avatarId FROM user WHERE id = ?", arguments: [nova.userId])
+        } == novaAvatar
+    }
+
+    for p in people {
+        await p.engine.stop()
+        try await p.db.writeWithoutTransaction { dbc in
+            try dbc.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
+        }
+        let location = StorageLocation(root: p.home)
+        let session = SessionFile(userId: p.userId, deviceId: p.meta.deviceId,
+                                  token: p.meta.token, username: p.username)
+        try JSONEncoder().encode(session).write(to: location.sessionURL, options: .atomic)
+    }
+
+    // demo's own surfaces: the aurora behind the chat with nova. The sticker
+    // pack needs nothing here: the app seeds the bundled stickers into a new home.
+    let aurora = String(decoding: try JSONEncoder().encode(ShaderGallery.aurora), as: UTF8.self)
+    try await demo.db.write { dbc in
+        try dbc.execute(sql: "INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)",
+                        arguments: ["shader.background:\(novaChat)", aurora])
+    }
+    try await demo.db.writeWithoutTransaction { dbc in
+        try dbc.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
+    }
+
+    print("")
+    print("The showcase is on the stand. Hand `demo` to a simulator:")
+    print("  scripts/fixture.py install demo <udid> --launch")
+    for p in people { print("  \(p.username) — \(p.userId) — \(p.home.path)") }
+}
+
 func show(dir: URL) throws {
     for (name, _) in cast {
         let metaURL = dir.appendingPathComponent(name).appendingPathComponent("meta.json")
@@ -533,6 +700,9 @@ do {
         }
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try await seed(dir: dir, base: base)
+    case "showcase":
+        try await showcase(dir: URL(fileURLWithPath: try arg("dir")),
+                           base: URL(string: try arg("base", default: "http://localhost:8787"))!)
     case "show":
         try show(dir: URL(fileURLWithPath: try arg("dir")))
     case "send":
@@ -585,6 +755,7 @@ do {
         usage:
           msngrfixture seed --dir <fixtures> [--base http://localhost:8787] [--reset]
           msngrfixture show --dir <fixtures>
+          msngrfixture showcase --dir <fixtures> [--base …]   the shader gallery on fresh demo accounts
           msngrfixture send --dir <fixtures> [--as bravo] [--to alfa | --to <group title>] [--base …] [--text …]
           msngrfixture send --dir <fixtures> --shader <file.glsl|export.json> [--kind shader|sticker] [--as bravo] [--to alfa]
           msngrfixture knock --dir <fixtures> [--as delta] [--name "Delta Service"] [--to alfa] [--base …] [--text …]
