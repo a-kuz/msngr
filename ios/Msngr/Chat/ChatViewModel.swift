@@ -838,7 +838,7 @@ final class ChatViewModel: ObservableObject {
         case .voice: return String(localized: "Voice message")
         case .file: return m.media?.name ?? String(localized: "File")
         case .album: return String(localized: "Album")
-        default: return String((m.text ?? "").prefix(80))
+        default: return String(MessageMarkdown.mentionsStripped(m.text ?? "").prefix(80))
         }
     }
 

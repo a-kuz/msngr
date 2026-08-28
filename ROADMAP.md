@@ -193,7 +193,10 @@ A ✅ goes in only together with a link to the evidence.
   - ⬜ the picture of the card travels like any other media, encrypted, not as a
     third-party URL the receiver would fetch in the clear
 - Mentions
-  - ⬜ a mention in the text renders as a link and its tap opens the profile
+  - ✅ a mention in the text renders as a link and its tap opens the direct
+    chat with that person; the token carries the userId, previews and
+    notifications show the visible name (qa/runs/2026-08-28-mention-token;
+    MentionMarkdownTests)
   - ⬜ your own mention is marked in the feed and in the chat list row
   - ⬜ a counter of unread mentions and a jump to the earliest one
   - ⬜ a mention survives a rename: it carries the userId, not the handle

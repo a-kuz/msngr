@@ -9,6 +9,8 @@ public struct MarkdownStyle: OptionSet, Hashable, Sendable {
     public static let italic = MarkdownStyle(rawValue: 1 << 1)
     public static let strikethrough = MarkdownStyle(rawValue: 1 << 2)
     public static let code = MarkdownStyle(rawValue: 1 << 3)
+    /// A mention of a user: the visible "@Name" with a `user:<id>` link.
+    public static let mention = MarkdownStyle(rawValue: 1 << 4)
 }
 
 /// A run of text with uniform styling.
@@ -180,6 +182,13 @@ public enum MessageMarkdown {
                 i += 2
                 continue
             }
+            // a mention token: the source carries the userId, the reader sees "@Name"
+            if c == "[", let m = mentionToken(s, at: i) {
+                flush()
+                out.append(MarkdownSpan(m.text, style: style.union(.mention), link: m.link))
+                i = m.end
+                continue
+            }
             // monospace: the contents are literal, nothing nested is parsed inside
             if c == "`", let close = closingIndex(s, from: i + 1, char: "`", count: 1), close > i + 1 {
                 flush()
@@ -200,6 +209,45 @@ public enum MessageMarkdown {
             i += 1
         }
         flush()
+        return out
+    }
+
+    // MARK: - Mentions
+
+    /// The mention token in message source: `[@Name](user:<userId>)`. The name
+    /// shows as it was at send time, the id survives any rename.
+    static func mentionToken(_ s: [Character], at i: Int)
+        -> (text: String, link: String, end: Int)? {
+        guard i + 1 < s.count, s[i] == "[", s[i + 1] == "@" else { return nil }
+        // the visible part: "@Name" up to "](", no newlines inside
+        var j = i + 2
+        while j < s.count, s[j] != "]", s[j] != "\n" { j += 1 }
+        guard j > i + 2, j + 6 < s.count, s[j] == "]", s[j + 1] == "(",
+              matches(s, j + 2, Array("user:")) else { return nil }
+        var k = j + 7
+        while k < s.count, s[k] != ")", s[k] != "\n", s[k] != " " { k += 1 }
+        guard k > j + 7, k < s.count, s[k] == ")" else { return nil }
+        return (text: String(s[(i + 1)..<j]),
+                link: String(s[(j + 2)..<k]),
+                end: k + 1)
+    }
+
+    /// Message source with mention tokens replaced by their visible "@Name":
+    /// what previews, notifications and quotes show.
+    public static func mentionsStripped(_ source: String) -> String {
+        guard source.contains("](user:") else { return source }
+        let s = Array(source)
+        var out = ""
+        var i = 0
+        while i < s.count {
+            if s[i] == "[", let m = mentionToken(s, at: i) {
+                out += m.text
+                i = m.end
+            } else {
+                out.append(s[i])
+                i += 1
+            }
+        }
         return out
     }
 

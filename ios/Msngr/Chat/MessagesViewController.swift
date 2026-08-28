@@ -495,6 +495,16 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     /// A link from a message opens in the built-in browser: the chat stays where it is
     /// and a swipe down brings it back.
     private func open(_ url: URL) {
+        // a mention: open (or create) the direct chat with that person
+        if url.scheme?.lowercased() == "user" {
+            let userId = String(url.absoluteString.dropFirst("user:".count))
+            guard !userId.isEmpty else { return }
+            Task {
+                guard let chatId = await DirectChat.open(userId: userId) else { return }
+                NotificationCenter.default.post(name: .openChatRequested, object: chatId)
+            }
+            return
+        }
         guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
             UIApplication.shared.open(url)
             return
