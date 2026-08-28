@@ -58,11 +58,15 @@ takes a fresh seq, fails to open in the same broken session, and earns its
 own repairRequest with a full budget of 5 attempts — so every answered wave
 seeds the next, bigger one. `resetPairwiseSession` does not stop it: the
 session is rebuilt per request while the answering side keeps encrypting into
-its own fork. The fix needs a cycle-breaker — a repair frame must never earn
-a repair copy of itself (the answering side can see the target seq is a
-`repair` frame in `sentServiceFrame`), and likely a per-peer ceiling on
-in-flight repairs. Why the original session forked is still unestablished
-(one fixture home driven by two processes remains the best-fitting shape).
+its own fork. The cycle is broken from both ends in 24d0dc6 and 8cff769: the answering
+side gives no repair copy of a repair frame
+(`testSenderDoesNotAnswerRepairForARepairFrame`), and the asking side lets at
+most 20 unanswered repairs stand per sender before new requests wait
+(`testRepairCeilingHoldsNewRequestsBack`). The pile already accumulated in
+the alfa fixture stays as history holes; a live pass of the fixed CLI against
+that home is still owed once the bravo home frees up. Why the original
+session forked is still unestablished (one fixture home driven by two
+processes remains the best-fitting shape).
 
 ### A silent identity rotation is not re-checked by TOFU while a device list is cached
 Found 2026-08-27 in passing during the multi-device TOFU run
