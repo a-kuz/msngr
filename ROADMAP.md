@@ -262,6 +262,21 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ group events (left, title, photo, description, the admin role) as separate
     messages, worded for the actor, for the member it touches and for everyone else
     (qa/runs/2026-08-17-groups-run)
+- Shaders (user code, the Shadertoy dialect of GLSL, transpiled to MSL on the
+  device; design in `docs/plans/2026-08-28-shader-messages-design.md`)
+  - ⬜ a shader message: the source pasted into the composer, a live preview,
+    the bubble animating in the peer's feed, a full-screen player with the
+    source reachable
+  - ⬜ a shader as the chat background, and «Set as background» from a
+    received shader message; local, no sync
+  - ⬜ a shader behind a text bubble, chosen by the sender
+  - ⬜ a shader avatar, seen by the peers
+  - ⬜ shader stickers: a transparent bubble that honours `O.a`, packs kept
+    by the hash of the source so a sticker is transferred once and then
+    referenced
+  - ⬜ shader effects on events: the send animation, a reaction burst
+  - ⬜ `iChannel` textures and multipass buffers
+  - ⬜ a budget of live shaders on one screen; the rest hold a frame
 - Other
   - ⬜ contact and location
   - 🟡 GIFs: an animated one is sent unchanged and plays in the feed and the
