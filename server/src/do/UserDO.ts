@@ -567,7 +567,13 @@ export class UserDO implements DurableObject {
         rec.identitySignKey = b.identitySignKey;
         rec.identityKeySig = b.identityKeySig;
         await this.state.storage.put(ikKey(b.deviceId), rec);
-        return json({ ok: true });
+        // a rotated identity is a changed device set: peers holding the old
+        // key by version must drop the cache, or per-send TOFU keeps trusting
+        // the key this update just replaced
+        const version = ((await this.state.storage.get<number>("devicesVersion")) ?? 1) + 1;
+        await this.state.storage.put("devicesVersion", version);
+        await this.broadcastDevicesChanged(version);
+        return json({ ok: true, version });
       }
 
       case "/dev-fault": {
