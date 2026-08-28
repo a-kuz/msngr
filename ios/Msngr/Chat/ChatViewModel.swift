@@ -29,15 +29,16 @@ enum ChatFeedItem: Identifiable, Equatable {
     /// id stays stable for the whole viewing session: it is tied to the anchor seq.
     case unreadMarker(id: String, count: Int)
     /// Messages this device could not read, between two messages of the feed.
-    /// Neighbouring seqs collapse into one item.
-    case unreadable(id: String)
+    /// One item per hole, however many seqs it holds: the placeholder says the
+    /// same thing about each of them, and count is what it says.
+    case unreadable(id: String, count: Int)
 
     var id: String {
         switch self {
         case .message(let m, _, _, _, _, _, _): return m.id
         case .dateSeparator(let id, _): return id
         case .unreadMarker(let id, _): return id
-        case .unreadable(let id): return id
+        case .unreadable(let id, _): return id
         }
     }
 }
@@ -605,9 +606,9 @@ final class ChatViewModel: ObservableObject {
     /// Bubble grouping, date separators and the unread banner, for the inverted
     /// feed. A chat with hidden content (a request before it is accepted) gets an
     /// empty feed: the screen shows the request card instead.
-    /// unreadableSeqs are the seqs this device could not read; between two messages
-    /// of the window they become a neutral placeholder, and adjacent ones collapse
-    /// into a single placeholder.
+    /// unreadableSeqs are the seqs this device could not read; every hole between
+    /// two messages of the window becomes one neutral placeholder carrying the
+    /// number of messages behind it.
     static func buildFeed(_ msgs: [Message], members: [User], ownId: String = "",
                           unreadMarker: (anchorSeq: Int, count: Int)? = nil,
                           contentHidden: Bool = false,
@@ -660,8 +661,9 @@ final class ChatViewModel: ObservableObject {
             // at the edge of the window gets no placeholder: that is history not
             // paged in yet, not a gap
             if let older, let hi = msg.seq, let lo = older.seq, !unreadableSeqs.isEmpty {
-                for run in Self.runs(of: unreadableSeqs.filter { $0 > lo && $0 < hi }).reversed() {
-                    out.append(.unreadable(id: "gap:\(run.lowerBound)-\(run.upperBound)"))
+                let hole = unreadableSeqs.filter { $0 > lo && $0 < hi }
+                if let first = hole.min(), let last = hole.max() {
+                    out.append(.unreadable(id: "gap:\(first)-\(last)", count: hole.count))
                 }
             }
 
@@ -684,18 +686,6 @@ final class ChatViewModel: ObservableObject {
         return out
     }
 
-    /// Consecutive numbers grouped into ranges, ascending.
-    static func runs(of seqs: [Int]) -> [ClosedRange<Int>] {
-        var out: [ClosedRange<Int>] = []
-        for seq in seqs.sorted() {
-            if let last = out.last, seq == last.upperBound + 1 {
-                out[out.count - 1] = last.lowerBound...seq
-            } else if out.last?.contains(seq) != true {
-                out.append(seq...seq)
-            }
-        }
-        return out
-    }
 
     static func dayLabel(_ date: Date) -> String {
         let cal = Calendar.current

@@ -1915,6 +1915,17 @@
         }
       }
     },
+    "%lld messages not loaded yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщений ещё не загружено: %lld"
+          }
+        }
+      }
+    },
     "Message not loaded yet" : {
       "extractionState" : "manual",
       "localizations" : {
