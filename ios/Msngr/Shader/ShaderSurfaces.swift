@@ -23,6 +23,16 @@ final class ShaderSurfaces: ObservableObject {
     @Published var effectsEnabled: Bool {
         didSet { UserDefaults.standard.set(effectsEnabled, forKey: "shaderEffectsEnabled") }
     }
+    /// Draw the feed, the chat list and the backgrounds at half the view's
+    /// scale. The full-screen player and the composer preview always draw at
+    /// full scale. Every canvas re-sizes its drawable when this flips.
+    @Published var halfScale: Bool {
+        didSet {
+            UserDefaults.standard.set(halfScale, forKey: "shaderHalfScale")
+            NotificationCenter.default.post(name: Self.scaleChanged, object: nil)
+        }
+    }
+    static let scaleChanged = Notification.Name("msngr.shaderScaleChanged")
     /// the sticker pack, newest first
     @Published private(set) var stickers: [ShaderDocument] = []
 
@@ -32,6 +42,7 @@ final class ShaderSurfaces: ObservableObject {
 
     private init() {
         effectsEnabled = UserDefaults.standard.object(forKey: "shaderEffectsEnabled") as? Bool ?? true
+        halfScale = UserDefaults.standard.object(forKey: "shaderHalfScale") as? Bool ?? false
     }
 
     private var db: DatabaseQueue? { AppState.shared.db }
