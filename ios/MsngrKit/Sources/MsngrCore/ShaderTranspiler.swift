@@ -89,6 +89,7 @@ public enum ShaderTranspiler {
         s = rewriteParameterQualifiers(s)
         s = rewriteArrayConstructors(s)
         s = rewriteStructConstructors(s)
+        s = rewriteSwizzleCompoundAssignments(s)
         s = replace(#"\b([A-Za-z_]\w*)\.length\(\)"#, in: s, with: "(int)(sizeof($1)/sizeof($1[0]))")
         s = replace(#"\bdiscard\s*;"#, in: s, with: "discard_fragment();")
         if !matches(#"\bmainImage\s*\(\s*thread\s+float4\s*&\s*\w+\s*,\s*float2\s+\w+\s*\)"#, in: s) {
@@ -221,6 +222,15 @@ public enum ShaderTranspiler {
     }
 
     /// `T[](a, b)` and `T[N](a, b)` → `{a, b}`.
+    /// `p.xz *= m;` → `p.xz = p.xz * (m);`. MSL's compound operators take the
+    /// left side by reference, and a swizzle of two or more components is a
+    /// temporary that cannot bind to one.
+    static func rewriteSwizzleCompoundAssignments(_ s: String) -> String {
+        let lvalue = #"((?:[A-Za-z_]\w*)(?:\s*\[[^\]]*\]|\.[A-Za-z_]\w*)*)"#
+        let swizzle = #"\.([xyzw]{2,4}|[rgba]{2,4}|[stpq]{2,4})"#
+        return replace(lvalue + swizzle + #"\s*([-+*/])=\s*([^;]+);"#, in: s, with: "$1.$2 = $1.$2 $3 ($4);")
+    }
+
     static func rewriteArrayConstructors(_ s: String) -> String {
         bracify(s, pattern: #"\b([A-Za-z_]\w*)\s*\[\s*\d*\s*\]\s*\("#, keepName: false)
     }

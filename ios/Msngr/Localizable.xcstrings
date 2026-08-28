@@ -1,84 +1,12 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "Sticker" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Стикер" } } } },
-    "Stickers" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Стикеры" } } } },
-    "Bubble shader" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Шейдер пузыря" } } } },
-    "Shader sticker" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Шейдер-стикер" } } } },
-    "Chat background" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Фон чата" } } } },
-    "Send effect" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Эффект отправки" } } } },
-    "Reaction effect" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Эффект реакции" } } } },
-    "Shader avatar" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Шейдер-аватар" } } } },
-    "Shader avatar…" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Шейдер-аватар…" } } } },
-    "Attach" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Прикрепить" } } } },
-    "Set" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Установить" } } } },
-    "Use" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Использовать" } } } },
-    "Set as background" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Сделать фоном" } } } },
-    "Add to stickers" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "В стикеры" } } } },
-    "Remove from stickers" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Убрать из стикеров" } } } },
-    "New sticker" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Новый стикер" } } } },
-    "No stickers yet. Write one from Shadertoy code, or add one a friend sent." : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Стикеров пока нет. Напишите свой из кода Shadertoy или добавьте присланный." } } } },
-    "Shadertoy code. Write the alpha you want into O.a: where it is 0 the chat shows through." : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Код Shadertoy. Прозрачность пишите в O.a: где она 0, виден чат." } } } },
-    "Shadertoy code with alpha in O.a. iMouse.xy is where the event happened; the effect lasts about a second." : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Код Shadertoy с прозрачностью в O.a. iMouse.xy — точка события; эффект длится около секунды." } } } },
-    "Behind the next message" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "За следующим сообщением" } } } },
-    "Background" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Фон" } } } },
-    "Shader background…" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Шейдер-фон…" } } } },
-    "Change shader…" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Сменить шейдер…" } } } },
-    "Shaders" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Шейдеры" } } } },
-    "Effects on send and reaction" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "Эффекты при отправке и реакции" } } } },
-    "Default" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "По умолчанию" } } } },
-    "motion" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "движение" } } } },
-    "location" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "геопозиция" } } } },
-    "microphone" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "микрофон" } } } },
-    "camera" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "камера" } } } },
-    "keyboard" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "клавиатура" } } } },
-    "haptics" : { "extractionState" : "manual", "localizations" : { "ru" : { "stringUnit" : { "state" : "translated", "value" : "вибрация" } } } },
-    "Enter the number in international format, like +79261234567" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Введите номер в международном формате, например +79261234567"
-          }
-        }
-      }
-    },
-    "People who have your number in their contacts will find you. Only the number's hash reaches the server." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Вас смогут найти те, у кого ваш номер записан в контактах. На сервер попадает только хэш номера."
-          }
-        }
-      }
-    },
-    "Phone" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Телефон"
-          }
-        }
-      }
-    },
-    "Phone number" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Номер телефона"
-          }
-        }
-      }
-    },
     " " : {
       "comment" : "A placeholder text for a chat row.",
+      "isCommentAutoGenerated" : true
+    },
+    "@" : {
+      "comment" : "A button that jumps to the earliest unread message.",
       "isCommentAutoGenerated" : true
     },
     "@%@" : {
@@ -247,6 +175,17 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "%lld messages not loaded yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщений ещё не загружено: %lld"
           }
         }
       }
@@ -533,6 +472,17 @@
         }
       }
     },
+    "Add to stickers" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В стикеры"
+          }
+        }
+      }
+    },
     "Added %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -697,6 +647,17 @@
         }
       }
     },
+    "Attach" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прикрепить"
+          }
+        }
+      }
+    },
     "Attachment not sent: could not save to device" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -726,6 +687,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Автоудаление"
+          }
+        }
+      }
+    },
+    "Background" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Фон"
+          }
+        }
+      }
+    },
+    "Behind the next message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "За следующим сообщением"
           }
         }
       }
@@ -774,6 +757,28 @@
         }
       }
     },
+    "Bubble shader" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шейдер пузыря"
+          }
+        }
+      }
+    },
+    "camera" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "камера"
+          }
+        }
+      }
+    },
     "Cancel" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -796,6 +801,17 @@
         }
       }
     },
+    "Change shader…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сменить шейдер…"
+          }
+        }
+      }
+    },
     "Chat" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -803,6 +819,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Чат"
+          }
+        }
+      }
+    },
+    "Chat background" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Фон чата"
           }
         }
       }
@@ -939,6 +966,17 @@
         }
       }
     },
+    "Compiling…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Компиляция…"
+          }
+        }
+      }
+    },
     "Confirm" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -994,6 +1032,17 @@
         }
       }
     },
+    "Copied" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скопировано"
+          }
+        }
+      }
+    },
     "Copied!" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1023,6 +1072,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Скопировать ссылку"
+          }
+        }
+      }
+    },
+    "Could not be shown" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось отобразить"
           }
         }
       }
@@ -1121,6 +1181,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Данные"
+          }
+        }
+      }
+    },
+    "Default" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По умолчанию"
           }
         }
       }
@@ -1312,6 +1383,17 @@
         }
       }
     },
+    "Effects on send and reaction" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эффекты при отправке и реакции"
+          }
+        }
+      }
+    },
     "End-to-end encrypted" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1340,6 +1422,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Введите юзернейм или имя собеседника."
+          }
+        }
+      }
+    },
+    "Enter the number in international format, like +79261234567" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Введите номер в международном формате, например +79261234567"
           }
         }
       }
@@ -1384,83 +1477,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Файл"
-          }
-        }
-      }
-    },
-    "Shader" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Шейдер"
-          }
-        }
-      }
-    },
-    "Could not be shown" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось отобразить"
-          }
-        }
-      }
-    },
-    "Paste shader code" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Вставьте код шейдера"
-          }
-        }
-      }
-    },
-    "Source" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Исходник"
-          }
-        }
-      }
-    },
-    "Copied" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Скопировано"
-          }
-        }
-      }
-    },
-    "Compiling…" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Компиляция…"
-          }
-        }
-      }
-    },
-    "Shadertoy code or a Shadertoy JSON export. iTime, iResolution, iMouse, iChannel0–3, Buffer A–D." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Код Shadertoy или его JSON-экспорт. iTime, iResolution, iMouse, iChannel0–3, Buffer A–D."
           }
         }
       }
@@ -1663,6 +1679,17 @@
         }
       }
     },
+    "haptics" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "вибрация"
+          }
+        }
+      }
+    },
     "If this is not your account, cancel the login." : {
       "localizations" : {
         "ru" : {
@@ -1695,6 +1722,28 @@
         }
       }
     },
+    "keyboard" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "клавиатура"
+          }
+        }
+      }
+    },
+    "Language" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Язык"
+          }
+        }
+      }
+    },
     "last seen %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1713,17 +1762,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "был(а) только что"
-          }
-        }
-      }
-    },
-    "Language" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Язык"
           }
         }
       }
@@ -1802,6 +1840,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Список недоступен"
+          }
+        }
+      }
+    },
+    "location" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "геопозиция"
           }
         }
       }
@@ -1947,17 +1996,6 @@
         }
       }
     },
-    "%lld messages not loaded yet" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сообщений ещё не загружено: %lld"
-          }
-        }
-      }
-    },
     "Message not loaded yet" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2024,6 +2062,17 @@
         }
       }
     },
+    "microphone" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "микрофон"
+          }
+        }
+      }
+    },
     "Microphone disabled" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2031,6 +2080,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Микрофон выключен"
+          }
+        }
+      }
+    },
+    "motion" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "движение"
           }
         }
       }
@@ -2127,6 +2187,17 @@
         }
       }
     },
+    "New sticker" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новый стикер"
+          }
+        }
+      }
+    },
     "Newer" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2178,6 +2249,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "В этом чате нет сообщений с таким текстом"
+          }
+        }
+      }
+    },
+    "No stickers yet. Write one from Shadertoy code, or add one a friend sent." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Стикеров пока нет. Напишите свой из кода Shadertoy или добавьте присланный."
           }
         }
       }
@@ -2270,6 +2352,17 @@
         }
       }
     },
+    "Open" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть"
+          }
+        }
+      }
+    },
     "On a device already logged in, open:\nSettings → Devices → Add device\nand enter this code there." : {
       "localizations" : {
         "ru" : {
@@ -2346,6 +2439,17 @@
         }
       }
     },
+    "Paste shader code" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вставьте код шейдера"
+          }
+        }
+      }
+    },
     "Pause" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2375,6 +2479,39 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Люди"
+          }
+        }
+      }
+    },
+    "People who have your number in their contacts will find you. Only the number's hash reaches the server." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вас смогут найти те, у кого ваш номер записан в контактах. На сервер попадает только хэш номера."
+          }
+        }
+      }
+    },
+    "Phone" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Телефон"
+          }
+        }
+      }
+    },
+    "Phone number" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Номер телефона"
           }
         }
       }
@@ -2489,6 +2626,17 @@
         }
       }
     },
+    "Reaction effect" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эффект реакции"
+          }
+        }
+      }
+    },
     "Remove" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2507,6 +2655,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Из папки"
+          }
+        }
+      }
+    },
+    "Remove from stickers" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Убрать из стикеров"
           }
         }
       }
@@ -2764,6 +2923,17 @@
         }
       }
     },
+    "Send effect" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эффект отправки"
+          }
+        }
+      }
+    },
     "Sent %lld" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2782,6 +2952,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Сессия завершена"
+          }
+        }
+      }
+    },
+    "Set" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Установить"
+          }
+        }
+      }
+    },
+    "Set as background" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сделать фоном"
           }
         }
       }
@@ -2807,6 +2999,105 @@
         }
       }
     },
+    "Shader" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шейдер"
+          }
+        }
+      }
+    },
+    "Shader avatar" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шейдер-аватар"
+          }
+        }
+      }
+    },
+    "Shader avatar…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шейдер-аватар…"
+          }
+        }
+      }
+    },
+    "Shader background…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шейдер-фон…"
+          }
+        }
+      }
+    },
+    "Shader sticker" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шейдер-стикер"
+          }
+        }
+      }
+    },
+    "Shaders" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шейдеры"
+          }
+        }
+      }
+    },
+    "Shadertoy code or a Shadertoy JSON export. iTime, iResolution, iMouse, iChannel0–3, Buffer A–D." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Код Shadertoy или его JSON-экспорт. iTime, iResolution, iMouse, iChannel0–3, Buffer A–D."
+          }
+        }
+      }
+    },
+    "Shadertoy code with alpha in O.a. iMouse.xy is where the event happened; the effect lasts about a second." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Код Shadertoy с прозрачностью в O.a. iMouse.xy — точка события; эффект длится около секунды."
+          }
+        }
+      }
+    },
+    "Shadertoy code. Write the alpha you want into O.a: where it is 0 the chat shows through." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Код Shadertoy. Прозрачность пишите в O.a: где она 0, виден чат."
+          }
+        }
+      }
+    },
     "Show in chat" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2825,6 +3116,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Показывать текст сообщений"
+          }
+        }
+      }
+    },
+    "Source" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исходник"
           }
         }
       }
@@ -2869,6 +3171,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Начать заново?"
+          }
+        }
+      }
+    },
+    "Sticker" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Стикер"
+          }
+        }
+      }
+    },
+    "Stickers" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Стикеры"
           }
         }
       }
@@ -3298,6 +3622,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "вверх — замок"
+          }
+        }
+      }
+    },
+    "Use" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использовать"
           }
         }
       }

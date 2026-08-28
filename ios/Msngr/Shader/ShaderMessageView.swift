@@ -18,8 +18,12 @@ final class ShaderCanvas: UIView {
     private(set) var renderer: ShaderRenderer?
     private var observer: UUID?
     private var program: ShaderProgram?
-    /// Whether touches reach the shader; off in the feed, where they scroll.
+    /// Whether touches reach the shader; off for a shader message in the feed,
+    /// where they scroll, on for a sticker, the player and the composer.
     var acceptsTouches = false
+    /// Whether the canvas also takes the keyboard (the keyboard feed). Off in
+    /// the feed: becoming first responder there would dismiss the composer.
+    var acceptsKeys = true
     var priority: Priority = .feed
     var onState: ((ShaderProgram.State) -> Void)?
     /// The owner asked for frames; the budget decides whether they come.
@@ -147,7 +151,7 @@ final class ShaderCanvas: UIView {
 
     // MARK: touches → iMouse, iTouch, iPencil; keys → the keyboard texture
 
-    override var canBecomeFirstResponder: Bool { acceptsTouches }
+    override var canBecomeFirstResponder: Bool { acceptsTouches && acceptsKeys }
 
     /// Every finger down on the canvas right now.
     private var fingers: [UITouch] = []
@@ -160,7 +164,7 @@ final class ShaderCanvas: UIView {
         super.didMoveToWindow()
         if window != nil, acceptsTouches {
             if hover.view == nil { addGestureRecognizer(hover) }
-            becomeFirstResponder()
+            if acceptsKeys { becomeFirstResponder() }
         }
     }
 
@@ -257,6 +261,9 @@ final class ShaderMessageView: UIView {
     /// state label reads over the chat instead of over black.
     init(transparent: Bool = false) {
         canvas = ShaderCanvas(transparent: transparent)
+        // a sticker reacts to the finger; a shader message opens on a tap instead
+        canvas.acceptsTouches = transparent
+        canvas.acceptsKeys = false
         super.init(frame: .zero)
         clipsToBounds = true
         layer.cornerRadius = transparent ? 0 : Theme.bubbleCorner

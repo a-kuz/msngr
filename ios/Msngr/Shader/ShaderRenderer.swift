@@ -319,7 +319,10 @@ final class ShaderRenderer: NSObject, MTKViewDelegate {
     func touch(_ point: CGPoint?, in size: CGSize, scale: CGFloat, began: Bool) {
         guard let point else {
             mouse.z = -abs(mouse.z)
-            mouse.w = -abs(mouse.w)
+            // a tap that began and ended inside one frame still reports its
+            // click: `iMouse.w > 0` on that frame, as on Shadertoy, and the
+            // frame's end turns it negative
+            if !mouseDownThisFrame { mouse.w = -abs(mouse.w) }
             return
         }
         let x = Float(point.x * scale)
@@ -386,7 +389,8 @@ final class ShaderRenderer: NSObject, MTKViewDelegate {
         MainActor.assumeIsolated { drawFrame(in: view) }
     }
 
-    private func drawFrame(in view: MTKView) {
+    private
+    func drawFrame(in view: MTKView) {
         guard !compiled.isEmpty, pausedAt == nil,
               let queue = ShaderGPU.shared.queue, let device = ShaderGPU.shared.device,
               let drawable = view.currentDrawable, let uniforms else { return }
