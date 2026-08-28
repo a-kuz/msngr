@@ -787,9 +787,9 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "unread", for: indexPath) as! UnreadMarkerCell
             cell.configure(count: count)
             return cell
-        case .unreadable:
+        case .unreadable(_, let count):
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "system", for: indexPath) as! SystemCell
-            cell.configure(text: SystemCell.unreadableText)
+            cell.configure(text: SystemCell.unreadableText(count: count))
             return cell
         case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName,
                       let avatar):
@@ -824,9 +824,10 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             return CGSize(width: cv.bounds.width,
                           height: FeedNote.height(UnreadMarkerCell.title(count: count),
                                                   width: cv.bounds.width, padding: 12) + 14)
-        case .unreadable:
+        case .unreadable(_, let count):
             return CGSize(width: cv.bounds.width,
-                          height: FeedNote.height(SystemCell.unreadableText, width: cv.bounds.width) + 12)
+                          height: FeedNote.height(SystemCell.unreadableText(count: count),
+                                                  width: cv.bounds.width) + 12)
         case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName,
                       let avatar):
             if msg.kind == .system {
@@ -1094,6 +1095,11 @@ final class SystemCell: UICollectionViewCell {
     required init?(coder: NSCoder) { fatalError() }
 
     static let unreadableText = String(localized: "Message not loaded yet")
+
+    /// One hole in the history, however many messages are behind it.
+    static func unreadableText(count: Int) -> String {
+        count > 1 ? String(localized: "\(count) messages not loaded yet") : unreadableText
+    }
 
     static func text(for msg: Message, ownUserId: String = "") -> String {
         let t = msg.text ?? ""

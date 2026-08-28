@@ -13,7 +13,11 @@ final class HistoryFeedTests: XCTestCase {
     }
 
     private func unreadableIds(_ feed: [ChatFeedItem]) -> [String] {
-        feed.compactMap { if case .unreadable(let id) = $0 { return id } else { return nil } }
+        feed.compactMap { if case .unreadable(let id, _) = $0 { return id } else { return nil } }
+    }
+
+    private func unreadableCounts(_ feed: [ChatFeedItem]) -> [Int] {
+        feed.compactMap { if case .unreadable(_, let count) = $0 { return count } else { return nil } }
     }
 
     /// An unreadable seq between two messages of the window: one placeholder where the hole is.
@@ -34,6 +38,19 @@ final class HistoryFeedTests: XCTestCase {
         let feed = ChatViewModel.buildFeed([msg(10), msg(5)], members: [],
                                            unreadableSeqs: [6, 7, 8, 9])
         XCTAssertEqual(unreadableIds(feed), ["gap:6-9"])
+        XCTAssertEqual(unreadableCounts(feed), [4])
+    }
+
+    /// The seqs of a hole are not contiguous — service frames and the sender's
+    /// own messages take numbers this device never sees as a gap — and one hole
+    /// is still one placeholder. Before this it was one line per run, which
+    /// filled a screen with the same sentence.
+    @MainActor
+    func testHoleBrokenBySkippedSeqsIsStillOnePlaceholder() {
+        let feed = ChatViewModel.buildFeed([msg(20), msg(5)], members: [],
+                                           unreadableSeqs: [6, 7, 9, 12, 13, 18])
+        XCTAssertEqual(unreadableIds(feed), ["gap:6-18"])
+        XCTAssertEqual(unreadableCounts(feed), [6])
     }
 
     /// A gap below the oldest message of the window is simply the not-yet-loaded bottom,
@@ -53,12 +70,5 @@ final class HistoryFeedTests: XCTestCase {
         let ids = feed.map(\.id)
         XCTAssertEqual(Set(ids).count, ids.count, "feed item ids must be unique: \(ids)")
         XCTAssertEqual(unreadableIds(feed), ["gap:7-8", "gap:3-4"])
-    }
-
-    @MainActor
-    func testRunsGroupConsecutiveSeqs() {
-        XCTAssertEqual(ChatViewModel.runs(of: [4, 5, 6, 9, 11, 12]), [4...6, 9...9, 11...12])
-        XCTAssertEqual(ChatViewModel.runs(of: []), [])
-        XCTAssertEqual(ChatViewModel.runs(of: [7, 7]), [7...7])
     }
 }
