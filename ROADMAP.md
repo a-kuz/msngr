@@ -294,12 +294,15 @@ A ✅ goes in only together with a link to the evidence.
     started no feed and raised no prompt in the feed, and opening the player
     turned motion, location and the camera on and closing it turned them
     off — qa/runs/2026-08-28-shader-sensor-isolation-run.md)
-  - ⬜ the shader composer behind a switch in Settings → «Шейдеры»: off by
+  - ✅ the shader composer behind a switch in Settings → «Шейдеры»: off by
     default, the «Shader» and «Bubble shader» items leave the attachment
-    menu and the strip over the input field; the sticker panel, the
-    backgrounds, the avatar and the effects keep their own «write your own»
-    entry, and a received shader message still opens in the player and is
-    still previewed in the chat list and in the push
+    menu; the sticker panel, the backgrounds, the avatar and the effects
+    keep their own composer entries, and a received shader message still
+    opens in the player and keeps its previews
+    (`ShaderSurfaces.composerEnabled`; run live 2026-08-29: the menu
+    without and with the entries, the panel's own «+» opening the
+    sticker composer under the switch off —
+    qa/runs/2026-08-29-shader-composer-toggle-run.md)
   - ✅ a drawable scale setting in Settings → «Шейдеры»: «Половинное
     разрешение в чатах» halves the drawable of the feed, the chat list and
     the backgrounds; the player, the composer preview and the effects stay
