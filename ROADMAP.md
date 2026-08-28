@@ -200,7 +200,10 @@ A ✅ goes in only together with a link to the evidence.
     chat with that person; the token carries the userId, previews and
     notifications show the visible name (qa/runs/2026-08-28-mention-token;
     MentionMarkdownTests)
-  - ⬜ your own mention is marked in the feed and in the chat list row
+  - 🟡 your own mention is marked in the chat list row: an «@» circle next to
+    the unread badge while an unread message mentions you
+    (qa/runs/2026-08-28-mention-token; MentionMarksTests; the in-feed bubble
+    highlight is not done)
   - ⬜ a counter of unread mentions and a jump to the earliest one
   - ⬜ a mention survives a rename: it carries the userId, not the handle
   - ⬜ @all in a group, and who is allowed to use it

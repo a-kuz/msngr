@@ -63,6 +63,15 @@ token in the text.
   resorting between the screenshot and the scripted tap — the tap landed on
   another row; no product defect behind it.
 
+## The «@» mark on the chat row (fifth slice)
+
+- The chat list snapshot marks chats whose unread messages carry your mention
+  (`MentionMarks.hasUnreadMention`: unread only, incoming only, deleted and
+  foreign ids excluded — MentionMarksTests over an in-memory database), and
+  the row shows an accent «@» circle next to the badge.
+- Live: bravo's «Отметка: [@Alfa](…), проверь» into the muted «Design» lit
+  «@ 1» on its row; a plain message to the direct chat showed the badge alone.
+
 ## Left for the next slices
 
 - Your own mention marked in the feed and the chat list row; the

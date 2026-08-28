@@ -6,6 +6,8 @@ import SwiftUI
 
 /// Chat list row: the chat plus the data derived for display.
 struct ChatListItem: Identifiable, Equatable {
+    /// an unread message mentions you: the «@» mark next to the badge
+    var hasUnreadMention: Bool = false
     var chat: Chat
     var peer: User?          // direct chats only
     var lastMessage: Message?
@@ -33,6 +35,8 @@ private struct ChatListSnapshot {
     var chats: [Chat]
     var peers: [String: User]
     var lasts: [String: Message]
+    /// chats whose unread messages mention this user: the «@» mark
+    var mentions: Set<String> = []
     var folders: [ChatFolder]
     var pins: [String: [String: ChatFolderPin]]
 }
@@ -82,7 +86,14 @@ final class ChatListModel: ObservableObject {
                     """)
                 var peers: [String: User] = [:]
                 var lasts: [String: Message] = [:]
+                var mentions: Set<String> = []
                 for chat in chats {
+                    if chat.unreadCount > 0,
+                       try MentionMarks.hasUnreadMention(dbc, chatId: chat.id,
+                                                         myReadUpTo: chat.myReadUpTo,
+                                                         ownUserId: ownId) {
+                        mentions.insert(chat.id)
+                    }
                     if chat.kind == .direct {
                         if let peerId = try String.fetchOne(
                             dbc, sql: "SELECT userId FROM member WHERE chatId = ? AND userId != ?",
@@ -100,6 +111,7 @@ final class ChatListModel: ObservableObject {
                     }
                 }
                 return ChatListSnapshot(chats: chats, peers: peers, lasts: lasts,
+                                        mentions: mentions,
                                         folders: try ChatFolderStore.all(dbc),
                                         pins: try ChatFolderStore.pins(dbc))
                 }
@@ -108,7 +120,8 @@ final class ChatListModel: ObservableObject {
             .sink(receiveCompletion: { _ in }, receiveValue: { [weak self] snapshot in
                 guard let self else { return }
                 let all = snapshot.chats.map { chat in
-                    ChatListItem(chat: chat, peer: snapshot.peers[chat.id], lastMessage: snapshot.lasts[chat.id],
+                    ChatListItem(hasUnreadMention: snapshot.mentions.contains(chat.id),
+                                 chat: chat, peer: snapshot.peers[chat.id], lastMessage: snapshot.lasts[chat.id],
                                  typingText: self.typingLabel(chat.id, snapshot.peers[chat.id]))
                 }
                 let visible = all.filter { !$0.chat.archived && !$0.chat.isRequest }
