@@ -52,6 +52,17 @@ token in the text.
 - Live: with the «Design» group muted, a plain message from bravo raised
   nothing; a message carrying [@Alfa](user:…) raised the banner.
 
+## The tap on your own mention (owner's report, fourth slice)
+
+- Tapping [@Alfa](user:<own id>) used to fall into `DirectChat.open(ownId)`;
+  the server refuses a direct chat with yourself (`direct_needs_one_peer`),
+  so the tap died silently. Now a mention of yourself opens the
+  saved-messages chat; verified live in «Design». A mention of someone else
+  still opens their direct chat.
+- The earlier «tap opened the chat with Charlie» sighting was the chat list
+  resorting between the screenshot and the scripted tap — the tap landed on
+  another row; no product defect behind it.
+
 ## Left for the next slices
 
 - Your own mention marked in the feed and the chat list row; the
