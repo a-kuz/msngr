@@ -756,6 +756,11 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   system PiP window
 - ⬜ a second incoming call during a call: decline, or hold and switch
 - ⬜ the call log: outgoing, answered and missed in the chat and in a list
+- ⬜ pulling a third person into a 1:1 call, and onward — any participant can
+  invite the next one, growing the call ad hoc
+- ⬜ the live call bubble lands in the pairwise chat of the inviter and the
+  invited (created on the spot when they had none), and stays live in every
+  chat it was placed into: join from there, the timer and the participants on it
 
 ## Settings
 
