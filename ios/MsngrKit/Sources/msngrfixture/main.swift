@@ -334,10 +334,25 @@ func send(dir: URL, base: URL, name: String, peer: String, text: String, repeatC
         }
     }
     guard let chatId else { throw FixtureError("no chat between \(name) and \(peer)") }
+    // --reply quotes the peer's latest message, so the text lands as a reply
+    var replyTo: ReplyPreview?
+    if flag("reply") {
+        replyTo = try await p.db.read { dbc in
+            guard let row = try Row.fetchOne(dbc, sql: """
+                SELECT seq, fromUserId, text, kind FROM message
+                WHERE chatId = ? AND isOutgoing = 0 AND seq IS NOT NULL
+                ORDER BY seq DESC LIMIT 1
+                """, arguments: [chatId]) else { return nil }
+            return ReplyPreview(seq: row["seq"], authorId: row["fromUserId"],
+                                text: row["text"] ?? "", kind: row["kind"])
+        }
+        guard replyTo != nil else { throw FixtureError("no incoming message to reply to") }
+    }
     await startEngine(p, base: base)
     for i in 1...max(1, repeatCount) {
         var content = ContentPayload(kind: "text")
         content.text = repeatCount > 1 ? "\(text) \(i)" : text
+        content.replyTo = replyTo
         try await p.engine.enqueue(content: content, chatId: chatId)
     }
     try await settle("the messages to leave the outbox", seconds: 300) {
