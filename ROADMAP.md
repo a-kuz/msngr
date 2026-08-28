@@ -290,10 +290,14 @@ A ✅ goes in only together with a link to the evidence.
   - 🟡 a shader avatar, seen by the peers (the document as the avatar blob,
     told from a picture by the first byte; chat list, feed and info draw it
     live under the budget; not yet run live)
-  - 🟡 shader stickers: a transparent bubble that honours `O.a`, a local pack
+  - ✅ shader stickers: a transparent bubble that honours `O.a`, a local pack
     keyed by the hash of the document, «В стикеры» on a received one. The
     document travels inline in every sticker message: a reference the
-    receiver might not hold would be an unreadable message (not yet run live)
+    receiver might not hold would be an unreadable message. A sticker keeps
+    its touches, so it can react to a tap; the pack starts with two bundled
+    ones, Heart (beats when tapped, state in a buffer texel, the beat on the
+    haptics) and Sparkle (seen live on the simulator: the pack, a send, the
+    feed, taps on the heart; `BundledStickersTests` compile both)
   - 🟡 shader effects on events: the send burst and the reaction burst, two
     bundled shaders the user replaces from Settings → «Шейдеры» (not yet run live)
   - 🟡 the device as input, each a uniform or a channel texture (the uniform
