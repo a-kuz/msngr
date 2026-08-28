@@ -18,10 +18,13 @@ enum NotificationDecision {
     /// notification would duplicate it. When no push can arrive (simulator, a
     /// device with no registered token) and WS is still alive, the app posts
     /// the banner itself.
+    /// - repliesToMe: the message quotes one of yours; a muted chat still
+    ///   notifies about it, the way a mention would.
     static func forIncomingWS(appActive: Bool, chatOpen: Bool, isOwn: Bool,
                               isService: Bool, muted: Bool, alreadyShown: Bool,
-                              apnsAvailable: Bool = true) -> WSAction {
-        if isOwn || isService || muted || alreadyShown { return .none }
+                              apnsAvailable: Bool = true,
+                              repliesToMe: Bool = false) -> WSAction {
+        if isOwn || isService || (muted && !repliesToMe) || alreadyShown { return .none }
         guard appActive else { return apnsAvailable ? .none : .localNotification }
         return chatOpen ? .none : .inAppBanner
     }
@@ -36,8 +39,9 @@ enum NotificationDecision {
     static func shouldPresentSystemPush(isLocal: Bool = false,
                                         chatOpen: Bool, alreadyShown: Bool,
                                         messageInDB: Bool, messageRead: Bool,
-                                        muted: Bool) -> Bool {
+                                        muted: Bool, repliesToMe: Bool = false) -> Bool {
         if isLocal { return true }
-        return !(chatOpen || alreadyShown || messageInDB || messageRead || muted)
+        return !(chatOpen || alreadyShown || messageInDB || messageRead
+                 || (muted && !repliesToMe))
     }
 }
