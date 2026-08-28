@@ -98,11 +98,24 @@ final class NotificationDecisionTests: XCTestCase {
                                                      muted: muted)
     }
 
-    func testOwnLocalNotificationAlwaysPresents() {
+    func testOwnLocalNotificationPresentsThroughTheCommonDedup() {
         // the app posted this banner itself from a WS frame: the message is already in
         // the DB and its key is already in alreadyShown, so the common dedupe would
         // swallow the app's own notification
         XCTAssertTrue(present(isLocal: true, alreadyShown: true, messageInDB: true))
+    }
+
+    /// Posted in the background, presented on the way to the foreground — over
+    /// the very chat that already shows the message. Says nothing, declined.
+    func testOwnLocalNotificationOverItsOpenChatSuppressed() {
+        XCTAssertFalse(present(isLocal: true, chatOpen: true,
+                               alreadyShown: true, messageInDB: true))
+    }
+
+    /// The message was read before the banner got its turn to present.
+    func testOwnLocalNotificationForAReadMessageSuppressed() {
+        XCTAssertFalse(present(isLocal: true, alreadyShown: true,
+                               messageInDB: true, messageRead: true))
     }
 
     func testPushForUnknownMessagePresents() {
