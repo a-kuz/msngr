@@ -131,6 +131,10 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
             try? await UNUserNotificationCenter.current().add(
                 UNNotificationRequest(identifier: Message.feedId(chatId: chatId, seq: seq),
                                       content: built, trigger: nil))
+            // the add raced the read-sweep: the avatar fetch above can finish
+            // after the read's unread-count emission already swept the shade,
+            // and nothing would ever re-check this one — so it checks itself
+            dropReadNotifications()
         case .none:
             break
         }

@@ -32,7 +32,11 @@ enum NotificationDecision {
     /// Whether to present a notification the system asked the delegate about (willPresent).
     /// - isLocal: the app posted this notification itself from a WS frame. It
     ///   passed every check when it was posted and its key is in alreadyShown,
-    ///   so the common dedup would suppress the app's own banner.
+    ///   so the common dedup would suppress the app's own banner — but the
+    ///   world may have moved between the posting in the background and the
+    ///   presentation on the way to the foreground: a banner over the very
+    ///   chat that shows the message, or over a message already read, says
+    ///   nothing and is declined like any other.
     /// - messageInDB: the message already arrived over WS (a row in the DB), the banner would be a duplicate
     /// - alreadyShown: an in-app banner or a system push has already been shown for this (chatId, seq)
     /// - messageRead: the message is already read (seq <= myReadUpTo)
@@ -40,7 +44,7 @@ enum NotificationDecision {
                                         chatOpen: Bool, alreadyShown: Bool,
                                         messageInDB: Bool, messageRead: Bool,
                                         muted: Bool, repliesToMe: Bool = false) -> Bool {
-        if isLocal { return true }
+        if isLocal { return !(chatOpen || messageRead) }
         return !(chatOpen || alreadyShown || messageInDB || messageRead
                  || (muted && !repliesToMe))
     }

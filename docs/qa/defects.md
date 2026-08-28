@@ -91,12 +91,14 @@ app posted its local notification, as designed for the background. On
 returning to the foreground the banner presented over the very chat that
 already showed the message, and after the message was read the notification
 was still in the shade a minute later, alone — the pushed stack around it was
-withdrawn correctly. Unproven hypothesis for the second half:
-`dropReadNotifications` runs only on unread-count emissions, and this banner
-finished its async add (avatar fetch, `UNUserNotificationCenter.add`) after
-the read's emission had already swept, so nothing ever re-checks it. The
-presentation half needs `willPresent` to decline a banner whose chat is open
-and message visible on the local-notification path the way it does for pushes.
+withdrawn correctly. Both halves closed in code: `shouldPresentSystemPush` now declines a local
+banner too when its chat is open or its message is read (the isLocal bypass
+kept only against the self-dedup — NotificationDecisionTests, the two
+own-local suppression cases), and the local-notification `add` re-runs
+`dropReadNotifications` after it lands, closing the race with the read's
+sweep. A live pass of the original scenario (background with the chat open
+behind, WS message, return to foreground) is owed once a fixture home frees
+up.
 
 ### A held swipe on a chat row stutters
 Reported by the owner 2026-08-27: swiping a row sideways in the chat list
