@@ -391,7 +391,9 @@ final class ShaderRenderer: NSObject, MTKViewDelegate {
               let queue = ShaderGPU.shared.queue, let device = ShaderGPU.shared.device,
               let drawable = view.currentDrawable, let uniforms else { return }
         let size = view.drawableSize
-        guard size.width >= 1, size.height >= 1 else { return }
+        // a texture past 8192 px a side is an assertion inside Metal, not an error
+        guard size.width >= 1, size.height >= 1,
+              size.width <= ShaderCanvas.maxDrawableSide, size.height <= ShaderCanvas.maxDrawableSide else { return }
         let now = CACurrentMediaTime()
         if startedAt == nil {
             startedAt = now

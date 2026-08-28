@@ -38,6 +38,7 @@ final class ShaderCanvas: UIView {
         metalView.preferredFramesPerSecond = 60
         metalView.isPaused = true
         metalView.enableSetNeedsDisplay = false
+        metalView.autoResizeDrawable = false
         metalView.backgroundColor = .clear
         metalView.isOpaque = !transparent
         metalView.layer.isOpaque = !transparent
@@ -49,9 +50,26 @@ final class ShaderCanvas: UIView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Metal refuses a texture over 8192 px a side, with an assertion that
+    /// takes the process down. A cell mid-layout can hand the canvas a frame
+    /// thousands of points tall for a frame, so the drawable is sized here,
+    /// never past the ceiling, and a degenerate frame draws nothing.
+    static let maxDrawableSide: CGFloat = 8192
+    /// A lower ceiling for a canvas whose picture is a backdrop: the shader
+    /// behind a long text does not need a texel per pixel down its whole height.
+    var drawableCeiling: CGFloat = ShaderCanvas.maxDrawableSide
+
     override func layoutSubviews() {
         super.layoutSubviews()
         metalView.frame = bounds
+        let scale = metalView.contentScaleFactor
+        let ceiling = min(drawableCeiling, Self.maxDrawableSide)
+        var w = max(bounds.width * scale, 0), h = max(bounds.height * scale, 0)
+        // over the ceiling the drawable keeps its aspect and the layer stretches it
+        let over = max(w, h) / ceiling
+        if over > 1 { w /= over; h /= over }
+        let size = CGSize(width: floor(w), height: floor(h))
+        if metalView.drawableSize != size { metalView.drawableSize = size }
     }
 
     /// Rendering happens at the view's own scale: a phone draws every pixel.
