@@ -535,7 +535,12 @@ A ✅ goes in only together with a link to the evidence.
 - ✅ sharing a file from the viewer: the share sheet opens on the cached file
   with the system's save actions (qa/runs/2026-08-27-viewer)
 - ✅ video in the viewer (media-close-out)
-- ⬜ a hero transition bubble ↔ viewer
+- ✅ a hero transition bubble ↔ viewer: the tapped thumbnail flies from its
+  bubble frame into the fitted full-screen frame and back on close — the X
+  and the swipe down alike, the return starting from the dragged position;
+  after paging away the close falls back to the fade
+  (qa/runs/2026-08-29-hero-viewer-run.md, mid-flight frames in
+  qa/runs/2026-08-29-hero-viewer/)
 
 ## Marking up a picture before it is sent
 
