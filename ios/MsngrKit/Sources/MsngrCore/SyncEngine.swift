@@ -1141,13 +1141,15 @@ public actor SyncEngine {
         guard !isRequest else { return }
         // a new repair joins the queue only while the sender's unanswered ones
         // fit under the ceiling; a broken session otherwise turns every answer
-        // into the next request, and the queue grows instead of draining
+        // into the next request, and the queue grows instead of draining. A row
+        // whose attempts are spent is not in flight — nothing will ever answer
+        // it, so it must not hold the ceiling shut for the rest of the queue
         if pending.repairAttempts == 0 {
             let inFlight = (try? await db.read { dbc in
                 try Int.fetchOne(dbc, sql: """
                     SELECT COUNT(*) FROM pendingDecrypt
-                    WHERE fromUserId = ? AND repairAttempts > 0
-                    """, arguments: [pending.from]) ?? 0
+                    WHERE fromUserId = ? AND repairAttempts > 0 AND repairAttempts < ?
+                    """, arguments: [pending.from, MessageRepair.maxAttempts]) ?? 0
             }) ?? 0
             guard inFlight < MessageRepair.maxInFlightRepairsPerPeer else {
                 MsngrLog.repair.notice(
