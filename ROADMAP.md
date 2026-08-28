@@ -395,7 +395,12 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ the ack right after the seq is assigned, before the fanout and the push (smoke `ack precedes push`, `ack while apns still hanging`)
   - ✅ «не отправлено» when the server refuses the send, and «Отправить заново»
     repeating the message from the payload it was written with (receipts-run)
-  - 🟡 the «не отправлено» status once the attempts are spent (not verified live)
+  - 🟡 the «не отправлено» status once the attempts are spent: the branch
+    (`attempts > 10` in `drainOutbox`) has no live or unit coverage and ~50
+    stand restarts never spent an attempt — a stopped stand waits at
+    `guard connected` and retries forever by design; reaching it needs a send
+    caught mid-flight by a dying socket
+    (qa/runs/2026-08-28-undelivered-status-run)
 - Fanout
   - ✅ an alarm queue in ConversationDO: the cursor in storage, batches, retry until exhausted (smoke `fanout is queued, not inline`, `queue replays the whole burst`, `queue drains to empty cursor`)
   - ✅ a failing recipient does not break delivery to the rest, retry with backoff, typing is not retried (smoke `delivery survives a broken recipient`, `failed recipient gets retry`, `typing not retried`)
@@ -468,7 +473,11 @@ A ✅ goes in only together with a link to the evidence.
     relaunch with no repair pulling it back, the peer's copy untouched
     (qa/runs/2026-08-21-delete-for-me)
   - ✅ «Сообщение удалено» in the feed for the author and for the peer (qa/runs/2026-08-15-multiselect, 05–06)
-  - 🟡 a delete that arrived before the original is applied later (ServiceFrameTests units)
+  - 🟡 a delete that arrived before the original is applied later
+    (ServiceFrameTests units; the live trigger is a content frame stuck in
+    `pendingDecrypt` behind a missing group sender key, not a network
+    reorder — server fanout and client apply are both strictly ordered,
+    qa/runs/2026-08-28-undelivered-status-run)
   - ✅ deleting several messages at once (qa/runs/2026-08-15-multiselect, 02–05)
 - Clearing the history and deleting a chat
   - ✅ clearing the history for yourself, the peer keeps the conversation
