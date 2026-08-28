@@ -30,6 +30,42 @@ final class UnreadCountTests: XCTestCase {
         }
     }
 
+    /// An own service frame — a sender key handout, a reaction echo — lands on
+    /// top of the peer's unread messages: it must not drag myReadUpTo over
+    /// them, or every unread mark built on that cursor goes dark unread.
+    func testOwnServiceFrameDoesNotSwallowForeignUnread() throws {
+        let db = try AppDatabase.openInMemory()
+        try seedChat(db)
+        try db.write { dbc in
+            try incoming(dbc, seq: 1)
+            try SyncEngine.advanceChat(dbc, chatId: "c1", seq: 1, isOwn: false, isService: false)
+            try SyncEngine.advanceChat(dbc, chatId: "c1", seq: 2, isOwn: true, isService: true)
+        }
+        let row = try db.read { dbc in
+            try Row.fetchOne(dbc, sql: "SELECT unreadCount, myReadUpTo FROM chat WHERE id = 'c1'")
+        }
+        XCTAssertEqual(row?["unreadCount"] as Int?, 1)
+        XCTAssertEqual(row?["myReadUpTo"] as Int?, 0)
+    }
+
+    /// In a fully read chat an own service frame still swallows its seq, so the
+    /// catch-up resumes past it.
+    func testOwnServiceFrameInAReadChatStillSwallowsItsSeq() throws {
+        let db = try AppDatabase.openInMemory()
+        try seedChat(db)
+        try db.write { dbc in
+            try incoming(dbc, seq: 1)
+            try SyncEngine.advanceChat(dbc, chatId: "c1", seq: 1, isOwn: false, isService: false)
+            try dbc.execute(sql: "UPDATE chat SET myReadUpTo = 1, unreadCount = 0 WHERE id = 'c1'")
+            try SyncEngine.advanceChat(dbc, chatId: "c1", seq: 2, isOwn: true, isService: true)
+        }
+        let row = try db.read { dbc in
+            try Row.fetchOne(dbc, sql: "SELECT unreadCount, myReadUpTo FROM chat WHERE id = 'c1'")
+        }
+        XCTAssertEqual(row?["unreadCount"] as Int?, 0)
+        XCTAssertEqual(row?["myReadUpTo"] as Int?, 2)
+    }
+
     /// A rowless service frame between two messages: two messages arrived, and
     /// two is what the row says.
     func testServiceFrameDoesNotGrowTheCount() throws {

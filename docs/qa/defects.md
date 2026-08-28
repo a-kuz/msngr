@@ -18,6 +18,35 @@ checks red on two stands is not yet shown to be the host. To investigate:
 run the smoke test alone on an idle host, and if it stays red, read the
 push and alarm timings the DO logs against the timeouts the test uses.
 
+### An own service frame drags myReadUpTo over the peer's unread messages
+Found 2026-08-28 in passing while verifying the in-chat mention counter: the
+«Design» fixture chat sat at `myReadUpTo = lastSeq = 123` with
+`unreadCount = 20`. `advanceChat` let a service frame advance `myReadUpTo` when
+the frame was the reader's own (`isOwn OR myReadUpTo >= seq - 1`), so an own
+sender-key handout or reaction echo arriving after the peer's unread content
+marked all of it read — the unread count stayed, the cursor lied, and
+everything built on the cursor (the mention mark, the mention counter, read
+receipts derived from `myReadUpTo`) saw a fully-read chat.
+Two writers did it: `advanceChat` let any own service frame advance the
+cursor (`isOwn OR myReadUpTo >= seq - 1`), and the sent-ack path stamped
+`myReadUpTo = MAX(myReadUpTo, seq)` for every own ack — including the acks of
+rowless service frames (the fixture chat had no message row at any of the
+swallowed seqs).
+Closed in the same change: only a contiguous read may swallow a service seq in
+`advanceChat` (`testOwnServiceFrameDoesNotSwallowForeignUnread` and its
+fully-read counterpart hold both sides), and the sent ack moves the cursor
+only when the send has a message row — a send the reader actually saw.
+
+### «Сообщение ещё не загружено» placeholders pile up in the fixture group
+Seen 2026-08-28 in passing in the «Design» fixture chat: five placeholders in
+a row between two content messages, and more scattered through the history.
+The seqs under them have no message rows and coincide with stretches of
+service traffic (sender key handouts and their acks from the fixture cycles),
+so the suspicion is that rowless service seqs end up rendered as
+still-loading gaps instead of being skipped — unconfirmed; the placeholder
+logic already knows a "service" reason for gaps, so the question is why these
+seqs did not get it.
+
 ### A silent identity rotation is not re-checked by TOFU while a device list is cached
 Found 2026-08-27 in passing during the multi-device TOFU run
 (qa/runs/2026-08-27-multidevice-tofu-run.md). `/keys-update` (the identity
