@@ -827,6 +827,24 @@ to. Closed: the overlay now lays a live `ShaderCanvas` with the same document
 over the lifted snapshot — the bubble shader under the selectable text, the
 shader message and the sticker in their frames (`MessageContextOverlay.LiveShader`).
 
+### A canvas denied a budget slot can stay empty until the next layout
+Seen 2026-08-29 in the showcase chat: on first open the two bubble shaders
+(and the header's avatar canvas) stayed invisible while four other canvases
+held the live slots; a scroll — anything that relayouts or rebalances —
+drew them. The Settings fix (layoutSubviews holds a frame) covers a canvas
+that gets a layout pass after its program compiles; a canvas already laid
+out, denied a slot, whose program compiles later, is only served by the
+`.ready` observer and that path missed at least these cells. Open: make the
+held frame a guarantee — on `.ready`, draw it regardless of what layout has
+or has not happened since.
+
+### A theme switch leaves one bubble light with unreadable text
+Seen 2026-08-29 in passing during the showcase run: switching the appearance
+to dark while the chat was open left one text bubble with its light
+background and its text repainted to white — unreadable until the cell was
+reconfigured by a scroll. The bubble image and the text colour are updated
+by different paths on a trait change. Open.
+
 ### The pond sticker's bottom read as a dot grid
 Reported by the owner on 2026-08-28 («некрасиво сетчатый фон»): the bundled
 Pond sticker drew its pebbles on a visible square lattice. Closed: the bottom
