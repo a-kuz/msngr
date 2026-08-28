@@ -96,7 +96,10 @@ struct ChatScreen: View {
                 }
             }
             .animation(Theme.spring, value: model.contentHidden)
-            if !model.selecting { scrollDownButton }
+            if !model.selecting {
+                scrollDownButton
+                mentionJumpButton
+            }
             // the fade dissolves bubbles running under the navigation bar; while
             // searching the bar is gone and the field stands in its own row
             if !searching { headerFade }
@@ -776,6 +779,43 @@ struct ChatScreen: View {
         }
         .animation(Theme.springFast, value: showScrollDown)
         .animation(Theme.springFast, value: model.atNewest)
+    }
+
+    /// The «@» button above the way down: unread messages mention you, a tap
+    /// lands the feed on the earliest of them.
+    private var mentionJumpButton: some View {
+        Group {
+            if let mentions = model.unreadMentions {
+                Button {
+                    MessageJump.request(chatId: chatId, id: mentions.earliestId)
+                } label: {
+                    ZStack(alignment: .topTrailing) {
+                        Text("@")
+                            .font(Theme.glyph(17, max: 24).weight(.semibold))
+                            .foregroundStyle(Theme.accent)
+                            .frame(width: TypeScale.scaled(40, max: 54),
+                                   height: TypeScale.scaled(40, max: 54))
+                            .background(.regularMaterial, in: Circle())
+                            .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
+                        if mentions.count > 1 {
+                            Text("\(mentions.count)")
+                                .font(.caption2.bold())
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 5)
+                                .frame(minWidth: 17, minHeight: 17)
+                                .background(Theme.accent, in: Capsule())
+                                .offset(x: 4, y: -4)
+                        }
+                    }
+                }
+                .padding(.trailing, 10)
+                .padding(.bottom, 68 + TypeScale.scaled(40, max: 54) + 10)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .transition(.scale.combined(with: .opacity))
+                .accessibilityIdentifier("chat.mentionJump")
+            }
+        }
+        .animation(Theme.springFast, value: model.unreadMentions?.count)
     }
 
     // MARK: - Sending attachments

@@ -72,6 +72,18 @@ token in the text.
 - Live: bravo's «Отметка: [@Alfa](…), проверь» into the muted «Design» lit
   «@ 1» on its row; a plain message to the direct chat showed the badge alone.
 
+## The in-chat «@» button (sixth slice)
+
+- `MentionMarks.unreadMentions` counts the unread mentions and names the
+  earliest one; the chat screen shows an accent «@» button above the way-down
+  button with the count, and its tap lands the feed on that message through
+  the regular `MessageJump`. The counter follows the chat row, so reading past
+  the mentions removes the button.
+- Verifying it live surfaced the cursor defect below: the fixture chat kept
+  `myReadUpTo = lastSeq` with dozens unread, so no mention ever counted as
+  unread. Fixed first (see defects.md «An own service frame drags myReadUpTo
+  over the peer's unread messages»), then the button verified live.
+
 ## Left for the next slices
 
 - Your own mention marked in the feed and the chat list row; the

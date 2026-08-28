@@ -204,7 +204,9 @@ A ✅ goes in only together with a link to the evidence.
     the unread badge while an unread message mentions you
     (qa/runs/2026-08-28-mention-token; MentionMarksTests; the in-feed bubble
     highlight is not done)
-  - ⬜ a counter of unread mentions and a jump to the earliest one
+  - ✅ a counter of unread mentions and a jump to the earliest one: the «@»
+    button above the way down, its tap lands the feed on the earliest unread
+    mention (qa/runs/2026-08-28-mention-token; MentionMarksTests)
   - ⬜ a mention survives a rename: it carries the userId, not the handle
   - ⬜ @all in a group, and who is allowed to use it
 - Photo
