@@ -130,7 +130,7 @@ public enum NotificationContentBuilder {
 
     /// One-line preview of the content: the text, or a media placeholder plus caption.
     public static func preview(_ payload: ContentPayload) -> String {
-        let caption = truncate(payload.text ?? "")
+        let caption = truncate(MessageMarkdown.mentionsStripped(payload.text ?? ""))
         switch payload.kind {
         case "photo": return withCaption(CoreStrings.string("📷 Photo"), caption)
         case "video": return withCaption(CoreStrings.string("🎥 Video"), caption)
