@@ -80,23 +80,35 @@ own user, and the fixtures they need are on the stand, not on the device.
 
 ## The stand
 
-- `wrangler dev` on :8787 — shared and live. Do not restart it and do not wipe
-  its state (`server/.wrangler/`) without being asked to: it holds the
-  conversations and keys of the test users.
-- The cloudflared tunnel `msngr.a-kuz.online` → :8787 must always be up: device
-  builds default to it (`make device`). It runs under launchd with KeepAlive
-  (`scripts/launchd/ai.enface.msngr.tunnel.plist`, installed the same way as the
-  tidy job); its log is `~/.cloudflared/msngr.log`. Do not start a second
-  cloudflared by hand — launchd owns it.
+- The shared stand lives on the `adad` server (see `~/.ssh/config`), not on
+  this machine: `wrangler dev` on :8787 there, run by systemd
+  (`msngr-wrangler.service`, code and state in `/root/msngr/server`), reached
+  only through `https://msngr.a-kuz.online` — the app defaults to that URL
+  everywhere it runs. Do not restart the service and do not wipe its state
+  (`/root/msngr/server/.wrangler/`) without being asked to: it holds the
+  conversations and keys of the test users. Logs:
+  `ssh adad journalctl -u msngr-wrangler -f`.
+- The cloudflared tunnel `msngr.a-kuz.online` → :8787 runs on the same server
+  (`msngr-tunnel.service`) and must always be up. Do not start a second
+  cloudflared for this tunnel anywhere — two connectors split the traffic.
+- CLI tools that default to `http://localhost:8787` (`scripts/fixture.py`,
+  `msngrfixture`) need `--base https://msngr.a-kuz.online` (or `MSNGR_SERVER`)
+  to talk to the shared stand.
 - A branch that lands a migration in `server/migrations/` needs it applied on
-  the shared stand after the merge:
-  `cd server && ./node_modules/.bin/wrangler d1 migrations apply msngr --local`.
-  The gate never catches this — its smoke runs on a throwaway stand — and the
-  stale schema answers 500 to the first request that touches the new table.
+  the shared stand after the merge: `ssh adad "cd /root/msngr/server &&
+  ./node_modules/.bin/wrangler d1 migrations apply msngr --local"`, then
+  restart `msngr-wrangler`. The gate never catches this — its smoke runs on a
+  throwaway stand — and the stale schema answers 500 to the first request that
+  touches the new table. The code on the server is a copy, not a checkout:
+  rsync `server/` there after a server-side change.
 - The dev APNs mock `node server/tools/apns-mock.mjs` listens on :9871 and
-  delivers pushes to the simulator through `simctl push`. `node test/smoke.mjs`
-  brings up its own receiver on the same port, so the mock has to be stopped
-  before the smoke test. On your own stand the ports separate:
+  delivers pushes to the simulator through `simctl push` — it works only
+  against a stand on this machine. The shared stand's `APNS_HOST` points at
+  its own localhost where nothing listens, so pushes from the shared stand
+  reach no simulator: a scenario that checks push delivery needs a local
+  stand. `node test/smoke.mjs` brings up its own receiver on the mock's port,
+  so a running mock has to be stopped before the smoke test. On your own stand
+  the ports separate:
   `wrangler dev --port 8803 --var APNS_HOST:http://localhost:9873` (this
   overrides `.dev.vars`) and `PUSH_PORT=9873 node test/smoke.mjs`.
 - `simctl push` does not launch the NSE in any state of the app (the control
@@ -104,8 +116,9 @@ own user, and the fixtures they need are on the stand, not on the device.
   you only see what the system does with the raw payload: the badge arrives, the
   text stays unprocessed, the avatar is not filled in. Everything that goes
   through the extension is verified on a device.
-- "Offline" in the scenarios means a killed `wrangler dev`, not a disabled
-  network.
+- "Offline" in the scenarios means a stopped stand (`systemctl stop
+  msngr-wrangler` on the shared one, a killed `wrangler dev` on your own), not
+  a disabled network.
 
 ## Service accounts
 
