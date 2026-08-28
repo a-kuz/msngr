@@ -263,8 +263,10 @@ final class ShaderRenderer: NSObject, MTKViewDelegate {
     func setPaused(_ paused: Bool) {
         if paused, pausedAt == nil {
             pausedAt = CACurrentMediaTime()
-        } else if !paused, let p = pausedAt, let s = startedAt {
-            startedAt = s + (CACurrentMediaTime() - p)
+        } else if !paused, let p = pausedAt {
+            // the pause is taken out of the clock; before the first frame
+            // there is no clock yet
+            if let s = startedAt { startedAt = s + (CACurrentMediaTime() - p) }
             pausedAt = nil
             lastFrameAt = nil
         }
@@ -315,7 +317,10 @@ final class ShaderRenderer: NSObject, MTKViewDelegate {
         let size = view.drawableSize
         guard size.width >= 1, size.height >= 1 else { return }
         let now = CACurrentMediaTime()
-        if startedAt == nil { startedAt = now }
+        if startedAt == nil {
+            startedAt = now
+            MsngrLog.shader.info("shader starts: \(self.compiled.count) pass(es) at \(Int(size.width))×\(Int(size.height))")
+        }
         time = Float(now - startedAt!)
         let delta = Float(lastFrameAt.map { now - $0 } ?? 1.0 / 60.0)
         lastFrameAt = now
