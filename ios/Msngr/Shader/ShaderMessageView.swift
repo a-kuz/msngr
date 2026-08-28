@@ -157,14 +157,22 @@ final class ShaderCanvas: UIView {
     }
 
     /// One frame for a canvas that wants to run but has no slot: the shader
-    /// is seen standing still instead of as a black rectangle.
-    private func holdFrame() {
+    /// is seen standing still instead of as a black rectangle. The drawable
+    /// is not always there the moment layout sets its size — the renderer's
+    /// frame counter says whether anything was actually drawn, and a draw
+    /// that produced nothing is retried on the next turn of the runloop.
+    private func holdFrame(attempt: Int = 0) {
         guard !heldFrameDrawn, let renderer, case .ready = program?.state ?? .compiling,
               bounds.width > 0, bounds.height > 0 else { return }
         heldFrameDrawn = true
+        let before = renderer.frame
         renderer.setPaused(false)
         metalView.draw()
         renderer.setPaused(true)
+        if renderer.frame == before, attempt < 5 {
+            heldFrameDrawn = false
+            DispatchQueue.main.async { [weak self] in self?.holdFrame(attempt: attempt + 1) }
+        }
     }
 
     deinit {
