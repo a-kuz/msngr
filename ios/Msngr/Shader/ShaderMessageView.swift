@@ -74,6 +74,8 @@ final class ShaderCanvas: UIView {
         if over > 1 { w /= over; h /= over }
         let size = CGSize(width: floor(w), height: floor(h))
         if metalView.drawableSize != size { metalView.drawableSize = size }
+        // a canvas denied a slot before it had a size draws its held frame now
+        if wantsLive, !isLive { holdFrame() }
     }
 
     /// Rendering happens at the view's own scale: a phone draws every pixel.
@@ -162,6 +164,15 @@ final class ShaderCanvas: UIView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
+        // off the window a canvas gives its slot back; on it again, it asks anew
+        if wantsLive {
+            if window == nil {
+                ShaderBudget.shared.release(self)
+                applyBudget(live: false)
+            } else {
+                ShaderBudget.shared.request(self)
+            }
+        }
         if window != nil, acceptsTouches {
             if hover.view == nil { addGestureRecognizer(hover) }
             if acceptsKeys { becomeFirstResponder() }

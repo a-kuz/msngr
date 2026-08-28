@@ -719,3 +719,29 @@ and the renderer asked for a feedback buffer of the same size. Fixed in the
 same day: the canvas sizes its own drawable under a ceiling (8192 px, 2048 px
 for the backdrop of a text bubble) keeping the aspect, and the renderer skips a
 frame whose drawable is past the limit instead of allocating.
+
+## 2026-08-28 — the shader surfaces run live
+
+Found while running the remaining shader surfaces on the simulator (charlie
+and alfa on two simulators, the owner had already seen the background and the
+bubble shader work).
+
+### A reaction of your own raised no burst
+The reaction burst was checked only in the update path that inserts or
+removes items; a reaction changes an item in place (`oldIds == newIds`), and
+that path refreshed the cell without the effect. Closed: the check lives in
+`burstIfReactionLanded` and both paths call it; seen live as confetti out of
+the bubble.
+
+### Your own shader avatar was a black disc in Settings
+A canvas denied a budget slot draws one held frame — but only if it already has
+a size, and the slot is asked for before layout; nothing drew the frame later.
+Closed: `layoutSubviews` draws the held frame of a canvas that wants to run and
+has no slot, and a canvas leaving the window gives its slot back. Seen live:
+the avatar in Settings and on the peer's chat list.
+
+### The context menu shows a shader message as a black rectangle
+Open. The long-press preview is UIKit's snapshot of the cell, and the Metal
+layer is not in it: the preview of a shader message (and a sticker) is the
+canvas's black background. A `UITargetedPreview` built from a texture
+readback, or the last held frame as an image, would fix it.
