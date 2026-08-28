@@ -38,14 +38,23 @@ fully-read counterpart hold both sides), and the sent ack moves the cursor
 only when the send has a message row — a send the reader actually saw.
 
 ### «Сообщение ещё не загружено» placeholders pile up in the fixture group
-Seen 2026-08-28 in passing in the «Design» fixture chat: five placeholders in
-a row between two content messages, and more scattered through the history.
-The seqs under them have no message rows and coincide with stretches of
-service traffic (sender key handouts and their acks from the fixture cycles),
-so the suspicion is that rowless service seqs end up rendered as
-still-loading gaps instead of being skipped — unconfirmed; the placeholder
-logic already knows a "service" reason for gaps, so the question is why these
-seqs did not get it.
+Seen 2026-08-28 in the «Design» fixture chat: twenty identical placeholders
+filling a screen between two content messages. Measured on the device
+database: the 616-seq hole between the two messages holds 323 unreadable seqs
+that are not contiguous — the numbers in between were never recorded as gaps —
+and the feed made one placeholder per contiguous run, about ninety of them.
+Closed by 37841a3: a hole between two messages of the feed is one placeholder
+carrying the number of messages behind it
+(`testHoleBrokenBySkippedSeqsIsStillOnePlaceholder`).
+Open underneath it, and the reason the hole is there at all: 443 envelopes from
+bravo in `pendingDecrypt` with every repair attempt spent, `no_session` (299)
+and `pk_decrypt_failed` (144), the newest 3 minutes old. The repair protocol
+does ask the sender for a fresh copy, but the sender here is the `msngrfixture`
+CLI, which is not online to answer. The cause of the failures themselves is
+unconfirmed: the shape (bursts of a hundred within a minute, in a chat this
+agent was not sending to) fits the documented trap of one fixture home driven
+by two processes at once, which forks the sending ratchet, and a second agent
+was working in the same tree. Not reproduced on demand.
 
 ### A silent identity rotation is not re-checked by TOFU while a device list is cached
 Found 2026-08-27 in passing during the multi-device TOFU run
