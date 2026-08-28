@@ -13,9 +13,10 @@ public enum MentionMarks {
         let rows = try Row.fetchAll(dbc, sql: """
             SELECT id FROM message
             WHERE chatId = ? AND seq > ? AND isOutgoing = 0
-              AND deletedForAll = 0 AND text LIKE ?
+              AND deletedForAll = 0 AND (text LIKE ? OR text LIKE ?)
             ORDER BY seq ASC
-            """, arguments: [chatId, myReadUpTo, "%](user:\(ownUserId))%"])
+            """, arguments: [chatId, myReadUpTo, "%](user:\(ownUserId))%",
+                             "%](user:\(MessageMarkdown.allMentionId))%"])
         guard let first = rows.first else { return nil }
         return (count: rows.count, earliestId: first["id"])
     }
@@ -27,8 +28,9 @@ public enum MentionMarks {
             SELECT EXISTS(
                 SELECT 1 FROM message
                 WHERE chatId = ? AND seq > ? AND isOutgoing = 0
-                  AND deletedForAll = 0 AND text LIKE ?
+                  AND deletedForAll = 0 AND (text LIKE ? OR text LIKE ?)
             )
-            """, arguments: [chatId, myReadUpTo, "%](user:\(ownUserId))%"]) ?? false
+            """, arguments: [chatId, myReadUpTo, "%](user:\(ownUserId))%",
+                             "%](user:\(MessageMarkdown.allMentionId))%"]) ?? false
     }
 }

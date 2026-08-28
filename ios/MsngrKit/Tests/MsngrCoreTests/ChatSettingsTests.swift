@@ -66,6 +66,13 @@ final class ChatSettingsTests: XCTestCase {
         XCTAssertFalse(ChatPermissions.canEditSettings(kind: .group, role: nil))
     }
 
+    func testMentionAllOnlyForAGroupAdmin() {
+        XCTAssertTrue(ChatPermissions.canMentionAll(kind: .group, role: "admin"))
+        XCTAssertFalse(ChatPermissions.canMentionAll(kind: .group, role: "member"))
+        XCTAssertFalse(ChatPermissions.canMentionAll(kind: .group, role: nil))
+        XCTAssertFalse(ChatPermissions.canMentionAll(kind: .direct, role: "admin"))
+    }
+
     func testDirectSettingsForAnyMember() {
         XCTAssertTrue(ChatPermissions.canEditSettings(kind: .direct, role: "member"))
         XCTAssertFalse(ChatPermissions.canEditSettings(kind: .direct, role: nil))

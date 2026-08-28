@@ -97,6 +97,32 @@ token in the text.
   here» sit on the warm tint while «и снова обычная строка» between them stays
   white.
 
+## «@все» (eighth slice)
+
+- The group-wide token `[@все](user:all)` addresses every member:
+  `mentionsUser` answers true for any id, so the mute-piercing, the chat-row
+  mark, the unread counter and the bubble wash all light up through the code
+  the personal mention already runs. Its tap leads nowhere — `user:all` names
+  no person. Only a group admin is offered «все» in the autocomplete
+  (`ChatPermissions.canMentionAll`); the handle resolves through the regular
+  tokenizer.
+- Units: ChatSettingsTests `testMentionAllOnlyForAGroupAdmin`,
+  MentionMarkdownTests `testTheGroupWideTokenMentionsEverybody` (an id merely
+  starting with "all" does not match), MentionMarksTests
+  `testTheGroupWideMentionLightsTheMark` — 26/26 with the neighbours.
+- Live on the server stand (see below): bravo sent «Собрание в 15:00, @все»
+  into the muted «Design» — the row lit «@» next to the badge, the bubble sits
+  on the accent wash, the token renders as a link and its tap stays in the
+  chat. Alfa (admin in «Design») got «все» as the first capsule of the panel
+  over the draft «@», the tap put «@all» into the field and send resolved it
+  to `[@все](user:all)` (watched in the device database, status sent). In
+  «Standup», where alfa is a member, the same draft offered only Bravo and
+  Charlie.
+- The run doubled as the first live pass over the relocated shared stand: the
+  message travelled laptop CLI → https://msngr.a-kuz.online → adad worker →
+  alfa's socket.
+
 ## Left for the next slices
 
-- @all in a group, and who is allowed to use it.
+- A mention survives the author's rename (the token already carries the
+  userId; not yet watched live).

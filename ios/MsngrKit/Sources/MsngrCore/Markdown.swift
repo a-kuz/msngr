@@ -300,10 +300,16 @@ public enum MessageMarkdown {
         return out
     }
 
-    /// Whether the text carries a mention token of this user.
+    /// The pseudo-id of the whole group in a mention token: `[@все](user:all)`
+    /// addresses every member at once.
+    public static let allMentionId = "all"
+
+    /// Whether the text calls this user: a mention token of their id, or the
+    /// group-wide token, which addresses everyone.
     public static func mentionsUser(_ source: String, userId: String) -> Bool {
         guard !userId.isEmpty else { return false }
         return source.contains("](user:\(userId))")
+            || source.contains("](user:\(allMentionId))")
     }
 
     private static func isHandleChar(_ c: Character) -> Bool {
