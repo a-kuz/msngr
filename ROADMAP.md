@@ -503,7 +503,8 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ a reaction made offline arrives after a reconnect (offline-run 6)
   - ✅ removing it by tapping again and replacing your own reaction (2026-08-21-reactions-forward run, 01–03)
   - ✅ a double tap on the bubble = ❤️ (2026-08-21-reactions-forward run, 04–05)
-  - 🟡 capsules widen the bubble and wrap into rows (BubbleLayoutTests units)
+  - ✅ capsules widen the bubble and wrap into rows (BubbleLayoutTests units;
+    confirmed done by the owner, 2026-08-29)
   - ✅ a list of who reacted: a capsule tap in a group opens the sheet, in a direct
     chat it keeps toggling (ReactionRosterTests units, run 13)
   - ✅ particles when a reaction appears: the burst plays when a visible
