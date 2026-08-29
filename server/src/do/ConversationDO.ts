@@ -1,5 +1,5 @@
 import type { Env, ChatState, ChatMember, ChatPolicy, StoredMsg, ServerFrame, PublicUser } from "../types";
-import { json, err, seqKey, SEQ_PAD, nowSec, shouldArmAlarm } from "../util";
+import { json, err, seqKey, SEQ_PAD, nowSec, shouldArmAlarm, readPrivacy } from "../util";
 import {
   newCounters, snapshot, diff, logPerf, wrapState, wrapDB, wrapStub, type PerfCounters,
 } from "../perf";
@@ -295,6 +295,19 @@ export class ConversationDO implements DurableObject {
   private async blockedEitherWay(userId: string): Promise<boolean> {
     const b = await this.blockCheck(userId);
     return !!b && (b.byMe || b.byPeer);
+  }
+
+  /// Members of `userIds` who turned a privacy flag off themselves. Read receipts
+  /// and typing are reciprocal: turning one off both stops sending it and stops
+  /// receiving it, so a member with the flag off belongs on the fanout skip list
+  /// the same as a blocked one.
+  private async membersWithFlagOff(
+    userIds: string[], flag: "readReceipts" | "typing"
+  ): Promise<string[]> {
+    const settings = await Promise.all(
+      userIds.map((u) => readPrivacy(this.env.DB, u).then((p) => ({ u, on: p[flag] })))
+    );
+    return settings.filter((s) => !s.on).map((s) => s.u);
   }
 
   private async fanout(
@@ -834,10 +847,15 @@ export class ConversationDO implements DurableObject {
         const upTo = Math.max(current, ...b.seqs);
         if (upTo > current) {
           await this.state.storage.put(this.markKey("dlvr", b.userId), upTo);
-          await this.fanout(
-            { t: "receipt", chatId: meta.chatId, kind: "delivered", upToSeq: upTo, by: b.userId },
-            { except: b.userId }
-          );
+          // the mark above is the reader's own cursor and always moves; whether the
+          // peer learns about it is the readReceipts setting, reciprocal on both sides
+          if ((await readPrivacy(this.env.DB, b.userId)).readReceipts) {
+            const skip = await this.membersWithFlagOff([...members.keys()], "readReceipts");
+            await this.fanout(
+              { t: "receipt", chatId: meta.chatId, kind: "delivered", upToSeq: upTo, by: b.userId },
+              { except: b.userId, skip }
+            );
+          }
         }
         return json({ ok: true });
       }
@@ -868,10 +886,15 @@ export class ConversationDO implements DurableObject {
             [this.markKey("read", b.userId)]: b.upToSeq,
             [this.markKey("seen", b.userId)]: Math.max(seen, b.upToSeq),
           });
-          await this.fanout(
-            { t: "receipt", chatId: meta.chatId, kind: "read", upToSeq: b.upToSeq, by: b.userId },
-            { except: b.userId }
-          );
+          // the marks above are the reader's own cursor and always move; whether the
+          // peer sees the receipt is the readReceipts setting, reciprocal on both sides
+          if ((await readPrivacy(this.env.DB, b.userId)).readReceipts) {
+            const skip = await this.membersWithFlagOff([...members.keys()], "readReceipts");
+            await this.fanout(
+              { t: "receipt", chatId: meta.chatId, kind: "read", upToSeq: b.upToSeq, by: b.userId },
+              { except: b.userId, skip }
+            );
+          }
         }
         return json({ ok: true });
       }
@@ -883,9 +906,12 @@ export class ConversationDO implements DurableObject {
         // until acceptance the recipient is invisible to whoever sent the request
         if (!members.get(b.userId)!.accepted) return json({ ok: true });
         if (await this.blockedEitherWay(b.userId)) return json({ ok: true });
+        // the typing setting is reciprocal: off means neither sending nor receiving it
+        if (!(await readPrivacy(this.env.DB, b.userId)).typing) return json({ ok: true });
+        const typingOff = await this.membersWithFlagOff([...members.keys()], "typing");
         await this.fanout(
           { t: "typing", chatId: meta.chatId, from: b.userId, kind: b.kind },
-          { except: b.userId, skip: await this.blockedPeers(b.userId) }
+          { except: b.userId, skip: [...await this.blockedPeers(b.userId), ...typingOff] }
         );
         return json({ ok: true });
       }
@@ -1091,9 +1117,18 @@ export class ConversationDO implements DurableObject {
         // the presence of a recipient who has not accepted stays hidden from the requester
         if (!members.get(b.userId)?.accepted) return json({ ok: true });
         if (await this.blockedEitherWay(b.userId)) return json({ ok: true });
+        // last seen hidden by the person it belongs to: nobody in the chat gets the frame
+        if ((await readPrivacy(this.env.DB, b.userId)).lastSeen === "nobody") return json({ ok: true });
+        // hiding last seen also blinds you to everyone else's, so a member who hid
+        // their own is skipped the same as a blocked one
+        const hidden = await Promise.all(
+          [...members.keys()].map((u) =>
+            readPrivacy(this.env.DB, u).then((p) => ({ u, hidden: p.lastSeen === "nobody" })))
+        );
+        const skip = [...await this.blockedPeers(b.userId), ...hidden.filter((h) => h.hidden).map((h) => h.u)];
         await this.fanout(
           { t: "presence", userId: b.userId, online: b.online, lastSeen: b.lastSeen },
-          { except: b.userId, skip: await this.blockedPeers(b.userId) }
+          { except: b.userId, skip }
         );
         return json({ ok: true });
       }

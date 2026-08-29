@@ -154,6 +154,12 @@ struct SettingsView: View {
                         }
                     }
                     NavigationLink {
+                        PrivacyView()
+                    } label: {
+                        Label("Privacy", systemImage: "hand.raised.slash")
+                    }
+                    .accessibilityIdentifier("settings.privacy")
+                    NavigationLink {
                         BlockedListView()
                     } label: {
                         Label("Blocked users", systemImage: "hand.raised")

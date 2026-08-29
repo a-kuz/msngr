@@ -620,9 +620,15 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   - ✅ unblocking from the blocked list (qa/runs/2026-08-21-block)
   - ✅ after unblocking delivery resumes and what was hidden stays hidden
     (smoke `block: delivery resumes after unblock`)
-  - ⬜ who sees «был(а) в сети» and «в сети»: everyone, my contacts, or nobody,
-    with exceptions for named people; hiding it takes the peer's away too
-  - ⬜ read receipts and «печатает…» turned off, in both directions
+  - ✅ who sees «был(а) в сети» and «в сети»: everyone, my contacts, or nobody
+    (server: `privacy_settings.last_seen`, `GET/POST /api/privacy`); hiding it
+    takes the peer's away too (smoke `hiding your own last seen blinds you to
+    everyone else's`) — the "contacts" tier is stored and selectable but not
+    yet enforced as distinct from "everyone", since there is no contacts-list
+    primitive in this codebase to check against
+  - ⬜ exceptions for named people, for last seen and the settings below it
+  - ✅ read receipts and «печатает…» turned off, in both directions (smoke
+    `read receipt off reciprocally`, `typing off reciprocally`)
   - ⬜ who sees my avatar, bio and name, with the same three answers and the same
     exceptions
   - ⬜ who can find me: by username always, by the number's hash only if I allow it
