@@ -399,11 +399,12 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ the ack right after the seq is assigned, before the fanout and the push (smoke `ack precedes push`, `ack while apns still hanging`)
   - ✅ «не отправлено» when the server refuses the send, and «Отправить заново»
     repeating the message from the payload it was written with (receipts-run)
-  - 🟡 the «не отправлено» status once the attempts are spent: the branch
-    (`attempts > 10` in `drainOutbox`) has no live or unit coverage and ~50
-    stand restarts never spent an attempt — a stopped stand waits at
-    `guard connected` and retries forever by design; reaching it needs a send
-    caught mid-flight by a dying socket
+  - 🟡 the «не отправлено» status once the attempts are spent: the accounting
+    is under units now (`spendSendAttempt` — the ceiling, the failed pair,
+    «send again» after it, SendFailureTests), while the live path stays
+    unwatched: ~50 stand restarts never spent an attempt — a stopped stand
+    waits at `guard connected` and retries forever by design; reaching it
+    needs a send caught mid-flight by a dying socket
     (qa/runs/2026-08-28-undelivered-status-run)
 - Fanout
   - ✅ an alarm queue in ConversationDO: the cursor in storage, batches, retry until exhausted (smoke `fanout is queued, not inline`, `queue replays the whole burst`, `queue drains to empty cursor`)
