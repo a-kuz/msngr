@@ -900,6 +900,12 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 
 ## The macOS client
 
+The desktop MVP is the iOS binary run as «Designed for iPad» (the owner's
+call, 2026-08-30: two clients written in parallel is the wrong path): the
+device family includes iPad, and keyboard support lives in the shared UIKit
+code. The native MsngrMac target below is parked, kept compiling but not
+grown.
+
 - 🟡 registration, the chat list, the chat, sending text (not verified live)
 - 🟡 reactions and deleting a message (not verified live)
 - 🟡 the read mark under the same conditions as on iOS — the window has focus,
