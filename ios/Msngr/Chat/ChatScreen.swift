@@ -31,10 +31,12 @@ struct ChatScreen: View {
     @ObservedObject private var theme = ThemeStore.shared
     @Environment(\.dismiss) private var dismiss
 
-    /// Esc walks back out: first the edit, then the reply, then the chat
-    /// itself.
+    /// Esc walks back out: first the feed walk, then the edit, then the
+    /// reply, then the chat itself.
     private func escapeWalksBack() {
-        if model.editing != nil {
+        if messagesVC.clearKeyWalk() {
+            // the walk is over; nothing else moves
+        } else if model.editing != nil {
             withAnimation(Theme.springFast) { model.editing = nil }
         } else if model.replyingTo != nil {
             withAnimation(Theme.springFast) { model.replyingTo = nil }
@@ -122,6 +124,13 @@ struct ChatScreen: View {
                                  onSendVoice: sendVoice,
                                  onSendImages: { images, caption in
                                      Task { await sendImages(images, caption: caption) }
+                                 },
+                                 onArrowKey: { up in messagesVC.moveKeyWalk(up: up) },
+                                 onEmptyReturn: {
+                                     guard let msg = messagesVC.keyWalkMessage else { return false }
+                                     withAnimation(Theme.springFast) { model.replyingTo = msg }
+                                     messagesVC.clearKeyWalk()
+                                     return true
                                  })
                     }
                   }

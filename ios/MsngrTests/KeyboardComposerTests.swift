@@ -59,6 +59,70 @@ final class KeyboardComposerTests: XCTestCase {
         XCTAssertEqual(escapes, 1)
     }
 
+    /// Tab is consumed whole: the composer holds focus for the chat, so the
+    /// key must not fill the field with tab characters.
+    func testTabInsertsNothing() {
+        let tv = makeView()
+        tv.text = "hi"
+        press(tv, "\t")
+        XCTAssertEqual(tv.text, "hi")
+    }
+
+    /// The arrows walk the feed only over an empty field; with text in it the
+    /// commands are absent and the caret moves as in any text view.
+    func testArrowsExistOnlyOverAnEmptyField() {
+        let tv = makeView()
+        var walks = 0
+        tv.onArrow = { _ in walks += 1; return true }
+        press(tv, UIKeyCommand.inputUpArrow)
+        XCTAssertEqual(walks, 1)
+        tv.text = "draft"
+        XCTAssertNil(tv.keyCommands?.first { $0.input == UIKeyCommand.inputUpArrow })
+    }
+
+    /// Cmd+B wraps the selection in the bold marker; a second press takes it off.
+    func testBoldWrapsAndUnwraps() {
+        let tv = makeView()
+        tv.text = "make this bold"
+        tv.selectedRange = NSRange(location: 5, length: 4)
+        press(tv, "b", .command)
+        XCTAssertEqual(tv.text, "make **this** bold")
+        press(tv, "b", .command)
+        XCTAssertEqual(tv.text, "make this bold")
+    }
+
+    /// Cmd+I with no selection inserts the pair and leaves the caret inside.
+    func testItalicInsertsPairAtCaret() {
+        let tv = makeView()
+        tv.text = "x"
+        tv.selectedRange = NSRange(location: 1, length: 0)
+        press(tv, "i", .command)
+        XCTAssertEqual(tv.text, "x**")
+        XCTAssertEqual(tv.selectedRange, NSRange(location: 2, length: 0))
+    }
+
+    /// Cmd+K turns the selection into link markup; a URL on the clipboard
+    /// becomes the target.
+    func testLinkTakesTheClipboardURL() {
+        UIPasteboard.general.string = "https://a.io/x"
+        let tv = makeView()
+        tv.text = "see docs"
+        tv.selectedRange = NSRange(location: 4, length: 4)
+        press(tv, "k", .command)
+        XCTAssertEqual(tv.text, "see [docs](https://a.io/x)")
+    }
+
+    /// Cmd+K with no URL around leaves the caret between the parentheses.
+    func testLinkWithoutClipboardLeavesCaretInTarget() {
+        UIPasteboard.general.string = "not a url"
+        let tv = makeView()
+        tv.text = "docs"
+        tv.selectedRange = NSRange(location: 0, length: 4)
+        press(tv, "k", .command)
+        XCTAssertEqual(tv.text, "[docs]()")
+        XCTAssertEqual(tv.selectedRange, NSRange(location: 7, length: 0))
+    }
+
     /// Every command claims priority over the system's text handling — without
     /// it the text view swallows the keystroke before the command fires.
     func testCommandsOutrankSystemTextHandling() {

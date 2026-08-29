@@ -42,9 +42,12 @@ final class KeyboardNavigationTests: XCTestCase {
     }
 
     // The composer's own keys — Enter sends, Shift+Enter breaks the line, Esc
-    // walks out — are pinned in MsngrTests/KeyboardComposerTests: the
+    // walks out, Tab consumed, Cmd+B/I/K formatting, ↑/↓ walking the feed —
+    // are pinned in MsngrTests/KeyboardComposerTests and FeedKeyWalkTests: the
     // simulator's hardware-keyboard pipe drifts between runs and XCUITest
-    // cannot hold it steady, the StatusBarTapTests situation over again.
+    // cannot hold it steady, the StatusBarTapTests situation over again. A
+    // typeKey Return into the focused composer lands as an inserted newline
+    // on a drifted pipe, so even the send cannot be asserted from here.
 
     /// Cmd+N opens the new chat sheet from the list.
     func testCmdNOpensNewChat() {

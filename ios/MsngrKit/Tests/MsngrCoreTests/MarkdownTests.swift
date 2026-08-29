@@ -200,4 +200,37 @@ final class MarkdownTests: XCTestCase {
     func testNewlinesInsideParagraph() {
         XCTAssertEqual(spans("first\nsecond"), [MarkdownSpan("first\nsecond")])
     }
+
+    // MARK: - Explicit links
+
+    func testExplicitLink() {
+        XCTAssertEqual(spans("see [the docs](https://a.io/x) now"), [
+            MarkdownSpan("see "),
+            MarkdownSpan("the docs", link: "https://a.io/x"),
+            MarkdownSpan(" now"),
+        ])
+    }
+
+    /// A link whose target is not an absolute http(s) URL is no markup — the
+    /// text stays as typed (the autolinker may still pick a URL out of it).
+    func testExplicitLinkNeedsHttp() {
+        XCTAssertEqual(spans("[x](y z)"), [MarkdownSpan("[x](y z)")])
+        XCTAssertEqual(spans("[x](ftp://a.io)").first, MarkdownSpan("[x](ftp://"))
+    }
+
+    /// An unclosed bracket is no link markup; the bare URL inside still
+    /// autolinks, the same as anywhere else in plain text.
+    func testExplicitLinkUnclosed() {
+        XCTAssertEqual(spans("[x](https://a.io"), [
+            MarkdownSpan("[x]("),
+            MarkdownSpan("https://a.io", link: "https://a.io"),
+        ])
+    }
+
+    /// The explicit target wins over the autolinker for the same span, and
+    /// `links(in:)` lists it.
+    func testExplicitLinkListed() {
+        XCTAssertEqual(MessageMarkdown.links(in: "[a](https://a.io) https://b.io"),
+                       ["https://a.io", "https://b.io"])
+    }
 }

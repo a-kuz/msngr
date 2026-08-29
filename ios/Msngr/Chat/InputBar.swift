@@ -15,6 +15,12 @@ struct InputBar: View {
     var onAttachBubbleShader: () -> Void
     var onSendVoice: (URL, TimeInterval, [Int]) -> Void
     var onSendImages: ([UIImage], String) -> Void
+    /// ↑/↓ from the hardware keyboard over an empty composer (true is up):
+    /// the chat screen walks the feed with it.
+    var onArrowKey: (Bool) -> Bool = { _ in false }
+    /// Return over an empty composer: the chat screen may act on the walked
+    /// message (a reply); false leaves the keystroke a no-op.
+    var onEmptyReturn: () -> Bool = { false }
 
     @StateObject private var recorder = VoiceRecorder()
     @ObservedObject private var surfaces = ShaderSurfaces.shared
@@ -108,10 +114,14 @@ struct InputBar: View {
                                     onChange: { model.textChanged($0) },
                                     onPasteImages: { addPending($0) },
                                     onReturn: {
-                                        guard hasText || !pendingImages.isEmpty else { return true }
+                                        guard hasText || !pendingImages.isEmpty else {
+                                            _ = onEmptyReturn()
+                                            return true
+                                        }
                                         sendCurrent()
                                         return true
-                                    })
+                                    },
+                                    onArrow: onArrowKey)
                         .frame(maxWidth: .infinity)
                 }
                 actionButton
@@ -529,6 +539,8 @@ struct GrowingTextView: UIViewRepresentable {
     var onPasteImages: ([UIImage]) -> Void = { _ in }
     /// Hardware Return; true means the keystroke was consumed (a send).
     var onReturn: () -> Bool = { false }
+    /// ↑/↓ over an empty field (true is up): the feed walk.
+    var onArrow: (Bool) -> Bool = { _ in false }
     /// Reading the size is what brings `updateUIView` back when the reader
     /// changes it: the field then re-fonts itself and re-measures its height.
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -542,6 +554,7 @@ struct GrowingTextView: UIViewRepresentable {
         let tv = PasteAwareTextView()
         tv.onPasteImages = onPasteImages
         tv.onReturn = onReturn
+        tv.onArrow = onArrow
         tv.onEscape = { NotificationCenter.default.post(name: .chatEscapePressed, object: nil) }
         // with a hardware keyboard attached the composer takes focus as the
         // chat opens, so Enter works right away — a chat entered with the
@@ -577,6 +590,7 @@ struct GrowingTextView: UIViewRepresentable {
         // the closure captures view state (text, pending images) and goes
         // stale unless refreshed on every render
         (tv as? PasteAwareTextView)?.onReturn = onReturn
+        (tv as? PasteAwareTextView)?.onArrow = onArrow
         // Text flows from the view into the binding while the user types; the
         // binding writes back only a value the view itself never held — a clear
         // after send, a restored draft. Writing on every render echoes a stale
@@ -640,6 +654,10 @@ struct GrowingTextView: UIViewRepresentable {
         /// Esc pressed while the composer holds focus: the chat screen walks
         /// back out with it exactly as it does unfocused.
         var onEscape: () -> Void = {}
+        /// ↑/↓ pressed while the composer is empty (true is up): the chat
+        /// screen walks the feed with it. With text in the field the arrows
+        /// never reach here and move the caret as in any text view.
+        var onArrow: (Bool) -> Bool = { _ in false }
 
         override var keyCommands: [UIKeyCommand]? {
             let send = UIKeyCommand(input: "\r", modifierFlags: [],
@@ -651,7 +669,29 @@ struct GrowingTextView: UIViewRepresentable {
             let escape = UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [],
                                       action: #selector(escapePressed))
             escape.wantsPriorityOverSystemBehavior = true
-            return (super.keyCommands ?? []) + [send, newline, escape]
+            // The composer holds focus for the whole chat, so Tab has nowhere
+            // to move it — consumed, or the field fills with tab characters.
+            let tab = UIKeyCommand(input: "\t", modifierFlags: [],
+                                   action: #selector(tabPressed))
+            tab.wantsPriorityOverSystemBehavior = true
+            let bold = UIKeyCommand(input: "b", modifierFlags: .command,
+                                    action: #selector(makeBold))
+            let italic = UIKeyCommand(input: "i", modifierFlags: .command,
+                                      action: #selector(makeItalic))
+            let link = UIKeyCommand(input: "k", modifierFlags: .command,
+                                    action: #selector(makeLink))
+            var commands = (super.keyCommands ?? []) + [send, newline, escape, tab,
+                                                        bold, italic, link]
+            if text.isEmpty {
+                let up = UIKeyCommand(input: UIKeyCommand.inputUpArrow, modifierFlags: [],
+                                      action: #selector(arrowUp))
+                up.wantsPriorityOverSystemBehavior = true
+                let down = UIKeyCommand(input: UIKeyCommand.inputDownArrow, modifierFlags: [],
+                                        action: #selector(arrowDown))
+                down.wantsPriorityOverSystemBehavior = true
+                commands += [up, down]
+            }
+            return commands
         }
 
         @objc private func escapePressed() {
@@ -664,6 +704,63 @@ struct GrowingTextView: UIViewRepresentable {
 
         @objc private func shiftReturn() {
             insertText("\n")
+        }
+
+        @objc private func tabPressed() {}
+
+        @objc private func arrowUp() { _ = onArrow(true) }
+        @objc private func arrowDown() { _ = onArrow(false) }
+
+        // MARK: - Formatting (the mini-markdown the feed draws)
+
+        @objc private func makeBold() { toggleWrap("**") }
+        @objc private func makeItalic() { toggleWrap("*") }
+
+        /// Cmd+K: the selection becomes `[selection](url)`. A URL sitting on
+        /// the clipboard fills the target; otherwise the caret lands between
+        /// the parentheses to type it.
+        @objc private func makeLink() {
+            let range = selectedRange
+            let selected = (text as NSString).substring(with: range)
+            let clip = UIPasteboard.general.string?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let url = clip.hasPrefix("http://") || clip.hasPrefix("https://") ? clip : ""
+            replace(range, with: "[\(selected)](\(url))")
+            if url.isEmpty {
+                selectedRange = NSRange(location: range.location + selected.utf16.count + 3,
+                                        length: 0)
+            }
+        }
+
+        /// Wraps the selection in `marker`, or takes an existing wrap off; with
+        /// nothing selected the pair is inserted and the caret goes inside.
+        private func toggleWrap(_ marker: String) {
+            let range = selectedRange
+            let selected = (text as NSString).substring(with: range)
+            if selected.hasPrefix(marker), selected.hasSuffix(marker),
+               selected.count >= marker.count * 2 {
+                let inner = String(selected.dropFirst(marker.count).dropLast(marker.count))
+                replace(range, with: inner)
+                selectedRange = NSRange(location: range.location, length: inner.utf16.count)
+            } else if range.length > 0 {
+                replace(range, with: marker + selected + marker)
+                // the selection covers the markers too, so the same key
+                // pressed again takes the wrap back off
+                selectedRange = NSRange(location: range.location,
+                                        length: range.length + 2 * marker.utf16.count)
+            } else {
+                replace(range, with: marker + marker)
+                selectedRange = NSRange(location: range.location + marker.utf16.count, length: 0)
+            }
+        }
+
+        /// Replacement through the text-input system, so the delegate fires
+        /// and the SwiftUI binding follows.
+        private func replace(_ range: NSRange, with string: String) {
+            guard let start = position(from: beginningOfDocument, offset: range.location),
+                  let end = position(from: start, offset: range.length),
+                  let textRange = textRange(from: start, to: end) else { return }
+            replace(textRange, withText: string)
         }
 
         override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
