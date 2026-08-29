@@ -883,20 +883,42 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   is not yet watched)
 
 - Backup to iCloud
-  - ⬜ the backup itself: the history, the media and the settings, encrypted on
-    the device before anything leaves it
-  - ⬜ the key to the backup. Apple can read what is in iCloud unless Advanced
-    Data Protection is on, so the backup carries its own key that iCloud never
-    sees, and the user has to be able to get that key back on a new device —
-    a passphrase or a recovery code. Undecided which; nothing else in the
-    feature can be designed until it is.
-  - ⬜ what the backup does NOT carry: the ratchet state and the sender keys.
-    Restoring them on a second device would reuse a sending chain position, so a
-    restored device starts its sessions fresh.
-  - ⬜ when it runs: on a charger over Wi-Fi, with the last time shown and its size
-  - ⬜ restoring during registration, and what happens when the restore is
-    interrupted halfway
-  - ⬜ turning it off, and deleting what is already in iCloud
+  - ✅ the backup itself: the history, the media and the settings, sealed on the
+    device (ChaChaPoly, key from HKDF over the recovery code) before anything
+    leaves it (`AccountBackup`, `BackupSeal`; live run 2026-08-30 — alfa's three
+    direct chats, three groups and one photo attachment all came back byte-exact)
+  - ✅ the key to the backup: a recovery code, not a passphrase. 15 random bytes
+    (120 bits), shown once as Crockford base32 when backup is turned on, never
+    stored — HKDF derives the seal key from it directly, the same way every
+    other key derivation here starts from a high-entropy secret rather than
+    something typed. There is no password reset: losing the code loses the backup.
+  - ✅ what the backup does NOT carry: `ratchetSession`, `senderKeyIn`/`Out`,
+    `trustedIdentity`, and the ratchet's own bookkeeping tables. A restored
+    device adopts the account's identity keys and generates its own fresh
+    prekeys, exactly as a linked device does — sessions with every peer start
+    over (live run 2026-08-30: messages sent from the restored device were
+    decrypted and read by the peer, confirming a clean new session)
+  - 🟡 when it runs: manual only, from Settings → Backup → "Back up now". Not
+    done: running on its own on a charger over Wi-Fi
+  - ✅ restoring during registration: `RestoreFromBackupView`, a third path off
+    the registration screen. A restore that fails partway (bad recovery code,
+    a claim the server refuses) leaves the container wiped and the screen on
+    its failure state — there is no partially-restored account to clean up,
+    since the identity claim happens before any row is written
+  - ✅ turning it off (Settings → Backup → "Turn off backup", stops future
+    backups on this device only). No iCloud yet, so nothing there to delete —
+    see the storage note below
+  - the storage is a file, not iCloud: `fileExporter`/`fileImporter` (Files,
+    AirDrop, iCloud Drive as a plain file) — CloudKit needs a signed-in Apple ID,
+    which the simulator this was built and tested on does not have. The sealed
+    bytes (`BackupSeal.SealedBackup`) don't know or care which transport carries
+    them, so a CloudKit private-database uploader can be added later without
+    touching `AccountBackup`/`BackupSeal`; nothing about that path is verified yet
+  - server: `/api/restore/start` and `/api/restore/:id/claim` add a device to an
+    existing account with no other device online to approve it, by having the
+    claim sign a server-issued nonce with the account's Ed25519 identity key
+    (`@noble/ed25519` verifies it) — proof of possession standing in for the
+    live-device approval `/api/provision/*` uses instead
 
 ## The desktop client
 

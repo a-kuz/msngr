@@ -165,6 +165,15 @@ struct SettingsView: View {
                     }
                 }
 
+                Section {
+                    NavigationLink {
+                        BackupView()
+                    } label: {
+                        Label("Backup", systemImage: "icloud.and.arrow.up")
+                    }
+                    .accessibilityIdentifier("settings.backup")
+                }
+
                 Section("Data") {
                     Button {
                         app.media?.clearCache()

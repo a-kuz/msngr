@@ -236,6 +236,46 @@ public final class APIClient: @unchecked Sendable {
                                        body: [String: String](), as: OkResponse.self)
     }
 
+    // MARK: - Restoring from a backup
+
+    /// No provisioning token here: this device has no session at all yet, and
+    /// no other device is asked to approve it. The nonce this hands back is
+    /// what the claim signs to stand in for that approval.
+    public struct RestoreStartResponse: Decodable, Sendable {
+        public let restoreId: String
+        public let nonce: String
+        public let expiresIn: Double
+    }
+    public func restoreStart(username: String) async throws -> RestoreStartResponse {
+        try await post("api/restore/start", body: ["username": username],
+                       as: RestoreStartResponse.self)
+    }
+
+    public struct RestoreClaimRequest: Encodable {
+        public var identityKey: String
+        public var identitySignKey: String
+        public var identityKeySig: String
+        public var signature: String
+        public var signedPrekey: RegisterRequest.SignedPrekeyDTO
+        public var oneTimePrekeys: [RegisterRequest.OneTimePrekeyDTO]
+        public var device: [String: String]
+        public init(identityKey: String, identitySignKey: String, identityKeySig: String,
+                    signature: String, signedPrekey: RegisterRequest.SignedPrekeyDTO,
+                    oneTimePrekeys: [RegisterRequest.OneTimePrekeyDTO], deviceName: String) {
+            self.identityKey = identityKey
+            self.identitySignKey = identitySignKey
+            self.identityKeySig = identityKeySig
+            self.signature = signature
+            self.signedPrekey = signedPrekey
+            self.oneTimePrekeys = oneTimePrekeys
+            self.device = ["name": deviceName]
+        }
+    }
+    public func restoreClaim(_ restoreId: String,
+                             _ body: RestoreClaimRequest) async throws -> RegisterResponse {
+        try await post("api/restore/\(restoreId)/claim", body: body, as: RegisterResponse.self)
+    }
+
     // MARK: - Device sessions
 
     /// An active session: one of the user's devices whose token has not been revoked.

@@ -3,7 +3,7 @@ import type { Env, AuthCtx, ChatState, PublicUser } from "./types";
 import { authenticate } from "./auth";
 import {
   ulid, newToken, sha256hex, json, err, directChatName, b64url, provisionCode,
-  isValidUsername, isValidDisplayName, USERNAME_QUARANTINE_MS,
+  isValidUsername, isValidDisplayName, USERNAME_QUARANTINE_MS, verifyEd25519,
 } from "./util";
 import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "./version";
 import { newCounters, wrapDB } from "./perf";
@@ -232,6 +232,91 @@ app.post("/api/provision/:id/cancel", async (c) => {
   if ("error" in s) return s.error;
   await c.env.DB.prepare("DELETE FROM provision_sessions WHERE id = ?").bind(s.row.id).run();
   return json({ ok: true });
+});
+
+// --- restoring from a backup (no auth: this device has no account yet, and no
+// other device is asked to approve it — the nonce signature below stands in
+// for that approval) ---
+
+/// Life of a restore session, seconds. The nonce is signed and posted back in
+/// one round trip, so this only has to outlast a slow network, not a person.
+const RESTORE_TTL = 120;
+
+interface RestoreRow {
+  id: string; user_id: string; identity_key: string; identity_sign_key: string;
+  nonce: string; expires_at: number; claimed_at: number | null;
+}
+
+app.post("/api/restore/start", async (c) => {
+  const b = await c.req.json<{ username: string }>();
+  if (!isValidUsername(b.username)) return err("bad_username");
+  const user = await c.env.DB.prepare("SELECT id FROM users WHERE username = ?")
+    .bind(b.username).first<{ id: string }>();
+  if (!user) return err("account_not_found", 404);
+  const kd = await userStub(c.env, user.id).fetch("https://do/keys-devices");
+  const known = (await kd.json()) as { devices: Array<{ identityKey: string; identitySignKey: string }> };
+  if (!known.devices.length) return err("account_has_no_devices", 409);
+  const { identityKey, identitySignKey } = known.devices[0];
+  const now = Date.now();
+  await c.env.DB.prepare("DELETE FROM restore_sessions WHERE expires_at <= ?").bind(now).run();
+  const id = ulid(now);
+  const nonce = b64url(crypto.getRandomValues(new Uint8Array(32)));
+  await c.env.DB.prepare(
+    `INSERT INTO restore_sessions (id, user_id, identity_key, identity_sign_key, nonce, created_at, expires_at)
+     VALUES (?,?,?,?,?,?,?)`
+  ).bind(id, user.id, identityKey, identitySignKey, nonce, now, now + RESTORE_TTL * 1000).run();
+  return json({ ok: true, restoreId: id, nonce, expiresIn: RESTORE_TTL });
+});
+
+// The device proves it holds the account's identity private key by signing
+// the session's nonce; the server checks that signature against the identity
+// key already on file, then adds this device exactly as a live approval would.
+app.post("/api/restore/:id/claim", async (c) => {
+  const row = await c.env.DB.prepare("SELECT * FROM restore_sessions WHERE id = ?")
+    .bind(c.req.param("id")).first<RestoreRow>();
+  if (!row) return err("restore_not_found", 404);
+  if (row.claimed_at) return err("restore_claimed", 409);
+  if (row.expires_at <= Date.now()) return err("restore_expired", 410);
+  const b = await c.req.json<{
+    identityKey: string; identitySignKey: string; identityKeySig: string; signature: string;
+    signedPrekey: { id: number; key: string; sig: string };
+    oneTimePrekeys: Array<{ id: number; key: string }>;
+    device?: { name?: string };
+  }>();
+  if (!b.identityKey || !b.identitySignKey || !b.identityKeySig || !b.signature || !b.signedPrekey?.key) {
+    return err("bad_keys");
+  }
+  if (b.identityKey !== row.identity_key || b.identitySignKey !== row.identity_sign_key) {
+    return err("identity_mismatch", 409);
+  }
+  const nonceBytes = new TextEncoder().encode(row.nonce);
+  if (!(await verifyEd25519(row.identity_sign_key, b.signature, nonceBytes))) {
+    return err("bad_signature", 401);
+  }
+
+  const userId = row.user_id;
+  const now = Date.now();
+  const deviceId = ulid(now);
+  const token = newToken();
+  const kw = await userStub(c.env, userId).fetch("https://do/keys-register", {
+    method: "POST",
+    body: JSON.stringify({
+      userId, deviceId,
+      identityKey: b.identityKey, identitySignKey: b.identitySignKey,
+      identityKeySig: b.identityKeySig,
+      signedPrekey: b.signedPrekey, oneTimePrekeys: b.oneTimePrekeys ?? [], bump: true,
+    }),
+  });
+  if (!kw.ok) return err("keys_write_failed", 500);
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      "INSERT INTO devices (id, user_id, name, token_hash, created_at) VALUES (?,?,?,?,?)"
+    ).bind(deviceId, userId, b.device?.name ?? null, await sha256hex(token), now),
+    c.env.DB.prepare(
+      "UPDATE restore_sessions SET claimed_at = ? WHERE id = ? AND claimed_at IS NULL"
+    ).bind(now, row.id),
+  ]);
+  return json({ ok: true, userId, deviceId, token });
 });
 
 // --- everything below is authenticated ---
