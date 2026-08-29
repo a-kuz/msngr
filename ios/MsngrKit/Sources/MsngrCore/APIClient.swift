@@ -644,4 +644,28 @@ public final class APIClient: @unchecked Sendable {
     public func blockedUsers() async throws -> [String] {
         try await get("api/blocked", as: BlockedResponse.self).blocked
     }
+
+    // MARK: - Privacy
+
+    public struct PrivacyDTO: Codable, Sendable, Equatable {
+        public let lastSeen: String
+        public let readReceipts: Bool
+        public let typing: Bool
+    }
+    private struct PrivacyResponse: Decodable { let privacy: PrivacyDTO }
+
+    public func privacy() async throws -> PrivacyDTO {
+        try await get("api/privacy", as: PrivacyResponse.self).privacy
+    }
+
+    /// Any argument left nil keeps the server's current value for it.
+    @discardableResult
+    public func setPrivacy(
+        lastSeen: String? = nil, readReceipts: Bool? = nil, typing: Bool? = nil
+    ) async throws -> PrivacyDTO {
+        struct Body: Encodable { let lastSeen: String?; let readReceipts: Bool?; let typing: Bool? }
+        return try await post("api/privacy",
+            body: Body(lastSeen: lastSeen, readReceipts: readReceipts, typing: typing),
+            as: PrivacyResponse.self).privacy
+    }
 }

@@ -40,6 +40,16 @@ export type ClientFrame =
   | { t: "bg" }   // app went to background: presence goes offline at once
   | { t: "fg" };  // app came back: presence goes online
 
+export type LastSeenVisibility = "everyone" | "contacts" | "nobody";
+
+/// A user's privacy settings. A user with no row in `privacy_settings` gets
+/// these defaults.
+export interface PrivacySettings {
+  lastSeen: LastSeenVisibility;
+  readReceipts: boolean;
+  typing: boolean;
+}
+
 /// A user card as everyone may see it: the columns GET /api/users/:id serves.
 export interface PublicUser {
   id: string;

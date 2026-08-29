@@ -1,4 +1,5 @@
 import { verifyAsync as ed25519VerifyAsync } from "@noble/ed25519";
+import type { PrivacySettings } from "./types";
 
 const ULID_CHARS = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
@@ -103,6 +104,21 @@ export function isValidDisplayName(name: unknown): name is string {
 export function shouldArmAlarm(pending: number | null, at: number, now: number): boolean {
   if (pending === null) return true;
   return !(pending > now && pending <= at);
+}
+
+/// A user's privacy row, or the defaults if they never set one. Shared by the
+/// worker (for the REST endpoint and presence visibility) and ConversationDO
+/// (for gating receipts, typing and presence fanout).
+export async function readPrivacy(db: D1Database, userId: string): Promise<PrivacySettings> {
+  const row = await db.prepare(
+    "SELECT last_seen, read_receipts, typing FROM privacy_settings WHERE user_id = ?"
+  ).bind(userId).first<{ last_seen: string; read_receipts: number; typing: number }>();
+  if (!row) return { lastSeen: "everyone", readReceipts: true, typing: true };
+  return {
+    lastSeen: row.last_seen as PrivacySettings["lastSeen"],
+    readReceipts: row.read_receipts === 1,
+    typing: row.typing === 1,
+  };
 }
 
 export const SEQ_PAD = 10;
