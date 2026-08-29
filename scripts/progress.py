@@ -117,6 +117,39 @@ def table(data):
                 "dim", colored))
 
 
+def tasks_in_work():
+    """Lines of .claude/tasks.tsv: (agent, started, task, registered) — an
+    agent registers its current task there and takes the line out on delivery.
+    `registered` says whether the agent is also in .claude/agents.tsv."""
+    agents = set()
+    try:
+        with open(".claude/agents.tsv") as fh:
+            agents = {line.split("\t")[0] for line in fh if line.strip()}
+    except OSError:
+        pass
+    result = []
+    try:
+        with open(".claude/tasks.tsv") as fh:
+            for line in fh:
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) >= 3:
+                    result.append((parts[0], parts[1], parts[2], parts[0] in agents))
+    except OSError:
+        pass
+    return result
+
+
+def print_tasks(colored):
+    tasks = tasks_in_work()
+    if not tasks:
+        return
+    print()
+    print(paint("in work now", "bold", colored))
+    for agent, started, task, registered in tasks:
+        mark = "" if registered else paint("  (agent not in agents.tsv)", "yellow", colored)
+        print(f"  {agent:<10} {started:<17} {task}{mark}")
+
+
 def main():
     data = rows()
     if not data:
@@ -126,6 +159,7 @@ def main():
             print(json.dumps(row))
     else:
         table(data)
+        print_tasks(sys.stdout.isatty())
 
 
 if __name__ == "__main__":

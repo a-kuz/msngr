@@ -327,6 +327,9 @@ version, `migrations` in `wrangler.jsonc`. The details are in `docs/PROCESS.md`.
 
 ## How work is delivered
 
+- The task you are on lives in `.claude/tasks.tsv` (name, start, one
+  sentence, tab-separated): add your line when you take it, remove it when
+  you deliver. `scripts/progress.py` shows the owner these lines.
 - Micro-scope: one behaviour per change, commits incremental. A live run of the
   affected scenario on the simulator, then `make check`.
 - A red check on a product number or behaviour is a defect report until proven
