@@ -42,6 +42,21 @@ final class MessageContextOverlay: UIView {
 
     static let quickReactions = ["❤️", "👍", "🔥", "😂", "😮", "😢"]
 
+    /// The overlay on screen right now, while it is presented or dismissing.
+    private static weak var current: MessageContextOverlay?
+    /// Work that must wait for the menu's blur to leave the screen — the
+    /// reaction burst of a reaction picked in this very menu would otherwise
+    /// play behind it. With no overlay up the block runs at once.
+    private static var afterDismissBlocks: [() -> Void] = []
+    static func afterDismiss(_ block: @escaping () -> Void) {
+        if current == nil { block() } else { afterDismissBlocks.append(block) }
+    }
+    private static func flushAfterDismiss() {
+        let blocks = afterDismissBlocks
+        afterDismissBlocks = []
+        for b in blocks { b() }
+    }
+
     private let blurView = UIVisualEffectView(effect: nil)
     /// A wash of background colour over the blur: it kills the bubbles showing through and
     /// fades out towards the selected message through a gradient mask.
@@ -118,6 +133,7 @@ final class MessageContextOverlay: UIView {
         window.endEditing(true)
         overlay.frame = window.bounds
         window.addSubview(overlay)
+        current = overlay
         overlay.animateIn()
     }
 
@@ -506,6 +522,7 @@ final class MessageContextOverlay: UIView {
         } completion: { _ in
             self.sourceBubble?.isHidden = false
             self.removeFromSuperview()
+            if Self.current === self || Self.current == nil { Self.flushAfterDismiss() }
         }
     }
 
