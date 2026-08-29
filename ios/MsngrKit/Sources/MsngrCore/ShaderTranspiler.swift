@@ -90,6 +90,7 @@ public enum ShaderTranspiler {
         s = rewriteArrayConstructors(s)
         s = rewriteStructConstructors(s)
         s = rewriteSwizzleCompoundAssignments(s)
+        s = rewriteEquality(s)
         s = replace(#"\b([A-Za-z_]\w*)\.length\(\)"#, in: s, with: "(int)(sizeof($1)/sizeof($1[0]))")
         s = replace(#"\bdiscard\s*;"#, in: s, with: "discard_fragment();")
         if !matches(#"\bmainImage\s*\(\s*thread\s+float4\s*&\s*\w+\s*,\s*float2\s+\w+\s*\)"#, in: s) {
@@ -229,6 +230,129 @@ public enum ShaderTranspiler {
         let lvalue = #"((?:[A-Za-z_]\w*)(?:\s*\[[^\]]*\]|\.[A-Za-z_]\w*)*)"#
         let swizzle = #"\.([xyzw]{2,4}|[rgba]{2,4}|[stpq]{2,4})"#
         return replace(lvalue + swizzle + #"\s*([-+*/])=\s*([^;]+);"#, in: s, with: "$1.$2 = $1.$2 $3 ($4);")
+    }
+
+    /// `a == b` → `all(a == b)`, `a != b` → `any(a != b)`. GLSL compares two
+    /// vectors to one bool; MSL compares them componentwise, and a `bool2` is
+    /// not a condition. `all` and `any` of a scalar bool are the bool itself,
+    /// so the wrap is harmless where the operands are scalars. Preprocessor
+    /// lines are left alone.
+    static func rewriteEquality(_ s: String) -> String {
+        var chars = Array(s)
+        var i = 0
+        var atLineStart = true
+        var directive = false
+        while i < chars.count {
+            let c = chars[i]
+            if c == "\n" { atLineStart = true; directive = false; i += 1; continue }
+            if atLineStart && !c.isWhitespace { atLineStart = false; directive = (c == "#") }
+            if directive { i += 1; continue }
+            let next: Character? = i + 1 < chars.count ? chars[i + 1] : nil
+            let prev: Character? = i > 0 ? chars[i - 1] : nil
+            let isEq = c == "=" && next == "=" && !(prev.map { "<>!=".contains($0) } ?? false)
+            let isNe = c == "!" && next == "="
+            guard isEq || isNe else { i += 1; continue }
+            let l = operandStart(chars, before: i)
+            let r = operandEnd(chars, after: i + 2)
+            let wrap: [Character] = Array(isEq ? "all(" : "any(")
+            chars.insert(")", at: r)
+            chars.insert(contentsOf: wrap, at: l)
+            i = r + wrap.count + 1
+        }
+        return String(chars)
+    }
+
+    static let statementKeywords: Set<String> = ["return", "else", "case", "do"]
+    static let arithmetic: Set<Character> = ["+", "-", "*", "/", "%"]
+
+    static func isIdentChar(_ c: Character) -> Bool { c.isLetter || c.isNumber || c == "_" || c == "." }
+
+    /// The index where the operand ending just before `op` begins: the pieces
+    /// bound tighter than `==` (arithmetic, relational, unary, calls, indexing,
+    /// member access) are taken, anything looser or a statement keyword ends
+    /// the operand. A postfix chain (`foo(x)[0].y`) continues only while its
+    /// pieces touch; a space between two operand pieces is a statement boundary.
+    static func operandStart(_ chars: [Character], before op: Int) -> Int {
+        var j = op - 1
+        var start = op
+        var expectOperand = true
+        while true {
+            let before = j
+            while j >= 0 && chars[j].isWhitespace { j -= 1 }
+            if j < 0 { break }
+            let adjacent = j == before
+            let ch = chars[j]
+            if ch == ")" || ch == "]" {
+                if !expectOperand && !adjacent { break }
+                var depth = 0
+                while j >= 0 {
+                    if chars[j] == ")" || chars[j] == "]" { depth += 1 }
+                    if chars[j] == "(" || chars[j] == "[" { depth -= 1; if depth == 0 { break } }
+                    j -= 1
+                }
+                if j < 0 { break }
+                start = j; j -= 1; expectOperand = false
+            } else if isIdentChar(ch) {
+                if !expectOperand && !adjacent { break }
+                var k = j
+                while k >= 0 && isIdentChar(chars[k]) { k -= 1 }
+                if statementKeywords.contains(String(chars[(k + 1)...j])) { break }
+                start = k + 1; j = k; expectOperand = false
+            } else if arithmetic.contains(ch) || ch == "!" {
+                start = j; j -= 1; expectOperand = true
+            } else if ch == "=" {
+                guard j > 0, chars[j - 1] == "<" || chars[j - 1] == ">" else { break }
+                start = j - 1; j -= 2; expectOperand = true
+            } else if ch == "<" || ch == ">" {
+                start = j; j -= 1
+                if j >= 0 && chars[j] == ch { start = j; j -= 1 }
+                expectOperand = true
+            } else {
+                break
+            }
+        }
+        return start
+    }
+
+    /// The index just past the operand that begins at `from`.
+    static func operandEnd(_ chars: [Character], after from: Int) -> Int {
+        var j = from
+        var end = from
+        var expectOperand = true
+        while true {
+            let before = j
+            while j < chars.count && chars[j].isWhitespace { j += 1 }
+            if j >= chars.count { break }
+            let adjacent = j == before
+            let ch = chars[j]
+            if ch == "(" || ch == "[" {
+                if !expectOperand && !adjacent { break }
+                var depth = 0
+                while j < chars.count {
+                    if chars[j] == "(" || chars[j] == "[" { depth += 1 }
+                    if chars[j] == ")" || chars[j] == "]" { depth -= 1; if depth == 0 { break } }
+                    j += 1
+                }
+                if j >= chars.count { break }
+                j += 1; end = j; expectOperand = false
+            } else if isIdentChar(ch) {
+                if !expectOperand && !adjacent { break }
+                while j < chars.count && isIdentChar(chars[j]) { j += 1 }
+                end = j; expectOperand = false
+            } else if arithmetic.contains(ch) {
+                j += 1; expectOperand = true
+            } else if ch == "!" {
+                if j + 1 < chars.count && chars[j + 1] == "=" { break }
+                j += 1; expectOperand = true
+            } else if ch == "<" || ch == ">" {
+                j += 1
+                if j < chars.count && (chars[j] == ch || chars[j] == "=") { j += 1 }
+                expectOperand = true
+            } else {
+                break
+            }
+        }
+        return end
     }
 
     static func rewriteArrayConstructors(_ s: String) -> String {
