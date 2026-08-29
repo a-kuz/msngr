@@ -1,3 +1,5 @@
+import { verifyAsync as ed25519VerifyAsync } from "@noble/ed25519";
+
 const ULID_CHARS = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 export function ulid(now = Date.now()): string {
@@ -106,4 +108,17 @@ export function shouldArmAlarm(pending: number | null, at: number, now: number):
 export const SEQ_PAD = 10;
 export function seqKey(seq: number): string {
   return "msg:" + String(seq).padStart(SEQ_PAD, "0");
+}
+
+/// Proves a restore claim holds the account's identity private key: `pubKeyB64url`
+/// is the Ed25519 public half already on file for the account, `message` is the
+/// restore session's own nonce, never reused across sessions.
+export async function verifyEd25519(
+  pubKeyB64url: string, signatureB64url: string, message: Uint8Array
+): Promise<boolean> {
+  try {
+    return await ed25519VerifyAsync(fromB64url(signatureB64url), message, fromB64url(pubKeyB64url));
+  } catch {
+    return false;
+  }
 }
