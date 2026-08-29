@@ -876,7 +876,129 @@ check("block: blocked msg stays hidden after unblock",
   && irisHist2.msgs.some((m) => m.seq === b3?.seq));
 ch.ws.close(); ci.ws.close(); ci2.ws.close();
 
-// 21. Logout and device revocation
+// 21. Privacy: last seen, read receipts, typing — each enforced by the server,
+// not just hidden client-side, and reciprocal: hiding your own also blinds you
+// to everyone else's.
+{
+  const priya = await api("/api/register", { body: {
+    username: "priya_" + suffix, displayName: "Priya", ...fakeKeys("k1") } });
+  const milo = await api("/api/register", { body: {
+    username: "milo_" + suffix, displayName: "Milo", ...fakeKeys("l1") } });
+  const pchat = await api("/api/chats", { token: priya.token,
+    body: { kind: "direct", memberIds: [milo.userId] } });
+  await api(`/api/chats/${pchat.chatId}/accept`, { token: milo.token, body: {} });
+
+  const defaults = await api("/api/privacy", { token: priya.token });
+  check("privacy defaults", defaults.ok && defaults.privacy.lastSeen === "everyone"
+    && defaults.privacy.readReceipts === true && defaults.privacy.typing === true,
+    JSON.stringify(defaults));
+
+  const ck = new Client("priya", priya.token);
+  const cl = new Client("milo", milo.token);
+  await ck.connect(); await cl.connect();
+
+  // -- read receipts --
+  ck.send({ t: "send", chatId: pchat.chatId, clientMsgId: "cm-p0", sentAt: Date.now(),
+    body: { v: 1, mode: "pw", msgs: {} } });
+  const p0 = await ck.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p0");
+  await cl.waitFor((f) => f.t === "msg" && f.chatId === pchat.chatId && f.seq === p0.seq);
+
+  cl.send({ t: "read", chatId: pchat.chatId, upToSeq: p0.seq });
+  check("read receipt reaches the sender by default",
+    !!(await ck.waitFor((f) => f.t === "receipt" && f.kind === "read" && f.by === milo.userId)));
+
+  check("readReceipts off", (await api("/api/privacy", { token: milo.token,
+    body: { readReceipts: false } })).ok);
+  ck.send({ t: "send", chatId: pchat.chatId, clientMsgId: "cm-p1", sentAt: Date.now(),
+    body: { v: 1, mode: "pw", msgs: {} } });
+  const p1 = await ck.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p1");
+  await cl.waitFor((f) => f.t === "msg" && f.chatId === pchat.chatId && f.seq === p1.seq);
+  const ckMark = ck.mark();
+  cl.send({ t: "read", chatId: pchat.chatId, upToSeq: p1.seq });
+  await new Promise((r) => setTimeout(r, 700));
+  check("read receipt off: not sent to the peer",
+    !ck.frames.slice(ckMark).some((f) => f.t === "receipt" && f.by === milo.userId));
+
+  // milo's own read cursor still moves — the receipt is what's suppressed, not his mark
+  const pstate = await api("/api/chats", { token: milo.token });
+  const pc = pstate.chats.find((c2) => c2.state.chatId === pchat.chatId);
+  check("read mark still recorded for the reader with receipts off",
+    pc?.state.readMarks[milo.userId] === p1.seq, JSON.stringify(pc?.state.readMarks));
+
+  check("readReceipts back on", (await api("/api/privacy", { token: milo.token,
+    body: { readReceipts: true } })).ok);
+  check("readReceipts off on the other side too", (await api("/api/privacy", { token: priya.token,
+    body: { readReceipts: false } })).ok);
+  ck.send({ t: "send", chatId: pchat.chatId, clientMsgId: "cm-p2", sentAt: Date.now(),
+    body: { v: 1, mode: "pw", msgs: {} } });
+  const p2 = await ck.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p2");
+  await cl.waitFor((f) => f.t === "msg" && f.chatId === pchat.chatId && f.seq === p2.seq);
+  const ckMark2 = ck.mark();
+  cl.send({ t: "read", chatId: pchat.chatId, upToSeq: p2.seq });
+  await new Promise((r) => setTimeout(r, 700));
+  check("read receipt off reciprocally: a peer with it off gets none either",
+    !ck.frames.slice(ckMark2).some((f) => f.t === "receipt" && f.by === milo.userId));
+  check("readReceipts restored", (await api("/api/privacy", { token: priya.token,
+    body: { readReceipts: true } })).ok);
+
+  // -- typing --
+  check("typing off", (await api("/api/privacy", { token: priya.token,
+    body: { typing: false } })).ok);
+  const clMark = cl.mark();
+  ck.send({ t: "typing", chatId: pchat.chatId, kind: "text" });
+  await new Promise((r) => setTimeout(r, 700));
+  check("typing off: not sent at all",
+    !cl.frames.slice(clMark).some((f) => f.t === "typing" && f.from === priya.userId));
+
+  check("typing back on", (await api("/api/privacy", { token: priya.token,
+    body: { typing: true } })).ok);
+  check("typing off on the recipient", (await api("/api/privacy", { token: milo.token,
+    body: { typing: false } })).ok);
+  const clMark2 = cl.mark();
+  ck.send({ t: "typing", chatId: pchat.chatId, kind: "text" });
+  await new Promise((r) => setTimeout(r, 700));
+  check("typing off reciprocally: a peer with it off receives none either",
+    !cl.frames.slice(clMark2).some((f) => f.t === "typing" && f.from === priya.userId));
+  check("typing restored", (await api("/api/privacy", { token: milo.token,
+    body: { typing: true } })).ok);
+
+  // -- last seen --
+  const beforeHide = await api(`/api/users/${priya.userId}`, { token: milo.token });
+  check("last seen visible by default", beforeHide.ok && beforeHide.presence !== null,
+    JSON.stringify(beforeHide));
+
+  const clMark3 = cl.mark();
+  ck.send({ t: "fg" });
+  check("presence frame reaches the peer by default",
+    !!(await cl.waitAfter(clMark3, (f) => f.t === "presence" && f.userId === priya.userId)));
+
+  check("lastSeen hidden", (await api("/api/privacy", { token: priya.token,
+    body: { lastSeen: "nobody" } })).ok);
+  const hiddenFromPeer = await api(`/api/users/${priya.userId}`, { token: milo.token });
+  check("last seen hidden from the peer over REST",
+    hiddenFromPeer.ok && hiddenFromPeer.presence === null, JSON.stringify(hiddenFromPeer));
+  const hiddenFromSelf = await api(`/api/users/${milo.userId}`, { token: priya.token });
+  check("hiding your own last seen blinds you to everyone else's",
+    hiddenFromSelf.ok && hiddenFromSelf.presence === null, JSON.stringify(hiddenFromSelf));
+
+  const clMark4 = cl.mark();
+  ck.send({ t: "bg" });
+  await new Promise((r) => setTimeout(r, 200));
+  ck.send({ t: "fg" });
+  await new Promise((r) => setTimeout(r, 700));
+  check("presence frame withheld once last seen is hidden",
+    !cl.frames.slice(clMark4).some((f) => f.t === "presence" && f.userId === priya.userId));
+
+  check("lastSeen restored", (await api("/api/privacy", { token: priya.token,
+    body: { lastSeen: "everyone" } })).ok);
+  const restored = await api(`/api/users/${priya.userId}`, { token: milo.token });
+  check("last seen visible again after restoring", restored.ok && restored.presence !== null,
+    JSON.stringify(restored));
+
+  ck.ws.close(); cl.ws.close();
+}
+
+// 22. Logout and device revocation
 const logoutUser = await api("/api/register", { body: {
   username: "logout_" + suffix, displayName: "Frank", ...fakeKeys("f") } });
 const logoutSess0 = await api("/api/sessions", { token: logoutUser.token });
