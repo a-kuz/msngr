@@ -898,23 +898,28 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     interrupted halfway
   - ⬜ turning it off, and deleting what is already in iCloud
 
-## The macOS client
+## The desktop client
 
-The desktop MVP is the iOS binary run as «Designed for iPad» (the owner's
-call, 2026-08-30: two clients written in parallel is the wrong path): the
-device family includes iPad, and keyboard support lives in the shared UIKit
-code. The native MsngrMac target below is parked, kept compiling but not
-grown.
+One binary for every screen (the owner's call, 2026-08-30: two clients
+written in parallel is the wrong path): the iOS app targets the iPad family
+and a Mac runs it as «Designed for iPad». The native MsngrMac target is
+deleted. The signing team never enters the repository — a device or desktop
+build takes it from the environment (`make device TEAM=…`, local.mk).
 
-- 🟡 registration, the chat list, the chat, sending text (not verified live)
-- 🟡 reactions and deleting a message (not verified live)
-- 🟡 the read mark under the same conditions as on iOS — the window has focus,
-    the feed is at its end, the content is not held back (in the code, not
-    verified live: the check needs the host screen)
-- ⬜ sending and viewing media
-- ⬜ voice messages
-- ⬜ notifications
-- ⬜ parity with iOS on the context menu and the settings
+- ✅ the iPad family in the target; the chat list and the chat hold on an
+  iPad screen as they are (first run 2026-08-30, fable-ipad)
+- ✅ chat list from the keyboard: arrows walk the rows, Enter opens, Cmd+N
+  new chat, Cmd+F into search, Cmd+1..9 folder tabs
+  (KeyboardNavigationTests, real HID events)
+- 🟡 chat keys: Enter sends, Shift+Enter breaks the line, Esc walks out of
+  the edit, the reply and the chat (KeyboardNavigationTests written, the
+  live run pending)
+- ⬜ ↑ in an empty composer edits your last message
+- ⬜ Ctrl+Tab / Cmd+[ ] between chats
+- ⬜ the iPad layout reviewed screen by screen (the shader avatar defect from
+  the first run is in defects.md)
+- ⬜ a menu bar on the Mac (UIMenuBuilder) with the same commands
+- ⬜ a signed run on a real Mac as «Designed for iPad»
 
 ## Performance and animations
 
