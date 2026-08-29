@@ -30,14 +30,16 @@ final class AppState: ObservableObject {
     // an empty string into MSNGR_SERVER when no stand is set, so the variable is
     // used only when it parses into a URL
     static let httpBase: URL = {
-        let fallback = URL(string: "http://localhost:8787")!
         if let raw = ProcessInfo.processInfo.environment["MSNGR_SERVER"],
            let url = URL(string: raw), url.scheme != nil { return url }
-        // a physical device gets no environment: `make device` bakes the Mac's
-        // address into the Info instead (empty when not a device build)
+        // a physical device gets no environment: `make device` bakes the stand
+        // it was told to use into the Info instead (empty when not a device build)
         if let raw = Bundle.main.object(forInfoDictionaryKey: "MSNGRServer") as? String,
            let url = URL(string: raw), url.scheme != nil { return url }
-        return fallback
+        // the tunnel is the one address that holds everywhere the app runs: on a
+        // device loopback is the phone itself. A build that wants the stand
+        // directly says so through MSNGR_SERVER
+        return URL(string: "https://msngr.a-kuz.online")!
     }()
 
     @Published var session: Session?
