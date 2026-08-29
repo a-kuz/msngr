@@ -39,6 +39,8 @@ struct BackupView: View {
 
     private enum Stage: Equatable {
         case off
+        case choosingSecret
+        case enteringPassphrase
         case revealingCode(String)
         case on
     }
@@ -46,6 +48,9 @@ struct BackupView: View {
     @State private var stage: Stage = BackupStore.isEnabled ? .on : .off
     @State private var busy = false
     @State private var error: String?
+    @State private var codeCopied = false
+    @State private var passphrase = ""
+    @State private var passphraseRepeat = ""
     @State private var exportDocument: BackupFile?
     @State private var showExporter = false
     /// Set right before `showExporter`, read only once the export sheet
@@ -64,26 +69,72 @@ struct BackupView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                     Button {
-                        Task { await turnOn() }
+                        stage = .choosingSecret
                     } label: {
                         if busy { ProgressView() } else { Text("Turn on backup") }
                     }
                     .disabled(busy)
                     .accessibilityIdentifier("backup.turnOn")
                 }
+            case .choosingSecret:
+                Section {
+                    Button("Generate a recovery code") {
+                        let code = BackupSeal.generateRecoveryCode()
+                        BackupStore.sessionSecret = (code, isPassphrase: false)
+                        stage = .revealingCode(code)
+                    }
+                    .accessibilityIdentifier("backup.chooseCode")
+                    Button("Use my own password") {
+                        stage = .enteringPassphrase
+                    }
+                    .accessibilityIdentifier("backup.choosePassword")
+                } footer: {
+                    Text("A generated code cannot be guessed. A password is yours to remember — the backup is only as strong as the password you pick.")
+                }
+            case .enteringPassphrase:
+                Section {
+                    SecureField("Backup password", text: $passphrase)
+                        .accessibilityIdentifier("backup.passphrase")
+                    SecureField("Repeat it", text: $passphraseRepeat)
+                        .accessibilityIdentifier("backup.passphraseRepeat")
+                    Button("Continue") {
+                        let cleaned = BackupSeal.normalizePassphrase(passphrase)
+                        BackupStore.sessionSecret = (cleaned, isPassphrase: true)
+                        Task { await finishTurnOn(secret: cleaned, isPassphrase: true) }
+                    }
+                    .disabled(busy
+                              || BackupSeal.normalizePassphrase(passphrase).isEmpty
+                              || passphrase != passphraseRepeat)
+                    .accessibilityIdentifier("backup.passphraseContinue")
+                } footer: {
+                    Text("There is no reset: a forgotten password means the backup never opens again.")
+                }
             case .revealingCode(let code):
                 Section {
                     Text("Recovery code")
                         .font(.headline)
-                    Text(BackupSeal.formatRecoveryCode(code))
-                        .font(.system(.title3, design: .monospaced))
-                        .textSelection(.enabled)
-                        .accessibilityIdentifier("backup.recoveryCode")
+                    Button {
+                        UIPasteboard.general.string = BackupSeal.formatRecoveryCode(code)
+                        codeCopied = true
+                    } label: {
+                        HStack {
+                            Text(BackupSeal.formatRecoveryCode(code))
+                                .font(.system(.title3, design: .monospaced))
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            Image(systemName: codeCopied ? "checkmark" : "doc.on.doc")
+                                .foregroundStyle(codeCopied ? .green : Theme.accent)
+                        }
+                    }
+                    .accessibilityIdentifier("backup.recoveryCode")
+                    if codeCopied {
+                        Text("Copied").font(.footnote).foregroundStyle(.secondary)
+                    }
                     Text("This is the only way to open the backup on a new device. Nobody else can read it or hand it back to you — write it down now.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                     Button("I saved it") {
-                        Task { await finishTurnOn(code: code) }
+                        Task { await finishTurnOn(secret: code, isPassphrase: false) }
                     }
                     .disabled(busy)
                     .accessibilityIdentifier("backup.codeSaved")
@@ -143,24 +194,17 @@ struct BackupView: View {
         "msngr-\(app.session?.username ?? "backup").msngrbackup"
     }
 
-    private func turnOn() async {
-        busy = true; error = nil
-        defer { busy = false }
-        let code = BackupSeal.generateRecoveryCode()
-        BackupStore.sessionRecoveryCode = code
-        stage = .revealingCode(code)
-    }
-
-    private func finishTurnOn(code: String) async {
+    private func finishTurnOn(secret: String, isPassphrase: Bool) async {
         BackupStore.isEnabled = true
         stage = .on
-        await backUpNow(code: code)
+        passphrase = ""; passphraseRepeat = ""
+        await backUpNow(secret: (secret, isPassphrase))
     }
 
-    /// `code` is only ever non-nil right after `turnOn`, when the user has
-    /// just seen it and it is still in memory; every later backup asks
-    /// nothing of the user, because the recovery code was never stored.
-    private func backUpNow(code: String? = nil) async {
+    /// `secret` is only ever non-nil right at turn-on, when the user has just
+    /// seen or typed it and it is still in memory; every later backup asks
+    /// nothing of the user, because the secret was never stored.
+    private func backUpNow(secret: (value: String, isPassphrase: Bool)? = nil) async {
         guard let session = app.session, let store = app.store, let db = app.db, let media = app.media
         else { return }
         busy = true; error = nil
@@ -175,11 +219,13 @@ struct BackupView: View {
                 identitySigning: identity.signing.rawRepresentation.base64urlEncodedString(),
                 palette: ThemeStore.shared.palette.rawValue,
                 showsMessageText: NotificationPreferences.showsMessageText(in: AppGroup.defaults))
-            guard let recoveryCode = code ?? BackupStore.sessionRecoveryCode else {
+            guard let secret = secret ?? BackupStore.sessionSecret else {
                 error = String(localized: "Recovery code not available in this session; turn backup off and on again.")
                 return
             }
-            let sealed = try BackupSeal.seal(payload, recoveryCode: recoveryCode)
+            let sealed = secret.isPassphrase
+                ? try BackupSeal.seal(payload, passphrase: secret.value)
+                : try BackupSeal.seal(payload, recoveryCode: secret.value)
             let data = try JSONEncoder().encode(sealed)
             exportDocument = BackupFile(data: data)
             pendingSize = Int64(data.count)
@@ -212,8 +258,8 @@ enum BackupStore {
         get { Int64(AppGroup.defaults.integer(forKey: lastSizeKey)) }
         set { AppGroup.defaults.set(Int(newValue), forKey: lastSizeKey) }
     }
-    /// In-memory only, cleared on relaunch: the code the user just saw while
-    /// this process is still alive, so this run's "Back up now" does not need
-    /// it typed back in.
-    static var sessionRecoveryCode: String?
+    /// In-memory only, cleared on relaunch: the code or password the user just
+    /// saw or typed while this process is still alive, so this run's "Back up
+    /// now" does not need it typed back in.
+    static var sessionSecret: (value: String, isPassphrase: Bool)?
 }

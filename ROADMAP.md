@@ -892,6 +892,18 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     stored — HKDF derives the seal key from it directly, the same way every
     other key derivation here starts from a high-entropy secret rather than
     something typed. There is no password reset: losing the code loses the backup.
+  - ✅ the user's own password as the alternative (the owner's ask, 2026-08-30):
+    turning backup on offers a generated code or a typed password; a password
+    seals a `v: 2` file through PBKDF2-HMAC-SHA256 (600k rounds, random salt in
+    the file), and the restore screen reads the file's version to know which of
+    the two to ask for. The code on its screen is copied by a tap.
+    (BackupSealTests units; live run 2026-08-30: password backup → logout →
+    restore with the password brought the account back)
+  - ✅ restoring works after the last device logged out: the account identity
+    outlives its devices in `UserDO` (`accountIdentity`), so
+    `/api/restore/start` no longer answers `account_has_no_devices` to the
+    exact state a backup is for (found live by the owner 2026-08-30; smoke
+    `restore: start with zero devices` … `the restored device authenticates`)
   - ✅ what the backup does NOT carry: `ratchetSession`, `senderKeyIn`/`Out`,
     `trustedIdentity`, and the ratchet's own bookkeeping tables. A restored
     device adopts the account's identity keys and generates its own fresh
@@ -914,6 +926,10 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     bytes (`BackupSeal.SealedBackup`) don't know or care which transport carries
     them, so a CloudKit private-database uploader can be added later without
     touching `AccountBackup`/`BackupSeal`; nothing about that path is verified yet
+  - ⬜ no password at all, for iCloud only (the owner's ask, 2026-08-30): a
+    random key held in the iCloud Keychain instead of anything typed, so a
+    restore on a signed-in device asks for nothing — lands together with the
+    CloudKit transport, since only the keychain makes it safe
   - server: `/api/restore/start` and `/api/restore/:id/claim` add a device to an
     existing account with no other device online to approve it, by having the
     claim sign a server-issued nonce with the account's Ed25519 identity key
