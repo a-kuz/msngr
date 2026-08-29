@@ -69,6 +69,13 @@ struct RegisterView: View {
                         .font(.footnote)
                 }
                 .accessibilityIdentifier("reg.link")
+                NavigationLink {
+                    RestoreFromBackupView()
+                } label: {
+                    Text("Restore from a backup")
+                        .font(.footnote)
+                }
+                .accessibilityIdentifier("reg.restore")
                 Spacer()
                 Spacer()
             }
