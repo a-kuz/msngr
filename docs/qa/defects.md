@@ -6,16 +6,6 @@ with the commit that closed it.
 
 ## Open
 
-### The reaction burst for your own first reaction plays under the context menu
-Found 2026-08-29 in passing while running the reaction-burst scenario
-(qa/runs/2026-08-29-reaction-burst-run.md). Setting a first reaction from the
-context menu's emoji row lands 0→1 and fires the burst, but the effect canvas
-starts while the menu's dismissing blur still covers the feed, so most of the
-1.4 s effect plays behind it and the user barely sees it. An incoming
-reaction on an uncovered feed shows the confetti in full. Possible fix:
-delay the burst until the menu's dismissal completes, or play it in the
-window above the blur.
-
 ### The server smoke test fails on push timing, on a different check per run
 Found 2026-08-28 by the gate after the shader-messages merge
 (`.claude/gates/main-shader.log`): `no push for own echo` was red on the
@@ -293,6 +283,18 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### The reaction burst for your own first reaction plays under the context menu
+Found 2026-08-29 in passing while running the reaction-burst scenario
+(qa/runs/2026-08-29-reaction-burst-run.md). Setting a first reaction from the
+context menu's emoji row lands 0→1 and fires the burst, but the effect canvas
+starts while the menu's dismissing blur still covers the feed, so most of the
+1.4 s effect plays behind it and the user barely sees it. Closed 2026-08-29
+(`7b08b7d`): the burst goes through `MessageContextOverlay.afterDismiss` and
+plays once the blur has left the screen, over the bubble's settled position.
+Live: `runs/2026-08-29-menu-burst-run.md` — the blur leaves with no confetti
+behind it, the burst plays in full over the uncovered feed, log verdicts
+`reaction landed 0→1, bursting` → `effect reaction ready` after the dismissal.
 
 ### An edit's envelope failed to open on the peer with no_session
 Seen in passing 2026-08-21 during the unread-recount run and reproduced on
