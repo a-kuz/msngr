@@ -477,11 +477,10 @@ A ✅ goes in only together with a link to the evidence.
     relaunch with no repair pulling it back, the peer's copy untouched
     (qa/runs/2026-08-21-delete-for-me)
   - ✅ «Сообщение удалено» in the feed for the author and for the peer (qa/runs/2026-08-15-multiselect, 05–06)
-  - 🟡 a delete that arrived before the original is applied later
-    (ServiceFrameTests units; the live trigger is a content frame stuck in
-    `pendingDecrypt` behind a missing group sender key, not a network
-    reorder — server fanout and client apply are both strictly ordered,
-    qa/runs/2026-08-28-undelivered-status-run)
+  - ✅ a delete that arrived before the original is applied later
+    (ServiceFrameTests units; live behind a missing group sender key the seq
+    settles as a tombstone at once — a deleted message is never repaired or
+    decrypted, qa/runs/2026-08-29-delete-before-original-run.md)
   - ✅ deleting several messages at once (qa/runs/2026-08-15-multiselect, 02–05)
 - Clearing the history and deleting a chat
   - ✅ clearing the history for yourself, the peer keeps the conversation

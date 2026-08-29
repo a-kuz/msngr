@@ -594,11 +594,17 @@ public actor SyncEngine {
                             """,
                             arguments: [chatId, seq])
                         // nothing matched: the original has not been stored
-                        // yet, so the tombstone waits for it
+                        // yet. An envelope held in pendingDecrypt is settled
+                        // right here — a deleted message needs no decryption,
+                        // and its sender answers no repair for it; otherwise
+                        // the tombstone waits for the original
                         if dbc.changesCount == 0 {
-                            try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetSeq: seq,
-                                                              kind: "deleted", fromUserId: f.by ?? "",
-                                                              payload: "{}", seq: nil)
+                            if try !SyncEngine.tombstoneDeferred(dbc, chatId: chatId, seq: seq,
+                                                                 ownUserId: self.ownUserId) {
+                                try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetSeq: seq,
+                                                                  kind: "deleted", fromUserId: f.by ?? "",
+                                                                  payload: "{}", seq: nil)
+                            }
                         }
                     }
                 }
@@ -1076,6 +1082,9 @@ public actor SyncEngine {
         defer { sweeping = false }
         let now = Date().timeIntervalSince1970
         for pending in await pendingEnvelopes(chatId: nil) {
+            // ahead of the retry gate: a buried envelope needs no attempt,
+            // no repair request and no week of waiting
+            if await buriedByPendingDelete(pending) { continue }
             if MessageRepair.expired(firstSeenAt: pending.firstSeenAt,
                                      repairAttempts: pending.repairAttempts, now: now) {
                 await dropExpired(pending)
@@ -1091,6 +1100,49 @@ public actor SyncEngine {
         // them: the sweep gives the standing pile the same answer a fresh
         // envelope gets, or the device would wait for someone to write again
         await republishPrekeysIfDue(now: now)
+    }
+
+    /// Writes the tombstone of a deleted-for-all message whose envelope sits in
+    /// pendingDecrypt, and settles every trace of the seq: the envelope, the gap
+    /// record and a buffered delete. Returns false when no envelope is held, so
+    /// the caller can buffer the delete for an original still on its way.
+    @discardableResult
+    static func tombstoneDeferred(_ dbc: GRDB.Database, chatId: String, seq: Int,
+                                  ownUserId: String) throws -> Bool {
+        guard let held = try Row.fetchOne(
+            dbc, sql: "SELECT fromUserId, sentAt, ts FROM pendingDecrypt WHERE chatId = ? AND seq = ?",
+            arguments: [chatId, seq]) else { return false }
+        let from = held["fromUserId"] as String
+        try dbc.execute(
+            sql: """
+            INSERT INTO message (id, chatId, seq, fromUserId, sentAt, serverTs, kind,
+                                 deletedForAll, status, isOutgoing)
+            VALUES (?,?,?,?,?,?,'text',1,1,?)
+            """,
+            arguments: [UUID().uuidString, chatId, seq, from, held["sentAt"] as Double,
+                        held["ts"] as Double?, from == ownUserId])
+        try dbc.execute(sql: "DELETE FROM pendingDecrypt WHERE chatId = ? AND seq = ?",
+                        arguments: [chatId, seq])
+        try dbc.execute(sql: "DELETE FROM historyGap WHERE chatId = ? AND seq = ?",
+                        arguments: [chatId, seq])
+        try dbc.execute(sql: "DELETE FROM pendingApply WHERE chatId = ? AND targetSeq = ? AND kind = 'deleted'",
+                        arguments: [chatId, seq])
+        return true
+    }
+
+    /// A delete that came in ahead of the envelope: the message is deleted for
+    /// everyone, so the envelope is settled by its tombstone instead of being
+    /// decrypted — its sender answers no repair for a deleted seq.
+    private func buriedByPendingDelete(_ pending: PendingEnvelope) async -> Bool {
+        (try? await db.write { dbc -> Bool in
+            let deletePending = try Bool.fetchOne(dbc, sql: """
+                SELECT EXISTS(SELECT 1 FROM pendingApply
+                              WHERE chatId = ? AND targetSeq = ? AND kind = 'deleted')
+                """, arguments: [pending.chatId, pending.seq]) ?? false
+            guard deletePending else { return false }
+            return try SyncEngine.tombstoneDeferred(dbc, chatId: pending.chatId,
+                                                    seq: pending.seq, ownUserId: self.ownUserId)
+        }) ?? false
     }
 
     /// One attempt at a stored envelope. Success moves it into the feed and
@@ -1109,6 +1161,7 @@ public actor SyncEngine {
             }
             return true
         }
+        if await buriedByPendingDelete(pending) { return true }
         guard let body = try? JSONDecoder().decode(JSONValue.self, from: pending.body) else {
             await dropExpired(pending)
             return false
