@@ -36,10 +36,15 @@ final class KeyboardNavigationTests: XCTestCase {
     /// fresh account owns exactly one — the chat with yourself.
     func testArrowsSelectAndEnterOpens() {
         app.typeKey(.downArrow, modifierFlags: [])
-        app.typeKey(.enter, modifierFlags: [])
+        app.typeKey(.return, modifierFlags: [])
         XCTAssertTrue(app.textViews["chat.input"].waitForExistence(timeout: 8),
                       "Enter on the keyboard selection did not open the chat")
     }
+
+    // The composer's own keys — Enter sends, Shift+Enter breaks the line, Esc
+    // walks out — are pinned in MsngrTests/KeyboardComposerTests: the
+    // simulator's hardware-keyboard pipe drifts between runs and XCUITest
+    // cannot hold it steady, the StatusBarTapTests situation over again.
 
     /// Cmd+N opens the new chat sheet from the list.
     func testCmdNOpensNewChat() {

@@ -411,4 +411,6 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
 
 extension Notification.Name {
     static let openChatRequested = Notification.Name("openChatRequested")
+    /// Esc pressed in the focused composer: the chat screen walks back out.
+    static let chatEscapePressed = Notification.Name("chatEscapePressed")
 }

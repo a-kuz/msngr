@@ -31,6 +31,27 @@ struct ChatScreen: View {
     @ObservedObject private var theme = ThemeStore.shared
     @Environment(\.dismiss) private var dismiss
 
+    /// Esc walks back out: first the edit, then the reply, then the chat
+    /// itself.
+    private func escapeWalksBack() {
+        if model.editing != nil {
+            withAnimation(Theme.springFast) { model.editing = nil }
+        } else if model.replyingTo != nil {
+            withAnimation(Theme.springFast) { model.replyingTo = nil }
+        } else {
+            dismiss()
+        }
+    }
+
+    /// A hidden button takes Esc while nothing holds the keyboard; the focused
+    /// composer forwards its own Esc through `.chatEscapePressed` instead.
+    private var escapeShortcut: some View {
+        Button("") { escapeWalksBack() }
+            .keyboardShortcut(.cancelAction)
+            .opacity(0)
+            .accessibilityHidden(true)
+    }
+
     init(chatId: String) {
         self.chatId = chatId
         _model = StateObject(wrappedValue: ChatViewModel(chatId: chatId))
@@ -207,6 +228,10 @@ struct ChatScreen: View {
         }
         .navigationDestination(isPresented: $showChatInfo) {
             ChatInfoView(model: model)
+        }
+        .background(escapeShortcut)
+        .onReceive(NotificationCenter.default.publisher(for: .chatEscapePressed)) { _ in
+            escapeWalksBack()
         }
         .onChange(of: model.editing?.id) { _, _ in
             if let e = model.editing {

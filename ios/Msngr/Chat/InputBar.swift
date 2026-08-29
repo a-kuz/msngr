@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import GameController
 import MsngrCore
 
 /// Input bar: a growing field, a button that morphs between microphone and send, voice
@@ -105,7 +106,12 @@ struct InputBar: View {
                     .accessibilityIdentifier("chat.attach")
                     GrowingTextView(text: $text,
                                     onChange: { model.textChanged($0) },
-                                    onPasteImages: { addPending($0) })
+                                    onPasteImages: { addPending($0) },
+                                    onReturn: {
+                                        guard hasText || !pendingImages.isEmpty else { return true }
+                                        sendCurrent()
+                                        return true
+                                    })
                         .frame(maxWidth: .infinity)
                 }
                 actionButton
@@ -322,22 +328,27 @@ struct InputBar: View {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// One send for the button and the hardware Return alike.
+    private func sendCurrent() {
+        let t = text
+        let images = pendingImages
+        text = ""
+        withAnimation(Theme.springFast) { pendingImages = [] }
+        // emptying the field from code raises no delegate callback, so the
+        // typing indicator on the other side is taken down by hand
+        model.textChanged("")
+        guard !images.isEmpty else {
+            withAnimation(Theme.springFast) { model.send(text: t) }
+            return
+        }
+        onSendImages(images, t.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
     @ViewBuilder
     private var actionButton: some View {
         if hasText || !pendingImages.isEmpty {
             Button {
-                let t = text
-                let images = pendingImages
-                text = ""
-                withAnimation(Theme.springFast) { pendingImages = [] }
-                // emptying the field from code raises no delegate callback, so the
-                // typing indicator on the other side is taken down by hand
-                model.textChanged("")
-                guard !images.isEmpty else {
-                    withAnimation(Theme.springFast) { model.send(text: t) }
-                    return
-                }
-                onSendImages(images, t.trimmingCharacters(in: .whitespacesAndNewlines))
+                sendCurrent()
             } label: {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(Theme.glyph(32, max: 44))
@@ -516,6 +527,8 @@ struct GrowingTextView: UIViewRepresentable {
     @Binding var text: String
     var onChange: (String) -> Void
     var onPasteImages: ([UIImage]) -> Void = { _ in }
+    /// Hardware Return; true means the keystroke was consumed (a send).
+    var onReturn: () -> Bool = { false }
     /// Reading the size is what brings `updateUIView` back when the reader
     /// changes it: the field then re-fonts itself and re-measures its height.
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -528,6 +541,14 @@ struct GrowingTextView: UIViewRepresentable {
     func makeUIView(context: Context) -> UITextView {
         let tv = PasteAwareTextView()
         tv.onPasteImages = onPasteImages
+        tv.onReturn = onReturn
+        tv.onEscape = { NotificationCenter.default.post(name: .chatEscapePressed, object: nil) }
+        // with a hardware keyboard attached the composer takes focus as the
+        // chat opens, so Enter works right away — a chat entered with the
+        // keyboard should not need a tap before it
+        if GCKeyboard.coalesced != nil {
+            DispatchQueue.main.async { tv.becomeFirstResponder() }
+        }
         tv.font = Theme.Text.input.uiFont
         tv.backgroundColor = UIColor.systemGray6
         tv.layer.cornerRadius = 18
@@ -553,6 +574,9 @@ struct GrowingTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ tv: UITextView, context: Context) {
+        // the closure captures view state (text, pending images) and goes
+        // stale unless refreshed on every render
+        (tv as? PasteAwareTextView)?.onReturn = onReturn
         // Text flows from the view into the binding while the user types; the
         // binding writes back only a value the view itself never held — a clear
         // after send, a restored draft. Writing on every render echoes a stale
@@ -610,6 +634,37 @@ struct GrowingTextView: UIViewRepresentable {
     /// altogether and does not even offer to paste.
     final class PasteAwareTextView: UITextView {
         var onPasteImages: ([UIImage]) -> Void = { _ in }
+        /// Hardware Return: true means it was taken (a send); false falls back
+        /// to a newline. Shift+Return always breaks the line, like everywhere.
+        var onReturn: () -> Bool = { false }
+        /// Esc pressed while the composer holds focus: the chat screen walks
+        /// back out with it exactly as it does unfocused.
+        var onEscape: () -> Void = {}
+
+        override var keyCommands: [UIKeyCommand]? {
+            let send = UIKeyCommand(input: "\r", modifierFlags: [],
+                                    action: #selector(hardwareReturn))
+            send.wantsPriorityOverSystemBehavior = true
+            let newline = UIKeyCommand(input: "\r", modifierFlags: .shift,
+                                       action: #selector(shiftReturn))
+            newline.wantsPriorityOverSystemBehavior = true
+            let escape = UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [],
+                                      action: #selector(escapePressed))
+            escape.wantsPriorityOverSystemBehavior = true
+            return (super.keyCommands ?? []) + [send, newline, escape]
+        }
+
+        @objc private func escapePressed() {
+            onEscape()
+        }
+
+        @objc private func hardwareReturn() {
+            if !onReturn() { insertText("\n") }
+        }
+
+        @objc private func shiftReturn() {
+            insertText("\n")
+        }
 
         override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
             if action == #selector(paste(_:)), UIPasteboard.general.hasImages { return true }
