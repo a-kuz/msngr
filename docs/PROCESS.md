@@ -103,6 +103,15 @@ Every feature is run along a row of the matrix rather than down the happy path:
 4. The reports are worked through: every confirmed bug gets a reproducing test,
    then a fix, then a line in the regression suite.
 
+### The task register
+
+An agent that takes a task adds one line to `.claude/tasks.tsv` — its name,
+the start time and the task in one sentence, tab-separated — and takes the
+line out when the work is delivered. `scripts/progress.py` prints these lines
+under its table, so the owner sees what is in work right now without asking;
+a line whose agent is missing from `.claude/agents.tsv` is flagged as likely
+stale.
+
 ### Crash triage
 
 - After every run, by hand or by agent, `scripts/collect-crashes.sh` picks up
