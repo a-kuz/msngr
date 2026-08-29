@@ -127,6 +127,14 @@ public final class MediaManager: @unchecked Sendable {
         return try await fetch(t)
     }
 
+    /// Places plaintext directly into the cache under its mediaId, as a restore
+    /// does with the bytes a backup carried: the file behaves exactly like one
+    /// `fetch` downloaded, with no round trip to the server.
+    public func seedCache(mediaId: String, mime: String?, data: Data) throws {
+        let url = cacheDir.appendingPathComponent(cacheFileName(mediaId, mime: mime))
+        try data.write(to: url, options: .atomic)
+    }
+
     public func totalCacheSize() -> Int64 {
         let fm = FileManager.default
         guard let items = try? fm.contentsOfDirectory(at: cacheDir, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
