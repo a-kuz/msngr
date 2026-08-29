@@ -284,6 +284,22 @@ frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
 
+### A message deleted for everyone holds its unreadable envelope for a week
+Found 2026-08-29 in passing while staging the delete-before-original scenario
+(qa/runs/2026-08-29-delete-before-original-run.md). A recipient that cannot
+decrypt a message (a lost group sender key) asks the sender for a copy, but
+`answerRepairRequest` declines for a row with `deletedForAll` and the
+service-frame fallback holds no record for a content seq — a delete is a
+plain server act, not a service frame. The asker burned all 5 repair attempts
+against silence, kept the envelope for its 7-day TTL and held the buffered
+delete forever; the feed showed a placeholder for a message deleted for
+everyone. Closed the same day: a `deleted` frame that covers a seq held in
+`pendingDecrypt` settles it with a tombstone at once, and the sweep buries an
+envelope whose delete was buffered first (`tombstoneDeferred`, checks ahead
+of the retry gate). Units: `testDeleteSettlesEnvelopeHeldInPendingDecrypt`,
+`testBufferedDeleteBuriesEnvelopeOnReplay`. Live: the stuck state on the
+throwaway stand healed on the first sweep of the fixed build.
+
 ### The reaction burst for your own first reaction plays under the context menu
 Found 2026-08-29 in passing while running the reaction-burst scenario
 (qa/runs/2026-08-29-reaction-burst-run.md). Setting a first reaction from the

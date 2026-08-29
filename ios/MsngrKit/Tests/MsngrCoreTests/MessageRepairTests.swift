@@ -45,6 +45,61 @@ final class MessageRepairTests: XCTestCase {
         }
     }
 
+    // MARK: - A deleted message needs no repair
+
+    /// A delete lands while the seq sits in pendingDecrypt: the envelope is
+    /// settled by a tombstone at once — the sender answers no repair for a
+    /// deleted-for-all message, so waiting would hold the seq for a week.
+    func testDeleteSettlesEnvelopeHeldInPendingDecrypt() async throws {
+        let db = try AppDatabase.openInMemory()
+        try await makeDirectChat(db)
+        let engine = try makeEngine(db: db)
+        await engine.apply(try brokenFrame(seq: 1))
+
+        let deleted = try JSONDecoder().decode(WSIncoming.self, from: Data("""
+        {"t":"deleted","chatId":"c1","seqs":[1],"forAll":true,"by":"peer"}
+        """.utf8))
+        await engine.apply(deleted)
+
+        let state = try await db.read { dbc in
+            (row: try Row.fetchOne(dbc, sql: "SELECT deletedForAll, text, fromUserId FROM message WHERE chatId='c1' AND seq=1"),
+             pd: try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingDecrypt")!,
+             pa: try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingApply")!,
+             gap: try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM historyGap WHERE chatId='c1' AND seq=1")!)
+        }
+        let row = try XCTUnwrap(state.row)
+        XCTAssertEqual(row["deletedForAll"] as Bool, true)
+        XCTAssertNil(row["text"] as String?)
+        XCTAssertEqual(row["fromUserId"] as String, "peer")
+        XCTAssertEqual(state.pd, 0, "the envelope is settled, not kept for repair")
+        XCTAssertEqual(state.pa, 0)
+        XCTAssertEqual(state.gap, 0)
+    }
+
+    /// The other order: the delete is buffered first, the undecryptable
+    /// envelope arrives after — the next replay pass buries it.
+    func testBufferedDeleteBuriesEnvelopeOnReplay() async throws {
+        let db = try AppDatabase.openInMemory()
+        try await makeDirectChat(db)
+        let engine = try makeEngine(db: db)
+        let deleted = try JSONDecoder().decode(WSIncoming.self, from: Data("""
+        {"t":"deleted","chatId":"c1","seqs":[1],"forAll":true,"by":"peer"}
+        """.utf8))
+        await engine.apply(deleted)
+        await engine.apply(try brokenFrame(seq: 1))
+
+        await engine.sweepUnreadable()
+
+        let state = try await db.read { dbc in
+            (dead: try Bool.fetchOne(dbc, sql: "SELECT deletedForAll FROM message WHERE chatId='c1' AND seq=1"),
+             pd: try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingDecrypt")!,
+             pa: try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingApply")!)
+        }
+        XCTAssertEqual(state.dead, true)
+        XCTAssertEqual(state.pd, 0)
+        XCTAssertEqual(state.pa, 0)
+    }
+
     // MARK: - Keeping the envelope and asking for a copy
 
     /// A terminal failure: the envelope stays in the database so there is
