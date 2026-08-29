@@ -933,9 +933,10 @@ build takes it from the environment (`make device TEAM=…`, local.mk).
 - ✅ chat list from the keyboard: arrows walk the rows, Enter opens, Cmd+N
   new chat, Cmd+F into search, Cmd+1..9 folder tabs
   (KeyboardNavigationTests, real HID events)
-- 🟡 chat keys: Enter sends, Shift+Enter breaks the line, Esc walks out of
-  the edit, the reply and the chat (KeyboardNavigationTests written, the
-  live run pending)
+- ✅ chat keys: the composer takes focus as a chat opens under a hardware
+  keyboard, Enter sends, Shift+Enter breaks the line, Esc walks out of the
+  edit, the reply and the chat (KeyboardComposerTests units, live run
+  qa/runs/2026-08-30-keyboard-run.md)
 - ⬜ ↑ in an empty composer edits your last message
 - ⬜ Ctrl+Tab / Cmd+[ ] between chats
 - ⬜ the iPad layout reviewed screen by screen (the shader avatar defect from
