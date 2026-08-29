@@ -311,6 +311,43 @@ final class ShaderTranspilerTests: XCTestCase {
         XCTAssertTrue(scalar.contains("p.xy = p.xy + (1.0);"))
     }
 
+    /// A raymarched plate whose mouse parallax compares `iMouse.xy` to
+    /// `vec2(0.0)` inside a ternary condition.
+    func testLegoPlateCompiles() throws {
+        let msl = try compile(try fixture("lego-plate"))
+        XCTAssertTrue(msl.contains("float2 mouseN = all(mousePx == float2(0.0))"))
+        XCTAssertTrue(msl.contains("bool isDot = (all(cx == DOT_CELL.x) && all(cy == DOT_CELL.y));"))
+    }
+
+    func testVectorEqualityIsOneBool() throws {
+        let msl = try compile("""
+        #define ZERO vec2(0.0)
+        bool same(vec3 a, vec3 b) { return a == b; }
+        void mainImage(out vec4 O, in vec2 F) {
+            vec2 m = iMouse.xy;
+            vec2 n = m == vec2(0.0) ? vec2(0.0) : (m - iResolution.xy * 0.5) / min(iResolution.x, iResolution.y);
+            ivec2 cell = ivec2(floor(F / 8.0));
+            bool dot = cell == ivec2(0, 1);
+            int layer = int(F.x) % 2;
+            bool front = F.y > 10.0;
+            if ((layer == 1) != front && !same(vec3(n, 0.0), vec3(1.0))) layer = 0;
+            float k = layer != 0 && m != ZERO ? 1.0 : 0.5;
+            for (int i = 0; i != 3; i++) k += 0.1;
+            mat2 mm = mat2(1.0);
+            if (mm[0][1] == 0.0 && floor(n).x == -1.0 && same(vec3(n, 0.0), vec3(0.0)) == true) k *= 2.0;
+            O = vec4(n, dot ? k : -k, 1.0);
+        }
+        """)
+        XCTAssertTrue(msl.contains("if (all(mm[0][1] == 0.0) && all(floor(n).x == -1.0) && all(same(float3(n, 0.0), float3(0.0)) == true)) k *= 2.0;"))
+        XCTAssertTrue(msl.contains("return all(a == b);"))
+        XCTAssertTrue(msl.contains("float2 n = all(m == float2(0.0)) ? float2(0.0)"))
+        XCTAssertTrue(msl.contains("bool dot = all(cell == int2(0, 1));"))
+        XCTAssertTrue(msl.contains("if (any((all(layer == 1)) != front) && !same("))
+        XCTAssertTrue(msl.contains("float k = any(layer != 0) && any(m != ZERO) ? 1.0 : 0.5;"))
+        XCTAssertTrue(msl.contains("for (int i = 0; any(i != 3); i++)"))
+        XCTAssertTrue(msl.contains("#define ZERO float2(0.0)"))
+    }
+
     func testNoMainImage() {
         XCTAssertThrowsError(try ShaderTranspiler.transpile("void main() {}")) { error in
             XCTAssertEqual(error as? ShaderTranspiler.Failure, .noMainImage)
