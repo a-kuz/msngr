@@ -741,6 +741,57 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         return true
     }
 
+    // MARK: - The hardware-keyboard walk
+
+    /// The message the ↑/↓ walk stands on; nil while no walk is active. The
+    /// items array is inverted (0 is the newest), so up means a higher index.
+    private var keyWalkId: String?
+
+    /// The walked message, for the Enter action.
+    var keyWalkMessage: Message? {
+        guard let id = keyWalkId, let idx = index(ofId: id),
+              case .message(let m, _, _, _, _, _, _) = items[idx] else { return nil }
+        return m
+    }
+
+    /// Steps the walk one message older (up) or newer (down). Walking down
+    /// past the newest message ends the walk. Returns false only when there
+    /// was nothing to do at all, so the caller can leave the key unconsumed.
+    @discardableResult
+    func moveKeyWalk(up: Bool) -> Bool {
+        let messageIndices = items.indices.filter {
+            if case .message = items[$0] { return true } else { return false }
+        }
+        guard !messageIndices.isEmpty else { return false }
+        var target: Int?
+        if let id = keyWalkId, let current = index(ofId: id) {
+            target = up ? messageIndices.first(where: { $0 > current })
+                        : messageIndices.last(where: { $0 < current })
+            if !up, target == nil {
+                clearKeyWalk()
+                return true
+            }
+        } else if up {
+            target = messageIndices.first
+        } else {
+            return false
+        }
+        guard let idx = target, case .message(let m, _, _, _, _, _, _) = items[idx] else {
+            return keyWalkId != nil
+        }
+        keyWalkId = m.id
+        scrollTo(id: m.id, highlight: true)
+        return true
+    }
+
+    /// Ends the walk; true when one was active — the caller's Esc is then spent.
+    @discardableResult
+    func clearKeyWalk() -> Bool {
+        let active = keyWalkId != nil
+        keyWalkId = nil
+        return active
+    }
+
     /// Scrolls to a message a reference names by seq (a quote, a pin).
     @discardableResult
     func scrollTo(seq: Int, highlight: Bool = false, animated: Bool = true) -> Bool {

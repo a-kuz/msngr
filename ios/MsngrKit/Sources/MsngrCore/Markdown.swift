@@ -189,6 +189,13 @@ public enum MessageMarkdown {
                 i = m.end
                 continue
             }
+            // an explicit link: `[shown text](https://…)`
+            if c == "[", let l = linkToken(s, at: i) {
+                flush()
+                out.append(MarkdownSpan(l.text, style: style, link: l.link))
+                i = l.end
+                continue
+            }
             // monospace: the contents are literal, nothing nested is parsed inside
             if c == "`", let close = closingIndex(s, from: i + 1, char: "`", count: 1), close > i + 1 {
                 flush()
@@ -210,6 +217,23 @@ public enum MessageMarkdown {
         }
         flush()
         return out
+    }
+
+    /// The explicit link markup `[shown text](https://…)`: the text is what the
+    /// bubble draws, the URL is where a tap goes. Only absolute http(s) URLs
+    /// count — anything else stays plain text, the way an unclosed marker does.
+    static func linkToken(_ s: [Character], at i: Int)
+        -> (text: String, link: String, end: Int)? {
+        guard i < s.count, s[i] == "[" else { return nil }
+        var j = i + 1
+        while j < s.count, s[j] != "]", s[j] != "\n" { j += 1 }
+        guard j > i + 1, j + 1 < s.count, s[j] == "]", s[j + 1] == "(" else { return nil }
+        var k = j + 2
+        while k < s.count, s[k] != ")", s[k] != "\n", s[k] != " " { k += 1 }
+        guard k > j + 2, k < s.count, s[k] == ")" else { return nil }
+        let url = String(s[(j + 2)..<k])
+        guard url.hasPrefix("http://") || url.hasPrefix("https://") else { return nil }
+        return (text: String(s[(i + 1)..<j]), link: url, end: k + 1)
     }
 
     // MARK: - Mentions

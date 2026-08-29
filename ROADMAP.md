@@ -959,7 +959,17 @@ build takes it from the environment (`make device TEAM=…`, local.mk).
   keyboard, Enter sends, Shift+Enter breaks the line, Esc walks out of the
   edit, the reply and the chat (KeyboardComposerTests units, live run
   qa/runs/2026-08-30-keyboard-run.md)
-- ⬜ ↑ in an empty composer edits your last message
+- ✅ the keys the owner's first real-keyboard run missed (2026-08-30): Tab is
+  consumed instead of printing a tab character; ↑/↓ over an empty composer
+  walk the feed message by message with Enter replying to the walked one and
+  Esc ending the walk; Cmd+B/I toggle bold/italic markers around the
+  selection and Cmd+K makes a `[text](url)` link, with that markup added to
+  the message markdown (KeyboardComposerTests, FeedKeyWalkTests,
+  MarkdownTests; qa/runs/2026-08-30-keyboard-defects-run.md — the composer
+  keys hold on units, the simulator's keyboard pipe being undriveable from
+  tests is written down in the report)
+- ⬜ editing your last message from the keyboard (the bare ↑ walks the feed
+  now, so the edit needs its own key)
 - ⬜ Ctrl+Tab / Cmd+[ ] between chats
 - ⬜ the iPad layout reviewed screen by screen (the shader avatar defect from
   the first run is in defects.md)
