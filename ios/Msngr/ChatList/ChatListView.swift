@@ -133,6 +133,21 @@ struct ChatListView: View {
             .onReceive(NotificationCenter.default.publisher(for: .chatDeleted)) { _ in
                 path = NavigationPath()
             }
+            // Ctrl+Tab / Cmd+[ ] in the open chat: swap it for its neighbour
+            // in the current tab, keeping whatever sits under it on the path
+            .onReceive(NotificationCenter.default.publisher(for: .chatSwitchPerform)) { note in
+                guard !path.isEmpty,
+                      let chatId = note.userInfo?["chatId"] as? String,
+                      let forward = note.userInfo?["forward"] as? Bool,
+                      let target = Self.switchTarget(
+                          from: chatId,
+                          in: model.items(in: model.selectedFolderId).map { $0.chat.id },
+                          forward: forward)
+                else { return }
+                path.removeLast()
+                path.append(target)
+                keySelection = target
+            }
             .confirmationDialog(deleteTitle, isPresented: deleteConfirmPresented,
                                 titleVisibility: .visible) {
                 let isGroup = deleteCandidate?.chat.kind == .group
@@ -232,6 +247,15 @@ struct ChatListView: View {
     private func openKeySelection() {
         guard let id = keySelection else { return }
         path.append(id)
+    }
+
+    /// The neighbour Ctrl+Tab and Cmd+[ ] move to: the next or previous chat
+    /// of the tab's rows, nil at the list's edge and for a chat the tab does
+    /// not hold (one opened out of the archive or a search).
+    static func switchTarget(from id: String, in ids: [String], forward: Bool) -> String? {
+        guard let at = ids.firstIndex(of: id) else { return nil }
+        let next = at + (forward ? 1 : -1)
+        return ids.indices.contains(next) ? ids[next] : nil
     }
 
     private var folderPages: some View {

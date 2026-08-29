@@ -970,7 +970,10 @@ build takes it from the environment (`make device TEAM=…`, local.mk).
   tests is written down in the report)
 - ⬜ editing your last message from the keyboard (the bare ↑ walks the feed
   now, so the edit needs its own key)
-- ⬜ Ctrl+Tab / Cmd+[ ] between chats
+- ✅ Ctrl+Tab / Cmd+[ ] switch to the neighbouring chat of the current tab
+  from inside a chat, Ctrl+Shift+Tab back (the keys post a direction, the
+  open screen names itself, the list swaps the top of the path; pinned by
+  KeyboardComposerTests over the same undriveable simulator keyboard pipe)
 - ⬜ the iPad layout reviewed screen by screen (the shader avatar defect from
   the first run is in defects.md)
 - ⬜ a menu bar on the Mac (UIMenuBuilder) with the same commands
