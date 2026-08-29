@@ -576,7 +576,9 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   - ✅ one-time prekeys topped up automatically below 20 left: burned to 14 by
     bundle handouts, back at 100 three seconds after the next launch
     (qa/runs/2026-08-27-prekey-topup-run.md)
-  - 🟡 the session archive and glare resolution (CryptoTests units)
+  - ✅ the session archive and glare resolution (CryptoTests units; live glare
+    with both sides archiving and a readable round-trip after it,
+    qa/runs/2026-08-29-glare-run.md)
   - ✅ a message that arrived before its key is replayed later (ServiceFrameTests, HistoricReplayTests units)
   - ✅ an unreadable envelope is stored whatever the reason and replayed by passes
     at start, on a reconnect and round the clock — with an attempt counter, a
