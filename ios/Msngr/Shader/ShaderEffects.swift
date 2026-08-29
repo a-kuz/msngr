@@ -98,10 +98,25 @@ enum ShaderEffectPlayer {
         canvas.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         host.addSubview(canvas)
         MsngrLog.shader.info("effect \(effect.rawValue, privacy: .public) starts")
+        // the effect lives `duration` from the moment its program is ready:
+        // counted from play(), a cold compile ate the window and the first
+        // effect of a process was cut short or never seen at all
+        var takenDown = false
+        let takeDown = {
+            guard !takenDown else { return }
+            takenDown = true
+            canvas.setRunning(false)
+            canvas.clear()
+            canvas.removeFromSuperview()
+        }
         canvas.onState = { state in
             switch state {
-            case .ready: MsngrLog.shader.info("effect \(effect.rawValue, privacy: .public) ready")
-            case .failed(let why): MsngrLog.shader.error("effect \(effect.rawValue, privacy: .public) failed: \(why, privacy: .public)")
+            case .ready:
+                MsngrLog.shader.info("effect \(effect.rawValue, privacy: .public) ready")
+                DispatchQueue.main.asyncAfter(deadline: .now() + ShaderEffects.duration) { takeDown() }
+            case .failed(let why):
+                MsngrLog.shader.error("effect \(effect.rawValue, privacy: .public) failed: \(why, privacy: .public)")
+                DispatchQueue.main.async { takeDown() }
             case .compiling: break
             }
         }
@@ -110,10 +125,7 @@ enum ShaderEffectPlayer {
         canvas.renderer?.touch(point, in: host.bounds.size, scale: canvas.metalView.contentScaleFactor, began: true)
         canvas.renderer?.touch(point, in: host.bounds.size, scale: canvas.metalView.contentScaleFactor, began: false)
         canvas.setRunning(true)
-        DispatchQueue.main.asyncAfter(deadline: .now() + ShaderEffects.duration) {
-            canvas.setRunning(false)
-            canvas.clear()
-            canvas.removeFromSuperview()
-        }
+        // whatever happens to the program, the overlay does not outlive the compile timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + ShaderProgram.compileTimeout + ShaderEffects.duration) { takeDown() }
     }
 }

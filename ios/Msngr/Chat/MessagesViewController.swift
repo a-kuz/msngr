@@ -444,12 +444,18 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         guard case .message(let after, _, _, _, _, _, _) = now, case .message(let before, _, _, _, _, _, _) = was else { return }
         let counts = (before: Self.reactionCount(before), after: Self.reactionCount(after))
         guard counts.after > counts.before else { return }
-        guard let cell = collectionView.cellForItem(at: IndexPath(item: index, section: 0)) as? MessageCell else {
-            MsngrLog.shader.info("reaction landed \(counts.before)→\(counts.after) but the cell is off screen")
-            return
+        // a reaction picked in the context menu lands while the menu's blur is
+        // still dismissing; the burst waits for it and asks the cell where the
+        // bubble stands then, since the feed relayouts under the menu
+        MessageContextOverlay.afterDismiss { [weak self] in
+            guard let self else { return }
+            guard let cell = self.collectionView.cellForItem(at: IndexPath(item: index, section: 0)) as? MessageCell else {
+                MsngrLog.shader.info("reaction landed \(counts.before)→\(counts.after) but the cell is off screen")
+                return
+            }
+            MsngrLog.shader.info("reaction landed \(counts.before)→\(counts.after), bursting")
+            ShaderEffectPlayer.play(.reaction, in: self.view, at: cell.bubbleCenter(in: self.view))
         }
-        MsngrLog.shader.info("reaction landed \(counts.before)→\(counts.after), bursting")
-        ShaderEffectPlayer.play(.reaction, in: view, at: cell.bubbleCenter(in: view))
     }
 
     /// Refreshes a position that already stands in the feed and whose content changed.
