@@ -413,4 +413,11 @@ extension Notification.Name {
     static let openChatRequested = Notification.Name("openChatRequested")
     /// Esc pressed in the focused composer: the chat screen walks back out.
     static let chatEscapePressed = Notification.Name("chatEscapePressed")
+    /// Ctrl+Tab / Cmd+[ ] in the focused composer: userInfo["forward"] is the
+    /// direction; the open chat screen answers with `chatSwitchPerform`.
+    static let chatSwitchRequested = Notification.Name("chatSwitchRequested")
+    /// The resolved switch: userInfo["chatId"] names the chat being left,
+    /// userInfo["forward"] the direction; the chat list swaps the open chat
+    /// for its neighbour in the current tab.
+    static let chatSwitchPerform = Notification.Name("chatSwitchPerform")
 }

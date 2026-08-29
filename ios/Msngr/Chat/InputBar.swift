@@ -674,6 +674,16 @@ struct GrowingTextView: UIViewRepresentable {
             let tab = UIKeyCommand(input: "\t", modifierFlags: [],
                                    action: #selector(tabPressed))
             tab.wantsPriorityOverSystemBehavior = true
+            let nextChat = UIKeyCommand(input: "\t", modifierFlags: .control,
+                                        action: #selector(switchChatForward))
+            nextChat.wantsPriorityOverSystemBehavior = true
+            let prevChat = UIKeyCommand(input: "\t", modifierFlags: [.control, .shift],
+                                        action: #selector(switchChatBackward))
+            prevChat.wantsPriorityOverSystemBehavior = true
+            let nextBracket = UIKeyCommand(input: "]", modifierFlags: .command,
+                                           action: #selector(switchChatForward))
+            let prevBracket = UIKeyCommand(input: "[", modifierFlags: .command,
+                                           action: #selector(switchChatBackward))
             let bold = UIKeyCommand(input: "b", modifierFlags: .command,
                                     action: #selector(makeBold))
             let italic = UIKeyCommand(input: "i", modifierFlags: .command,
@@ -681,6 +691,8 @@ struct GrowingTextView: UIViewRepresentable {
             let link = UIKeyCommand(input: "k", modifierFlags: .command,
                                     action: #selector(makeLink))
             var commands = (super.keyCommands ?? []) + [send, newline, escape, tab,
+                                                        nextChat, prevChat,
+                                                        nextBracket, prevBracket,
                                                         bold, italic, link]
             if text.isEmpty {
                 let up = UIKeyCommand(input: UIKeyCommand.inputUpArrow, modifierFlags: [],
@@ -707,6 +719,16 @@ struct GrowingTextView: UIViewRepresentable {
         }
 
         @objc private func tabPressed() {}
+
+        @objc private func switchChatForward() {
+            NotificationCenter.default.post(name: .chatSwitchRequested, object: nil,
+                                            userInfo: ["forward": true])
+        }
+
+        @objc private func switchChatBackward() {
+            NotificationCenter.default.post(name: .chatSwitchRequested, object: nil,
+                                            userInfo: ["forward": false])
+        }
 
         @objc private func arrowUp() { _ = onArrow(true) }
         @objc private func arrowDown() { _ = onArrow(false) }

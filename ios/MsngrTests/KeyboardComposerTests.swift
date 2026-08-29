@@ -123,6 +123,34 @@ final class KeyboardComposerTests: XCTestCase {
         XCTAssertEqual(tv.selectedRange, NSRange(location: 7, length: 0))
     }
 
+    /// Ctrl+Tab asks for the next chat, Ctrl+Shift+Tab and Cmd+[ for the
+    /// previous, as a notification the chat screen resolves.
+    func testChatSwitchKeysPostTheirDirection() {
+        let tv = makeView()
+        var directions: [Bool] = []
+        let sub = NotificationCenter.default.addObserver(
+            forName: .chatSwitchRequested, object: nil, queue: nil
+        ) { note in
+            directions.append(note.userInfo?["forward"] as? Bool ?? false)
+        }
+        defer { NotificationCenter.default.removeObserver(sub) }
+        press(tv, "\t", .control)
+        press(tv, "\t", [.control, .shift])
+        press(tv, "]", .command)
+        press(tv, "[", .command)
+        XCTAssertEqual(directions, [true, false, true, false])
+    }
+
+    /// The switch target walks the tab's rows and stops at the edges.
+    func testSwitchTargetWalksTheTab() {
+        let ids = ["a", "b", "c"]
+        XCTAssertEqual(ChatListView.switchTarget(from: "a", in: ids, forward: true), "b")
+        XCTAssertEqual(ChatListView.switchTarget(from: "b", in: ids, forward: false), "a")
+        XCTAssertNil(ChatListView.switchTarget(from: "c", in: ids, forward: true))
+        XCTAssertNil(ChatListView.switchTarget(from: "a", in: ids, forward: false))
+        XCTAssertNil(ChatListView.switchTarget(from: "archived", in: ids, forward: true))
+    }
+
     /// Every command claims priority over the system's text handling — without
     /// it the text view swallows the keystroke before the command fires.
     func testCommandsOutrankSystemTextHandling() {

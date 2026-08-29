@@ -242,6 +242,14 @@ struct ChatScreen: View {
         .onReceive(NotificationCenter.default.publisher(for: .chatEscapePressed)) { _ in
             escapeWalksBack()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .chatSwitchRequested)) { note in
+            // the composer's Ctrl+Tab / Cmd+[ ] name a direction; this screen
+            // adds which chat is being left, and the list does the swap
+            guard let forward = note.userInfo?["forward"] as? Bool else { return }
+            NotificationCenter.default.post(name: .chatSwitchPerform, object: nil,
+                                            userInfo: ["chatId": model.chatId,
+                                                       "forward": forward])
+        }
         .onChange(of: model.editing?.id) { _, _ in
             if let e = model.editing {
                 // entering the mode, and switching which message is edited (A → B),
