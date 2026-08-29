@@ -13,6 +13,19 @@ struct RootView: View {
 /// the archive needs a type of its own.
 struct ArchiveRoute: Hashable {}
 
+/// Cmd+F moves focus into the search field where the system allows it;
+/// on earlier systems the shortcut is simply inert.
+private struct SearchFocusIfAvailable: ViewModifier {
+    var focused: FocusState<Bool>.Binding
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.searchFocused(focused)
+        } else {
+            content
+        }
+    }
+}
+
 struct ChatListView: View {
     @EnvironmentObject var app: AppState
     @StateObject private var model = ChatListModel()
@@ -28,6 +41,9 @@ struct ChatListView: View {
     @State private var slideForward = true
     /// folder opened for editing straight from the list
     @State private var editingFolder: ChatFolder?
+    /// the row a hardware keyboard walks with the arrows; Enter opens it
+    @State private var keySelection: String?
+    @FocusState private var searchFocused: Bool
 
     private var deleteConfirmPresented: Binding<Bool> {
         Binding(get: { deleteCandidate != nil },
@@ -65,6 +81,8 @@ struct ChatListView: View {
             .accessibilityIdentifier("chatlist.root")
             .navigationTitle("Chats")
             .searchable(text: $model.searchText, prompt: "Search")
+            .modifier(SearchFocusIfAvailable(focused: $searchFocused))
+            .background(keyShortcuts)
             // chats are filtered in place, messages and people are searched at their own pace
             .onChange(of: model.searchText) { _, text in
                 model.updateSearch()
@@ -77,6 +95,7 @@ struct ChatListView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showNewChat = true } label: { Image(systemName: "square.and.pencil") }
                         .accessibilityIdentifier("chatlist.new")
+                        .keyboardShortcut("n", modifiers: .command)
                 }
             }
             .navigationDestination(for: String.self) { chatId in
@@ -162,6 +181,59 @@ struct ChatListView: View {
     /// every horizontal movement for itself, and the row's swipe actions
     /// (archive, pin, delete) stop opening. Hence a gesture with a distance
     /// threshold instead.
+    /// The bare-key navigation works only while the list itself is what the
+    /// keyboard addresses: no chat pushed, no sheet up, no search in
+    /// progress — otherwise Enter belongs to whatever is in front.
+    private var keyNavigationActive: Bool {
+        path.isEmpty && model.searchText.isEmpty && !showNewChat && !showSettings
+            && !showFolders && editingFolder == nil && deleteCandidate == nil
+    }
+
+    /// Buttons that exist only for their shortcuts: a keyboardShortcut fires
+    /// without focus, which is what a hardware keyboard expects of Cmd-keys —
+    /// and, gated by `keyNavigationActive`, of the bare arrows too.
+    private var keyShortcuts: some View {
+        Group {
+            Button("") { searchFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+            // Cmd+1 is «Все», the folders follow in bar order
+            ForEach(Array(([nil] + model.folders.map { Optional($0.id) }).prefix(9).enumerated()),
+                    id: \.offset) { index, id in
+                Button("") { tabSelection.wrappedValue = id }
+                    .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+            }
+            if keyNavigationActive {
+                Button("") { moveKeySelection(by: -1) }
+                    .keyboardShortcut(.upArrow, modifiers: [])
+                Button("") { moveKeySelection(by: 1) }
+                    .keyboardShortcut(.downArrow, modifiers: [])
+                Button("") { openKeySelection() }
+                    .keyboardShortcut(.return, modifiers: [])
+            }
+        }
+        .opacity(0)
+        .accessibilityHidden(true)
+    }
+
+    /// One arrow step through the visible rows; with nothing selected the
+    /// arrows enter the list at its top.
+    private func moveKeySelection(by offset: Int) {
+        let ids = model.items(in: model.selectedFolderId).map { $0.chat.id }
+        guard !ids.isEmpty else { return }
+        guard let current = keySelection, let at = ids.firstIndex(of: current) else {
+            keySelection = ids.first
+            return
+        }
+        let next = at + offset
+        guard ids.indices.contains(next) else { return }
+        keySelection = ids[next]
+    }
+
+    private func openKeySelection() {
+        guard let id = keySelection else { return }
+        path.append(id)
+    }
+
     private var folderPages: some View {
         page(for: selectedFolder)
             .id(model.selectedFolderId ?? "")
@@ -258,6 +330,8 @@ struct ChatListView: View {
             ChatRow(chatId: item.chat.id) {
                 ChatRowView(item: item, ownUserId: app.session?.userId ?? "")
             }
+            .listRowBackground(keySelection == item.chat.id
+                               ? Theme.accent.opacity(0.12) : nil)
             .contextMenu { folderMenu(item) }
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 if let folder {
