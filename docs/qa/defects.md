@@ -6,6 +6,22 @@ with the commit that closed it.
 
 ## Open
 
+### A shader avatar in the chat list is drawn unclipped on iPad
+Found 2026-08-30 on the first iPad run (fable-ipad, the alfa home): Charlie
+Service's shader avatar renders as a large uncropped square over the
+neighbouring rows instead of the small circle the iPhone list shows —
+the avatar's shader canvas ignores its frame/mask at the iPad cell metrics
+(`/tmp/ipad-list.png` of the run; reproduce with the seeded trio, alfa's
+list, any peer with a shader avatar).
+
+### MsngrMac shows the saved-messages chat as «Группа»
+Found 2026-08-30 in passing on a fresh registration in the native Mac client:
+the chat list and the chat header title fall back to «Группа» for any
+non-direct kind (`MacViews.swift`, both `chat.title ?? "Группа"` sites), so
+the `self` chat every account gets at registration is listed as a group with
+a «Г» avatar; iOS shows «Избранное». Low priority while the desktop MVP is
+the iOS binary run as «Designed for iPad» — the native Mac client is parked.
+
 ### The server smoke test fails on push timing, on a different check per run
 Found 2026-08-28 by the gate after the shader-messages merge
 (`.claude/gates/main-shader.log`): `no push for own echo` was red on the
