@@ -1,6 +1,236 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Backup" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Резервная копия"
+          }
+        }
+      }
+    },
+    "Restore from backup" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановление из копии"
+          }
+        }
+      }
+    },
+    "Could not build the backup" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось собрать резервную копию"
+          }
+        }
+      }
+    },
+    "Could not restore this backup" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось восстановить эту копию"
+          }
+        }
+      }
+    },
+    "That recovery code does not open this backup." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот код или пароль не открывает эту копию."
+          }
+        }
+      }
+    },
+    "No account matches this backup." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этой копии не соответствует ни один аккаунт."
+          }
+        }
+      }
+    },
+    "The recovery code opened an account that does not match. Start over." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Код открыл аккаунт, который не совпадает. Начните заново."
+          }
+        }
+      }
+    },
+    "Could not open the file" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось открыть файл"
+          }
+        }
+      }
+    },
+    "Could not read the file" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось прочитать файл"
+          }
+        }
+      }
+    },
+    "Choose file…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбрать файл…"
+          }
+        }
+      }
+    },
+    "Restore" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановить"
+          }
+        }
+      }
+    },
+    "Last backup" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Последняя копия"
+          }
+        }
+      }
+    },
+    "Size" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Размер"
+          }
+        }
+      }
+    },
+    "I saved it" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Я сохранил(а)"
+          }
+        }
+      }
+    },
+    "Turn off backup" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отключить резервную копию"
+          }
+        }
+      }
+    },
+    "Recovery code not available in this session; turn backup off and on again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Код восстановления недоступен в этой сессии; выключите и снова включите резервную копию."
+          }
+        }
+      }
+    },
+    "Generate a recovery code" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сгенерировать код восстановления"
+          }
+        }
+      }
+    },
+    "Use my own password" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использовать свой пароль"
+          }
+        }
+      }
+    },
+    "A generated code cannot be guessed. A password is yours to remember — the backup is only as strong as the password you pick." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сгенерированный код нельзя подобрать. Пароль вы запоминаете сами — копия защищена ровно настолько, насколько силён пароль."
+          }
+        }
+      }
+    },
+    "Backup password" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пароль копии"
+          }
+        }
+      }
+    },
+    "Repeat it" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повторите"
+          }
+        }
+      }
+    },
+    "Continue" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Продолжить"
+          }
+        }
+      }
+    },
+    "There is no reset: a forgotten password means the backup never opens again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сброса нет: забытый пароль означает, что копия больше никогда не откроется."
+          }
+        }
+      }
+    },
     " " : {
       "comment" : "A placeholder text for a chat row.",
       "isCommentAutoGenerated" : true
@@ -408,7 +638,15 @@
     },
     "A backup carries your chats, media and settings, encrypted on this device before anything leaves it. Restoring it on a new device does not carry your active conversations — those start fresh, the way a second device always does." : {
       "comment" : "A description of the backup process.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Резервная копия содержит ваши чаты, медиа и настройки и шифруется на этом устройстве до того, как что-либо его покинет. Восстановление на новом устройстве не переносит активные переписки — они начинаются заново, как на любом втором устройстве."
+          }
+        }
+      }
     },
     "A folder collects chats by a rule — people, groups, unread — and keeps whatever you add by hand." : {
       "extractionState" : "manual",
@@ -697,7 +935,15 @@
     },
     "Back up now" : {
       "comment" : "A button to back up the user's data.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создать копию сейчас"
+          }
+        }
+      }
     },
     "Background" : {
       "extractionState" : "manual",
@@ -910,7 +1156,15 @@
     },
     "Choose the backup file you saved, then enter its recovery code." : {
       "comment" : "A description of the process of restoring an account from a backup file.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите сохранённый файл резервной копии и введите его код восстановления."
+          }
+        }
+      }
     },
     "Clear" : {
       "extractionState" : "manual",
@@ -1342,7 +1596,15 @@
     },
     "Each backup is exported as a file to save wherever you choose. It runs only when you ask." : {
       "comment" : "A description of how a backup is created.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Каждая копия экспортируется файлом — сохраните его где удобно. Копирование запускается только по вашей команде."
+          }
+        }
+      }
     },
     "Edit" : {
       "extractionState" : "manual",
@@ -2315,7 +2577,15 @@
     },
     "Not backed up yet on this device." : {
       "comment" : "A description of a backup that has not yet been run.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На этом устройстве копий ещё не было."
+          }
+        }
+      }
     },
     "Not sent" : {
       "extractionState" : "manual",
@@ -2681,7 +2951,15 @@
     },
     "Recovery code" : {
       "comment" : "A label displayed above the recovery code.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Код восстановления"
+          }
+        }
+      }
     },
     "Remove" : {
       "extractionState" : "manual",
@@ -2740,11 +3018,27 @@
     },
     "Restore from a backup" : {
       "comment" : "A link to restore an account from a backup.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановить из резервной копии"
+          }
+        }
+      }
     },
     "Restoring your account…" : {
       "comment" : "A message that appears when the user is restoring their account.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстанавливаем ваш аккаунт…"
+          }
+        }
+      }
     },
     "Revoke" : {
       "extractionState" : "manual",
@@ -3549,11 +3843,27 @@
     },
     "This is the only way to open the backup on a new device. Nobody else can read it or hand it back to you — write it down now." : {
       "comment" : "A description of the recovery code.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это единственный способ открыть копию на новом устройстве. Никто другой не сможет прочитать код или вернуть его вам — запишите прямо сейчас."
+          }
+        }
+      }
     },
     "This only stops future backups on this device. A file you already saved elsewhere is not deleted." : {
       "comment" : "A description of the effect of turning off backup.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отключение останавливает только будущие копии на этом устройстве. Уже сохранённый файл не удаляется."
+          }
+        }
+      }
     },
     "This version no longer works. Install the update to keep messaging." : {
       "extractionState" : "manual",
@@ -3590,7 +3900,15 @@
     },
     "Turn on backup" : {
       "comment" : "A button that turns backup on.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включить резервную копию"
+          }
+        }
+      }
     },
     "typing %@" : {
       "extractionState" : "manual",

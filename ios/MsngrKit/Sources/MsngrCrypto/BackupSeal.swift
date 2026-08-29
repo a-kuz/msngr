@@ -1,3 +1,4 @@
+import CommonCrypto
 import CryptoKit
 import Foundation
 
@@ -55,14 +56,18 @@ public enum BackupSeal {
     }
 
     /// What actually leaves the device: a version tag and one ChaChaPoly box.
-    /// This is the whole content of a `.msngrbackup` file.
+    /// This is the whole content of a `.msngrbackup` file. `v: 1` is sealed
+    /// under a generated recovery code (no salt), `v: 2` under a passphrase the
+    /// user chose, with the PBKDF2 salt riding along.
     public struct SealedBackup: Codable, Sendable {
         public let v: Int
         public let ct: String
+        public let salt: String?
 
-        public init(v: Int, ct: String) {
+        public init(v: Int, ct: String, salt: String? = nil) {
             self.v = v
             self.ct = ct
+            self.salt = salt
         }
     }
 
@@ -71,14 +76,69 @@ public enum BackupSeal {
         return SealedBackup(v: 1, ct: box.combined.base64urlEncodedString())
     }
 
+    /// A passphrase is a person's choice, not high-entropy random bytes, so it
+    /// goes through PBKDF2 with a random salt instead of straight into HKDF.
+    public static func seal<T: Encodable>(_ payload: T, passphrase: String) throws -> SealedBackup {
+        var salt = [UInt8](repeating: 0, count: passphraseSaltBytes)
+        let status = SecRandomCopyBytes(kSecRandomDefault, salt.count, &salt)
+        precondition(status == errSecSuccess, "SecRandomCopyBytes failed")
+        let box = try ChaChaPoly.seal(JSONEncoder().encode(payload),
+                                      using: try key(passphrase: passphrase, salt: Data(salt)))
+        return SealedBackup(v: 2, ct: box.combined.base64urlEncodedString(),
+                            salt: Data(salt).base64urlEncodedString())
+    }
+
+    /// Opens either version with whatever the person typed: the file itself
+    /// says whether that text is a recovery code or a passphrase.
     public static func open<T: Decodable>(_ sealed: SealedBackup, recoveryCode: String,
                                           as type: T.Type) throws -> T {
-        guard sealed.v == 1 else { throw Failure.unsupportedVersion }
+        let key: SymmetricKey
+        switch sealed.v {
+        case 1:
+            key = try self.key(recoveryCode: recoveryCode)
+        case 2:
+            guard let saltString = sealed.salt, let salt = Data(base64urlEncoded: saltString) else {
+                throw Failure.badFormat
+            }
+            key = try self.key(passphrase: recoveryCode, salt: salt)
+        default:
+            throw Failure.unsupportedVersion
+        }
         guard let ct = Data(base64urlEncoded: sealed.ct) else { throw Failure.badFormat }
         guard let box = try? ChaChaPoly.SealedBox(combined: ct),
-              let plain = try? ChaChaPoly.open(box, using: try key(recoveryCode: recoveryCode))
+              let plain = try? ChaChaPoly.open(box, using: key)
         else { throw Failure.decryptionFailed }
         return try JSONDecoder().decode(T.self, from: plain)
+    }
+
+    // MARK: - Passphrase sealing
+
+    static let passphraseSaltBytes = 16
+    /// OWASP's floor for PBKDF2-HMAC-SHA256; a one-off cost paid when a backup
+    /// is written or opened, not on any hot path.
+    static let passphraseRounds = 600_000
+
+    /// Leading and trailing whitespace is the classic invisible typo of a
+    /// pasted password; everything between stays exactly as typed.
+    public static func normalizePassphrase(_ typed: String) -> String {
+        typed.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func key(passphrase: String, salt: Data) throws -> SymmetricKey {
+        let password = Array(normalizePassphrase(passphrase).utf8)
+        guard !password.isEmpty else { throw Failure.badFormat }
+        var derived = [UInt8](repeating: 0, count: 32)
+        let passwordChars = password.map { CChar(bitPattern: $0) }
+        let status = salt.withUnsafeBytes { saltBytes in
+            CCKeyDerivationPBKDF(CCPBKDFAlgorithm(kCCPBKDF2),
+                                 passwordChars, passwordChars.count,
+                                 saltBytes.bindMemory(to: UInt8.self).baseAddress, salt.count,
+                                 CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256),
+                                 UInt32(passphraseRounds),
+                                 &derived, derived.count)
+        }
+        guard status == kCCSuccess else { throw Failure.decryptionFailed }
+        return SymmetricKey(data: Data(derived))
     }
 }
 

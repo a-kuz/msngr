@@ -30,10 +30,24 @@ def shoot(udid, path):
                    check=True, capture_output=True)
 
 
-def draw_grid(src, dst, step):
+def device_scale(udid, image):
+    """Pixels per point. iPads render @2x while being wider in pixels than any
+    @2x iPhone, so the width alone cannot tell the two apart — the device type
+    is what actually decides."""
+    listing = subprocess.run(["xcrun", "simctl", "list", "devices", "-j"],
+                             check=True, capture_output=True, text=True).stdout
+    if f'"udid" : "{udid}"' in listing:
+        import json
+        for devices in json.loads(listing)["devices"].values():
+            for d in devices:
+                if d["udid"] == udid:
+                    return 2 if "iPad" in d["deviceTypeIdentifier"] else 3
+    return 3 if image.width >= 1000 else 2
+
+
+def draw_grid(src, dst, step, udid):
     image = Image.open(src).convert("RGB")
-    # the shot is in pixels, a tap is in points: the ratio is the device scale
-    scale = 3 if image.width >= 1000 else 2
+    scale = device_scale(udid, image)
     points = (image.width // scale, image.height // scale)
     canvas = ImageDraw.Draw(image, "RGBA")
     font = ImageFont.truetype(FONT, 9 * scale)
@@ -76,7 +90,7 @@ def main():
     out = Path(args.out) if args.out else Path(f"/tmp/grid-{args.udid[:8]}.png")
     raw = out.with_name(out.stem + "-raw.png")
     shoot(args.udid, raw)
-    points, scale = draw_grid(raw, out, args.step)
+    points, scale = draw_grid(raw, out, args.step, args.udid)
     print(f"{out}  ({points[0]}x{points[1]} points, @{scale}x, grid every {args.step})")
     return 0
 

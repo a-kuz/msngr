@@ -26,6 +26,9 @@ struct RestoreFromBackupView: View {
     @State private var showImporter = false
     @State private var pickedData: Data?
     @State private var recoveryCode = ""
+    /// The file itself says how it was sealed: v1 asks for the recovery code,
+    /// v2 for the password the user picked.
+    @State private var sealedWithPassphrase = false
 
     var body: some View {
         VStack(spacing: 24) {
@@ -76,16 +79,24 @@ struct RestoreFromBackupView: View {
     private func enterCode(fileName: String) -> some View {
         VStack(spacing: 16) {
             Text(fileName).font(.footnote).foregroundStyle(.secondary)
-            TextField("Recovery code", text: $recoveryCode)
-                .textInputAutocapitalization(.characters)
-                .autocorrectionDisabled()
-                .textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier("restore.code")
+            if sealedWithPassphrase {
+                SecureField("Backup password", text: $recoveryCode)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("restore.code")
+            } else {
+                TextField("Recovery code", text: $recoveryCode)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("restore.code")
+            }
             Button("Restore") {
                 Task { await restore() }
             }
             .buttonStyle(.primaryAction)
-            .disabled(BackupSeal.normalizeRecoveryCode(recoveryCode).isEmpty)
+            .disabled(sealedWithPassphrase
+                      ? BackupSeal.normalizePassphrase(recoveryCode).isEmpty
+                      : BackupSeal.normalizeRecoveryCode(recoveryCode).isEmpty)
             .accessibilityIdentifier("restore.submit")
             Button("Cancel") { dismiss() }
                 .font(.footnote)
@@ -106,7 +117,10 @@ struct RestoreFromBackupView: View {
         }
         defer { url.stopAccessingSecurityScopedResource() }
         do {
-            pickedData = try Data(contentsOf: url)
+            let data = try Data(contentsOf: url)
+            pickedData = data
+            let sealed = try? JSONDecoder().decode(BackupSeal.SealedBackup.self, from: data)
+            sealedWithPassphrase = sealed?.v == 2
             stage = .enterCode(fileName: url.lastPathComponent)
         } catch {
             stage = .failed(String(localized: "Could not read the file"))
