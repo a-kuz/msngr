@@ -478,6 +478,13 @@ export class UserDO implements DurableObject {
             signedPrekey: b.signedPrekey.key,
             signedPrekeySig: b.signedPrekey.sig,
           } satisfies IdentityRecord,
+          // The identity belongs to the account, not to any device row:
+          // revoking the last device drops its keys, and this record is what
+          // a backup restore still has to verify its signature against.
+          accountIdentity: {
+            identityKey: b.identityKey,
+            identitySignKey: b.identitySignKey,
+          },
           devicesVersion: version,
         };
         for (const k of (b.oneTimePrekeys ?? []).slice(0, 200)) {
@@ -548,7 +555,10 @@ export class UserDO implements DurableObject {
           identitySignKey: d.identitySignKey,
           identityKeySig: d.identityKeySig,
         }));
-        return json({ ok: true, devices, version });
+        const account = (await this.state.storage.get<{
+          identityKey: string; identitySignKey: string;
+        }>("accountIdentity")) ?? null;
+        return json({ ok: true, devices, account, version });
       }
 
       case "/keys-version": {
@@ -567,6 +577,10 @@ export class UserDO implements DurableObject {
         rec.identitySignKey = b.identitySignKey;
         rec.identityKeySig = b.identityKeySig;
         await this.state.storage.put(ikKey(b.deviceId), rec);
+        await this.state.storage.put("accountIdentity", {
+          identityKey: b.identityKey,
+          identitySignKey: b.identitySignKey,
+        });
         // a rotated identity is a changed device set: peers holding the old
         // key by version must drop the cache, or per-send TOFU keeps trusting
         // the key this update just replaced

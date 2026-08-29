@@ -254,9 +254,16 @@ app.post("/api/restore/start", async (c) => {
     .bind(b.username).first<{ id: string }>();
   if (!user) return err("account_not_found", 404);
   const kd = await userStub(c.env, user.id).fetch("https://do/keys-devices");
-  const known = (await kd.json()) as { devices: Array<{ identityKey: string; identitySignKey: string }> };
-  if (!known.devices.length) return err("account_has_no_devices", 409);
-  const { identityKey, identitySignKey } = known.devices[0];
+  const known = (await kd.json()) as {
+    devices: Array<{ identityKey: string; identitySignKey: string }>;
+    account: { identityKey: string; identitySignKey: string } | null;
+  };
+  // The account identity outlives its devices: logging out everywhere is the
+  // exact state a backup restore is for, so the check is against the account
+  // record, not against a live device.
+  const identity = known.account ?? known.devices[0];
+  if (!identity) return err("account_has_no_devices", 409);
+  const { identityKey, identitySignKey } = identity;
   const now = Date.now();
   await c.env.DB.prepare("DELETE FROM restore_sessions WHERE expires_at <= ?").bind(now).run();
   const id = ulid(now);
