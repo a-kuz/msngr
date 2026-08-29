@@ -3,8 +3,9 @@ import type { Env, AuthCtx, ChatState, PublicUser } from "./types";
 import { authenticate } from "./auth";
 import {
   ulid, newToken, sha256hex, json, err, directChatName, b64url, provisionCode,
-  isValidUsername, isValidDisplayName, USERNAME_QUARANTINE_MS, verifyEd25519,
+  isValidUsername, isValidDisplayName, USERNAME_QUARANTINE_MS, verifyEd25519, readPrivacy,
 } from "./util";
+import type { LastSeenVisibility } from "./types";
 import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "./version";
 import { newCounters, wrapDB } from "./perf";
 
@@ -483,13 +484,20 @@ app.get("/api/users/:id", async (c) => {
 });
 
 /// Whether the viewer may see the target's presence: they share a direct chat the
-/// target has accepted. Everyone always sees their own.
+/// target has accepted, the target has not hidden their last seen, and the viewer
+/// has not hidden their own — hiding last seen takes the peer's away too, same as
+/// hiding it removes what the viewer sees of everyone else's.
 async function presenceVisible(env: Env, viewerId: string, targetId: string): Promise<boolean> {
   if (viewerId === targetId) return true;
   const r = await convStub(env, directChatName(viewerId, targetId)).fetch("https://do/state");
   const j = (await r.json()) as { ok: boolean; state?: ChatState };
   if (!j.ok || !j.state) return false;
-  return j.state.members.some((m) => m.userId === targetId && m.accepted);
+  if (!j.state.members.some((m) => m.userId === targetId && m.accepted)) return false;
+  const targetPrivacy = await readPrivacy(env.DB, targetId);
+  if (targetPrivacy.lastSeen === "nobody") return false;
+  const viewerPrivacy = await readPrivacy(env.DB, viewerId);
+  if (viewerPrivacy.lastSeen === "nobody") return false;
+  return true;
 }
 
 // Devices and identity keys for a list of users (?ids=uid1,uid2). Consumes nothing,
@@ -1009,6 +1017,41 @@ app.get("/api/blocked", async (c) => {
     "SELECT blocked_id FROM blocks WHERE user_id = ?"
   ).bind(userId).all<{ blocked_id: string }>();
   return json({ ok: true, blocked: rows.results.map((r) => r.blocked_id) });
+});
+
+const LAST_SEEN_VALUES: LastSeenVisibility[] = ["everyone", "contacts", "nobody"];
+
+app.get("/api/privacy", async (c) => {
+  const { userId } = c.get("auth");
+  return json({ ok: true, privacy: await readPrivacy(c.env.DB, userId) });
+});
+
+// The setting itself is what's enforced, not just hidden client-side: a hidden
+// last seen never rides the presence frame (presenceVisible, ConversationDO
+// /presence), and receipts/typing turned off never leave ConversationDO's
+// /recv, /read and /typing handlers.
+app.post("/api/privacy", async (c) => {
+  const { userId } = c.get("auth");
+  const b = await c.req.json<{
+    lastSeen?: string; readReceipts?: boolean; typing?: boolean;
+  }>();
+  if (b.lastSeen !== undefined && !LAST_SEEN_VALUES.includes(b.lastSeen as LastSeenVisibility)) {
+    return err("bad_privacy");
+  }
+  const current = await readPrivacy(c.env.DB, userId);
+  const next = {
+    lastSeen: (b.lastSeen as LastSeenVisibility | undefined) ?? current.lastSeen,
+    readReceipts: b.readReceipts ?? current.readReceipts,
+    typing: b.typing ?? current.typing,
+  };
+  await c.env.DB.prepare(
+    `INSERT INTO privacy_settings (user_id, last_seen, read_receipts, typing, updated_at)
+     VALUES (?,?,?,?,?)
+     ON CONFLICT(user_id) DO UPDATE SET last_seen = excluded.last_seen,
+       read_receipts = excluded.read_receipts, typing = excluded.typing,
+       updated_at = excluded.updated_at`
+  ).bind(userId, next.lastSeen, next.readReceipts ? 1 : 0, next.typing ? 1 : 0, Date.now()).run();
+  return json({ ok: true, privacy: next });
 });
 
 export default {
