@@ -425,6 +425,50 @@ func react(dir: URL, base: URL, name: String, peer: String, emoji: String) async
     print("· reacted \(emoji) to «\(target.text ?? "")» in \(target.chatId)")
 }
 
+/// Deletes the account's own latest message for everyone, in the direct chat
+/// with a named peer or in a group addressed by its title.
+func deleteLatest(dir: URL, base: URL, name: String, peer: String) async throws {
+    let display = cast.first(where: { $0.name == name })?.display ?? name
+    guard FileManager.default.fileExists(atPath: dir.appendingPathComponent(name).appendingPathComponent("meta.json").path) else {
+        throw FixtureError("unknown account \(name)")
+    }
+    let p = try await openPerson(name: name, display: display, dir: dir, base: base)
+    let peerMetaURL = dir.appendingPathComponent(peer).appendingPathComponent("meta.json")
+    let chatId: String?
+    if let data = try? Data(contentsOf: peerMetaURL),
+       let peerMeta = try? JSONDecoder().decode(Meta.self, from: data) {
+        chatId = try await p.db.read { dbc in
+            try String.fetchOne(dbc, sql: """
+                SELECT c.id FROM chat c
+                JOIN member m ON m.chatId = c.id AND m.userId = ?
+                WHERE c.kind = 'direct'
+                """, arguments: [peerMeta.userId])
+        }
+    } else {
+        chatId = try await p.db.read { dbc in
+            try String.fetchOne(dbc, sql: "SELECT id FROM chat WHERE kind = 'group' AND title = ?",
+                                arguments: [peer])
+        }
+    }
+    guard let chatId else { throw FixtureError("no chat between \(name) and \(peer)") }
+    guard let target = try await p.db.read({ dbc in
+        try Row.fetchOne(dbc, sql: """
+            SELECT id, text FROM message
+            WHERE chatId = ? AND isOutgoing = 1 AND seq IS NOT NULL
+            ORDER BY seq DESC LIMIT 1
+            """, arguments: [chatId]).map { (id: $0["id"] as String, text: $0["text"] as String?) }
+    }) else { throw FixtureError("no own message in \(chatId) to delete") }
+    await startEngine(p, base: base)
+    await p.engine.deleteMessages(chatId: chatId, ids: [target.id], forAll: true)
+    try await settle("the delete to leave the action queue", seconds: 60) {
+        try await p.db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingAction WHERE type = 'delete'") ?? 0
+        } == 0
+    }
+    await p.engine.stop()
+    print("· deleted «\(target.text ?? "")» for everyone in \(chatId)")
+}
+
 /// Writes to a fixture account from someone it has never talked to: a fresh
 /// account is registered under `name`, opens a direct chat with the peer and
 /// sends one text, so the peer's device receives a message request.
@@ -826,6 +870,12 @@ do {
             name: try arg("as", default: "bravo"),
             peer: try arg("to", default: "alfa"),
             emoji: try arg("emoji", default: "❤️"))
+    case "delete":
+        try await deleteLatest(
+            dir: URL(fileURLWithPath: try arg("dir")),
+            base: URL(string: try arg("base", default: "http://localhost:8787"))!,
+            name: try arg("as", default: "bravo"),
+            peer: try arg("to", default: "alfa"))
     case "knock":
         try await knock(
             dir: URL(fileURLWithPath: try arg("dir")),
