@@ -1717,6 +1717,37 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
   civ.ws.close();
 }
 
+{
+  // --- restoring from a backup after the last device logged out ---
+  // The account identity outlives its devices in the user's object: revoking
+  // every device must leave /api/restore/start something to verify against.
+  const ed = await import("@noble/ed25519");
+  const priv = ed.utils.randomSecretKey();
+  const pub = await ed.getPublicKeyAsync(priv);
+  const b64url = (bytes) => Buffer.from(bytes).toString("base64url");
+  const keys = fakeKeys("rst");
+  keys.identitySignKey = b64url(pub);
+  const username = "rst" + (Date.now() % 1e8);
+  const reg = await api("/api/register", { body: {
+    username, displayName: "Restore Me", ...keys,
+  } });
+  check("restore: registered", reg.ok, JSON.stringify(reg));
+  const out = await api("/api/logout", { token: reg.token, body: {} });
+  check("restore: logout of the only device", out.ok, JSON.stringify(out));
+
+  const start = await api("/api/restore/start", { body: { username } });
+  check("restore: start with zero devices", start.ok && !!start.nonce, JSON.stringify(start));
+  const signature = b64url(await ed.signAsync(new TextEncoder().encode(start.nonce), priv));
+  const claim = await api(`/api/restore/${start.restoreId}/claim`, { body: {
+    ...keys, signature, device: { name: "restored" },
+  } });
+  check("restore: claim adds a device back", claim.ok && !!claim.token, JSON.stringify(claim));
+  const sessions = await api("/api/sessions", { token: claim.token });
+  check("restore: the restored device authenticates",
+    sessions.ok && sessions.sessions.length === 1 && sessions.sessions[0].name === "restored",
+    JSON.stringify(sessions));
+}
+
 cmal.ws.close(); ctre.ws.close();
 ca.ws.close(); cb2.ws.close(); cb3.ws.close(); cb4.ws.close(); ca2.ws.close(); ce.ws.close();
 cf.ws.close(); cg.ws.close();
