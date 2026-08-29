@@ -1805,6 +1805,22 @@ public actor SyncEngine {
         }
     }
 
+    /// A live send may spend this many attempts before the message shows
+    /// «не отправлено»; a closed socket spends none — the drain stops at its
+    /// guard and the reconnect wakes it.
+    static let maxSendAttempts = 10
+
+    /// Counts one spent send attempt and, past the ceiling, marks the message
+    /// failed. Returns true when the message was marked, false while tries
+    /// remain. `spent` is the count before this attempt.
+    static func spendSendAttempt(_ dbc: GRDB.Database, clientMsgId: String, spent: Int) throws -> Bool {
+        try dbc.execute(sql: "UPDATE outbox SET attempts = attempts + 1 WHERE clientMsgId = ?",
+                        arguments: [clientMsgId])
+        guard spent + 1 > maxSendAttempts else { return false }
+        try markSendFailed(dbc, clientMsgId: clientMsgId, reason: SendFailure.tooManyAttempts)
+        return true
+    }
+
     /// The send is out of tries. Both marks are set together: the failed status
     /// the feed shows, and the queue entry that "send again" turns back on.
     static func markSendFailed(_ dbc: GRDB.Database, clientMsgId: String, reason: String) throws {
@@ -2137,18 +2153,11 @@ public actor SyncEngine {
                 // reconnect wakes the drain again
                 MsngrLog.outbox.error(
                     "send failed chat=\(item.chatId, privacy: .public) attempt=\(item.attempts + 1, privacy: .public): \(String(describing: error), privacy: .public)")
-                try? await db.write { dbc in
-                    try dbc.execute(sql: "UPDATE outbox SET attempts = attempts + 1 WHERE clientMsgId = ?",
-                                    arguments: [item.clientMsgId])
-                }
-                let attempts = item.attempts + 1
-                if attempts > 10 {
-                    try? await db.write { dbc in
-                        try SyncEngine.markSendFailed(dbc, clientMsgId: item.clientMsgId,
-                                                      reason: SendFailure.tooManyAttempts)
-                    }
-                    continue
-                }
+                let failedForGood = (try? await db.write { dbc in
+                    try SyncEngine.spendSendAttempt(dbc, clientMsgId: item.clientMsgId,
+                                                    spent: item.attempts)
+                }) ?? false
+                if failedForGood { continue }
                 break
             }
         }

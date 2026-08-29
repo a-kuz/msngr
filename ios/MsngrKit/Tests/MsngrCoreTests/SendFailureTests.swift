@@ -168,6 +168,65 @@ final class SendFailureTests: XCTestCase {
 
     // MARK: - Texts
 
+    /// The drain's attempt accounting: tries below the ceiling keep the message
+    /// sending, the try past it sets «не отправлено» with too_many_attempts and
+    /// turns the queue entry failed — the pair «send again» works from.
+    func testSpentAttemptsPastCeilingMarkTheMessageFailed() async throws {
+        let db = try AppDatabase.openInMemory()
+        try await seedOutgoing(db, clientMsgId: "m1")
+
+        for spent in 0..<SyncEngine.maxSendAttempts {
+            let marked = try await db.write { dbc in
+                try SyncEngine.spendSendAttempt(dbc, clientMsgId: "m1", spent: spent)
+            }
+            XCTAssertFalse(marked, "attempt \(spent + 1) is within the ceiling")
+        }
+        var state = try await db.read { dbc in
+            (status: try Int.fetchOne(dbc, sql: "SELECT status FROM message WHERE clientMsgId='m1'")!,
+             outbox: try String.fetchOne(dbc, sql: "SELECT state FROM outbox WHERE clientMsgId='m1'")!,
+             attempts: try Int.fetchOne(dbc, sql: "SELECT attempts FROM outbox WHERE clientMsgId='m1'")!)
+        }
+        XCTAssertEqual(state.status, MessageStatus.sending.rawValue)
+        XCTAssertEqual(state.outbox, "ready")
+        XCTAssertEqual(state.attempts, SyncEngine.maxSendAttempts)
+
+        let marked = try await db.write { dbc in
+            try SyncEngine.spendSendAttempt(dbc, clientMsgId: "m1", spent: SyncEngine.maxSendAttempts)
+        }
+        XCTAssertTrue(marked)
+        state = try await db.read { dbc in
+            (status: try Int.fetchOne(dbc, sql: "SELECT status FROM message WHERE clientMsgId='m1'")!,
+             outbox: try String.fetchOne(dbc, sql: "SELECT state FROM outbox WHERE clientMsgId='m1'")!,
+             attempts: try Int.fetchOne(dbc, sql: "SELECT attempts FROM outbox WHERE clientMsgId='m1'")!)
+        }
+        XCTAssertEqual(state.status, MessageStatus.failed.rawValue)
+        XCTAssertEqual(state.outbox, "failed", "the entry stays for «send again»")
+        let reason = try await db.read { dbc in
+            try String.fetchOne(dbc, sql: "SELECT failReason FROM message WHERE clientMsgId='m1'")
+        }
+        XCTAssertEqual(reason, SendFailure.tooManyAttempts)
+    }
+
+    /// «Send again» after too_many_attempts turns the failed entry back on.
+    func testRetryAfterSpentAttemptsRequeues() async throws {
+        let db = try AppDatabase.openInMemory()
+        try await seedOutgoing(db, clientMsgId: "m1")
+        _ = try await db.write { dbc -> Bool in
+            try dbc.execute(sql: "UPDATE outbox SET attempts = ?", arguments: [SyncEngine.maxSendAttempts])
+            return try SyncEngine.spendSendAttempt(dbc, clientMsgId: "m1",
+                                                   spent: SyncEngine.maxSendAttempts)
+        }
+        let engine = try makeEngine(db: db)
+        let requeued = await engine.retrySend(messageId: "m1")
+        XCTAssertTrue(requeued)
+        let state = try await db.read { dbc in
+            (status: try Int.fetchOne(dbc, sql: "SELECT status FROM message WHERE clientMsgId='m1'")!,
+             outbox: try String.fetchOne(dbc, sql: "SELECT state FROM outbox WHERE clientMsgId='m1'")!)
+        }
+        XCTAssertEqual(state.status, MessageStatus.sending.rawValue)
+        XCTAssertEqual(state.outbox, "ready")
+    }
+
     func testExplanationPerCode() {
         XCTAssertEqual(SendFailure.explanation(SendFailure.blocked),
                        CoreStrings.string("You blocked this user. Unblock them to write."))
