@@ -56,6 +56,8 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var typingUsers: [String] = []
     @Published var replyingTo: Message?
     @Published var editing: Message?
+    /// A scheduled message whose time is being moved: the picker sheet for it.
+    @Published var reschedulingMessage: Message?
     /// A shader chosen for the next text message, painted behind its bubble.
     @Published var pendingBubbleShader: ShaderDocument?
     /// The card of the first link in the field, ready to travel with the send.
@@ -802,6 +804,33 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    /// Cancels a message still waiting for its scheduled time: it never went
+    /// out, so nothing is left behind for it once this returns.
+    func cancelScheduled(_ msg: Message) {
+        let id = msg.clientMsgId ?? msg.id
+        Task { [weak self] in await self?.app.engine.cancelScheduled(clientMsgId: id) }
+    }
+
+    /// Moves a scheduled message to a new time.
+    func rescheduleSend(_ msg: Message, to date: Date) {
+        let id = msg.clientMsgId ?? msg.id
+        Task { [weak self] in
+            await self?.app.engine.rescheduleSend(clientMsgId: id, to: date.timeIntervalSince1970)
+        }
+    }
+
+    /// Releases a scheduled message to go out at once.
+    func sendScheduledNow(_ msg: Message) {
+        let id = msg.clientMsgId ?? msg.id
+        Task { [weak self] in await self?.app.engine.rescheduleSend(clientMsgId: id, to: nil) }
+    }
+
+    /// Rewrites the text of a message still waiting for its scheduled time.
+    func editScheduledText(_ msg: Message, text: String) {
+        let id = msg.clientMsgId ?? msg.id
+        Task { [weak self] in await self?.app.engine.editScheduledText(clientMsgId: id, text: text) }
+    }
+
     /// Puts a media placeholder into the feed before the attachment is ready:
     /// the row is visible and takes the same "move the feed to the bottom"
     /// path as `enqueue`, but nothing is sent until the caller fills it in
@@ -839,6 +868,14 @@ final class ChatViewModel: ObservableObject {
         dismissUnreadMarker()
         let tokenized = MessageMarkdown.tokenizeMentions(trimmed, users: mentionCandidates)
         if let editing {
+            // still waiting for its time: it never went out, so the row and
+            // its queued payload are rewritten directly instead of through
+            // the `edit` event a delivered message needs
+            if editing.scheduledFor != nil {
+                editScheduledText(editing, text: tokenized)
+                self.editing = nil
+                return
+            }
             var c = ContentPayload(kind: "edit")
             c.targetLocalId = editing.id
             c.text = tokenized

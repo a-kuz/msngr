@@ -307,6 +307,11 @@ struct ChatScreen: View {
         .sheet(item: $editHistoryMessage) { msg in
             EditHistorySheet(message: msg)
         }
+        .sheet(item: $model.reschedulingMessage) { msg in
+            SchedulePickerSheet(initial: msg.scheduledFor.map(Date.init(timeIntervalSince1970:)) ?? Date().addingTimeInterval(60)) { date in
+                model.rescheduleSend(msg, to: date)
+            }
+        }
         .sheet(isPresented: $showCalendar) {
             ChatCalendarSheet(chatId: chatId) { id in
                 jump(to: id)
@@ -1280,6 +1285,9 @@ struct MessagesView: UIViewControllerRepresentable {
             case .forward: NotificationCenter.default.post(name: .forwardRequested, object: msg)
             case .select: withAnimation(Theme.springFast) { model.beginSelection(with: msg) }
             case .resend: model.resend(msg)
+            case .sendNow: model.sendScheduledNow(msg)
+            case .reschedule: model.reschedulingMessage = msg
+            case .cancelScheduled: withAnimation(Theme.springFast) { model.cancelScheduled(msg) }
             case .setBackground:
                 if let doc = msg.shader {
                     ShaderSurfaces.shared.setBackground(doc, for: msg.chatId)

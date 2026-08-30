@@ -1400,6 +1400,26 @@ extension MessageCell {
         Haptics.medium()
 
         var items: [MessageContextOverlay.Item] = []
+        // waiting for its time: it has no server id yet either, so the choices
+        // are to release it now, move it, edit its text, or throw it away
+        if let scheduledFor = msg.scheduledFor, scheduledFor > Date().timeIntervalSince1970 {
+            items.append(.init(title: String(localized: "Send now"), icon: "paperplane") { [weak self] in
+                self?.onContextAction?(.sendNow)
+            })
+            items.append(.init(title: String(localized: "Reschedule"), icon: "clock") { [weak self] in
+                self?.onContextAction?(.reschedule)
+            })
+            if msg.kind == .text {
+                items.append(.init(title: String(localized: "Edit"), icon: "pencil") { [weak self] in
+                    self?.onContextAction?(.edit)
+                })
+            }
+            items.append(.init(title: String(localized: "Cancel"), icon: "xmark.circle", destructive: true) { [weak self] in
+                self?.onContextAction?(.cancelScheduled)
+            })
+            presentContextMenu(items, in: window, msg: msg, showsReactions: false)
+            return
+        }
         // a message that never went out has no server id: it cannot be replied
         // to, forwarded or pinned, and the only two things to do with it are to
         // send it again and to throw it away
