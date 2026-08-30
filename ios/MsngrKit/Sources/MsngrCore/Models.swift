@@ -24,6 +24,16 @@ public struct User: Codable, Identifiable, Equatable, FetchableRecord, Persistab
     }
 }
 
+/// How far one member of a chat has got, read straight from `chatMark`.
+public struct MemberMark: Equatable {
+    public let deliveredUpTo: Int
+    public let readUpTo: Int
+    public init(deliveredUpTo: Int, readUpTo: Int) {
+        self.deliveredUpTo = deliveredUpTo
+        self.readUpTo = readUpTo
+    }
+}
+
 public enum ChatKind: String, Codable {
     case direct, group
     /// The chat with yourself: one per user, its only member is the owner.

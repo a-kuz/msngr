@@ -1912,6 +1912,22 @@ public actor SyncEngine {
         }
     }
 
+    /// One chat's marks for every member but the caller, keyed by userId.
+    /// A member with no mark row yet is absent from the result.
+    public static func memberMarks(_ dbc: GRDB.Database, chatId: String,
+                                   ownUserId: String) throws -> [String: MemberMark] {
+        let rows = try Row.fetchAll(dbc, sql: """
+            SELECT userId, deliveredUpTo, readUpTo FROM chatMark
+            WHERE chatId = ? AND userId <> ?
+            """, arguments: [chatId, ownUserId])
+        var marks: [String: MemberMark] = [:]
+        for row in rows {
+            marks[row["userId"]] = MemberMark(deliveredUpTo: row["deliveredUpTo"],
+                                              readUpTo: row["readUpTo"])
+        }
+        return marks
+    }
+
     /// The tick speaks for the whole chat, so it moves on the member who is
     /// furthest behind: in a group the second tick appears when the last member
     /// has the message, and it turns read when the last of them has read it. In

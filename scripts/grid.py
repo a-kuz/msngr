@@ -9,13 +9,14 @@ labels every crossing, so a coordinate can be read off the picture:
     scripts/grid.py <udid>                  # shot + grid, prints the paths
     scripts/grid.py <udid> --step 40        # coarser grid
     scripts/grid.py <udid> --tap 201 421    # tap that point, then shoot again
+    scripts/grid.py <udid> --press 201 421  # long-press it (0.8s, --duration to change)
 
 The labelled numbers are what `idb ui tap <udid> X Y` expects.
 
-Every --tap first saves an aim shot — the screen as it was right before the
-touch, with a red crosshair at the tapped point, as a small JPEG. When a tap
-reads as "the button does not work", look at the aim shot before anything
-else: it answers whether the touch landed on the control or beside it.
+Every --tap and --press first saves an aim shot — the screen as it was right
+before the touch, with a red crosshair at the touched point, as a small JPEG.
+When a touch reads as "the button does not work", look at the aim shot before
+anything else: it answers whether the touch landed on the control or beside it.
 """
 
 import argparse
@@ -104,17 +105,25 @@ def main():
     parser.add_argument("--step", type=int, default=40, help="grid step in points")
     parser.add_argument("--tap", nargs=2, type=int, metavar=("X", "Y"),
                         help="tap this point (in points) before shooting")
+    parser.add_argument("--press", nargs=2, type=int, metavar=("X", "Y"),
+                        help="long-press this point (in points) before shooting")
+    parser.add_argument("--duration", type=float, default=0.8,
+                        help="press duration in seconds (with --press)")
     parser.add_argument("--out", default=None, help="where to write the grid image")
     args = parser.parse_args()
 
-    if args.tap:
+    touch = args.tap or args.press
+    if touch:
         aim = Path(f"/tmp/aim-{args.udid[:8]}.jpg")
         raw = aim.with_suffix(".raw.png")
         shoot(args.udid, raw)
-        draw_aim(raw, aim, args.tap, args.udid)
-        subprocess.run(["idb", "ui", "tap", "--udid", args.udid,
-                        str(args.tap[0]), str(args.tap[1])], check=True)
-        print(f"{aim}  (the screen before the tap, crosshair at {args.tap[0]},{args.tap[1]})")
+        draw_aim(raw, aim, touch, args.udid)
+        cmd = ["idb", "ui", "tap", "--udid", args.udid]
+        if args.press:
+            cmd += ["--duration", str(args.duration)]
+        subprocess.run(cmd + [str(touch[0]), str(touch[1])], check=True)
+        kind = "press" if args.press else "tap"
+        print(f"{aim}  (the screen before the {kind}, crosshair at {touch[0]},{touch[1]})")
 
     out = Path(args.out) if args.out else Path(f"/tmp/grid-{args.udid[:8]}.png")
     raw = out.with_name(out.stem + "-raw.png")

@@ -26,6 +26,7 @@ struct ChatScreen: View {
     @State private var forwardingSelection = false
     @State private var reactionRoster: ReactionRosterRequest?
     @State private var editHistoryMessage: Message?
+    @State private var readByMessage: Message?
     @State private var messagesVC = MessagesViewController()
     @EnvironmentObject var app: AppState
     @ObservedObject private var theme = ThemeStore.shared
@@ -307,6 +308,9 @@ struct ChatScreen: View {
         .sheet(item: $editHistoryMessage) { msg in
             EditHistorySheet(message: msg)
         }
+        .sheet(item: $readByMessage) { msg in
+            ReadBySheet(message: msg, model: model)
+        }
         .sheet(isPresented: $showCalendar) {
             ChatCalendarSheet(chatId: chatId) { id in
                 jump(to: id)
@@ -332,6 +336,9 @@ struct ChatScreen: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .editHistoryRequested)) { note in
             editHistoryMessage = note.object as? Message
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .readByRequested)) { note in
+            readByMessage = note.object as? Message
         }
         // from the attachment gallery: the screens above the feed close and the feed
         // travels to the message, loading history first if it sits deeper than the window
@@ -1268,6 +1275,7 @@ struct MessagesView: UIViewControllerRepresentable {
     func updateUIViewController(_ vc: MessagesViewController, context: Context) {
         // callbacks that capture bindings are reinstalled on every update: a binding
         // captured in makeUIViewController outlives the body that produced it
+        vc.isGroupChat = model.chat?.kind == .group
         vc.onContextAction = { [weak model] msg, action in
             guard let model else { return }
             switch action {
@@ -1275,6 +1283,7 @@ struct MessagesView: UIViewControllerRepresentable {
             case .copy: MessageClipboard.copy(msg)
             case .edit: withAnimation(Theme.springFast) { model.editing = msg }
             case .editHistory: NotificationCenter.default.post(name: .editHistoryRequested, object: msg)
+            case .readBy: NotificationCenter.default.post(name: .readByRequested, object: msg)
             case .pin: model.pin(msg)
             case .unpin: model.unpin(msg)
             case .forward: NotificationCenter.default.post(name: .forwardRequested, object: msg)
@@ -1332,6 +1341,7 @@ struct MessagesView: UIViewControllerRepresentable {
 extension Notification.Name {
     static let forwardRequested = Notification.Name("forwardRequested")
     static let editHistoryRequested = Notification.Name("editHistoryRequested")
+    static let readByRequested = Notification.Name("readByRequested")
 }
 
 /// The composer's hardware-key notifications, gathered off the screen's body:

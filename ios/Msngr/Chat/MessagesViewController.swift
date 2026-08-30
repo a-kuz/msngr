@@ -18,6 +18,8 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     /// chat it toggles your own reaction — the screen decides which.
     var onReactionCapsuleTap: ((Message, String) -> Void)?
     var onContextAction: ((Message, MessageContextAction) -> Void)?
+    /// an outgoing message in a group offers the read-by list in its menu
+    var isGroupChat = false
     /// The message the chat holds pinned, so the context menu of that one offers
     /// to take the pin off instead of putting it on again.
     var pinnedSeqs: Set<Int> = []
@@ -505,6 +507,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     private func configureMessageCell(_ cell: MessageCell, msg: Message, plan: BubbleLayoutPlan,
                                       avatar: FeedAvatar? = nil) {
         cell.configure(msg: msg, plan: plan, avatar: avatar)
+        cell.isGroupChat = isGroupChat
         cell.onReply = { [weak self] in self?.onReply?(msg) }
         cell.onReact = { [weak self] emoji in self?.onReact?(msg, emoji) }
         cell.onCapsuleTap = { [weak self] emoji in self?.onReactionCapsuleTap?(msg, emoji) }
@@ -840,6 +843,8 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
 
 enum MessageContextAction {
     case reply, copy, forward, select, edit, editHistory, pin, unpin, delete, resend
+    /// who has read and who has received an outgoing group message
+    case readBy
     /// a shader message becomes this chat's background, on this device
     case setBackground
     /// a sticker goes into the local pack
