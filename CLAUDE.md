@@ -183,13 +183,23 @@ grid over it, labelled in the units a tap actually takes. `idb ui tap` counts in
 points, a screenshot is in pixels, and passing one for the other sends the touch
 to empty space — which reads as "the button does not work" and has already cost
 an afternoon of chasing a defect that was not there. Read the coordinate off the
-picture, and use `--tap X Y` to tap and re-shoot in one step.
+picture, and use `--tap X Y` to tap and re-shoot in one step; `--press X Y`
+long-presses the same way (`--duration` changes the hold).
 
-Every `--tap` also saves an aim shot — the screen right before the touch with
-a red crosshair at the tapped point, as a small JPEG whose path is printed.
-When a tap reads as "the button does not work", look at the aim shot first: it
-says whether the touch landed on the control or beside it, which is the
-points-vs-pixels mistake showing itself.
+Every `--tap` and `--press` also saves an aim shot — the screen right before
+the touch with a red crosshair at the touched point, as a small JPEG whose
+path is printed. When a touch reads as "the button does not work", look at the
+aim shot first: it says whether the touch landed on the control or beside it,
+which is the points-vs-pixels mistake showing itself. Touching through raw
+`idb ui tap` skips the aim shot, so prefer grid.py for anything that might
+need a post-mortem.
+
+The aim shot is not for every touch — it is for the second failure. A touch
+that did not do what you expected twice in a row is never answered with a
+third identical attempt: open the aim shot, see where the touch actually
+landed and what screen it landed on, and only then retry. Blind series of
+taps are how an afternoon disappears; the owner has watched agents do it
+while the aim shot with the answer sat unread.
 
 - Do not touch the owner's simulators: `44CE2242-EBB9-48EA-A605-5988A00E4C31`
   (iPhone 17 dev) and `0E0CF155-B4B7-4794-A963-AD7C76EFDCEA` (iPhone 17 Pro Max).

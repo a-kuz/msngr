@@ -676,7 +676,10 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   (qa/runs/2026-08-21-presence-names)
 - ✅ read on returning from the background: the receipt goes out on the
   foreground return with the reader at the message (qa/runs/2026-08-21-read-on-return)
-- ⬜ aggregated read receipts in a group ("N read it")
+- ✅ the read-by list of an outgoing group message: «Кто прочитал» in the
+  context menu opens who has read and who has only received it, from the
+  per-member marks the receipts already keep (the owner's call over an
+  aggregated "N read it"; qa/runs/2026-08-30-read-by-run)
 
 ## Notifications
 

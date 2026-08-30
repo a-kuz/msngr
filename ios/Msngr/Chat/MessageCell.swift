@@ -8,6 +8,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     var onReply: (() -> Void)?
     var onReact: ((String) -> Void)?
     var onContextAction: ((MessageContextAction) -> Void)?
+    /// set by the feed: an outgoing message in a group offers the read-by list
+    var isGroupChat = false
     /// Tap on a reaction capsule. Separate from onReact: in a group it opens
     /// the list of who reacted instead of toggling.
     var onCapsuleTap: ((String) -> Void)?
@@ -1447,6 +1449,13 @@ extension MessageCell {
         if msg.isOutgoing && msg.kind == .text {
             items.append(.init(title: String(localized: "Edit"), icon: "pencil") { [weak self] in
                 self?.onContextAction?(.edit)
+            })
+        }
+        // the per-member marks only exist where there is more than one reader
+        if isGroupChat, msg.isOutgoing, msg.seq != nil, !msg.deletedForAll {
+            items.append(.init(title: String(localized: "Read by"), icon: "checkmark.bubble",
+                               id: "chat.menu.readBy") { [weak self] in
+                self?.onContextAction?(.readBy)
             })
         }
         if msg.kind == .shader, msg.shader != nil {
