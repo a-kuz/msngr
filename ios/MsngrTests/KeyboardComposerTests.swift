@@ -77,7 +77,9 @@ final class KeyboardComposerTests: XCTestCase {
         press(tv, UIKeyCommand.inputUpArrow)
         XCTAssertEqual(walks, 1)
         tv.text = "draft"
-        XCTAssertNil(tv.keyCommands?.first { $0.input == UIKeyCommand.inputUpArrow })
+        XCTAssertNil(tv.keyCommands?.first {
+            $0.input == UIKeyCommand.inputUpArrow && $0.modifierFlags == []
+        }, "the bare arrow must disappear over a draft; Cmd+↑ stays")
     }
 
     /// Cmd+B wraps the selection in the bold marker; a second press takes it off.
@@ -139,6 +141,18 @@ final class KeyboardComposerTests: XCTestCase {
         press(tv, "]", .command)
         press(tv, "[", .command)
         XCTAssertEqual(directions, [true, false, true, false])
+    }
+
+    /// Cmd+↑ asks the chat screen for the last own message to edit.
+    func testEditLastKeyPostsTheRequest() {
+        let tv = makeView()
+        var asks = 0
+        let sub = NotificationCenter.default.addObserver(
+            forName: .chatEditLastRequested, object: nil, queue: nil
+        ) { _ in asks += 1 }
+        defer { NotificationCenter.default.removeObserver(sub) }
+        press(tv, UIKeyCommand.inputUpArrow, .command)
+        XCTAssertEqual(asks, 1)
     }
 
     /// The switch target walks the tab's rows and stops at the edges.

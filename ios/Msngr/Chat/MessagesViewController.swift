@@ -792,6 +792,16 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         return active
     }
 
+    /// The newest message Cmd+↑ may edit: your own text, the same gate the
+    /// context menu's Edit has, skipping what delete-for-all left behind.
+    var lastOwnEditableMessage: Message? {
+        for item in items {
+            guard case .message(let m, _, _, _, _, _, _) = item else { continue }
+            if m.isOutgoing, m.kind == .text, !m.deletedForAll { return m }
+        }
+        return nil
+    }
+
     /// Scrolls to a message a reference names by seq (a quote, a pin).
     @discardableResult
     func scrollTo(seq: Int, highlight: Bool = false, animated: Bool = true) -> Bool {

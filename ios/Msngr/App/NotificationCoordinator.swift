@@ -416,6 +416,9 @@ extension Notification.Name {
     /// Ctrl+Tab / Cmd+[ ] in the focused composer: userInfo["forward"] is the
     /// direction; the open chat screen answers with `chatSwitchPerform`.
     static let chatSwitchRequested = Notification.Name("chatSwitchRequested")
+    /// Cmd+↑ in the focused composer: the chat screen puts your last own
+    /// text message into the edit mode.
+    static let chatEditLastRequested = Notification.Name("chatEditLastRequested")
     /// The resolved switch: userInfo["chatId"] names the chat being left,
     /// userInfo["forward"] the direction; the chat list swaps the open chat
     /// for its neighbour in the current tab.
