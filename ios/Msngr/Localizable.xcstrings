@@ -61,6 +61,36 @@
         }
       }
     },
+    "Media cache limit" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Лимит кэша медиа"
+          }
+        }
+      }
+    },
+    "No limit" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без лимита"
+          }
+        }
+      }
+    },
+    "Over the limit, the media untouched the longest is removed from this device. Everything removed can be downloaded again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сверх лимита с устройства удаляется медиа, которое дольше всего не открывали. Всё удалённое можно загрузить снова."
+          }
+        }
+      }
+    },
     "Link previews" : {
       "localizations" : {
         "ru" : {

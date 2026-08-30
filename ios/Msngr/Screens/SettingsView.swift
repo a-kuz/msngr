@@ -19,6 +19,8 @@ struct SettingsView: View {
     /// the media cache size shown next to the clear button; the label re-renders
     /// only when this state moves, so the clear writes the new size back into it
     @State private var cacheSize: Int64 = 0
+    /// The media cache ceiling, applied to MediaManager at startup and on change.
+    @AppStorage(MediaCacheCeiling.key) private var cacheCeiling = MediaCacheCeiling.gigabyte
     @State private var uploadingAvatar = false
     @State private var nameError: String?
     @State private var phone = ""
@@ -180,7 +182,15 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings.backup")
                 }
 
-                Section("Data") {
+                Section {
+                    Picker(selection: $cacheCeiling) {
+                        ForEach(MediaCacheCeiling.allCases) { option in
+                            Text(option.label).tag(option)
+                        }
+                    } label: {
+                        Label("Media cache limit", systemImage: "internaldrive")
+                    }
+                    .accessibilityIdentifier("settings.cacheLimit")
                     Button {
                         app.media?.clearCache()
                         cacheSize = app.media?.totalCacheSize() ?? 0
@@ -193,6 +203,15 @@ struct SettingsView: View {
                         }
                     }
                     .onAppear { cacheSize = app.media?.totalCacheSize() ?? 0 }
+                } header: {
+                    Text("Data")
+                } footer: {
+                    Text("Over the limit, the media untouched the longest is removed from this device. Everything removed can be downloaded again.")
+                }
+                .onChange(of: cacheCeiling) { _, ceiling in
+                    app.media?.cacheCeilingBytes = ceiling.bytes
+                    app.media?.enforceCacheCeiling()
+                    cacheSize = app.media?.totalCacheSize() ?? 0
                 }
 
                 Section {

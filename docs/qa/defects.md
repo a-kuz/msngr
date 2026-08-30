@@ -7,6 +7,24 @@ with the commit that closed it.
 ## Open
 
 
+### iPad with a hardware keyboard: a tap around the settings sheet crashes the app
+Found 2026-08-30 on the iPad Pro 11" simulator with ConnectHardwareKeyboard on
+(the Mac «Designed for iPad» case has a hardware keyboard always). Repro: open
+Settings (the form sheet), scroll it, tap near the «Приватность» row / the
+sheet's edge — the app aborts on a UIKit assertion:
+`NSInternalInconsistencyException: Invalid parameter not satisfying:
+parentEnvironment != nil` in
+`-[_UIFocusContainerGuideFallbackItemsContainer initWithParentEnvironment:childItems:]`,
+reached from `-[UIFocusSystem updateFocusIfNeeded]` in the after-CACommit
+block. Reproduced three times (reports in `docs/qa/crashes/`,
+2026-08-30-155125/155208/161020); the identical gesture with the hardware
+keyboard disconnected does not crash. Nothing of ours is on the stack and the
+app defines no focus guides — the focus map trips over a container guide whose
+parent environment is already gone, most likely mid-transition of the SwiftUI
+sheet. Needs a workaround (the crash is user-visible on exactly the desktop
+target); none found yet — no public switch turns the focus map off for a
+window, and the assertion fires inside UIKit's own snapshot pass.
+
 ### The server smoke test fails on push timing, on a different check per run
 Found 2026-08-28 by the gate after the shader-messages merge
 (`.claude/gates/main-shader.log`): `no push for own echo` was red on the

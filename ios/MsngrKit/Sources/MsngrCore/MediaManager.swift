@@ -45,7 +45,45 @@ public final class MediaManager: @unchecked Sendable {
 
     public func cachedURL(for mediaId: String, mime: String? = nil) -> URL? {
         let url = cacheDir.appendingPathComponent(cacheFileName(mediaId, mime: mime))
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        // a hit refreshes the file's date: eviction below walks oldest-first,
+        // and "old" has to mean "not looked at", not "downloaded long ago"
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
+        return url
+    }
+
+    // MARK: - The cache ceiling
+
+    /// The decrypted cache stays under this many bytes; 0 means unbounded.
+    /// The app sets it from the «Данные» setting; eviction runs after every
+    /// download, oldest-untouched files first.
+    public var cacheCeilingBytes: Int64 {
+        get { lock.lock(); defer { lock.unlock() }; return ceilingBytes }
+        set { lock.lock(); ceilingBytes = newValue; lock.unlock() }
+    }
+    private var ceilingBytes: Int64 = 0
+
+    /// Deletes the least recently touched cache files until the total fits the
+    /// ceiling, with a tenth of slack so one more download does not evict again.
+    public func enforceCacheCeiling() {
+        let ceiling = cacheCeilingBytes
+        guard ceiling > 0 else { return }
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(
+            at: cacheDir, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])
+        else { return }
+        var files: [(url: URL, size: Int64, date: Date)] = items.compactMap { url in
+            let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            return (url, Int64(values?.fileSize ?? 0), values?.contentModificationDate ?? .distantPast)
+        }
+        var total = files.reduce(0) { $0 + $1.size }
+        guard total > ceiling else { return }
+        let target = ceiling - ceiling / 10
+        files.sort { $0.date < $1.date }
+        for file in files where total > target {
+            try? fm.removeItem(at: file.url)
+            total -= file.size
+        }
     }
 
     // MARK: - Local originals (media not uploaded yet)
@@ -113,6 +151,7 @@ public final class MediaManager: @unchecked Sendable {
             let plaintext = try MediaCrypto.decrypt(ciphertext, key: key, expectedSHA256: hash)
             let url = self.cacheDir.appendingPathComponent(self.cacheFileName(media.mediaId, mime: media.mime))
             try plaintext.write(to: url, options: .atomic)
+            self.enforceCacheCeiling()
             return url
         }
         inflight[media.mediaId] = task
