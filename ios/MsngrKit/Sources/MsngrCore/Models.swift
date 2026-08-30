@@ -170,6 +170,31 @@ public struct ForwardInfo: Codable, Equatable {
     }
 }
 
+/// The card under a text message that carries a link: the page's title,
+/// description and picture, fetched by the sender's client and carried inside
+/// the encrypted payload — the server never sees the page, and the receiver
+/// never fetches it.
+public struct LinkPreview: Codable, Equatable {
+    public var url: String
+    public var title: String
+    public var desc: String?
+    /// The page's picture, travelling like any other media: encrypted, in R2.
+    public var image: MediaInfo?
+
+    public init(url: String, title: String, desc: String? = nil, image: MediaInfo? = nil) {
+        self.url = url
+        self.title = title
+        self.desc = desc
+        self.image = image
+    }
+
+    /// What the card's third line shows: the page's host, without "www.".
+    public var host: String? {
+        guard let h = URL(string: url)?.host else { return nil }
+        return h.hasPrefix("www.") ? String(h.dropFirst(4)) : h
+    }
+}
+
 /// One superseded text of an edited message: what it said and when that text
 /// was authored (the original's `sentAt`, or the `sentAt` of the edit that
 /// produced it).
@@ -202,6 +227,8 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
     public var shader: ShaderDocument?
     /// A shader the sender chose to paint behind the bubble of a text message.
     public var bubbleShader: ShaderDocument?
+    /// text: the card of the first link, built on the sender's device.
+    public var linkPreview: LinkPreview?
     public var edited: Bool = false
     /// Superseded texts, oldest first; the original text is [0] once edited.
     public var editHistory: [EditVersion] = []
@@ -275,6 +302,8 @@ public struct ContentPayload: Codable {
     public var shader: ShaderDocument?
     /// text: a shader painted behind the bubble, the sender's choice
     public var bubbleShader: ShaderDocument?
+    /// text: the link card the sender built; the receiver renders, never fetches
+    public var preview: LinkPreview?
     /// edit / reaction: seq of the message the event lands on. Filled at send
     /// time from the local row (`targetLocalId`); the peer applies by it.
     public var targetSeq: Int?

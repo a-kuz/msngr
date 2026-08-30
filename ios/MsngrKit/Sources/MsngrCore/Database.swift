@@ -501,6 +501,12 @@ public enum AppDatabase {
                 t.column("addedAt", .double).notNull()
             }
         }
+        m.registerMigration("v27-linkPreview") { db in
+            // the link card the sender built, as JSON
+            try db.alter(table: "message") { t in
+                t.add(column: "linkPreview", .text)
+            }
+        }
         return m
     }
 }
@@ -535,6 +541,7 @@ extension Message {
         forward = (row["forward"] as String?).flatMap { try? dec.decode(ForwardInfo.self, from: Data($0.utf8)) }
         shader = (row["shader"] as String?).flatMap { try? dec.decode(ShaderDocument.self, from: Data($0.utf8)) }
         bubbleShader = (row["bubbleShader"] as String?).flatMap { try? dec.decode(ShaderDocument.self, from: Data($0.utf8)) }
+        linkPreview = (row["linkPreview"] as String?).flatMap { try? dec.decode(LinkPreview.self, from: Data($0.utf8)) }
         edited = row["edited"]
         editHistory = (row["editHistory"] as String?).flatMap { try? dec.decode([EditVersion].self, from: Data($0.utf8)) } ?? []
         editedAt = row["editedAt"]
@@ -567,6 +574,7 @@ extension Message {
         container["forward"] = js(forward)
         container["shader"] = js(shader)
         container["bubbleShader"] = js(bubbleShader)
+        container["linkPreview"] = js(linkPreview)
         container["edited"] = edited
         container["editHistory"] = js(editHistory) ?? "[]"
         container["editedAt"] = editedAt

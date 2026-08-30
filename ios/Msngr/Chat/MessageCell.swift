@@ -25,6 +25,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private let nameLabel = UILabel()
     private let forwardLabel = UILabel()
     private let replyBar = ReplyStripView()
+    private let linkCard = LinkCardView()
+    private var linkCardURL: String?
     private let timeLabel = UILabel()
     private let tickView = UIImageView()
     private let statusBackdrop = UIView()
@@ -109,6 +111,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
         bubbleView.addSubview(replyBar)
 
+        bubbleView.addSubview(linkCard)
+
         // the time is pinned to the right edge of its frame, so the width slack left by
         // measurement does not show up as a ragged gap on the right
         timeLabel.textAlignment = .right
@@ -182,8 +186,14 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         replyTap.require(toFail: doubleTap)
         replyBar.addGestureRecognizer(replyTap)
 
+        // the card opens its link; a long press still yields to the context menu
+        let linkCardTap = UITapGestureRecognizer(target: self, action: #selector(handleLinkCardTap))
+        linkCardTap.require(toFail: longPress)
+        linkCardTap.require(toFail: doubleTap)
+        linkCard.addGestureRecognizer(linkCardTap)
+
         // in selection mode only the row tap works, every other gesture is switched off
-        gestures = [pan, doubleTap, longPress, tap, replyTap, press]
+        gestures = [pan, doubleTap, longPress, tap, replyTap, linkCardTap, press]
         selectionTap = UITapGestureRecognizer(target: self, action: #selector(handleSelectionTap))
         selectionTap.isEnabled = false
         contentView.addGestureRecognizer(selectionTap)
@@ -220,6 +230,11 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     @objc private func handleReplyQuoteTap() {
         guard msg?.replyTo != nil else { return }
         onTapReplyQuote?()
+    }
+
+    @objc private func handleLinkCardTap() {
+        guard let raw = linkCardURL, let url = URL(string: raw) else { return }
+        onTapLink?(url)
     }
 
     /// A brief flash of the bubble confirming the jump landed on the original.
@@ -424,6 +439,19 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             replyBar.frame = rf
         } else {
             replyBar.isHidden = true
+        }
+
+        // the link card under the text
+        if let lf = plan.linkFrame {
+            linkCard.isHidden = false
+            linkCard.configure(title: plan.linkTitle ?? "", desc: plan.linkDesc,
+                               host: plan.linkHost, image: plan.linkImage,
+                               outgoing: plan.isOutgoing)
+            linkCard.frame = lf
+            linkCardURL = plan.linkURL
+        } else {
+            linkCard.isHidden = true
+            linkCardURL = nil
         }
 
         // media
@@ -1203,6 +1231,100 @@ final class ReplyStripView: UIView {
         authorLabel.frame = CGRect(x: 9, y: 2, width: bounds.width - 9, height: authorH)
         textLabel.frame = CGRect(x: 9, y: 2 + authorH, width: bounds.width - 9,
                                  height: max(0, bounds.height - 4 - authorH))
+    }
+}
+
+/// The link card under a text bubble: the page's title, description and host
+/// behind the same accent bar the reply strip draws. The picture the card may
+/// carry travels as media and is drawn by the media pipeline, not here.
+final class LinkCardView: UIView {
+    private let bar = UIView()
+    private let titleLabel = UILabel()
+    private let descLabel = UILabel()
+    private let hostLabel = UILabel()
+    private let thumbView = UIImageView()
+    /// mediaId|localPath of the loaded thumbnail, so reconfiguring the same
+    /// card does not flash it
+    private var thumbSignature: String?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        bar.layer.cornerRadius = 1.5
+        descLabel.numberOfLines = 2
+        thumbView.contentMode = .scaleAspectFill
+        thumbView.clipsToBounds = true
+        thumbView.layer.cornerRadius = 6
+        thumbView.isHidden = true
+        addSubview(bar)
+        addSubview(titleLabel)
+        addSubview(descLabel)
+        addSubview(hostLabel)
+        addSubview(thumbView)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(title: String, desc: String?, host: String?, image: MediaInfo?, outgoing: Bool) {
+        titleLabel.font = BubbleLayout.linkTitleFont
+        descLabel.font = BubbleLayout.linkDescFont
+        hostLabel.font = BubbleLayout.linkHostFont
+        titleLabel.text = title
+        descLabel.text = desc
+        descLabel.isHidden = desc == nil
+        hostLabel.text = host
+        hostLabel.isHidden = host == nil
+        bar.backgroundColor = outgoing ? UIColor(Theme.outgoingText) : UIColor(Theme.accent)
+        titleLabel.textColor = outgoing ? UIColor(Theme.outgoingText) : UIColor(Theme.accent)
+        descLabel.textColor = outgoing ? UIColor(Theme.outgoingText) : .label
+        hostLabel.textColor = outgoing ? UIColor(Theme.outgoingMeta) : .secondaryLabel
+        loadThumb(image)
+    }
+
+    /// The blurhash stands in while the blob is fetched — the local file on the
+    /// sender, the encrypted blob on the receiver, both through MediaManager.
+    private func loadThumb(_ image: MediaInfo?) {
+        guard let image else {
+            thumbView.isHidden = true
+            thumbSignature = nil
+            return
+        }
+        thumbView.isHidden = false
+        let signature = "\(image.mediaId)|\(image.localPath ?? "")"
+        guard signature != thumbSignature else { return }
+        thumbSignature = signature
+        thumbView.image = image.blurhash
+            .flatMap { BlurHash.decodePixels($0, width: 16, height: 16) }
+            .flatMap { UIImage.fromRGBA($0, width: 16, height: 16) }
+        let side = BubbleLayout.linkThumbSide * UIScreen.main.scale
+        Task { [weak self] in
+            guard let mm = AppState.shared.media,
+                  let url = try? await mm.fetch(image),
+                  let cg = await ImagePipeline.shared.image(at: url, targetPixelSize: CGSize(width: side, height: side))
+            else { return }
+            await MainActor.run {
+                guard let self, self.thumbSignature == signature else { return }
+                self.thumbView.image = UIImage(cgImage: cg)
+            }
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // the heights mirror what BubbleLayout measured the card with
+        let pad = BubbleLayout.linkCardPad
+        let x = BubbleLayout.linkCardLead
+        let side = thumbView.isHidden ? 0 : BubbleLayout.linkThumbSide
+        let w = bounds.width - x - (side > 0 ? side + 8 : 0)
+        let titleH = ceil(titleLabel.font.lineHeight)
+        let hostH = hostLabel.isHidden ? 0 : ceil(hostLabel.font.lineHeight) + 2
+        bar.frame = CGRect(x: 0, y: 2, width: 3, height: bounds.height - 4)
+        titleLabel.frame = CGRect(x: x, y: pad, width: w, height: titleH)
+        descLabel.frame = CGRect(x: x, y: pad + titleH + 2, width: w,
+                                 height: max(0, bounds.height - pad * 2 - titleH - 2 - hostH))
+        hostLabel.frame = CGRect(x: x, y: bounds.height - pad - (hostH - 2), width: w,
+                                 height: max(0, hostH - 2))
+        thumbView.frame = CGRect(x: bounds.width - side, y: (bounds.height - side) / 2,
+                                 width: side, height: side)
     }
 }
 

@@ -66,6 +66,7 @@ struct InputBar: View {
         VStack(spacing: 0) {
             replyEditBanner
             bubbleShaderStrip
+            linkPreviewStrip
             mentionBar
             pendingImagesBar
             HStack(alignment: .bottom, spacing: 8) {
@@ -262,6 +263,39 @@ struct InputBar: View {
         }
     }
 
+    /// The link card waiting to travel with the next send: the page's title and
+    /// host over the field, with a cross that sends the link bare.
+    @ViewBuilder
+    private var linkPreviewStrip: some View {
+        if let card = model.pendingLinkPreview {
+            HStack(spacing: 8) {
+                Image(systemName: "link")
+                    .foregroundStyle(Theme.accent)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(card.title)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Theme.accent)
+                        .lineLimit(1)
+                    Text(card.desc ?? card.host ?? card.url)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Button {
+                    withAnimation(Theme.springFast) { model.dismissLinkPreview() }
+                } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+                }
+                .accessibilityIdentifier("chat.strip.linkPreview.cancel")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .accessibilityIdentifier("chat.strip.linkPreview")
+        }
+    }
+
     @ViewBuilder
     private var replyEditBanner: some View {
         if let target = model.editing ?? model.replyingTo {
@@ -344,13 +378,16 @@ struct InputBar: View {
         let images = pendingImages
         text = ""
         withAnimation(Theme.springFast) { pendingImages = [] }
-        // emptying the field from code raises no delegate callback, so the
-        // typing indicator on the other side is taken down by hand
-        model.textChanged("")
         guard !images.isEmpty else {
+            // the send first: it takes the link card with it, and clearing the
+            // field below would drop that card before it travels
             withAnimation(Theme.springFast) { model.send(text: t) }
+            // emptying the field from code raises no delegate callback, so the
+            // typing indicator on the other side is taken down by hand
+            model.textChanged("")
             return
         }
+        model.textChanged("")
         onSendImages(images, t.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
