@@ -785,7 +785,7 @@ final class ChatViewModel: ObservableObject {
     /// Puts content into the send queue. The queue is local and the network plays
     /// no part here: a failure means the row never made it into the database and
     /// the message is lost, which is worth telling the user about.
-    func enqueue(_ content: ContentPayload, chatId: String? = nil) {
+    func enqueue(_ content: ContentPayload, chatId: String? = nil, scheduledFor: Date? = nil) {
         let target = chatId ?? self.chatId
         if Self.movesFeedToEnd(kind: content.kind, target: target, chatId: self.chatId) {
             returnToBottom()
@@ -793,7 +793,8 @@ final class ChatViewModel: ObservableObject {
         }
         Task { [weak self] in
             do {
-                try await app.engine.enqueue(content: content, chatId: target)
+                try await app.engine.enqueue(content: content, chatId: target,
+                                             scheduledFor: scheduledFor?.timeIntervalSince1970)
             } catch {
                 MsngrLog.outbox.error("failed to enqueue \(content.kind): \(error)")
                 self?.sendFailure = String(localized: "Failed to save message")
@@ -831,7 +832,7 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    func send(text: String) {
+    func send(text: String, scheduledFor: Date? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         PerfTrace.shared.mark("send.tap")
@@ -865,7 +866,7 @@ final class ChatViewModel: ObservableObject {
         }
         replyingTo = nil
         saveDraft(nil, immediately: true)
-        enqueue(c)
+        enqueue(c, scheduledFor: scheduledFor)
         Haptics.light()
     }
 

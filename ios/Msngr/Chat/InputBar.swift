@@ -34,6 +34,8 @@ struct InputBar: View {
     /// the microphone is denied in the system: the only thing left to do from here is
     /// open Settings, so that is where the button leads
     @State private var micDenied = false
+    /// long press on the send button: the schedule-time picker
+    @State private var showSchedulePicker = false
 
     var body: some View {
         if model.peer?.isBlocked == true {
@@ -391,18 +393,41 @@ struct InputBar: View {
         onSendImages(images, t.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    /// The long-press path on the send button: the text goes out at the
+    /// picked time instead of at once. Attachments still go through the
+    /// ordinary send — nothing to schedule them against yet.
+    private func sendScheduled(at date: Date) {
+        guard pendingImages.isEmpty else { return }
+        let t = text
+        guard !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        text = ""
+        withAnimation(Theme.springFast) { model.send(text: t, scheduledFor: date) }
+        model.textChanged("")
+    }
+
     @ViewBuilder
     private var actionButton: some View {
         if hasText || !pendingImages.isEmpty {
-            Button {
-                sendCurrent()
-            } label: {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(Theme.glyph(32, max: 44))
-                    .foregroundStyle(Theme.accent)
-            }
-            .accessibilityIdentifier("chat.send")
-            .transition(.scale.combined(with: .opacity))
+            // a plain Button's own tap gesture wins over an attached
+            // onLongPressGesture, so the long-press-to-schedule path needs a
+            // bare tappable image instead of a Button
+            Image(systemName: "arrow.up.circle.fill")
+                .font(Theme.glyph(32, max: 44))
+                .foregroundStyle(Theme.accent)
+                .contentShape(Rectangle())
+                .accessibilityIdentifier("chat.send")
+                .transition(.scale.combined(with: .opacity))
+                .onTapGesture { sendCurrent() }
+                .simultaneousGesture(
+                    LongPressGesture(minimumDuration: 0.4).onEnded { _ in
+                        guard hasText, pendingImages.isEmpty else { return }
+                        Haptics.medium()
+                        showSchedulePicker = true
+                    }
+                )
+                .sheet(isPresented: $showSchedulePicker) {
+                    SchedulePickerSheet { date in sendScheduled(at: date) }
+                }
         } else if gesture.isLocked {
             Button {
                 handle(gesture.send())
