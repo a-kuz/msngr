@@ -6,14 +6,6 @@ with the commit that closed it.
 
 ## Open
 
-### A shader avatar in the chat list is drawn unclipped on iPad
-Found 2026-08-30 on the first iPad run (fable-ipad, the alfa home): Charlie
-Service's shader avatar renders as a large uncropped square over the
-neighbouring rows instead of the small circle the iPhone list shows —
-the avatar's shader canvas ignores its frame/mask at the iPad cell metrics
-(`/tmp/ipad-list.png` of the run; reproduce with the seeded trio, alfa's
-list, any peer with a shader avatar).
-
 
 ### The server smoke test fails on push timing, on a different check per run
 Found 2026-08-28 by the gate after the shader-messages merge
@@ -292,6 +284,15 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### A shader avatar in the chat list is drawn unclipped on iPad
+Found 2026-08-30 on the first iPad run (fable-ipad, the alfa home): Charlie
+Service's shader avatar rendered as a large uncropped square over the
+neighbouring rows. The list's avatar deliberately let a document draw past
+its circle («moons and glow»), which any document that fills its whole
+canvas turns into a square over other chats' rows. Closed 2026-08-30: the
+list clips the canvas to the avatar's circle, the same as the feed does;
+verified live on the same alfa list — a clean circle with the presence dot.
 
 ### MsngrMac shows the saved-messages chat as «Группа»
 Found 2026-08-30 in passing on a fresh registration in the native Mac

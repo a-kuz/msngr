@@ -231,14 +231,16 @@ struct AvatarView: View {
         GeometryReader { geo in
             ZStack(alignment: .bottomTrailing) {
                 if let shader {
-                    // a shader avatar owns more than its circle: the canvas is
-                    // transparent and twice the circle's size, the document
-                    // draws the disc itself and may send its moons and glow
-                    // past the edge. Live while the budget allows, a held
-                    // frame in a long list.
+                    // The canvas is clipped to the avatar's circle, the same
+                    // way the feed clips it: a row sits shoulder to shoulder
+                    // with other chats, and a document that fills its whole
+                    // canvas must not be drawn over them. The halo a document
+                    // may render past its disc lives on the screens where the
+                    // avatar stands alone. Live while the budget allows, a
+                    // held frame in a long list.
                     ShaderCanvasView(document: shader, running: true, transparent: true, priority: .avatar)
-                        .frame(width: geo.size.width * 2, height: geo.size.height * 2)
-                        .position(x: geo.size.width / 2, y: geo.size.height / 2)
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .clipShape(Circle())
                         .allowsHitTesting(false)
                 }
                 Group {
