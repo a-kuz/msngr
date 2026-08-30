@@ -594,8 +594,15 @@ enum BubbleLayout {
         return f
     }()
 
+    /// A clock glyph in front of the time reads as "not sent yet" the same
+    /// way the failed/sending ticks do, ahead of the time it names.
+    static let scheduledMark = "\u{1F551} "
+
     static func timeString(_ msg: Message) -> String {
-        hmFormatter.string(from: Date(timeIntervalSince1970: msg.serverTs ?? msg.sentAt))
+        if let scheduledFor = msg.scheduledFor {
+            return scheduledMark + hmFormatter.string(from: Date(timeIntervalSince1970: scheduledFor))
+        }
+        return hmFormatter.string(from: Date(timeIntervalSince1970: msg.serverTs ?? msg.sentAt))
     }
 
     static func statusWidth(_ msg: Message, timeString: String) -> CGFloat {
