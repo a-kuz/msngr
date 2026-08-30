@@ -43,6 +43,11 @@ Do not edit `.pbxproj` by hand — the next `xcodegen` will overwrite the edits.
 entitlements of the app and the extension are built from `project.yml` too
 (`entitlements.properties`), so editing `.entitlements` is pointless.
 
+The signing team is machine-local and stays out of git: the project includes
+`ios/Config/Local.xcconfig`, which optionally includes the gitignored
+`ios/Config/Signing.xcconfig` with a single `DEVELOPMENT_TEAM` line. Without
+that file the project still generates and builds for the simulator.
+
 `swift test` in MsngrKit: `CoreIntegrationTests` skip themselves if nothing
 answers on :8787; the rest of the tests need no server.
 
@@ -179,6 +184,12 @@ points, a screenshot is in pixels, and passing one for the other sends the touch
 to empty space — which reads as "the button does not work" and has already cost
 an afternoon of chasing a defect that was not there. Read the coordinate off the
 picture, and use `--tap X Y` to tap and re-shoot in one step.
+
+Every `--tap` also saves an aim shot — the screen right before the touch with
+a red crosshair at the tapped point, as a small JPEG whose path is printed.
+When a tap reads as "the button does not work", look at the aim shot first: it
+says whether the touch landed on the control or beside it, which is the
+points-vs-pixels mistake showing itself.
 
 - Do not touch the owner's simulators: `44CE2242-EBB9-48EA-A605-5988A00E4C31`
   (iPhone 17 dev) and `0E0CF155-B4B7-4794-A963-AD7C76EFDCEA` (iPhone 17 Pro Max).
