@@ -66,6 +66,37 @@ final class FeedKeyWalkTests: XCTestCase {
         XCTAssertFalse(empty.moveKeyWalk(up: true))
     }
 
+    private func own(_ seq: Int, kind: MessageKind = .text, deleted: Bool = false) -> Message {
+        var m = msg(seq)
+        m.isOutgoing = true
+        m.kind = kind
+        m.deletedForAll = deleted
+        return m
+    }
+
+    private func apply(_ vc: MessagesViewController, _ messages: [Message]) {
+        vc.apply(messages.sorted { ($0.seq ?? 0) > ($1.seq ?? 0) }.map {
+            .message($0, tightGap: false, showTail: true, showName: false, authorName: nil)
+        })
+    }
+
+    /// Cmd+↑ picks your newest own text message, stepping over the peer's and
+    /// over what delete-for-all left behind.
+    func testLastOwnEditableSkipsForeignAndDeleted() {
+        let vc = MessagesViewController()
+        vc.loadViewIfNeeded()
+        apply(vc, [own(1), own(2, deleted: true), msg(3)])
+        XCTAssertEqual(vc.lastOwnEditableMessage?.seq, 1)
+    }
+
+    /// A feed with nothing of yours to edit answers with nothing.
+    func testLastOwnEditableCanBeAbsent() {
+        let vc = MessagesViewController()
+        vc.loadViewIfNeeded()
+        apply(vc, [msg(1), own(2, kind: .photo)])
+        XCTAssertNil(vc.lastOwnEditableMessage)
+    }
+
     /// Esc clears the walk and says whether there was one to clear.
     func testClearReportsActivity() {
         let vc = controller([1])

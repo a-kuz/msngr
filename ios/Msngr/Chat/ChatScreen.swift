@@ -45,6 +45,20 @@ struct ChatScreen: View {
         }
     }
 
+    /// Cmd+↑: your newest own text message goes into the edit mode.
+    private func editLastFromKeyboard() {
+        guard let msg = messagesVC.lastOwnEditableMessage else { return }
+        withAnimation(Theme.springFast) { model.editing = msg }
+    }
+
+    /// The composer's Ctrl+Tab / Cmd+[ ] name a direction; this screen adds
+    /// which chat is being left, and the list does the swap.
+    private func performChatSwitch(forward: Bool) {
+        NotificationCenter.default.post(name: .chatSwitchPerform, object: nil,
+                                        userInfo: ["chatId": model.chatId,
+                                                   "forward": forward])
+    }
+
     /// A hidden button takes Esc while nothing holds the keyboard; the focused
     /// composer forwards its own Esc through `.chatEscapePressed` instead.
     private var escapeShortcut: some View {
@@ -239,17 +253,9 @@ struct ChatScreen: View {
             ChatInfoView(model: model)
         }
         .background(escapeShortcut)
-        .onReceive(NotificationCenter.default.publisher(for: .chatEscapePressed)) { _ in
-            escapeWalksBack()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .chatSwitchRequested)) { note in
-            // the composer's Ctrl+Tab / Cmd+[ ] name a direction; this screen
-            // adds which chat is being left, and the list does the swap
-            guard let forward = note.userInfo?["forward"] as? Bool else { return }
-            NotificationCenter.default.post(name: .chatSwitchPerform, object: nil,
-                                            userInfo: ["chatId": model.chatId,
-                                                       "forward": forward])
-        }
+        .modifier(ChatKeyNotifications(onEscape: escapeWalksBack,
+                                       onEditLast: editLastFromKeyboard,
+                                       onSwitch: performChatSwitch))
         .onChange(of: model.editing?.id) { _, _ in
             if let e = model.editing {
                 // entering the mode, and switching which message is edited (A → B),
@@ -1326,4 +1332,27 @@ struct MessagesView: UIViewControllerRepresentable {
 extension Notification.Name {
     static let forwardRequested = Notification.Name("forwardRequested")
     static let editHistoryRequested = Notification.Name("editHistoryRequested")
+}
+
+/// The composer's hardware-key notifications, gathered off the screen's body:
+/// the chain of onReceive closures inline was what pushed the body past the
+/// type-checker's time budget.
+private struct ChatKeyNotifications: ViewModifier {
+    let onEscape: () -> Void
+    let onEditLast: () -> Void
+    let onSwitch: (Bool) -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: .chatEscapePressed)) { _ in
+                onEscape()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .chatEditLastRequested)) { _ in
+                onEditLast()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .chatSwitchRequested)) { note in
+                guard let forward = note.userInfo?["forward"] as? Bool else { return }
+                onSwitch(forward)
+            }
+    }
 }

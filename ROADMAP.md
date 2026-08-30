@@ -968,8 +968,10 @@ build takes it from the environment (`make device TEAM=…`, local.mk).
   MarkdownTests; qa/runs/2026-08-30-keyboard-defects-run.md — the composer
   keys hold on units, the simulator's keyboard pipe being undriveable from
   tests is written down in the report)
-- ⬜ editing your last message from the keyboard (the bare ↑ walks the feed
-  now, so the edit needs its own key)
+- ✅ Cmd+↑ puts your newest own text message into the edit mode — the bare ↑
+  walks the feed, so the edit has its own key; the same gate the context
+  menu's Edit has, skipping delete-for-all leftovers (KeyboardComposerTests,
+  FeedKeyWalkTests)
 - ✅ Ctrl+Tab / Cmd+[ ] switch to the neighbouring chat of the current tab
   from inside a chat, Ctrl+Shift+Tab back (the keys post a direction, the
   open screen names itself, the list swaps the top of the path; pinned by

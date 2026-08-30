@@ -684,6 +684,9 @@ struct GrowingTextView: UIViewRepresentable {
                                            action: #selector(switchChatForward))
             let prevBracket = UIKeyCommand(input: "[", modifierFlags: .command,
                                            action: #selector(switchChatBackward))
+            let editLast = UIKeyCommand(input: UIKeyCommand.inputUpArrow, modifierFlags: .command,
+                                        action: #selector(editLastMessage))
+            editLast.wantsPriorityOverSystemBehavior = true
             let bold = UIKeyCommand(input: "b", modifierFlags: .command,
                                     action: #selector(makeBold))
             let italic = UIKeyCommand(input: "i", modifierFlags: .command,
@@ -693,7 +696,7 @@ struct GrowingTextView: UIViewRepresentable {
             var commands = (super.keyCommands ?? []) + [send, newline, escape, tab,
                                                         nextChat, prevChat,
                                                         nextBracket, prevBracket,
-                                                        bold, italic, link]
+                                                        editLast, bold, italic, link]
             if text.isEmpty {
                 let up = UIKeyCommand(input: UIKeyCommand.inputUpArrow, modifierFlags: [],
                                       action: #selector(arrowUp))
@@ -728,6 +731,10 @@ struct GrowingTextView: UIViewRepresentable {
         @objc private func switchChatBackward() {
             NotificationCenter.default.post(name: .chatSwitchRequested, object: nil,
                                             userInfo: ["forward": false])
+        }
+
+        @objc private func editLastMessage() {
+            NotificationCenter.default.post(name: .chatEditLastRequested, object: nil)
         }
 
         @objc private func arrowUp() { _ = onArrow(true) }
