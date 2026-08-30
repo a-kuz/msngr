@@ -303,14 +303,13 @@ struct ChatListView: View {
 
     private func page(for folder: ChatFolder?) -> some View {
         let items = model.items(in: folder?.id)
-        return List {
-            if folder == nil {
-                if !model.requests.isEmpty { requestsSection }
-                if !model.archived.isEmpty { archiveRow }
-            }
-            chatsSection(items, folder: folder)
-        }
-        .listStyle(.plain)
+        return ChatListCollection(model: model, folder: folder, items: items,
+                                  keySelection: keySelection,
+                                  ownUserId: app.session?.userId ?? "",
+                                  onOpen: { path.append($0) },
+                                  onOpenArchive: { path.append(ArchiveRoute()) },
+                                  onDelete: { deleteCandidate = $0 },
+                                  onNewFolder: { showFolders = true })
         .overlay {
             if model.loaded, let folder, items.isEmpty {
                 folderEmptyState(folder)
@@ -349,102 +348,6 @@ struct ChatListView: View {
         .padding(.bottom, 40)
     }
 
-    private func chatsSection(_ items: [ChatListItem], folder: ChatFolder?) -> some View {
-        ForEach(items) { item in
-            ChatRow(chatId: item.chat.id) {
-                ChatRowView(item: item, ownUserId: app.session?.userId ?? "")
-            }
-            .listRowBackground(keySelection == item.chat.id
-                               ? Theme.accent.opacity(0.12) : nil)
-            .contextMenu { folderMenu(item) }
-            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                if let folder {
-                    Button { model.setChat(item.id, inFolder: folder, included: false) } label: {
-                        Label("Remove from folder", systemImage: "folder.badge.minus")
-                    }.tint(.teal)
-                }
-                Button { model.toggleArchive(item) } label: {
-                    Label("Archive", systemImage: "archivebox.fill")
-                }.tint(.gray)
-                Button { model.toggleMute(item) } label: {
-                    let muted = MuteState.isMuted(muted: item.chat.muted, mutedUntil: item.chat.mutedUntil)
-                    Label(muted ? "Unmute" : "Mute",
-                          systemImage: muted ? "bell.fill" : "bell.slash.fill")
-                }.tint(.indigo)
-                // delete comes last, further from the edge; the chat with
-                // yourself stays, it is cleared from its info screen instead
-                if item.chat.kind != .saved {
-                    Button(role: .destructive) { deleteCandidate = item } label: {
-                        Label("Delete", systemImage: "trash.fill")
-                    }
-                    .accessibilityIdentifier("chatlist.delete")
-                }
-            }
-            .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                Button { model.togglePin(item) } label: {
-                    Label(item.chat.pinned ? "Unpin" : "Pin",
-                          systemImage: item.chat.pinned ? "pin.slash.fill" : "pin.fill")
-                }.tint(.orange)
-            }
-        }
-    }
-
-    /// Sorts the chat into folders without opening the settings; the checkmark
-    /// shows where it already sits, whether by rule or put there by hand.
-    @ViewBuilder
-    private func folderMenu(_ item: ChatListItem) -> some View {
-        if model.folders.isEmpty {
-            Button { showFolders = true } label: {
-                Label("New Folder", systemImage: "folder.badge.plus")
-            }
-        } else {
-            let containing = model.folders(containing: item.id)
-            ForEach(model.folders) { folder in
-                let inside = containing.contains(folder.id)
-                Button { model.setChat(item.id, inFolder: folder, included: !inside) } label: {
-                    Label(folder.title, systemImage: inside ? "checkmark" : "folder")
-                }
-            }
-        }
-    }
-
-    private var requestsSection: some View {
-        Section {
-            ForEach(model.requests) { item in
-                ChatRow(chatId: item.chat.id) {
-                    ChatRowView(item: item, ownUserId: app.session?.userId ?? "")
-                }
-                // no full swipe: the same distance switches the tab, and blocking
-                // by accident takes the chat away for good
-                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                    Button { model.blockRequest(item) } label: {
-                        Label("Block", systemImage: "hand.raised.fill")
-                    }.tint(.red)
-                    Button { model.acceptRequest(item) } label: {
-                        Label("Accept", systemImage: "checkmark")
-                    }.tint(.green)
-                }
-            }
-        } header: {
-            Text("Message requests")
-        }
-    }
-
-    /// The archive goes onto the same path as the chats: a link that carries its
-    /// destination in itself puts the stack out of step with the path, and a chat
-    /// opened out of the archive then arrives one tap late or not at all.
-    private var archiveRow: some View {
-        NavigationLink(value: ArchiveRoute()) {
-            HStack {
-                Image(systemName: "archivebox")
-                    .foregroundStyle(.secondary)
-                    .frame(width: 52, height: 52)
-                Text("Archive").foregroundStyle(.secondary)
-                Spacer()
-                Text("\(model.archived.count)").foregroundStyle(.secondary).font(.subheadline)
-            }
-        }
-    }
 
     /// A search hit: the chat opens and scrolls to the message rather than
     /// stopping at the bottom of the feed.

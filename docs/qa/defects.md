@@ -303,6 +303,18 @@ frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
 
+### Pinning a chat jerks the list: the row flies over its neighbours, a gap stays open
+Reported by the owner 2026-08-30 from an iPhone, two videos, reproducible in
+airplane mode. Three causes stacked: SwiftUI List played the move as a removal
+and an insertion (the row faded in flight, the destination sat open for the
+whole spring); on a UIKit container SwiftUI's double `updateUIView` re-applied
+the same order and cut the slide short; a row just released from a swipe
+started its move from a stale frame. Closed 2026-08-30: the list lives in
+`ChatListCollection` (a UIKit collection list under the same SwiftUI rows), an
+unchanged order is never re-applied, and a swipe-pinned row is reissued as a
+fresh cell before it moves. Verified frame by frame at 30 fps
+(qa/runs/2026-08-30-chatlist-reorder-run).
+
 ### A shader avatar in the chat list is drawn unclipped on iPad
 Found 2026-08-30 on the first iPad run (fable-ipad, the alfa home): Charlie
 Service's shader avatar rendered as a large uncropped square over the

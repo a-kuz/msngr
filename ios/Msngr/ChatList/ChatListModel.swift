@@ -132,9 +132,9 @@ final class ChatListModel: ObservableObject {
                     self.folders = snapshot.folders
                     self.rebuildMembership(pins: snapshot.pins)
                 }
-                // List animates a structural change only when the data moves
-                // inside an animated transaction; a modifier on the ForEach does
-                // not reach its diff. The first fill stays instant on purpose.
+                // the collection slides rows only when the order changes inside an
+                // animated transaction, which is how it tells a reorder from a
+                // content update. The first fill stays instant on purpose.
                 let requests = all.filter { $0.chat.isRequest }
                 let archived = all.filter { $0.chat.archived && !$0.chat.isRequest }
                 let moved = visible.map(\.id) != self.items.map(\.id)
