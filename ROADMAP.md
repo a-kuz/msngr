@@ -886,7 +886,11 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ✅ «История начинается здесь» instead of a placeholder for every unrecoverable message
   (HistoryFeedTests units)
 - 🟡 Data Protection on the storage files (not verified on a locked screen)
-- ⬜ cleaning out stale media by cache size
+- ✅ cleaning out stale media by cache size: the decrypted cache keeps to a
+  user-set ceiling («Данные» → «Лимит кэша медиа», default 1 GB), evicting the
+  files untouched the longest — a cache hit refreshes the file — after every
+  download and at startup (qa/runs/2026-08-30-cache-ceiling-run.md;
+  MediaCacheCeilingTests)
 - ✅ deleting messages automatically once their TTL expires: a sweep on the
   maintenance loop plus an alarm for the nearest deadline, attachments removed
   with the rows; a 20 s timer took an outgoing and an incoming message off the

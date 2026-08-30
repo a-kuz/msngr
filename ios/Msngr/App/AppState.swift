@@ -192,6 +192,8 @@ final class AppState: ObservableObject {
                                  cacheDir: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
                                      .appendingPathComponent("media"),
                                  pendingDir: storage.pendingMediaDir)
+            media?.cacheCeilingBytes = MediaCacheCeiling.current.bytes
+            media?.enforceCacheCeiling()
             var comps = URLComponents(url: Self.httpBase.appendingPathComponent("ws"), resolvingAgainstBaseURL: false)!
             comps.scheme = Self.httpBase.scheme == "https" ? "wss" : "ws"
             comps.queryItems = [URLQueryItem(name: "token", value: s.token)]
