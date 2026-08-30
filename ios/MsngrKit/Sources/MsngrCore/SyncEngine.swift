@@ -87,6 +87,10 @@ public actor SyncEngine {
         try? await db.write { dbc in
             try dbc.execute(sql: "UPDATE outbox SET state = 'ready' WHERE state IN ('inflight', 'waiting')")
         }
+        // a scheduled send whose time passed while the app was gone (or
+        // never started) is picked up by the drain's own query the moment it
+        // connects; the alarm below is only for one still due while running
+        await scheduleNextSend()
         // an AsyncStream serves one iteration: a started-again engine (stop,
         // then start) needs fresh wakeups, or the outbox and action loops
         // consume streams that already ended with their cancelled tasks
@@ -181,6 +185,7 @@ public actor SyncEngine {
         actionTask?.cancel()
         maintenanceTask?.cancel()
         expiryTask?.cancel()
+        sendTimerTask?.cancel()
         await ws.stop()
         connected = false
     }
@@ -1731,7 +1736,7 @@ public actor SyncEngine {
             try dbc.execute(
                 sql: """
                 UPDATE message SET seq = ?, serverTs = ?, status = MAX(status, 1),
-                  failReason = NULL, expiresAt = ?
+                  failReason = NULL, expiresAt = ?, scheduledFor = NULL
                 WHERE clientMsgId = ?
                 """,
                 arguments: [seq, f.ts,
@@ -1994,7 +1999,7 @@ public actor SyncEngine {
     /// works offline. clientMsgId is passed in where a repeat has to collapse
     /// under the server's dedup (a repair request, its answer, a chain ack).
     public func enqueue(content: ContentPayload, chatId: String,
-                        clientMsgId: String = UUID().uuidString) async throws {
+                        clientMsgId: String = UUID().uuidString, scheduledFor: Double? = nil) async throws {
         let now = Date().timeIntervalSince1970
         let isGroupEvent = content.kind == GroupEvent.kind
         var msg = Message(id: clientMsgId, chatId: chatId, fromUserId: ownUserId, sentAt: now,
@@ -2008,11 +2013,13 @@ public actor SyncEngine {
         msg.shader = content.shader
         msg.bubbleShader = content.bubbleShader
         msg.linkPreview = content.preview
+        msg.scheduledFor = scheduledFor
         let payload = try JSONEncoder().encode(content)
         try await db.write { [msg] dbc in
             let visible = !SyncEngine.rowlessKinds.contains(content.kind)
             if visible { try msg.save(dbc) }
-            try OutboxItem(clientMsgId: clientMsgId, chatId: chatId, createdAt: now, payload: payload).save(dbc)
+            try OutboxItem(clientMsgId: clientMsgId, chatId: chatId, createdAt: now, payload: payload,
+                          scheduledFor: scheduledFor).save(dbc)
             // a group event leaves a line but no preview, so the chat stays
             // where the conversation left it
             if visible && !isGroupEvent {
@@ -2028,7 +2035,80 @@ public actor SyncEngine {
                                              userId: self.ownUserId, emoji: content.emoji)
             }
         }
-        outboxWakeup.continuation.yield()
+        if let scheduledFor, scheduledFor > now {
+            await scheduleNextSend()
+        } else {
+            outboxWakeup.continuation.yield()
+        }
+    }
+
+    /// Cancels a scheduled send before its time: it never reached the wire,
+    /// so both the outbox entry and the row it queued disappear with it.
+    public func cancelScheduled(clientMsgId: String) async {
+        try? await db.write { dbc in
+            try dbc.execute(
+                sql: "DELETE FROM outbox WHERE clientMsgId = ? AND scheduledFor IS NOT NULL",
+                arguments: [clientMsgId])
+            try dbc.execute(
+                sql: "DELETE FROM message WHERE clientMsgId = ? AND scheduledFor IS NOT NULL",
+                arguments: [clientMsgId])
+        }
+        await scheduleNextSend()
+    }
+
+    /// Moves a scheduled send to a new time, or (`to: nil`) releases it to go
+    /// out at once, same as an ordinary send.
+    public func rescheduleSend(clientMsgId: String, to: Double?) async {
+        try? await db.write { dbc in
+            try dbc.execute(sql: "UPDATE outbox SET scheduledFor = ? WHERE clientMsgId = ? AND state = 'ready'",
+                            arguments: [to, clientMsgId])
+            try dbc.execute(sql: "UPDATE message SET scheduledFor = ? WHERE clientMsgId = ?",
+                            arguments: [to, clientMsgId])
+        }
+        if let to, to > Date().timeIntervalSince1970 {
+            await scheduleNextSend()
+        } else {
+            wakeOutbox()
+        }
+    }
+
+    /// Rewrites the text of a message still waiting for its time: it has
+    /// never gone out, so this changes the row and the queued payload alike
+    /// rather than going through the `edit` event a delivered message needs.
+    public func editScheduledText(clientMsgId: String, text: String) async {
+        try? await db.write { dbc in
+            try dbc.execute(
+                sql: "UPDATE message SET text = ? WHERE clientMsgId = ? AND scheduledFor IS NOT NULL",
+                arguments: [text, clientMsgId])
+            guard let payload = try Data.fetchOne(dbc, sql: "SELECT payload FROM outbox WHERE clientMsgId = ?",
+                                                  arguments: [clientMsgId]),
+                  var content = try? JSONDecoder().decode(ContentPayload.self, from: payload) else { return }
+            content.text = text
+            let newPayload = try JSONEncoder().encode(content)
+            try dbc.execute(sql: "UPDATE outbox SET payload = ? WHERE clientMsgId = ?",
+                            arguments: [newPayload, clientMsgId])
+        }
+    }
+
+    private var sendTimerTask: Task<Void, Never>?
+
+    /// An alarm for the nearest scheduled send: without it a message due while
+    /// the app sits idle and connected would wait for the next maintenance
+    /// pass (up to 30s) instead of leaving right on time.
+    private func scheduleNextSend() async {
+        sendTimerTask?.cancel()
+        let next = (try? await db.read { dbc in
+            try Double.fetchOne(
+                dbc, sql: "SELECT MIN(scheduledFor) FROM outbox WHERE state = 'ready' AND scheduledFor IS NOT NULL")
+        }) ?? nil
+        guard let next else { return }
+        let delay = max(0, next - Date().timeIntervalSince1970)
+        sendTimerTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000) + 200_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.wakeOutbox()
+            await self?.scheduleNextSend()
+        }
     }
 
     // MARK: - Staged media sends
@@ -2133,7 +2213,11 @@ public actor SyncEngine {
         while connected {
             guard let item = (try? await db.read { dbc in
                 try OutboxItem.fetchAll(
-                    dbc, sql: "SELECT * FROM outbox WHERE state = 'ready' ORDER BY createdAt")
+                    dbc, sql: """
+                    SELECT * FROM outbox
+                    WHERE state = 'ready' AND (scheduledFor IS NULL OR scheduledFor <= ?)
+                    ORDER BY createdAt
+                    """, arguments: [Date().timeIntervalSince1970])
             })?.first(where: { !skipped.contains($0.clientMsgId) }) else { break }
 
             do {
