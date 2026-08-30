@@ -92,14 +92,43 @@ final class SendFailureTests: XCTestCase {
         XCTAssertEqual(left, 0)
     }
 
-    /// A message with no queue entry cannot be repeated, and says so instead of
-    /// pretending it went out.
-    func testRetrySendWithoutQueueEntryIsRefused() async throws {
+    /// A message whose queue entry is gone is sent again from the row itself:
+    /// the entry is rebuilt with the content the feed shows.
+    func testRetrySendRebuildsAMissingQueueEntry() async throws {
+        let db = try AppDatabase.openInMemory()
+        let engine = try makeEngine(db: db)
+        try await seedOutgoing(db, clientMsgId: "cm1")
+        await engine.apply(try errorFrame(SendFailure.sendFailed, clientMsgId: "cm1"))
+        try await db.write { dbc in
+            try dbc.execute(sql: "DELETE FROM outbox WHERE clientMsgId = 'cm1'")
+        }
+
+        let queued = await engine.retrySend(messageId: "cm1")
+
+        XCTAssertTrue(queued)
+        let item = try await db.read { dbc in
+            try OutboxItem.fetchOne(dbc, sql: "SELECT * FROM outbox WHERE clientMsgId = 'cm1'")
+        }
+        let content = try XCTUnwrap(item.map { try JSONDecoder().decode(ContentPayload.self, from: $0.payload) })
+        XCTAssertEqual(content.kind, "text")
+        XCTAssertEqual(content.text, "hello")
+        XCTAssertEqual(item?.state, "ready")
+        let msg = try await db.read { dbc in
+            try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE clientMsgId = 'cm1'")
+        }
+        XCTAssertEqual(msg?.status, .sending)
+        XCTAssertNil(msg?.failReason)
+    }
+
+    /// A message the server already numbered is not a candidate for a repeat:
+    /// it went out, and sending it again would double it.
+    func testRetrySendIgnoresADeliveredMessage() async throws {
         let db = try AppDatabase.openInMemory()
         let engine = try makeEngine(db: db)
         try await seedOutgoing(db, clientMsgId: "cm1")
         try await db.write { dbc in
             try dbc.execute(sql: "DELETE FROM outbox WHERE clientMsgId = 'cm1'")
+            try dbc.execute(sql: "UPDATE message SET seq = 7, status = 1 WHERE clientMsgId = 'cm1'")
         }
 
         let queued = await engine.retrySend(messageId: "cm1")
