@@ -1831,21 +1831,27 @@ public actor SyncEngine {
             arguments: [MessageStatus.failed.rawValue, reason, clientMsgId])
     }
 
-    /// Sends a message that failed once more, from the payload it was written
-    /// with. A message whose queue entry is gone — one this device failed before
-    /// the entry was kept — cannot be repeated and says so by staying failed.
+    /// Sends a message once more: from the payload it was written with while the
+    /// queue entry is still there, and from the row itself when it is not, so an
+    /// outgoing message in the feed can always be sent again.
     @discardableResult
     public func retrySend(messageId: String) async -> Bool {
         let restored = (try? await db.write { dbc -> Bool in
-            guard let clientMsgId = try String.fetchOne(
-                dbc, sql: "SELECT clientMsgId FROM message WHERE id = ? OR clientMsgId = ?",
+            guard let msg = try Message.fetchOne(
+                dbc, sql: "SELECT * FROM message WHERE id = ? OR clientMsgId = ?",
                 arguments: [messageId, messageId]),
-                try Bool.fetchOne(dbc, sql: "SELECT EXISTS(SELECT 1 FROM outbox WHERE clientMsgId = ?)",
-                                  arguments: [clientMsgId]) == true
+                let clientMsgId = msg.clientMsgId,
+                msg.isOutgoing, !msg.deletedForAll, msg.kind != .system, msg.seq == nil
             else { return false }
-            try dbc.execute(
-                sql: "UPDATE outbox SET state = 'ready', attempts = 0 WHERE clientMsgId = ?",
-                arguments: [clientMsgId])
+            if try Bool.fetchOne(dbc, sql: "SELECT EXISTS(SELECT 1 FROM outbox WHERE clientMsgId = ?)",
+                                 arguments: [clientMsgId]) == true {
+                try dbc.execute(
+                    sql: "UPDATE outbox SET state = 'ready', attempts = 0 WHERE clientMsgId = ?",
+                    arguments: [clientMsgId])
+            } else {
+                try OutboxItem(clientMsgId: clientMsgId, chatId: msg.chatId, createdAt: msg.sentAt,
+                               payload: try JSONEncoder().encode(SyncEngine.contentOf(msg))).save(dbc)
+            }
             try dbc.execute(
                 sql: """
                 UPDATE message SET status = ?, failReason = NULL WHERE clientMsgId = ?
@@ -1855,6 +1861,20 @@ public actor SyncEngine {
         }) ?? false
         if restored { wakeOutbox() }
         return restored
+    }
+
+    /// The content a message row was written from: what `enqueue` put into the
+    /// queue, rebuilt from the row when the queue entry no longer exists.
+    static func contentOf(_ msg: Message) -> ContentPayload {
+        var content = ContentPayload(kind: msg.kind.rawValue)
+        content.text = msg.text
+        content.media = msg.media
+        content.album = msg.album
+        content.replyTo = msg.replyTo
+        content.fwd = msg.forward
+        content.shader = msg.shader
+        content.bubbleShader = msg.bubbleShader
+        return content
     }
 
     private func applyReceipt(_ f: WSIncoming) async {

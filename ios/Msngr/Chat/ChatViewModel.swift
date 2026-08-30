@@ -813,11 +813,13 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    /// «Send again» puts the message back into the queue; the bubble's own mark
+    /// carries the outcome, so there is nothing to tell the user here.
     func resend(_ msg: Message) {
         Task { [weak self] in
             guard let self else { return }
             let queued = await self.app.engine.retrySend(messageId: msg.id)
-            if !queued { self.sendFailure = String(localized: "Cannot send this message anymore") }
+            if !queued { MsngrLog.outbox.error("retry refused for \(msg.id, privacy: .public)") }
         }
     }
 
