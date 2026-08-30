@@ -11,6 +11,11 @@ labels every crossing, so a coordinate can be read off the picture:
     scripts/grid.py <udid> --tap 201 421    # tap that point, then shoot again
 
 The labelled numbers are what `idb ui tap <udid> X Y` expects.
+
+Every --tap first saves an aim shot — the screen as it was right before the
+touch, with a red crosshair at the tapped point, as a small JPEG. When a tap
+reads as "the button does not work", look at the aim shot before anything
+else: it answers whether the touch landed on the control or beside it.
 """
 
 import argparse
@@ -74,6 +79,25 @@ def draw_grid(src, dst, step, udid):
     return points, scale
 
 
+def draw_aim(src, dst, point, udid):
+    """A red crosshair at the planned tap point, saved as a small JPEG: the
+    whole picture exists to answer one question — does the mark sit on the
+    control — so it is shrunk until it is cheap to look at."""
+    image = Image.open(src).convert("RGB")
+    scale = device_scale(udid, image)
+    x, y = point[0] * scale, point[1] * scale
+    canvas = ImageDraw.Draw(image)
+    canvas.line([(x, 0), (x, image.height)], fill=(255, 0, 0), width=scale)
+    canvas.line([(0, y), (image.width, y)], fill=(255, 0, 0), width=scale)
+    r = 16 * scale
+    canvas.ellipse([x - r, y - r, x + r, y + r], outline=(255, 0, 0), width=2 * scale)
+    canvas.ellipse([x - 2 * scale, y - 2 * scale, x + 2 * scale, y + 2 * scale],
+                   fill=(255, 0, 0))
+    image.thumbnail((840, 4000))
+    image.save(dst, "JPEG", quality=60)
+    return scale
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("udid")
@@ -84,8 +108,13 @@ def main():
     args = parser.parse_args()
 
     if args.tap:
+        aim = Path(f"/tmp/aim-{args.udid[:8]}.jpg")
+        raw = aim.with_suffix(".raw.png")
+        shoot(args.udid, raw)
+        draw_aim(raw, aim, args.tap, args.udid)
         subprocess.run(["idb", "ui", "tap", "--udid", args.udid,
                         str(args.tap[0]), str(args.tap[1])], check=True)
+        print(f"{aim}  (the screen before the tap, crosshair at {args.tap[0]},{args.tap[1]})")
 
     out = Path(args.out) if args.out else Path(f"/tmp/grid-{args.udid[:8]}.png")
     raw = out.with_name(out.stem + "-raw.png")
