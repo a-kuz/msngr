@@ -25,6 +25,9 @@ struct PrivacyView: View {
     @State private var readReceipts = true
     @State private var typing = true
     @State private var loaded = false
+    /// Local, this device only: whether the composer fetches a typed link's
+    /// page to build the card. Off means no page is ever requested.
+    @AppStorage(LinkPreviewSetting.key) private var linkPreviews = true
 
     var body: some View {
         List {
@@ -57,6 +60,15 @@ struct PrivacyView: View {
                 .accessibilityIdentifier("privacy.typing")
             } footer: {
                 Text("Whether people see when you're typing, and you see when they are.")
+            }
+
+            Section {
+                Toggle(isOn: $linkPreviews) {
+                    Label("Link previews", systemImage: "link")
+                }
+                .accessibilityIdentifier("privacy.linkPreviews")
+            } footer: {
+                Text("To build a preview card this device fetches the page of a link you type. Turned off, no page is ever requested.")
             }
         }
         .navigationTitle("Privacy")

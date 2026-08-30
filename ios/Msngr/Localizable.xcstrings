@@ -61,6 +61,26 @@
         }
       }
     },
+    "Link previews" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Превью ссылок"
+          }
+        }
+      }
+    },
+    "To build a preview card this device fetches the page of a link you type. Turned off, no page is ever requested." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для карточки превью устройство загружает страницу по введённой ссылке. Если выключено, страницы не запрашиваются вовсе."
+          }
+        }
+      }
+    },
     "Format" : {
       "localizations" : {
         "ru" : {

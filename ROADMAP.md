@@ -188,13 +188,19 @@ A ✅ goes in only together with a link to the evidence.
     (qa/runs/2026-08-15-markdown)
   - ✅ selecting and copying part of the text from the menu (qa/runs/2026-08-15-multiselect, 07–08)
 - A link in the text
-  - ⬜ a preview card under the message: the title, the description and the
-    picture. The server never sees the plaintext, so the sender's client fetches
-    the page and carries the card inside the encrypted message
-  - ⬜ the sender decides: the card can be dropped before sending, and a setting
-    keeps the client from fetching pages at all
-  - ⬜ the picture of the card travels like any other media, encrypted, not as a
-    third-party URL the receiver would fetch in the clear
+  - ✅ a preview card under the message: the title, the description and the
+    picture. The server never sees the plaintext: the sender's client fetches
+    the page (Open Graph tags, the <title> fallback) and carries the card
+    inside the encrypted message; the receiver renders, never fetches
+    (qa/runs/2026-08-30-link-preview-run.md; LinkPreviewTests,
+    LinkCardLayoutTests)
+  - ✅ the sender decides: the strip over the composer shows the card with a
+    cross that sends the link bare, and the «Превью ссылок» toggle in Privacy
+    keeps the client from fetching pages at all (same run; the toggle is local
+    to the device)
+  - ✅ the picture of the card travels like any other media, encrypted through
+    R2, uploaded by the outbox worker alongside the message (same run: the
+    thumbnail arrived on the peer with no request to the page's host)
 - Mentions
   - ✅ a mention in the text renders as a link and its tap opens the direct
     chat with that person; the token carries the userId, previews and

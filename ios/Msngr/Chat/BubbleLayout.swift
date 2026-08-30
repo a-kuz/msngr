@@ -19,6 +19,13 @@ struct BubbleLayoutPlan: Equatable {
     var replyFrame: CGRect?
     var replyAuthor: String?
     var replyText: String?
+    /// the link card under the text, in the bubble's coordinates
+    var linkFrame: CGRect?
+    var linkTitle: String?
+    var linkDesc: String?
+    var linkHost: String?
+    var linkURL: String?
+    var linkImage: MediaInfo?
     var forwardFrame: CGRect?
     var forwardText: String?
     var authorNameFrame: CGRect?    // the name shown in groups
@@ -74,6 +81,16 @@ enum BubbleLayout {
         ceil(Theme.Text.replyAuthor.uiFont.lineHeight + Theme.Text.replyText.uiFont.lineHeight) + 6
     }
     static var replyWidth: CGFloat { TypeScale.scaled(220, max: 340) }
+    /// The link card under the text: its labels' fonts and paddings.
+    static var linkTitleFont: UIFont { Theme.Text.replyAuthor.uiFont }
+    static var linkDescFont: UIFont { Theme.Text.replyText.uiFont }
+    static var linkHostFont: UIFont { Theme.Text.replyText.uiFont }
+    static var linkCardWidth: CGFloat { TypeScale.scaled(240, max: 360) }
+    static let linkCardPad: CGFloat = 6
+    /// bar (3) + its gap (6), the same geometry the reply strip draws
+    static let linkCardLead: CGFloat = 9
+    /// The page's picture in the card: a square thumbnail on the right.
+    static var linkThumbSide: CGFloat { TypeScale.scaled(48, max: 68) }
     /// Reaction capsule.
     static var chipHeight: CGFloat { ceil(Theme.Text.reaction.uiFont.lineHeight) + 8 }
     /// Voice waveform and file plate.
@@ -98,7 +115,7 @@ enum BubbleLayout {
     static func cacheKey(_ msg: Message, width: CGFloat, tightGap: Bool, showTail: Bool,
                          showName: Bool, avatarInset: Bool, ownId: String) -> NSString {
         let reactions = msg.reactions.map { "\($0.key)\($0.value.count)\($0.value.contains(ownId) ? "*" : "")" }.sorted().joined()
-        let ver = "\(msg.text ?? "")|\(msg.status.rawValue)|\(msg.edited)|\(reactions)|\(msg.deletedForAll)"
+        let ver = "\(msg.text ?? "")|\(msg.status.rawValue)|\(msg.edited)|\(reactions)|\(msg.deletedForAll)|\(msg.linkPreview?.url ?? "")|\(msg.linkPreview?.image?.mediaId ?? (msg.linkPreview?.image != nil ? "local" : ""))"
         return "\(msg.id)|\(Int(width))|\(TypeScale.category.rawValue)|\(tightGap)|\(showTail)|\(showName)|\(avatarInset)|\(ver.hashValue)" as NSString
     }
 
@@ -253,6 +270,30 @@ enum BubbleLayout {
             y = f.maxY
         }
 
+        // the link card under the text: title, up to two lines of description,
+        // the host — sized here with the same fonts the cell draws them with
+        var linkFrame: CGRect?
+        if let card = msg.linkPreview, msg.kind == .text, !msg.deletedForAll {
+            y += 6
+            let w = min(maxBubbleWidth - 2 * hPadding, linkCardWidth)
+            let thumb = card.image != nil ? linkThumbSide : 0
+            let innerW = w - linkCardLead - (thumb > 0 ? thumb + 8 : 0)
+            var cardH = linkCardPad + ceil(linkTitleFont.lineHeight)
+            if let desc = card.desc, !desc.isEmpty {
+                let bound = (desc as NSString).boundingRect(
+                    with: CGSize(width: innerW, height: 2 * linkDescFont.lineHeight + 2),
+                    options: [.usesLineFragmentOrigin],
+                    attributes: [.font: linkDescFont], context: nil)
+                cardH += 2 + ceil(min(bound.height, 2 * linkDescFont.lineHeight))
+            }
+            if card.host != nil { cardH += 2 + ceil(linkHostFont.lineHeight) }
+            cardH += linkCardPad
+            if thumb > 0 { cardH = max(cardH, thumb + 2 * linkCardPad) }
+            linkFrame = CGRect(x: hPadding, y: y, width: w, height: cardH)
+            contentWidth = max(contentWidth, w)
+            y = linkFrame!.maxY
+        }
+
         // --- Reactions: the capsules are measured first, the status placement depends on them ---
         struct Chip { let emoji: String; let count: Int; let mine: Bool; let width: CGFloat }
         let chipH = chipHeight
@@ -308,7 +349,7 @@ enum BubbleLayout {
             let chipsWidth = chips.reduce(0) { $0 + $1.width } + CGFloat(chips.count - 1) * chipGap
             // voice and file: capsules always get their own rows under the waveform or the
             // file plate; the inline "text + reactions + time" row exists for text only
-            let inlineAll = voiceFrame == nil && singleLineText
+            let inlineAll = voiceFrame == nil && singleLineText && linkFrame == nil
                 && lastLine + gap + chipsWidth + gap + statusWidth <= maxContent
 
             if inlineAll {
@@ -363,7 +404,12 @@ enum BubbleLayout {
             // code block it always moves to a line of its own
             let lastLineWidth = Self.endsWithCodeBlock(at)
                 ? maxContent : Self.lastLineWidth(at, maxWidth: maxContent)
-            if lastLineWidth + gap + statusWidth <= maxContent {
+            if linkFrame != nil {
+                // the card fills the bubble's bottom, so the time goes under it
+                statusFrame = CGRect(x: hPadding + contentWidth - statusWidth,
+                                     y: y + 2, width: statusWidth, height: statusH)
+                y += statusH + 2
+            } else if lastLineWidth + gap + statusWidth <= maxContent {
                 // placement 1 of 3: the status sits in the last line of the text
                 let bubbleContentW = max(contentWidth, lastLineWidth + gap + statusWidth)
                 contentWidth = bubbleContentW
@@ -435,6 +481,12 @@ enum BubbleLayout {
             replyFrame: replyFrame,
             replyAuthor: msg.replyTo != nil ? replyAuthorName : nil,
             replyText: msg.replyTo.map(Self.replyPreviewText),
+            linkFrame: linkFrame,
+            linkTitle: linkFrame != nil ? msg.linkPreview?.title : nil,
+            linkDesc: linkFrame != nil ? msg.linkPreview?.desc : nil,
+            linkHost: linkFrame != nil ? msg.linkPreview?.host : nil,
+            linkURL: linkFrame != nil ? msg.linkPreview?.url : nil,
+            linkImage: linkFrame != nil ? msg.linkPreview?.image : nil,
             forwardFrame: forwardFrame,
             forwardText: msg.deletedForAll ? nil : msg.forward.map { Self.forwardedFrom($0.fromName) },
             authorNameFrame: authorNameFrame, authorName: authorName,

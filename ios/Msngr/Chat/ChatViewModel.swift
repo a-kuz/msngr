@@ -58,6 +58,14 @@ final class ChatViewModel: ObservableObject {
     @Published var editing: Message?
     /// A shader chosen for the next text message, painted behind its bubble.
     @Published var pendingBubbleShader: ShaderDocument?
+    /// The card of the first link in the field, ready to travel with the send.
+    @Published var pendingLinkPreview: LinkPreview?
+    /// The cross was pressed for the link the field currently holds.
+    private var linkPreviewDismissed = false
+    private var linkPreviewURL: URL?
+    /// A link whose page gave no card: not asked again while the text keeps it.
+    private var linkPreviewFailedURL: URL?
+    private var linkPreviewTask: Task<Void, Never>?
     /// The pinned rows in pin order, the newest pin last.
     @Published var pinnedMessages: [Message] = []
     /// Which pin the bar shows: an index into `pinnedMessages`. Reset to the
@@ -841,6 +849,16 @@ final class ChatViewModel: ObservableObject {
         c.text = tokenized
         c.bubbleShader = pendingBubbleShader
         pendingBubbleShader = nil
+        // the card goes out only while the text still carries its link
+        if let card = pendingLinkPreview, !linkPreviewDismissed,
+           LinkPreviewFetcher.firstLink(in: tokenized) == linkPreviewURL {
+            c.preview = card
+        }
+        linkPreviewTask?.cancel()
+        linkPreviewTask = nil
+        pendingLinkPreview = nil
+        linkPreviewURL = nil
+        linkPreviewDismissed = false
         c.replyTo = replyingTo.map {
             ReplyPreview(seq: $0.seq, authorId: $0.fromUserId,
                          text: Self.previewText($0), kind: $0.kind.rawValue)
@@ -1045,6 +1063,7 @@ final class ChatViewModel: ObservableObject {
 
     func textChanged(_ text: String) {
         saveDraft(text.isEmpty ? nil : text)
+        updateLinkPreview(for: text)
         guard chat?.iAccepted != false else { return }
         if text.isEmpty {
             // the field is empty again: clear the typing indicator on the other side at once
@@ -1056,6 +1075,74 @@ final class ChatViewModel: ObservableObject {
             lastTypingSent = Date()
             Task { await app.engine.sendTyping(chatId: chatId, kind: "text") }
         }
+    }
+
+    // MARK: - Link preview
+
+    /// Follows the field: the first link of the text gets its card fetched on
+    /// the sender's device, shown over the input with a cross, and sent inside
+    /// the encrypted payload. The cross holds for that link until the text
+    /// stops carrying it.
+    func updateLinkPreview(for text: String) {
+        guard LinkPreviewSetting.enabled else { return }
+        let url = LinkPreviewFetcher.firstLink(in: text)
+        if url != linkPreviewURL {
+            linkPreviewTask?.cancel()
+            linkPreviewTask = nil
+            linkPreviewDismissed = false
+            linkPreviewURL = url
+            pendingLinkPreview = nil
+        }
+        guard let url, !linkPreviewDismissed, pendingLinkPreview == nil,
+              url != linkPreviewFailedURL, linkPreviewTask == nil else { return }
+        linkPreviewTask = Task { [weak self] in
+            // half a second of quiet, so half-typed URLs are not fetched
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled else { return }
+            let got = await LinkPreviewFetcher.fetchCard(for: url)
+            guard let self, self.linkPreviewURL == url else { return }
+            self.linkPreviewTask = nil
+            guard let got else {
+                self.linkPreviewFailedURL = url
+                return
+            }
+            guard !self.linkPreviewDismissed else { return }
+            self.pendingLinkPreview = got.preview
+            if let imageURL = got.imageURL {
+                await self.attachLinkImage(imageURL, for: url)
+            }
+        }
+    }
+
+    /// The card's picture: downloaded and downscaled on this device, stashed as
+    /// pending media for the outbox worker to encrypt and upload with the send.
+    private func attachLinkImage(_ imageURL: URL, for link: URL) async {
+        guard let raw = await LinkPreviewFetcher.fetchImage(imageURL),
+              let prepared = ImageProcessor.prepareForSending(raw, maxDimension: 640),
+              let localName = try? app.media.stash(prepared.data, mime: "image/jpeg")
+        else { return }
+        var info = MediaInfo(type: "photo", mediaId: "", key: "", hash: "",
+                             size: prepared.data.count, mime: "image/jpeg")
+        info.localPath = localName
+        info.w = Int(prepared.size.width)
+        info.h = Int(prepared.size.height)
+        if let px = ImageProcessor.rgbaPixels(prepared.data) {
+            info.blurhash = BlurHash.encode(pixels: px.pixels, width: px.width, height: px.height)
+        }
+        // the field may have moved on while the picture was downloading
+        guard linkPreviewURL == link, !linkPreviewDismissed else {
+            app.media.removePending(localName: localName)
+            return
+        }
+        pendingLinkPreview?.image = info
+    }
+
+    /// The cross on the strip: this link goes out bare.
+    func dismissLinkPreview() {
+        linkPreviewDismissed = true
+        linkPreviewTask?.cancel()
+        linkPreviewTask = nil
+        pendingLinkPreview = nil
     }
 
     /// The draft follows the typing at a distance. It lives on the chat row, and the
@@ -1275,4 +1362,13 @@ extension RelativeDateTimeFormatter {
         f.unitsStyle = .short
         return f
     }()
+}
+
+/// Whether the composer builds link cards at all — local to this device,
+/// switched in Privacy. Off means the client never fetches a typed link's page.
+enum LinkPreviewSetting {
+    static let key = "linkPreviewsEnabled"
+    static var enabled: Bool {
+        UserDefaults.standard.object(forKey: key) as? Bool ?? true
+    }
 }

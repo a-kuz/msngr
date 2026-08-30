@@ -1553,6 +1553,7 @@ public actor SyncEngine {
             msg.forward = content.fwd
             msg.shader = content.shader
             msg.bubbleShader = content.bubbleShader
+            msg.linkPreview = content.preview
             let ttl = try Int.fetchOne(dbc, sql: "SELECT ttlSeconds FROM chat WHERE id = ?", arguments: [chatId]) ?? 0
             if ttl > 0 { msg.expiresAt = Date().timeIntervalSince1970 + Double(ttl) }
             try msg.save(dbc)
@@ -1625,7 +1626,8 @@ public actor SyncEngine {
                 msg.replyTo = content.replyTo
                 msg.forward = content.fwd
                 msg.shader = content.shader
-            msg.bubbleShader = content.bubbleShader
+                msg.bubbleShader = content.bubbleShader
+                msg.linkPreview = content.preview
                 // a historic copy of a disappearing message is stamped the same way
                 // as one that arrived live: otherwise paging up would bring back
                 // what has already expired, and it would stay forever
@@ -1874,6 +1876,7 @@ public actor SyncEngine {
         content.fwd = msg.forward
         content.shader = msg.shader
         content.bubbleShader = msg.bubbleShader
+        content.preview = msg.linkPreview
         return content
     }
 
@@ -2004,6 +2007,7 @@ public actor SyncEngine {
         msg.forward = content.fwd
         msg.shader = content.shader
         msg.bubbleShader = content.bubbleShader
+        msg.linkPreview = content.preview
         let payload = try JSONEncoder().encode(content)
         try await db.write { [msg] dbc in
             let visible = !SyncEngine.rowlessKinds.contains(content.kind)
@@ -2300,6 +2304,12 @@ public actor SyncEngine {
                 obsolete.forEach { media?.removePending(localName: $0) }
             }
         }
+        if let img = content.preview?.image, needsUpload(img) {
+            let (uploaded, obsolete) = try await uploadOne(img, clientMsgId: item.clientMsgId, index: nil)
+            content.preview?.image = uploaded
+            try await persistUploadedPayload(content, clientMsgId: item.clientMsgId)
+            obsolete.forEach { media?.removePending(localName: $0) }
+        }
         return content
     }
 
@@ -2340,11 +2350,12 @@ public actor SyncEngine {
         let payload = try enc.encode(content)
         let mediaJSON = content.media.flatMap { try? enc.encode($0) }.flatMap { String(data: $0, encoding: .utf8) }
         let albumJSON = content.album.flatMap { try? enc.encode($0) }.flatMap { String(data: $0, encoding: .utf8) }
+        let previewJSON = content.preview.flatMap { try? enc.encode($0) }.flatMap { String(data: $0, encoding: .utf8) }
         try await db.write { dbc in
             try dbc.execute(sql: "UPDATE outbox SET payload = ? WHERE clientMsgId = ?",
                             arguments: [payload, clientMsgId])
-            try dbc.execute(sql: "UPDATE message SET media = ?, album = ? WHERE clientMsgId = ?",
-                            arguments: [mediaJSON, albumJSON, clientMsgId])
+            try dbc.execute(sql: "UPDATE message SET media = ?, album = ?, linkPreview = ? WHERE clientMsgId = ?",
+                            arguments: [mediaJSON, albumJSON, previewJSON, clientMsgId])
         }
     }
 
