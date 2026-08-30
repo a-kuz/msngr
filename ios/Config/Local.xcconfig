@@ -1,0 +1,4 @@
+// Machine-local build settings. Signing.xcconfig is gitignored and holds the
+// signing team of whoever builds here; without it the project builds unsigned
+// for the simulator.
+#include? "Signing.xcconfig"
