@@ -57,7 +57,43 @@ struct MsngrApp: App {
     }
 }
 
-final class AppDelegate: NSObject, UIApplicationDelegate {
+final class AppDelegate: UIResponder, UIApplicationDelegate {
+    /// The Mac menu bar (and the iPad shortcut HUD) carries the commands the
+    /// keyboard already answers. Each item names a selector the responder
+    /// chain resolves — the focused composer implements them — so an item is
+    /// enabled exactly where its key already works. The keystrokes themselves
+    /// stay in the composer's keyCommands; the menu adds the clickable face.
+    override func buildMenu(with builder: UIMenuBuilder) {
+        super.buildMenu(with: builder)
+        guard builder.system == .main else { return }
+        var previous = UIMenu.Identifier.edit
+        for menu in Self.keyboardMenus() {
+            builder.insertSibling(menu, afterMenu: previous)
+            previous = menu.identifier
+        }
+    }
+
+    /// The menus buildMenu inserts, on their own so a test can hold them.
+    static func keyboardMenus() -> [UIMenu] {
+        let chats = UIMenu(title: String(localized: "Chats"), options: [], children: [
+            UICommand(title: String(localized: "Next chat"),
+                      action: #selector(GrowingTextView.PasteAwareTextView.switchChatForward)),
+            UICommand(title: String(localized: "Previous chat"),
+                      action: #selector(GrowingTextView.PasteAwareTextView.switchChatBackward)),
+            UICommand(title: String(localized: "Edit last message"),
+                      action: #selector(GrowingTextView.PasteAwareTextView.editLastMessage)),
+        ])
+        let format = UIMenu(title: String(localized: "Format"), options: [], children: [
+            UICommand(title: String(localized: "Bold"),
+                      action: #selector(GrowingTextView.PasteAwareTextView.makeBold)),
+            UICommand(title: String(localized: "Italic"),
+                      action: #selector(GrowingTextView.PasteAwareTextView.makeItalic)),
+            UICommand(title: String(localized: "Link"),
+                      action: #selector(GrowingTextView.PasteAwareTextView.makeLink)),
+        ])
+        return [chats, format]
+    }
+
     func application(_ application: UIApplication,
                      didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         let token = deviceToken.map { String(format: "%02x", $0) }.joined()

@@ -723,17 +723,19 @@ struct GrowingTextView: UIViewRepresentable {
 
         @objc private func tabPressed() {}
 
-        @objc private func switchChatForward() {
+        // internal, not private: the Mac menu bar names the same selectors,
+        // and the responder chain finds them here while the composer is focused
+        @objc func switchChatForward() {
             NotificationCenter.default.post(name: .chatSwitchRequested, object: nil,
                                             userInfo: ["forward": true])
         }
 
-        @objc private func switchChatBackward() {
+        @objc func switchChatBackward() {
             NotificationCenter.default.post(name: .chatSwitchRequested, object: nil,
                                             userInfo: ["forward": false])
         }
 
-        @objc private func editLastMessage() {
+        @objc func editLastMessage() {
             NotificationCenter.default.post(name: .chatEditLastRequested, object: nil)
         }
 
@@ -742,13 +744,13 @@ struct GrowingTextView: UIViewRepresentable {
 
         // MARK: - Formatting (the mini-markdown the feed draws)
 
-        @objc private func makeBold() { toggleWrap("**") }
-        @objc private func makeItalic() { toggleWrap("*") }
+        @objc func makeBold() { toggleWrap("**") }
+        @objc func makeItalic() { toggleWrap("*") }
 
         /// Cmd+K: the selection becomes `[selection](url)`. A URL sitting on
         /// the clipboard fills the target; otherwise the caret lands between
         /// the parentheses to type it.
-        @objc private func makeLink() {
+        @objc func makeLink() {
             let range = selectedRange
             let selected = (text as NSString).substring(with: range)
             let clip = UIPasteboard.general.string?
