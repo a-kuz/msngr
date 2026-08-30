@@ -974,8 +974,13 @@ build takes it from the environment (`make device TEAM=…`, local.mk).
   from inside a chat, Ctrl+Shift+Tab back (the keys post a direction, the
   open screen names itself, the list swaps the top of the path; pinned by
   KeyboardComposerTests over the same undriveable simulator keyboard pipe)
-- ⬜ the iPad layout reviewed screen by screen (the shader avatar defect from
-  the first run is in defects.md)
+- ✅ the iPad layout reviewed screen by screen: the list, the feed with a
+  shader background and stickers, settings, backup, chat info, attachments,
+  the sticker sheet, the picker and the media viewer all hold at 834 pt; the
+  shader-avatar square from the first run is fixed (the list clips to the
+  circle, like the feed) — qa/runs/2026-08-30-ipad-review-run.md. The feed
+  spans the full width with bubbles at the left edge; a bubble-column cap is
+  the owner's design call.
 - ⬜ a menu bar on the Mac (UIMenuBuilder) with the same commands
 - ⬜ a signed run on a real Mac as «Designed for iPad»
 
