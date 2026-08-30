@@ -92,8 +92,8 @@ def delta(value, prev, unit=""):
 
 def table(data):
     colored = sys.stdout.isatty()
-    print(paint(f"{'day':<12}{'code':>7}{'':9}  {'✅':>4} {'🟡':>3} {'⬜':>3} "
-                f"{'🐞':>3} {'✔':>3}   roadmap",
+    print(paint(f"{'   ':<12}{'code':>7}{'':9}  {'✅':>3} {'🟡':>2} {'⬜':>2} "
+                f"{'🐞':>2} {'✔':>3}   ",
                 "bold", colored))
     total = max(r["done"] + r["unwatched"] + r["missing"] for r in data)
     prev = None
@@ -111,9 +111,9 @@ def table(data):
         prev = r
     last = data[-1]
     pct = 100 * last["done"] // total if total else 0
-    print(paint(f"{'':12}{'█ done':>10}   ▒ built, not watched   · not built"
-                f"   — {last['done']}/{total} ({pct}%)"
-                f"   🐞 {last['defects_open']} open, {last['defects_fixed']} fixed",
+    print()
+    print(paint(f"🚀 {last['done']}/{total} ({pct}%)"
+                f"    🐞 {last['defects_open']} open, {last['defects_fixed']} fixed",
                 "dim", colored))
 
 
