@@ -4,7 +4,7 @@ import { authenticate } from "./auth";
 import {
   ulid, newToken, sha256hex, json, err, directChatName, b64url, provisionCode,
   isValidUsername, isValidDisplayName, USERNAME_QUARANTINE_MS, verifyEd25519, readPrivacy,
-  hiddenAvatarOwners, isContactOf,
+  hiddenAvatarOwners, privacyAllows,
 } from "./util";
 import type { LastSeenVisibility } from "./types";
 import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "./version";
@@ -483,8 +483,7 @@ app.get("/api/users/:id", async (c) => {
   if (!u) return err("not_found", 404);
   if (userId !== targetId) {
     const tier = (await readPrivacy(c.env.DB, targetId)).avatar;
-    if (tier === "nobody" ||
-        (tier === "contacts" && !(await isContactOf(c.env, targetId, userId)))) {
+    if (!(await privacyAllows(c.env, targetId, userId, "avatar", tier))) {
       u.bio = null;
       u.avatar_id = null;
     }
@@ -508,9 +507,9 @@ async function presenceVisible(env: Env, viewerId: string, targetId: string): Pr
   if (!j.ok || !j.state) return false;
   if (!j.state.members.some((m) => m.userId === targetId && m.accepted)) return false;
   const targetPrivacy = await readPrivacy(env.DB, targetId);
-  if (targetPrivacy.lastSeen === "nobody") return false;
-  if (targetPrivacy.lastSeen === "contacts" &&
-      !(await isContactOf(env, targetId, viewerId))) return false;
+  if (!(await privacyAllows(env, targetId, viewerId, "last_seen", targetPrivacy.lastSeen))) {
+    return false;
+  }
   const viewerPrivacy = await readPrivacy(env.DB, viewerId);
   if (viewerPrivacy.lastSeen === "nobody") return false;
   return true;
@@ -689,18 +688,14 @@ async function addableToGroup(
 ): Promise<{ addable: string[]; invited: string[] }> {
   const addable: string[] = [];
   const invited: string[] = [];
-  if (!ids.length) return { addable, invited };
-  const placeholders = ids.map(() => "?").join(",");
-  const rows = await env.DB.prepare(
-    `SELECT user_id, group_invites FROM privacy_settings
-     WHERE group_invites != 'everyone' AND user_id IN (${placeholders})`
-  ).bind(...ids).all<{ user_id: string; group_invites: string }>();
-  const tier = new Map(rows.results.map((r) => [r.user_id, r.group_invites]));
   for (const id of ids) {
-    const t = tier.get(id);
-    if (id === actor || t === undefined) { addable.push(id); continue; }
-    if (t === "nobody") { invited.push(id); continue; }
-    if (await isContactOf(env, id, actor)) addable.push(id); else invited.push(id);
+    if (id === actor) { addable.push(id); continue; }
+    const tier = (await readPrivacy(env.DB, id)).groupInvites;
+    if (await privacyAllows(env, id, actor, "group_invites", tier)) {
+      addable.push(id);
+    } else {
+      invited.push(id);
+    }
   }
   return { addable, invited };
 }
@@ -1023,8 +1018,7 @@ app.get("/api/avatar/:id", async (c) => {
     .bind(mediaId).first<{ id: string }>();
   if (owner && owner.id !== c.get("auth").userId) {
     const tier = (await readPrivacy(c.env.DB, owner.id)).avatar;
-    if (tier === "nobody" ||
-        (tier === "contacts" && !(await isContactOf(c.env, owner.id, c.get("auth").userId)))) {
+    if (!(await privacyAllows(c.env, owner.id, c.get("auth").userId, "avatar", tier))) {
       return err("not_found", 404);
     }
   }
@@ -1057,16 +1051,12 @@ async function discoverableBy(
   env: Env, searcherId: string, ids: string[]
 ): Promise<Set<string>> {
   const allowed = new Set(ids);
-  if (!ids.length) return allowed;
-  const placeholders = ids.map(() => "?").join(",");
-  const rows = await env.DB.prepare(
-    `SELECT user_id, phone_discovery FROM privacy_settings
-     WHERE phone_discovery != 'everyone' AND user_id IN (${placeholders})`
-  ).bind(...ids).all<{ user_id: string; phone_discovery: string }>();
-  for (const row of rows.results) {
-    if (row.user_id === searcherId) continue;
-    if (row.phone_discovery === "nobody") { allowed.delete(row.user_id); continue; }
-    if (!(await isContactOf(env, row.user_id, searcherId))) allowed.delete(row.user_id);
+  for (const id of ids) {
+    if (id === searcherId) continue;
+    const tier = (await readPrivacy(env.DB, id)).phoneDiscovery;
+    if (!(await privacyAllows(env, id, searcherId, "phone_discovery", tier))) {
+      allowed.delete(id);
+    }
   }
   return allowed;
 }
@@ -1139,6 +1129,50 @@ const LAST_SEEN_VALUES: LastSeenVisibility[] = ["everyone", "contacts", "nobody"
 app.get("/api/privacy", async (c) => {
   const { userId } = c.get("auth");
   return json({ ok: true, privacy: await readPrivacy(c.env.DB, userId) });
+});
+
+const EXCEPTION_SETTINGS = ["last_seen", "avatar", "phone_discovery", "group_invites"];
+
+// Named-people overrides of the tiers: who is always shown the setting and
+// who never is, whatever the tier says.
+app.get("/api/privacy/exceptions", async (c) => {
+  const { userId } = c.get("auth");
+  const rows = await c.env.DB.prepare(
+    `SELECT e.setting, e.peer_id, e.allow, u.username, u.display_name
+     FROM privacy_exceptions e JOIN users u ON u.id = e.peer_id
+     WHERE e.user_id = ?`
+  ).bind(userId).all<{
+    setting: string; peer_id: string; allow: number; username: string; display_name: string;
+  }>();
+  return json({ ok: true, exceptions: rows.results.map((r) => ({
+    setting: r.setting, peerId: r.peer_id, allow: r.allow === 1,
+    username: r.username, displayName: r.display_name,
+  })) });
+});
+
+app.post("/api/privacy/exceptions", async (c) => {
+  const { userId } = c.get("auth");
+  const b = await c.req.json<{ setting?: string; peerId?: string; allow?: boolean | null }>();
+  if (!b.setting || !EXCEPTION_SETTINGS.includes(b.setting) || !b.peerId || b.peerId === userId) {
+    return err("bad_exception");
+  }
+  const peer = await c.env.DB.prepare("SELECT 1 FROM users WHERE id = ?").bind(b.peerId).first();
+  if (!peer) return err("not_found", 404);
+  if (b.allow === null || b.allow === undefined) {
+    await c.env.DB.prepare(
+      "DELETE FROM privacy_exceptions WHERE user_id = ? AND setting = ? AND peer_id = ?"
+    ).bind(userId, b.setting, b.peerId).run();
+  } else {
+    await c.env.DB.prepare(
+      `INSERT INTO privacy_exceptions (user_id, setting, peer_id, allow) VALUES (?,?,?,?)
+       ON CONFLICT(user_id, setting, peer_id) DO UPDATE SET allow = excluded.allow`
+    ).bind(userId, b.setting, b.peerId, b.allow ? 1 : 0).run();
+  }
+  // an avatar override changes what this peer already holds from the last
+  // profile frame; the broadcast is one card for all, so it only helps when
+  // the change makes the card MORE hidden — an allowed peer refetches
+  if (b.setting === "avatar") await broadcastProfile(c.env, userId);
+  return json({ ok: true });
 });
 
 // The setting itself is what's enforced, not just hidden client-side: a hidden

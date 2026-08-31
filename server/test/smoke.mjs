@@ -587,6 +587,32 @@ check("contacts-tier bio shows to a contact",
 check("contacts-tier bio blanks to a stranger",
   noraToBob.ok && noraToBob.user.bio === null, JSON.stringify(noraToBob.user));
 
+// 15b2. Named exceptions override the tiers in both directions
+// deny: alice is nora's contact, yet an avatar deny row blanks the bio to her
+await api("/api/privacy/exceptions", { token: noraA.token,
+  body: { setting: "avatar", peerId: alice.userId, allow: false } });
+const deniedCard = await api("/api/users/" + noraA.userId, { token: alice.token });
+check("a deny exception beats the contacts tier",
+  deniedCard.ok && deniedCard.user.bio === null, JSON.stringify(deniedCard.user));
+await api("/api/privacy/exceptions", { token: noraA.token,
+  body: { setting: "avatar", peerId: alice.userId, allow: null } });
+const restoredCard = await api("/api/users/" + noraA.userId, { token: alice.token });
+check("clearing the exception returns to the tier",
+  restoredCard.ok && restoredCard.user.bio === "ask my contacts",
+  JSON.stringify(restoredCard.user));
+// allow: bob is a stranger, yet a discovery allow row lets him find her
+await api("/api/privacy", { token: noraA.token, body: { phoneDiscovery: "nobody" } });
+await api("/api/privacy/exceptions", { token: noraA.token,
+  body: { setting: "phone_discovery", peerId: bob.userId, allow: true } });
+const foundByBob = await api("/api/contacts/discover", { token: bob.token,
+  body: { hashes: [laterHash] } });
+check("an allow exception beats the nobody tier",
+  foundByBob.ok && foundByBob.matches.length === 1 && foundByBob.matches[0].id === noraA.userId,
+  JSON.stringify(foundByBob.matches));
+await api("/api/privacy/exceptions", { token: noraA.token,
+  body: { setting: "phone_discovery", peerId: bob.userId, allow: null } });
+await api("/api/privacy", { token: noraA.token, body: { phoneDiscovery: "everyone" } });
+
 // 15c. Who can add me to a group: the protected are not added, the response
 // names them so the client can offer the invite link instead
 await api("/api/privacy", { token: noraA.token, body: { groupInvites: "nobody" } });
