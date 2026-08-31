@@ -264,6 +264,12 @@ enum BubbleLayout {
             voiceFrame = CGRect(x: hPadding, y: y, width: w, height: h) // a contact borrows the voiceFrame slot
             contentWidth = max(contentWidth, w)
             y += h
+        case .call:
+            let w = min(attachmentWidth, maxBubbleWidth - 2 * hPadding)
+            let h = attachmentHeight
+            voiceFrame = CGRect(x: hPadding, y: y, width: w, height: h) // a call borrows the voiceFrame slot
+            contentWidth = max(contentWidth, w)
+            y += h
         case .location:
             // a map card in the shared slot, wide and 5:3
             let w = min(attachmentWidth + 60, maxBubbleWidth - 2 * hPadding)
@@ -566,6 +572,7 @@ enum BubbleLayout {
         case .album: return String(localized: "🖼 Album")
         case .contact: return "👤 " + (reply.text.isEmpty ? String(localized: "Contact") : reply.text)
         case .location: return "📍 " + (reply.text.isEmpty ? String(localized: "Location") : reply.text)
+        case .call: return String(localized: "📞 Call")
         case .shader: return "✨ " + (reply.text.isEmpty ? String(localized: "Shader") : reply.text)
         case .sticker: return "✨ " + (reply.text.isEmpty ? String(localized: "Sticker") : reply.text)
         default: return reply.text.isEmpty ? String(localized: "Message") : reply.text

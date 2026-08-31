@@ -54,17 +54,38 @@ final class SignalLog: @unchecked Sendable {
     var types: [CallSignal.SignalType] { all.map(\.0.type) }
 }
 
+/// Collects the call logs a manager publishes.
+final class LogSink: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [(CallLog, String)] = []
+    func record(_ log: CallLog, chatId: String) {
+        lock.lock(); items.append((log, chatId)); lock.unlock()
+    }
+    var all: [(CallLog, String)] {
+        lock.lock(); defer { lock.unlock() }
+        return items
+    }
+}
+
 final class CallManagerTests: XCTestCase {
     func makeManager(dialTimeout: TimeInterval = 60)
         -> (CallManager, SignalLog, FakeTransport) {
+        let (m, log, t, _) = makeManagerWithLogs(dialTimeout: dialTimeout)
+        return (m, log, t)
+    }
+
+    func makeManagerWithLogs(dialTimeout: TimeInterval = 60)
+        -> (CallManager, SignalLog, FakeTransport, LogSink) {
         let log = SignalLog()
+        let logs = LogSink()
         let transport = FakeTransport()
         let manager = CallManager(
             ownUserId: "me",
             sendSignal: { log.record($0, chatId: $1) },
+            sendLog: { logs.record($0, chatId: $1) },
             makeTransport: { transport },
             dialTimeout: dialTimeout)
-        return (manager, log, transport)
+        return (manager, log, transport, logs)
     }
 
     func event(_ signal: CallSignal, chatId: String = "chat1", from: String = "peer",
@@ -234,6 +255,53 @@ final class CallManagerTests: XCTestCase {
         let state = await manager.current
         XCTAssertEqual(state.phase, .idle)
         XCTAssertTrue(log.all.isEmpty)
+    }
+
+    func testCallerLogsCompletedWithDuration() async {
+        let (manager, log, transport, logs) = makeManagerWithLogs()
+        await manager.startCall(chatId: "chat1", peerUserId: "peer")
+        await manager.handle(event(CallSignal(type: .answer, callId: log.all[0].0.callId, sdp: "a")))
+        transport.emit(.connected)
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        await manager.hangUp()
+        XCTAssertEqual(logs.all.count, 1)
+        XCTAssertEqual(logs.all[0].0.outcome, .completed)
+        XCTAssertEqual(logs.all[0].0.callId, log.all[0].0.callId)
+        XCTAssertNotNil(logs.all[0].0.duration)
+        XCTAssertEqual(logs.all[0].1, "chat1")
+    }
+
+    func testCallerLogsMissedOnTimeoutAndCancel() async {
+        let (manager, _, _, logs) = makeManagerWithLogs(dialTimeout: 0.2)
+        await manager.startCall(chatId: "chat1", peerUserId: "peer")
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        XCTAssertEqual(logs.all.map { $0.0.outcome }, [.missed])
+        XCTAssertNil(logs.all[0].0.duration)
+
+        await manager.reset()
+        await manager.startCall(chatId: "chat1", peerUserId: "peer")
+        await manager.hangUp() // gave up while dialing
+        XCTAssertEqual(logs.all.map { $0.0.outcome }, [.missed, .missed])
+    }
+
+    func testCallerLogsDeclined() async {
+        let (manager, log, _, logs) = makeManagerWithLogs()
+        await manager.startCall(chatId: "chat1", peerUserId: "peer")
+        await manager.handle(event(CallSignal(type: .end, callId: log.all[0].0.callId, reason: .decline)))
+        XCTAssertEqual(logs.all.map { $0.0.outcome }, [.declined])
+    }
+
+    /// Only the caller publishes: the callee's side of the same call must not
+    /// produce a second row.
+    func testCalleeNeverLogs() async {
+        let (manager, _, _, logs) = makeManagerWithLogs()
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "s")))
+        await manager.decline()
+        await manager.reset()
+        await manager.handle(event(CallSignal(type: .offer, callId: "c2", sdp: "s")))
+        await manager.accept()
+        await manager.handle(event(CallSignal(type: .end, callId: "c2", reason: .hangup)))
+        XCTAssertTrue(logs.all.isEmpty)
     }
 
     func testMutePassesThrough() async {

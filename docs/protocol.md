@@ -374,7 +374,7 @@ asked for it.
 
 - `kind`: `text` | `photo` | `video` | `file` | `voice` | `album` | `contact` |
   `shader` | `sticker` | `edit` | `reaction` | `disappearing` | `groupEvent` |
-  `call` | `repairRequest` | `repair` | `skdAck`;
+  `call` | `callLog` | `repairRequest` | `repair` | `skdAck`;
 - `shader` — `ShaderDocument`: `{name?, passes: [{id, kind, code, inputs}], haptics?}`,
   a Shadertoy project as user code. `id` is `image`, `A`–`D` or `common`;
   `kind` is `image` | `buffer` | `common`; `code` is GLSL in the Shadertoy
@@ -418,6 +418,14 @@ asked for it.
   reconnect cannot start a ghost call. Media itself never touches the server:
   the peers connect directly over DTLS-SRTP, and the SDP inside the E2EE
   envelope is what authenticates the endpoints;
+- `callLog` is the record a finished call leaves in the feed, in `text` as
+  `call:` followed by JSON (`CallLog`): `{outcome: "completed"|"missed"|
+  "declined"|"busy"|"failed", duration?, callId}`. The caller alone sends it,
+  once, when the call is over (`clientMsgId` is `clog:<callId>`, so a retry
+  collapses under the dedup). Like a group event it is service on the wire
+  with a feed row on both sides — no unread count and no push — but unlike
+  one it does move the chat up the list: a missed call is exactly the thing
+  the list has to show;
 - `to` — an addressed frame: the envelope is encrypted pairwise to a single
   member, even in a group. The whole repair protocol travels this way.
 

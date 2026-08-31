@@ -553,6 +553,10 @@ struct ChatScreen: View {
                      onShowPollVoters: { pollVotersMessage = $0 },
                      onOpenContact: { shownContact = $0 },
                      onOpenLocation: { shownLocation = $0 },
+                     onRedial: {
+                         guard model.chat?.kind == .direct, let peerId = model.peer?.id else { return }
+                         Task { await AppState.shared.callManager?.startCall(chatId: chatId, peerUserId: peerId) }
+                     },
                      onDateTap: { showCalendar = true })
     }
 
@@ -1474,6 +1478,7 @@ struct MessagesView: UIViewControllerRepresentable {
     var onShowPollVoters: (Message) -> Void
     var onOpenContact: (Message) -> Void
     var onOpenLocation: (Message) -> Void
+    var onRedial: () -> Void
     var onDateTap: () -> Void
 
     func makeUIViewController(context: Context) -> MessagesViewController {
@@ -1571,6 +1576,7 @@ struct MessagesView: UIViewControllerRepresentable {
         vc.onShowPollVoters = onShowPollVoters
         vc.onOpenContact = onOpenContact
         vc.onOpenLocation = onOpenLocation
+        vc.onRedial = onRedial
         vc.onDateTap = onDateTap
         vc.pinnedSeqs = Set(model.chat?.pinnedSeqs ?? [])
         vc.ownUserId = model.ownUserId
