@@ -19,7 +19,10 @@ enum MediaViewerPresenter {
 
     /// `sourceView` is the tapped thumbnail; when it carries a picture the
     /// viewer opens with a hero flight from its frame instead of a fade.
-    static func present(message: Message, startIndex: Int, from sourceView: UIView? = nil) {
+    /// `onEdited` arms the markup button on photos: the marked-up copy is
+    /// handed back and the viewer closes.
+    static func present(message: Message, startIndex: Int, from sourceView: UIView? = nil,
+                        onEdited: ((UIImage) -> Void)? = nil) {
         guard window == nil,
               let scene = UIApplication.shared.connectedScenes
                   .compactMap({ $0 as? UIWindowScene })
@@ -32,7 +35,8 @@ enum MediaViewerPresenter {
                                    cornerRadius: iv.layer.cornerRadius)
         }
         let host = UIHostingController(
-            rootView: MediaViewerView(message: message, startIndex: startIndex, hero: hero)
+            rootView: MediaViewerView(message: message, startIndex: startIndex, hero: hero,
+                                      onEdited: onEdited)
             { animatedOut in dismiss(fade: !animatedOut) })
         host.view.backgroundColor = .clear
         let w = UIWindow(windowScene: scene)
@@ -71,6 +75,8 @@ struct MediaViewerView: View {
     let message: Message
     let startIndex: Int
     let hero: MediaViewerHero?
+    /// Set on photos opened from a chat: the marked-up copy goes here.
+    let onEdited: ((UIImage) -> Void)?
     /// `true` — the hero already animated the window out; `false` — fade the window.
     let onDismiss: (Bool) -> Void
     @State private var index: Int
@@ -80,11 +86,14 @@ struct MediaViewerView: View {
     /// Once the flight in has finished, the real pages take over from the overlay.
     @State private var heroDone: Bool
     @State private var closing = false
+    @State private var markingUp = false
 
-    init(message: Message, startIndex: Int, hero: MediaViewerHero?, onDismiss: @escaping (Bool) -> Void) {
+    init(message: Message, startIndex: Int, hero: MediaViewerHero?,
+         onEdited: ((UIImage) -> Void)? = nil, onDismiss: @escaping (Bool) -> Void) {
         self.message = message
         self.startIndex = startIndex
         self.hero = hero
+        self.onEdited = onEdited
         self.onDismiss = onDismiss
         _index = State(initialValue: startIndex)
         _heroDone = State(initialValue: hero == nil)
@@ -156,6 +165,29 @@ struct MediaViewerView: View {
                             .background(.black.opacity(0.4), in: Circle())
                     }
                     Spacer()
+                    if onEdited != nil, let image = editableImage {
+                        Button {
+                            markingUp = true
+                        } label: {
+                            Image(systemName: "pencil.tip.crop.circle")
+                                .font(Theme.glyph(17, max: 24).weight(.semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: TypeScale.scaled(40, max: 54),
+                                       height: TypeScale.scaled(40, max: 54))
+                                .background(.black.opacity(0.4), in: Circle())
+                        }
+                        .accessibilityIdentifier("viewer.markup")
+                        .fullScreenCover(isPresented: $markingUp) {
+                            MarkupEditorScreen(image: image,
+                                               onDone: { edited in
+                                                   markingUp = false
+                                                   onEdited?(edited)
+                                                   onDismiss(false)
+                                               },
+                                               onCancel: { markingUp = false })
+                                .ignoresSafeArea()
+                        }
+                    }
                     if let url = cachedURL {
                         ShareLink(item: url) {
                             Image(systemName: "square.and.arrow.up")
@@ -172,6 +204,15 @@ struct MediaViewerView: View {
             }
             .opacity(dragOffset == .zero ? 1 : 0)
         }
+    }
+
+    /// The shown photo as a picture for the markup editor: photos only — a
+    /// video has no still to draw on and a GIF would lose its motion.
+    private var editableImage: UIImage? {
+        guard index < medias.count else { return nil }
+        let media = medias[index]
+        guard media.type == "photo", media.mime != "image/gif", let url = cachedURL else { return nil }
+        return UIImage(contentsOfFile: url.path)
     }
 
     /// The flying picture: the thumbnail scaled between its bubble frame and the

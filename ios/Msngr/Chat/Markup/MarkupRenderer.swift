@@ -187,25 +187,32 @@ enum MarkupRenderer {
 
     private static func blurred(_ image: UIImage, region: CGRect) -> UIImage {
         guard let cg = image.cgImage, region.width > 1, region.height > 1 else { return image }
+        let size = CGSize(width: cg.width, height: cg.height)
         let full = CIImage(cgImage: cg)
         let radius = max(6, min(region.width, region.height) / 8)
         let blurredFull = full.clampedToExtent()
             .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: radius])
             .cropped(to: full.extent)
-        // Core Image counts from the bottom-left corner
-        let ciRegion = CGRect(x: region.minX, y: full.extent.height - region.maxY,
-                              width: region.width, height: region.height)
-            .intersection(full.extent)
-        guard !ciRegion.isEmpty,
-              let patch = ciContext.createCGImage(blurredFull.cropped(to: ciRegion), from: ciRegion)
-        else { return image }
-        let size = CGSize(width: cg.width, height: cg.height)
-        return bitmap(size: size) { _ in
-            image.draw(in: CGRect(origin: .zero, size: size))
-            UIImage(cgImage: patch).draw(in: CGRect(x: ciRegion.minX,
-                                                    y: size.height - ciRegion.maxY,
-                                                    width: ciRegion.width, height: ciRegion.height))
+        // the region's edge falls off smoothly: the mix mask is the region's
+        // rectangle blurred by its own feather, so the blur fades into the
+        // picture instead of ending at a visible seam
+        let feather = max(8, min(region.width, region.height) / 5)
+        let maskBitmap = bitmap(size: size) { ctx in
+            UIColor.black.setFill()
+            ctx.fill(CGRect(origin: .zero, size: size))
+            UIColor.white.setFill()
+            ctx.fill(region)
         }
+        guard let maskCG = maskBitmap.cgImage else { return image }
+        let mask = CIImage(cgImage: maskCG).clampedToExtent()
+            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: feather])
+            .cropped(to: full.extent)
+        let blended = blurredFull.applyingFilter("CIBlendWithMask", parameters: [
+            kCIInputBackgroundImageKey: full,
+            kCIInputMaskImageKey: mask,
+        ])
+        guard let out = ciContext.createCGImage(blended, from: full.extent) else { return image }
+        return UIImage(cgImage: out)
     }
 
     private static func scaled(_ p: CGPoint, _ px: CGFloat) -> CGPoint {

@@ -24,6 +24,9 @@ struct ChatScreen: View {
     @State private var textBeforeEdit: String?
     @State private var showScrollDown = false
     @State private var photoItems: [PhotosPickerItem] = []
+    /// Picked and pasted images waiting in the input bar, open to markup
+    /// before they leave.
+    @State private var pendingImages: [UIImage] = []
     @State private var showFilePicker = false
     @State private var forwardMessage: Message?
     @State private var forwardingSelection = false
@@ -145,6 +148,7 @@ struct ChatScreen: View {
                                  onSendImages: { images, caption in
                                      Task { await sendImages(images, caption: caption) }
                                  },
+                                 pendingImages: $pendingImages,
                                  onArrowKey: { up in messagesVC.moveKeyWalk(up: up) },
                                  onEmptyReturn: {
                                      guard let msg = messagesVC.keyWalkMessage else { return false }
@@ -295,7 +299,16 @@ struct ChatScreen: View {
         .onChange(of: photoItems) { _, items in
             guard !items.isEmpty else { return }
             photoItems = []
-            Task { await sendPicked(items) }
+            // plain photos wait in the bar, open to markup and a caption; a
+            // video or a GIF has nothing to mark up and keeps the instant path
+            let editable = items.allSatisfy { item in
+                !item.supportedContentTypes.contains { $0.conforms(to: .movie) || $0.conforms(to: .gif) }
+            }
+            if editable {
+                Task { await stagePicked(items) }
+            } else {
+                Task { await sendPicked(items) }
+            }
         }
         .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.item]) { result in
             if case .success(let url) = result {
@@ -469,7 +482,12 @@ struct ChatScreen: View {
                      sendTick: model.sendTick,
                      selecting: model.selecting, selectedIds: model.selection.ids,
                      onTapMedia: { (msg: Message, idx: Int, view: UIView) in
-                         MediaViewerPresenter.present(message: msg, startIndex: idx, from: view)
+                         MediaViewerPresenter.present(message: msg, startIndex: idx, from: view,
+                                                      onEdited: { image in
+                             // the marked-up copy waits in the bar as a new
+                             // attachment; the original message stays as it was
+                             withAnimation(Theme.springFast) { pendingImages.append(image) }
+                         })
                      },
                      onTapShader: { (msg: Message) in
                          if let document = msg.shader { ShaderPlayerPresenter.present(document: document) }
@@ -990,6 +1008,18 @@ struct ChatScreen: View {
         var c = ContentPayload(kind: kind.rawValue)
         if isAlbum { c.album = finals } else { c.media = finals[0] }
         try? await app.engine.finalizeMedia(chatId: chatId, clientMsgId: clientMsgId, content: c)
+    }
+
+    /// Picked photos land in the input bar as waiting attachments: the sender
+    /// can mark them up and add a caption before they leave.
+    private func stagePicked(_ items: [PhotosPickerItem]) async {
+        for item in items {
+            let image = await retrying("load picked photo") { () async -> UIImage? in
+                guard let data = try? await item.loadTransferable(type: Data.self) else { return nil }
+                return UIImage(data: data)
+            }
+            withAnimation(Theme.springFast) { pendingImages.append(image) }
+        }
     }
 
     /// Images pasted from the clipboard take the same path as ones chosen in the picker.

@@ -19,6 +19,9 @@ struct InputBar: View {
     @ObservedObject var videoRecorder: RoundVideoRecorder
     var onSendRoundVideo: (URL, TimeInterval) -> Void
     var onSendImages: ([UIImage], String) -> Void
+    /// Picked and pasted images waiting in the bar; the chat screen fills it
+    /// from the photo picker, the paste path appends here directly.
+    @Binding var pendingImages: [UIImage]
     /// ↑/↓ from the hardware keyboard over an empty composer (true is up):
     /// the chat screen walks the feed with it.
     var onArrowKey: (Bool) -> Bool = { _ in false }
@@ -32,8 +35,8 @@ struct InputBar: View {
     /// where the take is in its life: asked for, running, locked, dropped
     @State private var gesture = RecordingGesture()
     @State private var dragOffset: CGFloat = 0
-    /// images from the clipboard waiting to be sent
-    @State private var pendingImages: [UIImage] = []
+    /// which pending image is open in the markup editor
+    @State private var markupTarget: MarkupTarget?
     @State private var pasteboardHasImage = MessageClipboard.hasImages
     /// the microphone is denied in the system: the only thing left to do from here is
     /// open Settings, so that is where the button leads
@@ -364,18 +367,21 @@ struct InputBar: View {
         }
     }
 
-    /// Previews of the pasted images: tapping the cross drops an attachment.
+    /// Previews of the waiting images: the cross drops an attachment, a tap
+    /// on the picture opens the markup editor over it.
     @ViewBuilder
     private var pendingImagesBar: some View {
         if !pendingImages.isEmpty {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(Array(pendingImages.enumerated()), id: \.offset) { pair in
-                        PendingImageThumb(image: pair.element) {
+                        PendingImageThumb(image: pair.element,
+                                          onEdit: { markupTarget = MarkupTarget(index: pair.offset) },
+                                          onRemove: {
                             withAnimation(Theme.springFast) {
                                 _ = pendingImages.remove(at: pair.offset)
                             }
-                        }
+                        })
                     }
                 }
                 .padding(.horizontal, 12)
@@ -384,6 +390,17 @@ struct InputBar: View {
             .frame(height: 68)
             .accessibilityIdentifier("chat.pendingAttachments")
             .transition(.move(edge: .bottom).combined(with: .opacity))
+            .fullScreenCover(item: $markupTarget) { target in
+                if target.index < pendingImages.count {
+                    MarkupEditorScreen(image: pendingImages[target.index],
+                                       onDone: { edited in
+                                           pendingImages[target.index] = edited
+                                           markupTarget = nil
+                                       },
+                                       onCancel: { markupTarget = nil })
+                        .ignoresSafeArea()
+                }
+            }
         }
     }
 
@@ -606,9 +623,16 @@ struct InputBar: View {
     }
 }
 
-/// Attachment thumbnail in the input bar, with a cross to remove it.
+/// Which pending image the markup editor is open over.
+struct MarkupTarget: Identifiable {
+    let index: Int
+    var id: Int { index }
+}
+
+/// Attachment thumbnail in the input bar: a tap opens markup, the cross removes it.
 struct PendingImageThumb: View {
     let image: UIImage
+    let onEdit: () -> Void
     let onRemove: () -> Void
 
     var body: some View {
@@ -617,6 +641,8 @@ struct PendingImageThumb: View {
             .scaledToFill()
             .frame(width: 56, height: 56)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .onTapGesture(perform: onEdit)
             .overlay(alignment: .topTrailing) {
                 Button(action: onRemove) {
                     Image(systemName: "xmark.circle.fill")
