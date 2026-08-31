@@ -304,6 +304,45 @@ final class CallManagerTests: XCTestCase {
         XCTAssertTrue(logs.all.isEmpty)
     }
 
+    /// The callee's privacy gate: a shut-out caller is answered busy and the
+    /// device never rings; an allowed one rings as usual.
+    func testPrivacyGateAnswersBusyWithoutRinging() async {
+        let log = SignalLog()
+        let manager = CallManager(
+            ownUserId: "me",
+            sendSignal: { log.record($0, chatId: $1) },
+            mayCall: { $0 == "friend" },
+            makeTransport: { FakeTransport() })
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "s"), from: "stranger"))
+        var state = await manager.current
+        XCTAssertEqual(state.phase, .idle)
+        XCTAssertEqual(log.types, [.end])
+        XCTAssertEqual(log.all[0].0.reason, .busy)
+        XCTAssertEqual(log.all[0].0.callId, "c1")
+
+        await manager.handle(event(CallSignal(type: .offer, callId: "c2", sdp: "s"), from: "friend"))
+        state = await manager.current
+        XCTAssertEqual(state.phase, .ringing)
+        XCTAssertEqual(state.callId, "c2")
+    }
+
+    /// Glare is not an incoming call: whoever this device just dialed is
+    /// allowed to converge into one call whatever the privacy tier says.
+    func testPrivacyGateDoesNotBreakGlare() async {
+        let log = SignalLog()
+        let transport = FakeTransport()
+        let manager = CallManager(
+            ownUserId: "me",
+            sendSignal: { log.record($0, chatId: $1) },
+            mayCall: { _ in false },
+            makeTransport: { transport })
+        await manager.startCall(chatId: "chat1", peerUserId: "peer")
+        await manager.handle(event(CallSignal(type: .offer, callId: "!first", sdp: "their-offer")))
+        let state = await manager.current
+        XCTAssertEqual(state.phase, .connecting)
+        XCTAssertEqual(state.callId, "!first")
+    }
+
     func testMutePassesThrough() async {
         let (manager, _, transport) = makeManager()
         await manager.startCall(chatId: "chat1", peerUserId: "peer")
