@@ -426,11 +426,19 @@ public final class APIClient: @unchecked Sendable {
 
     // MARK: - Chats
 
-    public struct CreateChatResponse: Decodable { public let chatId: String }
+    public struct CreateChatResponse: Decodable {
+        public let chatId: String
+        /// True when the chat was already there and the call only reopened it.
+        public let existed: Bool?
+    }
     public func createChat(kind: String, memberIds: [String], title: String?) async throws -> String {
+        try await createChatDetailed(kind: kind, memberIds: memberIds, title: title).chatId
+    }
+    public func createChatDetailed(kind: String, memberIds: [String],
+                                   title: String?) async throws -> CreateChatResponse {
         struct Body: Encodable { let kind: String; let memberIds: [String]; let title: String? }
         return try await post("api/chats", body: Body(kind: kind, memberIds: memberIds, title: title),
-                              as: CreateChatResponse.self).chatId
+                              as: CreateChatResponse.self)
     }
 
     public struct ChatsSnapshot: Decodable {
