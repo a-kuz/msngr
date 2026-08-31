@@ -286,10 +286,17 @@ A ✅ goes in only together with a link to the evidence.
     spinner for the long fetch, unreadable types going to the share sheet
     (qa/runs/2026-08-21-file-preview, a 98.9 MB PDF of 642 pages)
 - Polls
-  - ⬜ creating one: the question, the options, single or multiple choice
-  - ⬜ voting, the result as a share of the votes, retracting a vote
-  - ⬜ an anonymous poll and one with the voters visible; the count is the server's
-    but the wording stays encrypted, so a poll is a message kind of its own
+  - ✅ creating one: the question, two to ten options, single or multiple
+    choice (the run 2026-08-31-poll)
+  - ✅ voting, the result as a share of the votes with animated bars,
+    retracting a vote, and revoting — every tap sends the voter's whole
+    current choice, so a replay lands the same state (PollTests, the run)
+  - 🟡 anonymity: the flag hides the voters everywhere, only the shares and
+    the count show. The count is counted on every device from the encrypted
+    `pollVote` events, not by the server — the server is E2EE-blind, so a
+    server-side count would mean plaintext votes; anonymity is a display
+    promise, the events always name their sender. (Left: showing the voters
+    of a non-anonymous poll by name.)
 - System messages
   - ✅ «Код безопасности собеседника изменился» inserted into the feed on a
     real key change (qa/runs/2026-08-27-key-change-run.md)
