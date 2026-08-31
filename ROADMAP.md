@@ -846,7 +846,10 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     the sound block in smoke)
   - ✅ separate defaults for direct chats and for groups (the same run; the
     pickers in Settings → Notifications)
-  - ⬜ a sound of its own for a person, applied wherever they write
+  - ✅ a sound of its own for a person, applied wherever they write: keyed by
+    the sender on the receiver's object, between the chat's explicit sound
+    and the shape default; the picker on the direct chat's info screen
+    (the person-sound cases in smoke; live pick 2026-09-01)
   - ⬜ a sound of its own for a mention, louder than the chat's own
   - ✅ a muted chat still notifying on a mention or a reply to you
     (qa/runs/2026-08-28-mute-reply; NotificationDecisionTests,
