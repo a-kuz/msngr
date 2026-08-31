@@ -67,11 +67,12 @@ gate on its own: `make check DEV_UDID=14C70E21-A23A-4492-8E6A-113AE0BC6B6D`
 (gate-runner).
 
 The UI smoke (MsngrUITests — launch, registration, sending text, drafts, the
-long-press menu, the attach menu) is its own target: `make uicheck
-DEV_UDID=<yours>`, run when the change touches the UI layer, on the agent's
-own simulator. It sits outside the gate because its reds have almost always
-been the host — a stale database on a shared device, a starved runner, a
-missing fixture user — not the code.
+long-press menu, the attach menu) is its own target, `make uicheck
+DEV_UDID=<yours>`, and is not part of the process: no change requires it.
+In its whole history every red has been the test or the host — a stale
+database on a shared device, a starved runner, locators tied to one locale,
+a missing fixture user — never the product (the owner's call, 2026-08-31).
+Run it only when explicitly asked, on the agent's own simulator.
 
 ### One change at a time
 
