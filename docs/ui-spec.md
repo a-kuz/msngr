@@ -444,6 +444,21 @@ not move the chat up the list.
 In a group where only admins may write, the input bar is replaced by «Писать в
 этой группе могут только администраторы».
 
+## Calls
+
+A direct chat's header carries a phone glyph next to the magnifier. Tapping it
+dials the peer: the call takes the whole screen — avatar, name, and a status
+line that reads «Вызов…», then «Соединение…», then the running duration once
+media flows. The callee sees the same screen with «Входящий звонок» and two
+buttons, «Отклонить» and «Принять»; a ringing call anywhere in the app rides
+over every screen, under the passcode lock only. During the call the two
+controls are «Без звука» and «Завершить». An ended call names its outcome
+(«Звонок завершён», «Занято», «Нет ответа»…) for a moment and dismisses
+itself. One call at a time: a second incoming offer is answered busy without
+disturbing the screen, and both sides dialing each other at once settles into
+one call with no human involved. The ring works while the app is running; a
+push that wakes a closed app for a call is not built yet.
+
 ## Chat info
 
 For a direct chat: the safety number (60 digits in groups of 5, fetching the

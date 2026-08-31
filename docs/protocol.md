@@ -372,7 +372,7 @@ asked for it.
 
 - `kind`: `text` | `photo` | `video` | `file` | `voice` | `album` | `contact` |
   `shader` | `sticker` | `edit` | `reaction` | `disappearing` | `groupEvent` |
-  `repairRequest` | `repair` | `skdAck`;
+  `call` | `repairRequest` | `repair` | `skdAck`;
 - `shader` — `ShaderDocument`: `{name?, passes: [{id, kind, code, inputs}], haptics?}`,
   a Shadertoy project as user code. `id` is `image`, `A`–`D` or `common`;
   `kind` is `image` | `buffer` | `common`; `code` is GLSL in the Shadertoy
@@ -408,6 +408,14 @@ asked for it.
   (`GroupEvent`): the verb, the display name of whoever acted, and the name and
   id of the member it concerns. The names travel with the event so a line about
   someone who has already left still reads;
+- `call` carries one step of a call's WebRTC signaling in `text` as JSON
+  (`CallSignal`): `{type: "offer"|"answer"|"ice"|"end", callId, sdp?,
+  candidates?, reason?}`. It is a service frame with no feed row; delivery on
+  the receiver is in-memory only, straight to the call engine. An offer older
+  than 60 seconds is dropped instead of ringing, so a journal replay after a
+  reconnect cannot start a ghost call. Media itself never touches the server:
+  the peers connect directly over DTLS-SRTP, and the SDP inside the E2EE
+  envelope is what authenticates the endpoints;
 - `to` — an addressed frame: the envelope is encrypted pairwise to a single
   member, even in a group. The whole repair protocol travels this way.
 
