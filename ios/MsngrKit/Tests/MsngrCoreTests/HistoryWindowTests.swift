@@ -203,4 +203,54 @@ final class HistoryWindowTests: XCTestCase {
         let wider = try db.read { dbc in try HistoryWindow.exhaustedGapSeqs(dbc, chatId: "c1", floor: 1) }
         XCTAssertEqual(wider, [5, 25])
     }
+
+    // MARK: - Chat row preview
+
+    /// A backfilled message never replaces the row's preview with an older
+    /// seq, even when its server timestamp is not behind the message already
+    /// shown.
+    func testLastMessageHoldsTheHighestSeqRegardlessOfTimestamp() throws {
+        let db = try AppDatabase.openInMemory()
+        try seedChat(db, lastSeq: 10, syncedSeq: 0)
+        try db.write { dbc in
+            // the freshest message lands first, as it does right after an
+            // install, before the older history has been backfilled
+            var latest = Message(id: "m10", chatId: "c1", fromUserId: "peer",
+                                 sentAt: 100, kind: .text, text: "latest",
+                                 status: .sent, isOutgoing: false)
+            latest.seq = 10
+            latest.serverTs = 100
+            try latest.save(dbc)
+        }
+        XCTAssertEqual(try db.read { try HistoryWindow.lastMessage($0, chatId: "c1")?.seq }, 10)
+
+        try db.write { dbc in
+            // the backfill writes an older seq whose server timestamp is not
+            // behind the one already shown (clock skew between senders, or a
+            // coarse timestamp shared by messages seeded together)
+            var older = Message(id: "m5", chatId: "c1", fromUserId: "peer",
+                                sentAt: 50, kind: .text, text: "older",
+                                status: .sent, isOutgoing: false)
+            older.seq = 5
+            older.serverTs = 150
+            try older.save(dbc)
+        }
+        XCTAssertEqual(try db.read { try HistoryWindow.lastMessage($0, chatId: "c1")?.seq }, 10)
+    }
+
+    /// An own send still queued (no seq yet) previews as the newest thing in
+    /// the chat, above every seq the server has numbered.
+    func testLastMessagePrefersAnUnsentSendOverNumberedHistory() throws {
+        let db = try AppDatabase.openInMemory()
+        try seedChat(db, lastSeq: 10, syncedSeq: 10)
+        try seedMessages(db, seqs: Array(1...10))
+        try db.write { dbc in
+            var pending = Message(id: "pending", chatId: "c1", fromUserId: "me",
+                                  sentAt: 1000, kind: .text, text: "sending…",
+                                  status: .sending, isOutgoing: true)
+            pending.seq = nil
+            try pending.save(dbc)
+        }
+        XCTAssertEqual(try db.read { try HistoryWindow.lastMessage($0, chatId: "c1")?.id }, "pending")
+    }
 }

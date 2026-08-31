@@ -102,11 +102,7 @@ final class ChatListModel: ObservableObject {
                             peers[chat.id] = peer
                         }
                     }
-                    if let m = try Message.fetchOne(
-                        dbc, sql: """
-                        SELECT * FROM message WHERE chatId = ? AND kind != 'system'
-                        ORDER BY COALESCE(serverTs, sentAt) DESC LIMIT 1
-                        """, arguments: [chat.id]) {
+                    if let m = try HistoryWindow.lastMessage(dbc, chatId: chat.id) {
                         lasts[chat.id] = m
                     }
                 }

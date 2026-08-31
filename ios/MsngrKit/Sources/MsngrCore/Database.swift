@@ -516,6 +516,13 @@ public enum AppDatabase {
                 t.add(column: "scheduledFor", .double)
             }
         }
+        m.registerMigration("v29-dropActivityIndex") { db in
+            // The chat list previewed a row by timestamp, which let a backfilled
+            // message with an equal-or-later serverTs than the one already shown
+            // replace it with an older seq. The preview now reads the feed order
+            // (`message_on_chat_feedOrder`), so this index has no reader left.
+            try db.execute(sql: "DROP INDEX message_on_chat_activity")
+        }
         return m
     }
 }
