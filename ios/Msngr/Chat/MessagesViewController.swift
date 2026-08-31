@@ -24,6 +24,8 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     /// how many people besides the sender a note reaches: the listened dots
     /// compare it against who has actually listened
     var noteRecipients = 1
+    /// a tap on a poll option: the message and the full chosen set
+    var onVotePoll: ((Message, [Int]) -> Void)?
     /// The message the chat holds pinned, so the context menu of that one offers
     /// to take the pin off instead of putting it on again.
     var pinnedSeqs: Set<Int> = []
@@ -556,9 +558,11 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     /// when the content is updated they have to be reinstalled along with it.
     private func configureMessageCell(_ cell: MessageCell, msg: Message, plan: BubbleLayoutPlan,
                                       avatar: FeedAvatar? = nil) {
-        cell.configure(msg: msg, plan: plan, avatar: avatar)
         cell.isGroupChat = isGroupChat
         cell.noteRecipients = noteRecipients
+        cell.ownUserId = ownUserId
+        cell.onVotePoll = { [weak self] votes in self?.onVotePoll?(msg, votes) }
+        cell.configure(msg: msg, plan: plan, avatar: avatar)
         cell.onReply = { [weak self] in self?.onReply?(msg) }
         cell.onReact = { [weak self] emoji in self?.onReact?(msg, emoji) }
         cell.onCapsuleTap = { [weak self] emoji in self?.onReactionCapsuleTap?(msg, emoji) }

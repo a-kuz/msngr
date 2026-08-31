@@ -59,6 +59,11 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private let noteDots = NoteDotsView()
     private var reactionViews: [ReactionCapsuleView] = []
     private let voiceView = VoiceMessageView()
+    private let pollView = PollMessageView()
+    /// who this device is, for the poll's own-vote state
+    var ownUserId = ""
+    /// the full chosen set after a tap on a poll option
+    var onVotePoll: (([Int]) -> Void)?
     private let shaderView = ShaderMessageView()
     /// A sticker: the same live view with nothing painted behind the shader.
     private let stickerView = ShaderMessageView(transparent: true)
@@ -135,6 +140,9 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         noteDots.isHidden = true
         bubbleView.addSubview(noteDots)
         bubbleView.addSubview(voiceView)
+        pollView.isHidden = true
+        pollView.onVote = { [weak self] votes in self?.onVotePoll?(votes) }
+        bubbleView.addSubview(pollView)
         shaderView.isHidden = true
         shaderView.isUserInteractionEnabled = true
         shaderView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(shaderTapped)))
@@ -474,13 +482,20 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         // media
         configureMedia(msg: msg, plan: plan)
 
-        // voice / file
-        if let vf = plan.voiceFrame {
+        // voice / file / poll — they share the layout slot
+        if let vf = plan.voiceFrame, msg.kind == .poll {
+            voiceView.isHidden = true
+            pollView.isHidden = false
+            pollView.frame = vf
+            pollView.configure(msg: msg, outgoing: plan.isOutgoing, ownUserId: ownUserId)
+        } else if let vf = plan.voiceFrame {
             voiceView.isHidden = false
             voiceView.frame = vf
             voiceView.configure(msg: msg, outgoing: plan.isOutgoing)
+            pollView.isHidden = true
         } else {
             voiceView.isHidden = true
+            pollView.isHidden = true
         }
 
         // shader and sticker

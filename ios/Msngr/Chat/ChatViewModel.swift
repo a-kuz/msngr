@@ -976,6 +976,29 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    /// One voter's whole current choice: written locally at once, sent as a
+    /// `pollVote` service frame. An empty set retracts the vote. The frame
+    /// resolves the poll's seq the way every targeted event does, so voting
+    /// on a poll still waiting for its ack is safe.
+    func votePoll(_ message: Message, votes: [Int]) {
+        guard message.kind == .poll, let db = app.db else { return }
+        let own = ownUserId
+        Task {
+            try? await db.write { dbc in
+                guard let row = try Message.fetchOne(dbc, key: message.id) else { return }
+                var all = row.pollVotes
+                if votes.isEmpty { all.removeValue(forKey: own) } else { all[own] = votes.sorted() }
+                let json = String(data: try JSONEncoder().encode(all), encoding: .utf8)!
+                try dbc.execute(sql: "UPDATE message SET pollVotes = ? WHERE id = ?",
+                                arguments: [json, message.id])
+            }
+            var c = ContentPayload(kind: "pollVote")
+            c.targetLocalId = message.id
+            c.votes = votes
+            try? await app.engine?.enqueue(content: c, chatId: message.chatId)
+        }
+    }
+
     /// The next unheard note above the finished one, walking towards the newest
     /// message: notes play one after another and the chain stops at the first
     /// note already heard — or at one of our own.
@@ -1003,6 +1026,7 @@ final class ChatViewModel: ObservableObject {
         case .video: return String(localized: "Video")
         case .voice: return String(localized: "Voice message")
         case .roundVideo: return String(localized: "Video message")
+        case .poll: return "📊 " + (m.poll?.question ?? String(localized: "Poll"))
         case .file: return m.media?.name ?? String(localized: "File")
         case .album: return String(localized: "Album")
         case .shader: return m.shader?.name ?? String(localized: "Shader")

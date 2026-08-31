@@ -134,6 +134,7 @@ struct ChatRowView: View {
                 case .video: Label("Video", systemImage: "video.fill").labelStyle(PreviewLabelStyle())
                 case .voice: Label("Voice message", systemImage: "mic.fill").labelStyle(PreviewLabelStyle())
                 case .roundVideo: Label("Video message", systemImage: "video.circle.fill").labelStyle(PreviewLabelStyle())
+                case .poll: Label(last.poll?.question ?? String(localized: "Poll"), systemImage: "chart.bar").labelStyle(PreviewLabelStyle())
                 case .file: Label(last.media?.name ?? String(localized: "File"), systemImage: "doc.fill").labelStyle(PreviewLabelStyle())
                 case .album: Label("Album", systemImage: "photo.on.rectangle").labelStyle(PreviewLabelStyle())
                 case .shader: Label(last.shader?.name ?? String(localized: "Shader"), systemImage: "sparkles").labelStyle(PreviewLabelStyle())

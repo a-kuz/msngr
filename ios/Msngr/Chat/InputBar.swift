@@ -10,6 +10,7 @@ struct InputBar: View {
     @Binding var text: String
     var onAttachPhoto: () -> Void
     var onAttachFile: () -> Void
+    var onAttachPoll: () -> Void
     var onAttachShader: () -> Void
     var onAttachSticker: () -> Void
     var onAttachBubbleShader: () -> Void
@@ -92,6 +93,10 @@ struct InputBar: View {
                             Label("Photo or video", systemImage: "photo.on.rectangle")
                         }
                         .accessibilityIdentifier("chat.attach.photo")
+                        Button { onAttachPoll() } label: {
+                            Label(String(localized: "Poll"), systemImage: "chart.bar")
+                        }
+                        .accessibilityIdentifier("chat.attach.poll")
                         Button { onAttachFile() } label: {
                             Label("File", systemImage: "doc")
                         }

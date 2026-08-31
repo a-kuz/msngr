@@ -28,6 +28,7 @@ struct ChatScreen: View {
     /// before they leave.
     @State private var pendingImages: [UIImage] = []
     @State private var showFilePicker = false
+    @State private var showPollComposer = false
     @State private var forwardMessage: Message?
     @State private var forwardingSelection = false
     @State private var reactionRoster: ReactionRosterRequest?
@@ -139,6 +140,7 @@ struct ChatScreen: View {
                         InputBar(model: model, text: $text,
                                  onAttachPhoto: { photoPickerPresented = true },
                                  onAttachFile: { showFilePicker = true },
+                                 onAttachPoll: { showPollComposer = true },
                                  onAttachShader: { shaderComposer = .message },
                                  onAttachSticker: { showStickers = true },
                                  onAttachBubbleShader: { shaderComposer = .bubble },
@@ -327,6 +329,9 @@ struct ChatScreen: View {
         }
         .sheet(isPresented: $showStickers) {
             StickerPanelSheet { document in sendSticker(document) }
+        }
+        .sheet(isPresented: $showPollComposer) {
+            PollComposerSheet { poll in sendPoll(poll) }
         }
         .onAppear { backgroundRunning = true }
         .onDisappear { backgroundRunning = false }
@@ -1212,6 +1217,13 @@ struct ChatScreen: View {
 
     /// A shader is text-sized and needs no upload: the document goes straight
     /// into the send queue.
+    private func sendPoll(_ poll: PollInfo) {
+        var c = ContentPayload(kind: "poll")
+        c.poll = poll
+        model.enqueue(c)
+        Haptics.light()
+    }
+
     private func sendShader(_ document: ShaderDocument) {
         var c = ContentPayload(kind: "shader")
         c.shader = document
@@ -1439,6 +1451,7 @@ struct MessagesView: UIViewControllerRepresentable {
         // captured in makeUIViewController outlives the body that produced it
         vc.isGroupChat = model.chat?.kind == .group
         vc.noteRecipients = max(model.members.count - 1, 1)
+        vc.onVotePoll = { [weak model] msg, votes in model?.votePoll(msg, votes: votes) }
         vc.onContextAction = { [weak model] msg, action in
             guard let model else { return }
             switch action {
