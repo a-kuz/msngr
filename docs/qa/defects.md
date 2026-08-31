@@ -18,6 +18,18 @@ taken without a WAL checkpoint on some earlier pull. Two-sided runs on the
 trio are blocked past alfa. Reseeding the trio (`scripts/fixture.py seed
 --reset`) discards the shared history, so the call is the owner's.
 
+### A corrupted database at startup crashes Debug and strands Release on the splash
+Found 2026-08-31 by the gate's crash collector (three .ips in
+docs/qa/crashes/, 15:27:50–15:28:13): an agent's simulator launched the app
+over the corrupted bravo fixture, `AppDatabase.open` threw an SQLite error,
+and `AppState.bootstrap`'s catch-all answered with `assertionFailure` — a
+crash on every launch in Debug. In Release the assertion is a no-op: `db`
+stays nil, `ready` never turns true, and the app sits on the splash forever
+with no way out. Under the no-compatibility policy the product's own move
+here is a clean start: detect the unopenable file, offer (or take) the wipe
+back to registration the way `startOver` already does for a schema from a
+newer build.
+
 ### iPad with a hardware keyboard: a tap around the settings sheet crashes the app
 Found 2026-08-30 on the iPad Pro 11" simulator with ConnectHardwareKeyboard on
 (the Mac «Designed for iPad» case has a hardware keyboard always). Repro: open
