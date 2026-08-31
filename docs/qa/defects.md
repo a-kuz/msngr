@@ -6,10 +6,14 @@ with the commit that closed it.
 
 ## Open
 
-### A chat row's preview is replaced by an older message during install
-Reported 2026-08-31 by the owner: right after an install, a chat row in the
-list shows its last message and is then overwritten by an older one. The
-preview of a row must never step back to an older seq while history backfills.
+### The bravo fixture home is corrupted
+Found 2026-08-31 while reproducing the chat-list preview defect:
+`.claude/fixtures/bravo/msngr.sqlite` answers `database disk image is
+malformed` (SQLite error 11) to `PRAGMA integrity_check` — confirmed on the
+fixture file itself, before any hand-out. The keys in the home are unusable
+with it, so two-sided runs on bravo are blocked. Reseeding the trio
+(`scripts/fixture.py seed --reset`) discards the shared history, so the call
+is the owner's.
 
 ### iPad with a hardware keyboard: a tap around the settings sheet crashes the app
 Found 2026-08-30 on the iPad Pro 11" simulator with ConnectHardwareKeyboard on
@@ -306,6 +310,16 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### A chat row's preview is replaced by an older message during install
+Reported 2026-08-31 by the owner: right after an install, a chat row in the
+list showed its last message and was then overwritten by an older one.
+ChatListModel picked the preview by `COALESCE(serverTs, sentAt)`, so a
+backfilled message whose timestamp tied or outran the newest one's stepped
+the preview back to a lower seq. Closed 2026-08-31 (39e1ccc): the preview
+reads the feed order — `COALESCE(seq, unsentOrder) DESC` through
+`HistoryWindow.lastMessage` — and a regression test that fails on the old
+query holds it (`HistoryWindowTests`).
 
 ### Round video playback stutters on the device (owner's report, Debug build)
 Reported 2026-08-31 by the owner from a device run: playback of a round video
