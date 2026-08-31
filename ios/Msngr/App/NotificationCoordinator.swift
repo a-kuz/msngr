@@ -173,6 +173,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
             guard !ChatPrivacy.hidesContent(chat) else { return nil }
             let isGroup = chat?.kind == .group
             let sender = try User.fetchOne(dbc, key: ev.fromUserId)
+                .map { try ContactBookName.applied(dbc, to: $0) }
             let senderInfo = NotificationContentBuilder.SenderInfo(
                 userId: ev.fromUserId,
                 displayName: sender?.displayName ?? "",
@@ -211,6 +212,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
             let hidden = ChatPrivacy.hidesContent(chat)
             let isGroup = chat?.kind == .group
             let sender = try User.fetchOne(dbc, key: from)
+                .map { try ContactBookName.applied(dbc, to: $0) }
             let senderInfo = NotificationContentBuilder.SenderInfo(
                 userId: from,
                 displayName: sender?.displayName ?? "",

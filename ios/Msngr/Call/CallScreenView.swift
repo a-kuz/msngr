@@ -118,7 +118,7 @@ struct CallScreenView: View {
             return
         }
         peer = try? await db.read { dbc in
-            try User.fetchOne(dbc, key: id)
+            try User.fetchOne(dbc, key: id).map { try ContactBookName.applied(dbc, to: $0) }
         }
     }
 

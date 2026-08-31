@@ -100,7 +100,7 @@ final class ChatListModel: ObservableObject {
                             dbc, sql: "SELECT userId FROM member WHERE chatId = ? AND userId != ?",
                             arguments: [chat.id, ownId]),
                            let peer = try User.fetchOne(dbc, key: peerId) {
-                            peers[chat.id] = peer
+                            peers[chat.id] = try ContactBookName.applied(dbc, to: peer)
                         }
                     }
                     if let m = try HistoryWindow.lastMessage(dbc, chatId: chat.id) {
