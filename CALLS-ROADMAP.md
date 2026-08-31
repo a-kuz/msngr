@@ -80,14 +80,6 @@ row is written by the inviter exactly once.
 
 ## Polish
 
-### Caller named as in my address book
-The ringing screen, CallScreen, the call row and the future missed-call push
-show the peer's self-chosen profile name. Where my synced address book holds
-their number, my local name for them should win — the same resolution
-contact discovery already does at match time, applied at display time. One
-lookup point (local db: matched contact name by userId) used by CallScreen,
-CallMessageView and the chat header.
-
 ### Ring and dial sounds
 The call is silent until media flows: no dial tone for the caller, no
 ringtone for the callee, no hang-up click. Local audio assets played by

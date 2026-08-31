@@ -557,6 +557,13 @@ public enum AppDatabase {
                 t.add(column: "location", .text)
             }
         }
+        m.registerMigration("v34-contactBookName") { db in
+            // the owner's address-book name for a matched user; local only
+            try db.create(table: "contactBookName") { t in
+                t.column("userId", .text).primaryKey()
+                t.column("name", .text).notNull()
+            }
+        }
         return m
     }
 }
