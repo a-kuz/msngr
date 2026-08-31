@@ -433,8 +433,10 @@ A ✅ goes in only together with a link to the evidence.
     built
   - ⬜ shooting a photo or a video from the attachment sheet, without leaving the
     chat for the system camera
-  - ⬜ receiving what other apps share: a photo, a file or a link arrives through
-    a share extension and lands in a chat picked there
+  - ✅ receiving what other apps share: a photo, a file or a link arrives through
+    a share extension and lands in a chat picked there — written straight into
+    the shared database as an offline send, the app's worker uploads and sends
+    (qa/runs/2026-08-31-share-extension; ShareComposerTests)
 
 ## Sending, statuses, offline
 
