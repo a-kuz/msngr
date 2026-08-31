@@ -1165,6 +1165,50 @@
         }
       }
     },
+    "Who can add me to groups" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Кто может добавлять меня в группы"
+          }
+        }
+      }
+    },
+    "Anyone else can only send you an invite link." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Остальные могут только прислать вам ссылку-приглашение."
+          }
+        }
+      }
+    },
+    "Invitation to «%@»: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Приглашение в «%1$@»: %2$@"
+          }
+        }
+      }
+    },
+    "Invitation to a group: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Приглашение в группу: %@"
+          }
+        }
+      }
+    },
     "Who can find me by number" : {
       "extractionState" : "manual",
       "localizations" : {

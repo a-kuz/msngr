@@ -177,6 +177,8 @@ struct NewChatView: View {
                                                                   title: groupTitle) else { return }
         try? await app.engine.refreshSnapshot()
         await DefaultDisappearingTimer.apply(chatId: created.chatId, existedBefore: created.existed ?? false)
+        await GroupInvites.deliver(groupChatId: created.chatId, title: groupTitle,
+                                   to: created.invited ?? [])
         onOpen(created.chatId)
     }
 
