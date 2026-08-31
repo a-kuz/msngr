@@ -430,6 +430,9 @@ public final class APIClient: @unchecked Sendable {
         public let chatId: String
         /// True when the chat was already there and the call only reopened it.
         public let existed: Bool?
+        /// Users whose privacy keeps them from being put straight into a
+        /// group: they were not added, an invite link is what may reach them.
+        public let invited: [String]?
     }
     public func createChat(kind: String, memberIds: [String], title: String?) async throws -> String {
         try await createChatDetailed(kind: kind, memberIds: memberIds, title: title).chatId
@@ -496,9 +499,15 @@ public final class APIClient: @unchecked Sendable {
     public func deleteChat(_ chatId: String) async throws {
         _ = try await request("api/chats/\(chatId)/delete", method: "POST", jsonBody: [String: String]())
     }
-    public func updateMembers(_ chatId: String, add: [String], remove: [String]) async throws {
+    /// Returns the users whose privacy kept them from being added: they get
+    /// an invite link instead of a membership.
+    @discardableResult
+    public func updateMembers(_ chatId: String, add: [String], remove: [String]) async throws -> [String] {
         struct Body: Encodable { let add: [String]; let remove: [String] }
-        _ = try await request("api/chats/\(chatId)/members", method: "POST", jsonBody: Body(add: add, remove: remove))
+        struct Reply: Decodable { let invited: [String]? }
+        let data = try await request("api/chats/\(chatId)/members", method: "POST",
+                                     jsonBody: Body(add: add, remove: remove))
+        return ((try? JSONDecoder().decode(Reply.self, from: data))?.invited) ?? []
     }
     public func chatSettings(_ chatId: String, title: String? = nil,
                              avatarId: String? = nil, description: String? = nil,
@@ -662,6 +671,9 @@ public final class APIClient: @unchecked Sendable {
         public let avatar: String
         /// Who may find this account by its phone hash; the username search is open.
         public let phoneDiscovery: String
+        /// Who may put this account straight into a group; anyone else can
+        /// only send an invite link.
+        public let groupInvites: String
         public let readReceipts: Bool
         public let typing: Bool
     }
@@ -675,15 +687,15 @@ public final class APIClient: @unchecked Sendable {
     @discardableResult
     public func setPrivacy(
         lastSeen: String? = nil, avatar: String? = nil, phoneDiscovery: String? = nil,
-        readReceipts: Bool? = nil, typing: Bool? = nil
+        groupInvites: String? = nil, readReceipts: Bool? = nil, typing: Bool? = nil
     ) async throws -> PrivacyDTO {
         struct Body: Encodable {
             let lastSeen: String?; let avatar: String?; let phoneDiscovery: String?
-            let readReceipts: Bool?; let typing: Bool?
+            let groupInvites: String?; let readReceipts: Bool?; let typing: Bool?
         }
         return try await post("api/privacy",
             body: Body(lastSeen: lastSeen, avatar: avatar, phoneDiscovery: phoneDiscovery,
-                       readReceipts: readReceipts, typing: typing),
+                       groupInvites: groupInvites, readReceipts: readReceipts, typing: typing),
             as: PrivacyResponse.self).privacy
     }
 }

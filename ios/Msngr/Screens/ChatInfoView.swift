@@ -707,8 +707,19 @@ struct AddMembersView: View {
         failedId = nil
         Task {
             do {
-                try await app.api.updateMembers(chatId, add: [u.id], remove: [])
-                onAdded(u)
+                let invited = try await app.api.updateMembers(chatId, add: [u.id], remove: [])
+                if invited.contains(u.id) {
+                    // their privacy keeps them out of a straight add: the
+                    // invitation leaves as a message with the group's link
+                    let db = await MainActor.run { AppState.shared.db }
+                    let title = try? await db?.read { dbc in
+                        try String.fetchOne(dbc, sql: "SELECT title FROM chat WHERE id = ?",
+                                            arguments: [chatId])
+                    }
+                    await GroupInvites.deliver(groupChatId: chatId, title: title ?? nil, to: [u.id])
+                } else {
+                    onAdded(u)
+                }
                 dismiss()
             } catch {
                 failedId = u.id
