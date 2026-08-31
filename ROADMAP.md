@@ -180,6 +180,19 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ a send that survives a killed app and a cold start at the appointed time
     (the same run: killed before the deadline, launched after it, the message
     left on its own)
+  - ⬜ leaving on time with the app backgrounded, killed or the phone off:
+    a deferred envelope. The device encrypts at scheduling time exactly as a
+    normal send would and hands the server the ciphertext with the moment it
+    is due; at that moment the ConversationDO journals it as an ordinary
+    message (the seq is assigned then) and fans it out. The server learns
+    what it learns of any message — ciphertext and size — plus the fact and
+    time of the deferral; cancel, reschedule and edit before the deadline
+    are a delete or replace of the stored envelope. The late delivery rides
+    the ratchet's skipped-message keys; a recipient device enrolled after
+    scheduling cannot open it and heals through the usual repair path.
+    (Cloud-plaintext messengers schedule on the server; E2EE ones either
+    lack the feature or send from the device — this keeps E2EE and the
+    server's reliability at once)
 
 ## Message kinds
 
@@ -296,12 +309,14 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ voting, the result as a share of the votes with animated bars,
     retracting a vote, and revoting — every tap sends the voter's whole
     current choice, so a replay lands the same state (PollTests, the run)
-  - 🟡 anonymity: the flag hides the voters everywhere, only the shares and
+  - ✅ anonymity: the flag hides the voters everywhere, only the shares and
     the count show. The count is counted on every device from the encrypted
     `pollVote` events, not by the server — the server is E2EE-blind, so a
     server-side count would mean plaintext votes; anonymity is a display
-    promise, the events always name their sender. (Left: showing the voters
-    of a non-anonymous poll by name.)
+    promise, the events always name their sender (the really-anonymous line
+    below lifts that). A non-anonymous poll shows its voters: the footer of
+    a poll with earned results opens a sheet grouped by option, names and
+    avatars (PollVotersTests, live on the alfa fixture 2026-08-31)
   - ⬜ really anonymous polls: the vote of an anonymous poll carries a
     per-poll pseudonym — an HMAC of the account key over the poll id —
     instead of the voter's name, so even a modified client of a member
@@ -1061,7 +1076,10 @@ build takes it from the environment (`make device TEAM=…`, local.mk).
 - ✅ the reaction capsule appearing on a spring: recorded frame by frame, the
   whole capsule scales as one unit (qa/runs/2026-08-27-reaction-spring-run.md;
   the clipped-glyph entrance it replaced is in defects.md, closed)
-- 🟡 a pointwise feed diff instead of reloadData, the layout plan cache (indirectly in the runs)
+- ✅ a pointwise feed diff instead of reloadData, the layout plan cache:
+  held directly by FeedDiffTests — a counting data source shows an insert
+  materialises the new cell without re-asking for the screen, and an edit
+  reconfigures in place with no dequeue at all
 - ✅ the feed window is bounded by count while the reader is at the bottom:
     without a ceiling it grew for as long as the chat stayed open, and sending
     fell from 12 to 4 messages/s at 158% CPU (the 20k run, qa/runs/2026-08-15-20k-chat-run)
