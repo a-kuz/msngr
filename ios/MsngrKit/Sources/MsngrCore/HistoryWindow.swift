@@ -99,6 +99,19 @@ public enum HistoryWindow {
             """, arguments: [chatId, floor ?? 0, limit])
     }
 
+    /// The message a chat row previews: the highest seq stored, an unsent send
+    /// of our own sorting above everything the server has numbered. Ordering
+    /// by seq rather than by timestamp is what keeps the preview from stepping
+    /// back to an older message while a backfill is still writing seqs below
+    /// the one already shown — a server timestamp is not guaranteed to grow
+    /// with seq the way the seq itself is.
+    public static func lastMessage(_ dbc: GRDB.Database, chatId: String) throws -> Message? {
+        try Message.fetchOne(dbc, sql: """
+            SELECT * FROM message WHERE chatId = ? AND kind != 'system'
+            ORDER BY COALESCE(seq, \(unsentOrder)) DESC, sentAt DESC LIMIT 1
+            """, arguments: [chatId])
+    }
+
     // MARK: - Seq gaps
 
     /// Seq ranges inside `lower...upper` that `known` does not cover.
