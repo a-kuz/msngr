@@ -1870,6 +1870,45 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
     JSON.stringify(sessions));
 }
 
+{
+  // --- deferred send: the envelope waits on the server and leaves on time ---
+  const due = Date.now() + 1500;
+  ca.send({ t: "defer", chatId: chat.chatId, clientMsgId: "cm-def1", sentAt: Date.now(),
+    dueAt: due, body: { v: 1, mode: "pw", msgs: {} } });
+  const ack = await ca.waitFor((f) => f.t === "deferred" && f.clientMsgId === "cm-def1");
+  check("defer acked with its deadline", !!ack && ack.dueAt === due, JSON.stringify(ack));
+  const early = await cb2.waitFor((f) => f.t === "msg" && f.chatId === chat.chatId
+    && f.from === alice.userId && f.sentAt >= due - 2000 && Date.now() < due - 300, 700);
+  check("deferred envelope is not journaled early", !early, JSON.stringify(early));
+  const landed = await cb2.waitFor((f) => f.t === "msg" && f.chatId === chat.chatId
+    && f.at >= due - 250 && f.from === alice.userId, 8000);
+  check("deferred envelope arrives once due", !!landed, JSON.stringify(landed));
+  const echoMark = ca.frames.findIndex((f) => f.t === "msg" && f.seq === landed?.seq);
+  check("sender gets the echo of the deferred send", echoMark >= 0);
+
+  // a reschedule replaces the envelope in place; a cancel removes it
+  ca.send({ t: "defer", chatId: chat.chatId, clientMsgId: "cm-def2", sentAt: Date.now(),
+    dueAt: Date.now() + 60_000, body: { v: 1, mode: "pw", msgs: {} } });
+  await ca.waitFor((f) => f.t === "deferred" && f.clientMsgId === "cm-def2");
+  const soon = Date.now() + 1500;
+  ca.send({ t: "defer", chatId: chat.chatId, clientMsgId: "cm-def2", sentAt: Date.now(),
+    dueAt: soon, body: { v: 1, mode: "pw", msgs: {} } });
+  const moved = await ca.waitFor((f) => f.t === "deferred" && f.clientMsgId === "cm-def2"
+    && f.dueAt === soon);
+  check("reschedule replaces the deadline", !!moved, JSON.stringify(moved));
+  const landed2 = await cb2.waitFor((f) => f.t === "msg" && f.chatId === chat.chatId
+    && f.at >= soon - 250 && f.seq > (landed?.seq ?? 0), 8000);
+  check("rescheduled envelope leaves at the new time", !!landed2, JSON.stringify(landed2));
+
+  ca.send({ t: "defer", chatId: chat.chatId, clientMsgId: "cm-def3", sentAt: Date.now(),
+    dueAt: Date.now() + 1200, body: { v: 1, mode: "pw", msgs: {} } });
+  await ca.waitFor((f) => f.t === "deferred" && f.clientMsgId === "cm-def3");
+  ca.send({ t: "deferCancel", chatId: chat.chatId, clientMsgId: "cm-def3" });
+  const cancelled = await cb2.waitFor((f) => f.t === "msg" && f.chatId === chat.chatId
+    && f.seq > (landed2?.seq ?? 0) && f.from === alice.userId, 2500);
+  check("a cancelled deferred send never leaves", !cancelled, JSON.stringify(cancelled));
+}
+
 cmal.ws.close(); ctre.ws.close();
 ca.ws.close(); cb2.ws.close(); cb3.ws.close(); cb4.ws.close(); ca2.ws.close(); ce.ws.close();
 cf.ws.close(); cg.ws.close();

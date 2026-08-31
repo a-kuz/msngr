@@ -32,6 +32,11 @@ export type ClientFrame =
   // catchup: next portion for the chats that are still behind
   | { t: "catchup"; cursors: Record<string, number> }
   | { t: "send"; chatId: string; clientMsgId: string; sentAt: number; body: unknown; service?: boolean }
+  // a scheduled send: the envelope is encrypted now, journaled by the server at
+  // dueAt (ms since epoch). Re-sending the same clientMsgId before the deadline
+  // replaces the envelope and the deadline (reschedule, edit)
+  | { t: "defer"; chatId: string; clientMsgId: string; sentAt: number; body: unknown; dueAt: number }
+  | { t: "deferCancel"; chatId: string; clientMsgId: string }
   | { t: "recv"; chatId: string; seqs: number[] }
   | { t: "read"; chatId: string; upToSeq: number }
   | { t: "typing"; chatId: string; kind: string | null }
@@ -63,6 +68,8 @@ export interface PublicUser {
 export type ServerFrame =
   | { t: "hello"; serverTime: number; protocol: number; minProtocol: number }
   | { t: "sent"; chatId: string; clientMsgId: string; seq: number; ts: number }
+  /// a defer frame's ack: the server holds the envelope and will journal it at dueAt
+  | { t: "deferred"; chatId: string; clientMsgId: string; dueAt: number }
   | { t: "msg"; chatId: string; seq: number; from: string; fromDevice: string; sentAt: number; ts: number; body: unknown; service?: boolean }
   | { t: "receipt"; chatId: string; kind: "delivered" | "read"; upToSeq?: number; seqs?: number[]; by: string }
   | { t: "typing"; chatId: string; from: string; kind: string | null }

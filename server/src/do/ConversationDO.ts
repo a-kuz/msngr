@@ -19,6 +19,18 @@ import {
 /// redelivers whatever was in flight; the recipient's session dedupes a repeat
 /// by the chat's seq and answers "already have it".
 const FANOUT_PREFIX = "fr:";
+/// A scheduled send waiting for its moment: an encrypted envelope, keyed by
+/// sender and clientMsgId so a reschedule or an edit replaces it in place.
+const DEFER_PREFIX = "defer:";
+
+interface DeferredSend {
+  from: string;
+  fromDevice: string;
+  clientMsgId: string;
+  sentAt: number;
+  body: unknown;
+  dueAt: number; // ms since epoch
+}
 /// Subrequests one alarm invocation is allowed to spend before rescheduling
 /// itself; the platform ceiling is 1000 per invocation and the next alarm gets
 /// a fresh budget, so audience size is not capped by it.
@@ -460,6 +472,109 @@ export class ConversationDO implements DurableObject {
     }
   }
 
+  /// Writes one message into the journal and fans it out: the shared tail of
+  /// /send and of a deferred envelope coming due. The caller has already
+  /// checked membership, policy and the sender's own block.
+  /// ackToSender queues a `sent` frame to the author ahead of the message
+  /// echo: a deferred envelope has no request to answer, so the ack that a
+  /// live send gets on its socket travels the delivery queue instead.
+  private async journal(
+    meta: Meta,
+    b: { from: string; fromDevice: string; clientMsgId: string; sentAt: number;
+         body: unknown; service?: boolean },
+    blockedFor: string | null,
+    ackToSender = false
+  ): Promise<{ seq: number; ts: number }> {
+    const seq = meta.lastSeq + 1;
+    // the counter moves only on what a client will show, and every message
+    // keeps where it stood: one number written here answers every later
+    // question about how much of the chat a member has not seen
+    const contentAt = (meta.contentCount ?? 0) + (b.service ? 0 : 1);
+    const msg: StoredMsg = {
+      seq, from: b.from, fromDevice: b.fromDevice,
+      clientMsgId: b.clientMsgId, sentAt: b.sentAt, ts: nowSec(), body: b.body,
+      contentAt,
+      ...(b.service ? { service: true } : {}),
+      ...(blockedFor ? { blockedFor } : {}),
+    };
+    meta.lastSeq = seq;
+    meta.contentCount = contentAt;
+    this.meta = meta;
+    await this.state.storage.put({
+      meta,
+      [seqKey(seq)]: msg,
+      [`cmid:${b.from}/${b.clientMsgId}`]: { seq, ts: msg.ts },
+    });
+
+    const frame: ServerFrame = {
+      t: "msg", chatId: meta.chatId, seq,
+      from: msg.from, fromDevice: msg.fromDevice,
+      sentAt: msg.sentAt, ts: msg.ts, body: msg.body,
+      ...(msg.service ? { service: true } : {}),
+    };
+    // Under a block the send still succeeds and the sender sees "sent", but nothing
+    // reaches the other side, over the socket or by push. The blocker's read mark
+    // moves at once, or his unread would grow on messages he will never see.
+    // The seen mark is the counting one unread is measured against: an
+    // author does not count their own message, and neither does someone the
+    // message was withheld from. Kept apart from the read marks because
+    // read receipts are sent for those alone: sending a message is not a
+    // claim that others were read. seq is the new head of the journal, so
+    // it is ahead of any mark by construction.
+    await this.migrateMarks();
+    const blocked = await this.blockedPeers(b.from);
+    const markBatch: Record<string, number> = { [this.markKey("seen", b.from)]: seq };
+    for (const u of blocked) {
+      markBatch[this.markKey("read", u)] = seq;
+      markBatch[this.markKey("seen", u)] = seq;
+    }
+    await this.state.storage.put(markBatch);
+    await this.sweepCmids(meta, msg.ts);
+    // ack answers the sender as soon as the message owns a seq; delivery
+    // (and the APNs call behind it) runs in the alarm queue afterwards.
+    // Author's own devices are targets too: the echo goes through his UserDO.
+    if (ackToSender) {
+      await this.fanout(
+        { t: "sent", chatId: meta.chatId, clientMsgId: b.clientMsgId, seq, ts: msg.ts },
+        { only: [b.from] });
+    }
+    await this.fanout(frame, { skip: blocked });
+    return { seq, ts: msg.ts };
+  }
+
+  /// Journals every deferred envelope whose time has come. A sender who has
+  /// since left the chat or blocked the peer loses the envelope silently — the
+  /// send would have been refused; one who is blocked by the peer is journaled
+  /// withheld, the way /send stores it. Returns the nearest future deadline.
+  private async drainDeferred(): Promise<number | undefined> {
+    const meta = await this.loadMeta();
+    if (!meta) return undefined;
+    const listed = await this.state.storage.list<DeferredSend>({ prefix: DEFER_PREFIX });
+    let next: number | undefined;
+    // due envelopes go out in the order they were meant to leave
+    const due = [...listed]
+      .filter(([, d]) => d.dueAt <= Date.now())
+      .sort((a, b) => a[1].dueAt - b[1].dueAt);
+    for (const [, d] of listed.entries()) {
+      if (d.dueAt > Date.now())
+        next = next === undefined ? d.dueAt : Math.min(next, d.dueAt);
+    }
+    for (const [key, d] of due) {
+      const members = await this.loadMembers();
+      const block = await this.blockCheck(d.from);
+      if (!members.has(d.from) || block?.byMe) {
+        await this.state.storage.delete(key);
+        continue;
+      }
+      const dupe = await this.state.storage.get(`cmid:${d.from}/${d.clientMsgId}`);
+      if (!dupe) {
+        await this.journal(meta, d, block?.byPeer ? block.peer : null, true);
+      }
+      await this.state.storage.delete(key);
+    }
+    return next;
+  }
+
   /// The recovery path. Deliveries are pumped by the requests that queue them;
   /// the alarm walks whatever storage still holds — backoffs come due, records
   /// whose chain died with the isolate — and re-arms for the nearest deadline.
@@ -480,6 +595,12 @@ export class ConversationDO implements DurableObject {
     this.rearmDelay = undefined;
     try {
       await this.loadMeta();
+      // scheduled sends whose time has come enter the journal first: their
+      // fanout records are then drained by the very pumps below
+      const nextDeferred = await this.drainDeferred();
+      if (nextDeferred !== undefined) {
+        this.rearmDelay = nextDeferred - Date.now();
+      }
       const budget = { left: FANOUT_BUDGET };
       const listed = await this.state.storage.list<DeliveryRecord>({
         prefix: FANOUT_PREFIX,
@@ -783,56 +904,44 @@ export class ConversationDO implements DurableObject {
         const dupe = await this.state.storage.get<{ seq: number; ts: number }>(dupeKey);
         if (dupe) return json({ ok: true, ...dupe, dupe: true });
 
-        const seq = meta.lastSeq + 1;
-        // the counter moves only on what a client will show, and every message
-        // keeps where it stood: one number written here answers every later
-        // question about how much of the chat a member has not seen
-        const contentAt = (meta.contentCount ?? 0) + (b.service ? 0 : 1);
-        const msg: StoredMsg = {
-          seq, from: b.from, fromDevice: b.fromDevice,
-          clientMsgId: b.clientMsgId, sentAt: b.sentAt, ts: nowSec(), body: b.body,
-          contentAt,
-          ...(b.service ? { service: true } : {}),
-          ...(blockedFor ? { blockedFor } : {}),
-        };
-        meta.lastSeq = seq;
-        meta.contentCount = contentAt;
-        this.meta = meta;
-        await this.state.storage.put({
-          meta,
-          [seqKey(seq)]: msg,
-          [dupeKey]: { seq, ts: msg.ts },
-        });
+        const r = await this.journal(meta, b, blockedFor);
+        return json({ ok: true, seq: r.seq, ts: r.ts });
+      }
 
-        const frame: ServerFrame = {
-          t: "msg", chatId: meta.chatId, seq,
-          from: msg.from, fromDevice: msg.fromDevice,
-          sentAt: msg.sentAt, ts: msg.ts, body: msg.body,
-          ...(msg.service ? { service: true } : {}),
+      // A scheduled send: the envelope arrives encrypted now and enters the
+      // journal at dueAt. The same clientMsgId before the deadline replaces
+      // the stored envelope and its deadline (a reschedule or an edit); a
+      // clientMsgId the journal already holds answers as the dupe it is.
+      case "/defer": {
+        const b = (await req.json()) as {
+          from: string; fromDevice: string; clientMsgId: string;
+          sentAt: number; body: unknown; dueAt: number;
         };
-        // Under a block the send still succeeds and the sender sees "sent", but nothing
-        // reaches the other side, over the socket or by push. The blocker's read mark
-        // moves at once, or his unread would grow on messages he will never see.
-        // The seen mark is the counting one unread is measured against: an
-        // author does not count their own message, and neither does someone the
-        // message was withheld from. Kept apart from the read marks because
-        // read receipts are sent for those alone: sending a message is not a
-        // claim that others were read. seq is the new head of the journal, so
-        // it is ahead of any mark by construction.
-        await this.migrateMarks();
-        const blocked = await this.blockedPeers(b.from);
-        const markBatch: Record<string, number> = { [this.markKey("seen", b.from)]: seq };
-        for (const u of blocked) {
-          markBatch[this.markKey("read", u)] = seq;
-          markBatch[this.markKey("seen", u)] = seq;
-        }
-        await this.state.storage.put(markBatch);
-        await this.sweepCmids(meta, msg.ts);
-        // ack answers the sender as soon as the message owns a seq; delivery
-        // (and the APNs call behind it) runs in the alarm queue afterwards.
-        // Author's own devices are targets too: the echo goes through his UserDO.
-        await this.fanout(frame, { skip: blocked });
-        return json({ ok: true, seq, ts: msg.ts });
+        const members = await this.loadMembers();
+        const sender = members.get(b.from);
+        if (!sender) return err("not_member", 403);
+        if (meta.kind === "group" &&
+            policy(meta.sendPolicy) === "admins" && sender.role !== "admin")
+          return err("not_allowed", 403);
+        const block = await this.blockCheck(b.from);
+        if (block?.byMe) return err("blocked", 403);
+
+        const dupe = await this.state.storage.get<{ seq: number; ts: number }>(
+          `cmid:${b.from}/${b.clientMsgId}`);
+        if (dupe) return json({ ok: true, ...dupe, dupe: true });
+
+        await this.state.storage.put(DEFER_PREFIX + b.from + "/" + b.clientMsgId, {
+          from: b.from, fromDevice: b.fromDevice, clientMsgId: b.clientMsgId,
+          sentAt: b.sentAt, body: b.body, dueAt: b.dueAt,
+        } satisfies DeferredSend);
+        await this.scheduleFanout(b.dueAt - Date.now());
+        return json({ ok: true, dueAt: b.dueAt });
+      }
+
+      case "/defer-cancel": {
+        const b = (await req.json()) as { from: string; clientMsgId: string };
+        await this.state.storage.delete(DEFER_PREFIX + b.from + "/" + b.clientMsgId);
+        return json({ ok: true });
       }
 
       case "/recv": {
