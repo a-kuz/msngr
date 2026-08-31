@@ -20,6 +20,9 @@ const SYNC_BUDGET = 128;
 /// event loop after this many, and the client asks for the rest.
 const SYNC_CHATS = 32;
 
+/// Address-book hashes one sync call takes; a longer book arrives in chunks.
+const CONTACTS_SYNC_MAX = 5000;
+
 interface ChatFlags {
   pinned: boolean;
   muted: boolean;
@@ -621,6 +624,33 @@ export class UserDO implements DurableObject {
         await this.state.storage.put("devicesVersion", version);
         await this.broadcastDevicesChanged(version);
         return json({ ok: true, version });
+      }
+
+      // --- the address book: a set of phone hashes under `ct:<hash>`.
+      // Contact-ness is answered against the peer's current hash at the
+      // moment of the question, so a number registering or changing hands
+      // needs no propagation into anyone's book.
+
+      case "/contacts-sync": {
+        const b = (await req.json()) as { hashes?: string[]; remove?: string[] };
+        const hashes = [...new Set(b.hashes ?? [])].slice(0, CONTACTS_SYNC_MAX);
+        const remove = [...new Set(b.remove ?? [])].slice(0, CONTACTS_SYNC_MAX);
+        for (let i = 0; i < hashes.length; i += STORAGE_BATCH) {
+          const batch: Record<string, number> = {};
+          for (const hash of hashes.slice(i, i + STORAGE_BATCH)) batch[`ct:${hash}`] = 1;
+          await this.state.storage.put(batch);
+        }
+        for (let i = 0; i < remove.length; i += STORAGE_BATCH) {
+          await this.state.storage.delete(remove.slice(i, i + STORAGE_BATCH).map((h) => `ct:${h}`));
+        }
+        return json({ ok: true });
+      }
+
+      case "/contact-of": {
+        const hash = url.searchParams.get("hash") ?? "";
+        const held = hash !== "" &&
+          (await this.state.storage.get(`ct:${hash}`)) !== undefined;
+        return json({ ok: true, contact: held });
       }
 
       case "/dev-fault": {

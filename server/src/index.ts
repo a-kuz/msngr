@@ -4,7 +4,7 @@ import { authenticate } from "./auth";
 import {
   ulid, newToken, sha256hex, json, err, directChatName, b64url, provisionCode,
   isValidUsername, isValidDisplayName, USERNAME_QUARANTINE_MS, verifyEd25519, readPrivacy,
-  hiddenAvatarOwners,
+  hiddenAvatarOwners, isContactOf,
 } from "./util";
 import type { LastSeenVisibility } from "./types";
 import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "./version";
@@ -80,8 +80,8 @@ app.post("/api/register", async (c) => {
   try {
     await c.env.DB.batch([
       c.env.DB.prepare(
-        "INSERT INTO users (id, username, display_name, created_at) VALUES (?,?,?,?)"
-      ).bind(userId, b.username, b.displayName.trim(), now),
+        "INSERT INTO users (id, username, display_name, phone_hash, created_at) VALUES (?,?,?,?,?)"
+      ).bind(userId, b.username, b.displayName.trim(), b.phoneHash ?? null, now),
       c.env.DB.prepare(
         "INSERT INTO devices (id, user_id, name, token_hash, created_at) VALUES (?,?,?,?,?)"
       ).bind(deviceId, userId, b.device?.name ?? null, tokenHash, now),
@@ -464,9 +464,9 @@ app.get("/api/users", async (c) => {
      LIMIT 20`
   ).bind(like, like, q.toLowerCase()).all<{ id: string; avatar_id: string | null }>();
   const { userId } = c.get("auth");
-  const hidden = await hiddenAvatarOwners(c.env.DB, rows.results.map((r) => r.id));
+  const hidden = await hiddenAvatarOwners(c.env, userId, rows.results.map((r) => r.id));
   for (const r of rows.results) {
-    if (hidden.has(r.id) && r.id !== userId) r.avatar_id = null;
+    if (hidden.has(r.id)) r.avatar_id = null;
   }
   return json({ ok: true, users: rows.results });
 });
@@ -481,9 +481,13 @@ app.get("/api/users/:id", async (c) => {
     "SELECT id, username, display_name, bio, avatar_id FROM users WHERE id = ?"
   ).bind(targetId).first<PublicUser>();
   if (!u) return err("not_found", 404);
-  if (userId !== targetId && (await readPrivacy(c.env.DB, targetId)).avatar === "nobody") {
-    u.bio = null;
-    u.avatar_id = null;
+  if (userId !== targetId) {
+    const tier = (await readPrivacy(c.env.DB, targetId)).avatar;
+    if (tier === "nobody" ||
+        (tier === "contacts" && !(await isContactOf(c.env, targetId, userId)))) {
+      u.bio = null;
+      u.avatar_id = null;
+    }
   }
   let presence: { online: boolean; lastSeen: number } | null = null;
   if (await presenceVisible(c.env, userId, targetId)) {
@@ -505,6 +509,8 @@ async function presenceVisible(env: Env, viewerId: string, targetId: string): Pr
   if (!j.state.members.some((m) => m.userId === targetId && m.accepted)) return false;
   const targetPrivacy = await readPrivacy(env.DB, targetId);
   if (targetPrivacy.lastSeen === "nobody") return false;
+  if (targetPrivacy.lastSeen === "contacts" &&
+      !(await isContactOf(env, targetId, viewerId))) return false;
   const viewerPrivacy = await readPrivacy(env.DB, viewerId);
   if (viewerPrivacy.lastSeen === "nobody") return false;
   return true;
@@ -663,9 +669,11 @@ async function broadcastProfile(env: Env, userId: string) {
   ).bind(userId).first<PublicUser>();
   if (!user) return;
   // peers get the card as they may see it: a hidden photo and bio travel only
-  // to the user's own devices
+  // to the user's own devices. The frame is one card for every peer, so the
+  // "contacts" tier blanks it here too — a contact still gets the full card
+  // from every pull path, and the bytes route answers them
   let peerUser = user;
-  if ((await readPrivacy(env.DB, userId)).avatar === "nobody") {
+  if ((await readPrivacy(env.DB, userId)).avatar !== "everyone") {
     peerUser = { ...user, bio: null, avatar_id: null };
   }
   await userStub(env, userId).fetch("https://do/profile-changed", {
@@ -722,9 +730,9 @@ app.get("/api/chats", async (c) => {
     const rows = await c.env.DB.prepare(
       `SELECT id, username, display_name, bio, avatar_id FROM users WHERE id IN (${placeholders})`
     ).bind(...memberIds).all<PublicUser>();
-    const hidden = await hiddenAvatarOwners(c.env.DB, memberIds);
+    const hidden = await hiddenAvatarOwners(c.env, userId, memberIds);
     for (const u of rows.results) {
-      if (hidden.has(u.id) && u.id !== userId) {
+      if (hidden.has(u.id)) {
         u.bio = null;
         u.avatar_id = null;
       }
@@ -975,9 +983,12 @@ app.get("/api/avatar/:id", async (c) => {
   const mediaId = c.req.param("id");
   const owner = await c.env.DB.prepare("SELECT id FROM users WHERE avatar_id = ?")
     .bind(mediaId).first<{ id: string }>();
-  if (owner && owner.id !== c.get("auth").userId &&
-      (await readPrivacy(c.env.DB, owner.id)).avatar === "nobody") {
-    return err("not_found", 404);
+  if (owner && owner.id !== c.get("auth").userId) {
+    const tier = (await readPrivacy(c.env.DB, owner.id)).avatar;
+    if (tier === "nobody" ||
+        (tier === "contacts" && !(await isContactOf(c.env, owner.id, c.get("auth").userId)))) {
+      return err("not_found", 404);
+    }
   }
   const obj = await c.env.MEDIA.get(mediaId);
   if (!obj) return err("not_found", 404);
@@ -1001,11 +1012,38 @@ app.post("/api/push-token", async (c) => {
   return json({ ok: true });
 });
 
-// contact discovery: the client sends SHA-256(E.164), the server answers with matches
+/// Drops the matches their owners hide: `phone_discovery` "nobody" always,
+/// "contacts" unless the found user lists the searcher in their own book —
+/// you are findable by the people whose number you hold.
+async function discoverableBy(
+  env: Env, searcherId: string, ids: string[]
+): Promise<Set<string>> {
+  const allowed = new Set(ids);
+  if (!ids.length) return allowed;
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = await env.DB.prepare(
+    `SELECT user_id, phone_discovery FROM privacy_settings
+     WHERE phone_discovery != 'everyone' AND user_id IN (${placeholders})`
+  ).bind(...ids).all<{ user_id: string; phone_discovery: string }>();
+  for (const row of rows.results) {
+    if (row.user_id === searcherId) continue;
+    if (row.phone_discovery === "nobody") { allowed.delete(row.user_id); continue; }
+    if (!(await isContactOf(env, row.user_id, searcherId))) allowed.delete(row.user_id);
+  }
+  return allowed;
+}
+
+// contact discovery: the client sends SHA-256(E.164); the book lands in the
+// caller's object as their contact set, and the answer is the registered
+// matches their owners let this searcher see
 app.post("/api/contacts/discover", async (c) => {
-  const b = await c.req.json<{ hashes: string[] }>();
+  const { userId } = c.get("auth");
+  const b = await c.req.json<{ hashes: string[]; remove?: string[] }>();
   const hashes = [...new Set(b.hashes)].slice(0, 5000);
-  if (!hashes.length) return json({ ok: true, matches: [] });
+  if (!hashes.length && !b.remove?.length) return json({ ok: true, matches: [] });
+  await userStub(c.env, userId).fetch("https://do/contacts-sync", {
+    method: "POST", body: JSON.stringify({ hashes, remove: b.remove }),
+  });
   const matches: Array<{ id: string; avatar_id: string | null }> = [];
   for (let i = 0; i < hashes.length; i += 100) {
     const chunk = hashes.slice(i, i + 100);
@@ -1015,12 +1053,13 @@ app.post("/api/contacts/discover", async (c) => {
     ).bind(...chunk).all<{ id: string; avatar_id: string | null }>();
     matches.push(...rows.results);
   }
-  const { userId } = c.get("auth");
-  const hidden = await hiddenAvatarOwners(c.env.DB, matches.map((m) => m.id));
-  for (const m of matches) {
-    if (hidden.has(m.id) && m.id !== userId) m.avatar_id = null;
+  const discoverable = await discoverableBy(c.env, userId, matches.map((m) => m.id));
+  const visible = matches.filter((m) => m.id === userId || discoverable.has(m.id));
+  const hidden = await hiddenAvatarOwners(c.env, userId, visible.map((m) => m.id));
+  for (const m of visible) {
+    if (hidden.has(m.id)) m.avatar_id = null;
   }
-  return json({ ok: true, matches });
+  return json({ ok: true, matches: visible });
 });
 
 app.post("/api/phone", async (c) => {
@@ -1071,29 +1110,32 @@ app.get("/api/privacy", async (c) => {
 app.post("/api/privacy", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{
-    lastSeen?: string; avatar?: string; readReceipts?: boolean; typing?: boolean;
+    lastSeen?: string; avatar?: string; phoneDiscovery?: string;
+    readReceipts?: boolean; typing?: boolean;
   }>();
-  if (b.lastSeen !== undefined && !LAST_SEEN_VALUES.includes(b.lastSeen as LastSeenVisibility)) {
-    return err("bad_privacy");
-  }
-  if (b.avatar !== undefined && !LAST_SEEN_VALUES.includes(b.avatar as LastSeenVisibility)) {
-    return err("bad_privacy");
+  for (const tier of [b.lastSeen, b.avatar, b.phoneDiscovery]) {
+    if (tier !== undefined && !LAST_SEEN_VALUES.includes(tier as LastSeenVisibility)) {
+      return err("bad_privacy");
+    }
   }
   const current = await readPrivacy(c.env.DB, userId);
   const next = {
     lastSeen: (b.lastSeen as LastSeenVisibility | undefined) ?? current.lastSeen,
     avatar: (b.avatar as LastSeenVisibility | undefined) ?? current.avatar,
+    phoneDiscovery: (b.phoneDiscovery as LastSeenVisibility | undefined) ?? current.phoneDiscovery,
     readReceipts: b.readReceipts ?? current.readReceipts,
     typing: b.typing ?? current.typing,
   };
   await c.env.DB.prepare(
-    `INSERT INTO privacy_settings (user_id, last_seen, avatar_visibility, read_receipts, typing, updated_at)
-     VALUES (?,?,?,?,?,?)
+    `INSERT INTO privacy_settings (user_id, last_seen, avatar_visibility, phone_discovery,
+       read_receipts, typing, updated_at)
+     VALUES (?,?,?,?,?,?,?)
      ON CONFLICT(user_id) DO UPDATE SET last_seen = excluded.last_seen,
        avatar_visibility = excluded.avatar_visibility,
+       phone_discovery = excluded.phone_discovery,
        read_receipts = excluded.read_receipts, typing = excluded.typing,
        updated_at = excluded.updated_at`
-  ).bind(userId, next.lastSeen, next.avatar, next.readReceipts ? 1 : 0,
+  ).bind(userId, next.lastSeen, next.avatar, next.phoneDiscovery, next.readReceipts ? 1 : 0,
          next.typing ? 1 : 0, Date.now()).run();
   // peers hold the card from the last profile frame, so a photo hidden or shown
   // again travels to them at once instead of waiting for a refetch

@@ -53,6 +53,8 @@ export interface PrivacySettings {
   lastSeen: LastSeenVisibility;
   /// Who sees the profile photo and bio; the display name is always visible.
   avatar: LastSeenVisibility;
+  /// Who may find this user by their phone hash; the username search is open.
+  phoneDiscovery: LastSeenVisibility;
   readReceipts: boolean;
   typing: boolean;
 }

@@ -111,30 +111,64 @@ export function shouldArmAlarm(pending: number | null, at: number, now: number):
 /// (for gating receipts, typing and presence fanout).
 export async function readPrivacy(db: D1Database, userId: string): Promise<PrivacySettings> {
   const row = await db.prepare(
-    "SELECT last_seen, avatar_visibility, read_receipts, typing FROM privacy_settings WHERE user_id = ?"
+    `SELECT last_seen, avatar_visibility, phone_discovery, read_receipts, typing
+     FROM privacy_settings WHERE user_id = ?`
   ).bind(userId).first<{
-    last_seen: string; avatar_visibility: string; read_receipts: number; typing: number;
+    last_seen: string; avatar_visibility: string; phone_discovery: string;
+    read_receipts: number; typing: number;
   }>();
-  if (!row) return { lastSeen: "everyone", avatar: "everyone", readReceipts: true, typing: true };
+  if (!row) {
+    return { lastSeen: "everyone", avatar: "everyone", phoneDiscovery: "everyone",
+             readReceipts: true, typing: true };
+  }
   return {
     lastSeen: row.last_seen as PrivacySettings["lastSeen"],
     avatar: row.avatar_visibility as PrivacySettings["avatar"],
+    phoneDiscovery: row.phone_discovery as PrivacySettings["phoneDiscovery"],
     readReceipts: row.read_receipts === 1,
     typing: row.typing === 1,
   };
 }
 
-/// The user ids among `ids` whose profile photo and bio are hidden from other
-/// users. "contacts" counts as visible: there is no contacts primitive on the
-/// server yet, so it is enforced as "everyone".
-export async function hiddenAvatarOwners(db: D1Database, ids: string[]): Promise<Set<string>> {
-  if (!ids.length) return new Set();
+/// Whether `viewerId` is in `ownerId`'s address book. The book is a set of
+/// phone hashes in the owner's object; the viewer's current hash is read
+/// here, so a number registering or changing hands needs no propagation.
+export async function isContactOf(
+  env: { DB: D1Database; USER_DO: DurableObjectNamespace },
+  ownerId: string, viewerId: string
+): Promise<boolean> {
+  const row = await env.DB.prepare("SELECT phone_hash FROM users WHERE id = ?")
+    .bind(viewerId).first<{ phone_hash: string | null }>();
+  if (!row?.phone_hash) return false;
+  const stub = env.USER_DO.get(env.USER_DO.idFromName(ownerId));
+  const res = await stub.fetch(
+    `https://do/contact-of?hash=${encodeURIComponent(row.phone_hash)}`);
+  const r = (await res.json()) as { contact: boolean };
+  return r.contact;
+}
+
+/// The user ids among `ids` whose profile photo and bio are hidden from this
+/// viewer: "nobody" hides from everyone, "contacts" from whoever the owner
+/// does not hold in their own address book.
+export async function hiddenAvatarOwners(
+  env: { DB: D1Database; USER_DO: DurableObjectNamespace },
+  viewerId: string, ids: string[]
+): Promise<Set<string>> {
+  const hidden = new Set<string>();
+  if (!ids.length) return hidden;
   const placeholders = ids.map(() => "?").join(",");
-  const rows = await db.prepare(
-    `SELECT user_id FROM privacy_settings
-     WHERE avatar_visibility = 'nobody' AND user_id IN (${placeholders})`
-  ).bind(...ids).all<{ user_id: string }>();
-  return new Set(rows.results.map((r) => r.user_id));
+  const rows = await env.DB.prepare(
+    `SELECT user_id, avatar_visibility FROM privacy_settings
+     WHERE avatar_visibility != 'everyone' AND user_id IN (${placeholders})`
+  ).bind(...ids).all<{ user_id: string; avatar_visibility: string }>();
+  for (const row of rows.results) {
+    if (row.user_id === viewerId) continue;
+    if (row.avatar_visibility === "nobody" ||
+        !(await isContactOf(env, row.user_id, viewerId))) {
+      hidden.add(row.user_id);
+    }
+  }
+  return hidden;
 }
 
 export const SEQ_PAD = 10;
