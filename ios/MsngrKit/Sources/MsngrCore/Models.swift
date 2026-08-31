@@ -120,7 +120,36 @@ public enum MessageStatus: Int, Codable, Comparable {
 }
 
 public enum MessageKind: String, Codable {
-    case text, photo, video, file, voice, album, contact, system, shader, sticker, roundVideo, poll
+    case text, photo, video, file, voice, album, contact, system, shader, sticker, roundVideo, poll,
+         location
+}
+
+/// A person's card as the sender shared it: what the contact picker handed
+/// over, not a reference into anyone's address book.
+public struct ContactCard: Codable, Equatable {
+    public var name: String
+    public var phones: [String]
+    public var emails: [String]
+
+    public init(name: String, phones: [String], emails: [String] = []) {
+        self.name = name
+        self.phones = phones
+        self.emails = emails
+    }
+}
+
+/// A point on the map. `name` is the label the sender picked it under — a
+/// place or an address; the receiver renders the coordinate, never resolves it.
+public struct LocationInfo: Codable, Equatable {
+    public var lat: Double
+    public var lon: Double
+    public var name: String?
+
+    public init(lat: Double, lon: Double, name: String? = nil) {
+        self.lat = lat
+        self.lon = lon
+        self.name = name
+    }
 }
 
 /// A poll as its author composed it. Votes travel separately, as `pollVote`
@@ -287,6 +316,10 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
     /// poll: userId -> chosen option indices, aggregated from `pollVote`
     /// events. A retraction removes the user's entry.
     public var pollVotes: [String: [Int]] = [:]
+    /// contact: the shared card.
+    public var contact: ContactCard?
+    /// location: the shared point.
+    public var location: LocationInfo?
     /// voice: the on-device transcript, recognized on demand. Local only —
     /// it never travels.
     public var transcript: String?
@@ -314,6 +347,7 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
              kind, text, media, album, replyTo, forward, shader, bubbleShader, edited, editHistory,
              editedAt, deletedForAll, status, isOutgoing, reactions, expiresAt,
              failReason, scheduledFor, listenedAt, listenedBy, poll, pollVotes,
+             contact, location,
              transcript, transcriptSpans, transcriptShown
     }
 
@@ -425,6 +459,10 @@ public struct ContentPayload: Codable {
     public var poll: PollInfo?
     /// pollVote: the chosen option indices; empty retracts the vote.
     public var votes: [Int]?
+    /// contact: the shared card.
+    public var contact: ContactCard?
+    /// location: the shared point.
+    public var location: LocationInfo?
 
     public init(kind: String) { self.kind = kind }
 }

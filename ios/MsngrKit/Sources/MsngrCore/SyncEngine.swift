@@ -1600,6 +1600,8 @@ public actor SyncEngine {
             msg.bubbleShader = content.bubbleShader
             msg.linkPreview = content.preview
             msg.poll = content.poll
+            msg.contact = content.contact
+            msg.location = content.location
             let ttl = try Int.fetchOne(dbc, sql: "SELECT ttlSeconds FROM chat WHERE id = ?", arguments: [chatId]) ?? 0
             if ttl > 0 { msg.expiresAt = Date().timeIntervalSince1970 + Double(ttl) }
             try msg.save(dbc)
@@ -1695,6 +1697,8 @@ public actor SyncEngine {
                 msg.bubbleShader = content.bubbleShader
                 msg.linkPreview = content.preview
                 msg.poll = content.poll
+                msg.contact = content.contact
+                msg.location = content.location
                 // a historic copy of a disappearing message is stamped the same way
                 // as one that arrived live: otherwise paging up would bring back
                 // what has already expired, and it would stay forever
@@ -2114,6 +2118,8 @@ public actor SyncEngine {
         msg.bubbleShader = content.bubbleShader
         msg.linkPreview = content.preview
         msg.poll = content.poll
+        msg.contact = content.contact
+        msg.location = content.location
         msg.scheduledFor = scheduledFor
         let payload = try JSONEncoder().encode(content)
         try await db.write { [msg] dbc in
