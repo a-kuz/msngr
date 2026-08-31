@@ -15,6 +15,9 @@ struct SettingsView: View {
     @State private var pinEnabled = PinStore.hasPin()
     @State private var biometrics = PinStore.biometricsEnabled()
     @State private var showsMessageText = NotificationPreferences.showsMessageText(in: AppGroup.defaults)
+    @State private var directSound = NotifySound.standard
+    @State private var groupSound = NotifySound.standard
+    @State private var soundsLoaded = false
     @State private var showLogoutConfirm = false
     /// the media cache size shown next to the clear button; the label re-renders
     /// only when this state moves, so the clear writes the new size back into it
@@ -136,6 +139,32 @@ struct SettingsView: View {
                     .onChange(of: showsMessageText) { _, on in
                         NotificationPreferences.setShowsMessageText(on, in: AppGroup.defaults)
                     }
+                    Picker(selection: $directSound) {
+                        ForEach(NotifySound.allCases) { option in
+                            Text(option.label).tag(option)
+                        }
+                    } label: {
+                        Label("Sound: direct chats", systemImage: "bell")
+                    }
+                    .accessibilityIdentifier("settings.sound.direct")
+                    .onChange(of: directSound) { _, new in
+                        guard soundsLoaded else { return }
+                        new.preview()
+                        Task { try? await app.api.setNotifySounds(direct: new.rawValue) }
+                    }
+                    Picker(selection: $groupSound) {
+                        ForEach(NotifySound.allCases) { option in
+                            Text(option.label).tag(option)
+                        }
+                    } label: {
+                        Label("Sound: groups", systemImage: "bell.and.waves.left.and.right")
+                    }
+                    .accessibilityIdentifier("settings.sound.group")
+                    .onChange(of: groupSound) { _, new in
+                        guard soundsLoaded else { return }
+                        new.preview()
+                        Task { try? await app.api.setNotifySounds(group: new.rawValue) }
+                    }
                     Text(showsMessageText
                          ? "The banner shows the sender's name and the text."
                          : "The banner keeps the sender's name and avatar; the text is hidden.")
@@ -252,6 +281,12 @@ struct SettingsView: View {
             }
             .task { await loadMe() }
             .task { await loadCounts() }
+            .task {
+                let sounds = try? await app.api.notifySounds()
+                directSound = sounds?.direct.flatMap(NotifySound.init(rawValue:)) ?? .standard
+                groupSound = sounds?.group.flatMap(NotifySound.init(rawValue:)) ?? .standard
+                soundsLoaded = true
+            }
             .onChange(of: displayName) { _, _ in nameError = nil }
             .onChange(of: phone) { _, _ in phoneError = nil }
             .onChange(of: avatarItem) { _, item in

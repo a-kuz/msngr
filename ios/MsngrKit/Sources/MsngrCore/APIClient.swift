@@ -530,15 +530,45 @@ public final class APIClient: @unchecked Sendable {
                               jsonBody: Body(seq: seq, pinned: pinned))
     }
     /// The server ignores `mutedUntil` without `muted`; `muted: true` with no expiry means forever.
+    /// `sound` "default" clears the chat's own push sound.
     public func setChatFlags(_ chatId: String, pinned: Bool? = nil,
                              muted: Bool? = nil, mutedUntil: Double? = nil,
-                             archived: Bool? = nil) async throws {
+                             archived: Bool? = nil, sound: String? = nil) async throws {
         struct Body: Encodable {
             let pinned: Bool?; let muted: Bool?; let mutedUntil: Double?; let archived: Bool?
+            let sound: String?
         }
         _ = try await request("api/chats/\(chatId)/flags", method: "POST",
                               jsonBody: Body(pinned: pinned, muted: muted,
-                                             mutedUntil: mutedUntil, archived: archived))
+                                             mutedUntil: mutedUntil, archived: archived,
+                                             sound: sound))
+    }
+
+    public struct ChatFlagsDTO: Decodable, Sendable {
+        public let pinned: Bool
+        public let muted: Bool
+        public let archived: Bool
+        public let sound: String?
+    }
+    private struct FlagsResponse: Decodable { let flags: ChatFlagsDTO }
+    public func chatFlags(_ chatId: String) async throws -> ChatFlagsDTO {
+        try await get("api/chats/\(chatId)/flags", as: FlagsResponse.self).flags
+    }
+
+    /// Default push sounds by chat shape; a caf name the app bundles, or
+    /// "default". The chat's own sound (a flag) overrides them.
+    public struct NotifySoundsDTO: Decodable, Sendable, Equatable {
+        public let direct: String?
+        public let group: String?
+    }
+    private struct NotifySoundsResponse: Decodable { let sounds: NotifySoundsDTO }
+    public func notifySounds() async throws -> NotifySoundsDTO {
+        try await get("api/notify-sounds", as: NotifySoundsResponse.self).sounds
+    }
+    public func setNotifySounds(direct: String? = nil, group: String? = nil) async throws {
+        struct Body: Encodable { let direct: String?; let group: String? }
+        _ = try await request("api/notify-sounds", method: "POST",
+                              jsonBody: Body(direct: direct, group: group))
     }
 
     public struct InviteResponse: Decodable {

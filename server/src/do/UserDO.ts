@@ -30,6 +30,22 @@ interface ChatFlags {
   mutedUntil?: number;
   archived: boolean;
   joinedAt: number;
+  /// APNs sound for this chat's pushes; unset falls back to the user's
+  /// direct/group default, then "default"
+  sound?: string;
+}
+
+/// The user's default push sounds by chat shape, stored under "notifySounds".
+interface NotifySounds {
+  direct?: string;
+  group?: string;
+}
+
+/// A per-chat sound or a default: a caf name the app bundles, or "default".
+const SOUND_NAME = /^[A-Za-z0-9._-]{1,64}$/;
+
+function chatShape(chatId: string): "direct" | "group" {
+  return chatId.startsWith("direct:") || chatId.startsWith("self:") ? "direct" : "group";
 }
 
 /// A mute with a deadline counts as lifted once that deadline has passed.
@@ -374,14 +390,26 @@ export class UserDO implements DurableObject {
         return json({ ok: true, chats: out });
       }
 
+      case "/flags-read": {
+        const b = (await req.json()) as { chatId: string };
+        const flags = await this.state.storage.get<ChatFlags>("chat:" + b.chatId);
+        if (!flags) return err("chat_not_found", 404);
+        return json({ ok: true, flags });
+      }
+
       case "/flags": {
         const b = (await req.json()) as {
           chatId: string; pinned?: boolean; muted?: boolean;
-          mutedUntil?: number | null; archived?: boolean;
+          mutedUntil?: number | null; archived?: boolean; sound?: string | null;
         };
         const key = "chat:" + b.chatId;
         const flags = await this.state.storage.get<ChatFlags>(key);
         if (!flags) return err("chat_not_found", 404);
+        if (b.sound !== undefined) {
+          if (b.sound === null || b.sound === "default") delete flags.sound;
+          else if (SOUND_NAME.test(b.sound)) flags.sound = b.sound;
+          else return err("bad_sound");
+        }
         if (b.pinned !== undefined) flags.pinned = b.pinned;
         // a deadline lives only with the mute that set it: muted with no mutedUntil
         // (or a null one) is indefinite, muted:false lifts it
@@ -393,6 +421,24 @@ export class UserDO implements DurableObject {
         if (b.archived !== undefined) flags.archived = b.archived;
         await this.state.storage.put(key, flags);
         return json({ ok: true });
+      }
+
+      case "/notify-sounds": {
+        if (req.method === "GET" || url.searchParams.get("read") === "1") {
+          const sounds = (await this.state.storage.get<NotifySounds>("notifySounds")) ?? {};
+          return json({ ok: true, sounds });
+        }
+        const b = (await req.json()) as { direct?: string | null; group?: string | null };
+        const sounds = (await this.state.storage.get<NotifySounds>("notifySounds")) ?? {};
+        for (const shape of ["direct", "group"] as const) {
+          const v = b[shape];
+          if (v === undefined) continue;
+          if (v === null || v === "default") delete sounds[shape];
+          else if (SOUND_NAME.test(v)) sounds[shape] = v;
+          else return err("bad_sound");
+        }
+        await this.state.storage.put("notifySounds", sounds);
+        return json({ ok: true, sounds });
       }
 
       case "/push-token": {
@@ -872,6 +918,10 @@ export class UserDO implements DurableObject {
     const badge = await this.totalUnread();
     const badgeStamp = await this.nextBadgeStamp();
     const userId = await this.getUserId();
+    // the chat's own sound wins; then the user's default for the chat's shape
+    const flags = await this.state.storage.get<ChatFlags>("chat:" + frame.chatId);
+    const defaults = (await this.state.storage.get<NotifySounds>("notifySounds")) ?? {};
+    const sound = flags?.sound ?? defaults[chatShape(frame.chatId)];
     // Every device is handled independently: one failure neither cancels the
     // others nor fails the frame delivery that already went over the socket.
     const results = await Promise.all(
@@ -880,7 +930,7 @@ export class UserDO implements DurableObject {
           return {
             deviceId,
             res: await sendPush(this.env, t.token, t.env, {
-              chatId: frame.chatId, seq: frame.seq,
+              chatId: frame.chatId, seq: frame.seq, sound,
               sentAt: frame.sentAt, badge, badgeStamp,
               from: frame.from, fromDevice: frame.fromDevice, ts: frame.ts,
               env: envelopeForDevice(frame.body, `${userId ?? ""}/${deviceId}`),

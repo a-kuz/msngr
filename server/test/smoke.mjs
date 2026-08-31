@@ -1541,6 +1541,27 @@ check("service frame does not grow the badge", pushSvc?.body.aps.badge === 1,
   check("re-add is a no-op with no push", readd.ok
     && !(await waitPush((p) => p.url === "/3/device/olga-sim-udid"
       && p.body.aps?.alert?.body?.startsWith("Вас добавили"), 1200)));
+
+  // The push's sound: the chat's own choice wins, then the user's default for
+  // the chat's shape, then "default". Both are resolved by the receiver's
+  // object, so a sender changes nothing about them.
+  await api("/api/notify-sounds", { token: olga.token, body: { group: "chime2.caf" } });
+  const s2 = await gsend("cm-snd1");
+  const sndPush1 = await waitPush(pushFor("olga-sim-udid", s2));
+  check("group default sound rides the push",
+    sndPush1?.body.aps.sound === "chime2.caf", JSON.stringify(sndPush1?.body.aps));
+  await api(`/api/chats/${gchat.chatId}/flags`, { token: olga.token,
+    body: { sound: "chime1.caf" } });
+  const s3 = await gsend("cm-snd2");
+  const sndPush2 = await waitPush(pushFor("olga-sim-udid", s3));
+  check("the chat's own sound beats the default",
+    sndPush2?.body.aps.sound === "chime1.caf", JSON.stringify(sndPush2?.body.aps));
+  await api(`/api/chats/${gchat.chatId}/flags`, { token: olga.token, body: { sound: null } });
+  await api("/api/notify-sounds", { token: olga.token, body: { group: null } });
+  const s4 = await gsend("cm-snd3");
+  const sndPush3 = await waitPush(pushFor("olga-sim-udid", s4));
+  check("clearing both returns the push to default",
+    sndPush3?.body.aps.sound === "default", JSON.stringify(sndPush3?.body.aps));
   cni.ws.close();
 }
 
