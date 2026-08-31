@@ -6,13 +6,6 @@ with the commit that closed it.
 
 ## Open
 
-### User search does not fold Cyrillic case
-Found 2026-08-31 in passing during the privacy-exceptions live run: SQLite's
-LOWER folds ASCII only, so `GET /api/users?q=Икфм` does not find a user whose
-display name is «икфмц» — any non-ASCII query is effectively case-sensitive.
-Fold the case in JS (the worker) on both the query and a stored lowercase
-column, or match with a collation that folds Unicode.
-
 ### The bravo and charlie fixture homes are corrupted
 Found 2026-08-31 while reproducing the chat-list preview defect:
 `.claude/fixtures/bravo/msngr.sqlite` answers `database disk image is
@@ -314,6 +307,19 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### User search does not fold Cyrillic case
+Found 2026-08-31 in passing during the privacy-exceptions live run: SQLite's
+LOWER folds ASCII only, so `GET /api/users?q=Икфм` did not find a user whose
+display name is «икфмц» — any non-ASCII query was effectively case-sensitive.
+Closed 2026-09-01: the query is folded in JS and matched against a stored
+JS-folded `display_name_lc` column (migration 0015), written at registration
+and on every profile rename; usernames stay on LOWER, being ASCII by rule.
+Smoke holds both write paths («user search folds Cyrillic case», «renamed
+Cyrillic name found case-insensitively»), both red on the old query. After the
+merge the migration needs applying on the shared stand; its SQL backfill folds
+ASCII only, so a stand row with an uppercase Cyrillic name heals on its next
+rename.
 
 ### A chat climbs the list with no new message in it
 Seen 2026-08-27 while recording the README demo on the simulator (alfa
