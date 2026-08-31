@@ -80,9 +80,10 @@ final class ChatListModel: ObservableObject {
         cancellable = ValueObservation
             .tracking { dbc -> ChatListSnapshot in
                 try PerfTrace.shared.measure("chatlist.fetch") {
-                // the chat with yourself leads the list, above the pins
+                // pins first, then by activity; the chat with yourself sorts
+                // like any other and is pinned to the top by pinning it
                 let chats = try Chat.fetchAll(dbc, sql: """
-                    SELECT * FROM chat ORDER BY (kind = 'self') DESC, pinned DESC, lastActivityAt DESC
+                    SELECT * FROM chat ORDER BY pinned DESC, lastActivityAt DESC
                     """)
                 var peers: [String: User] = [:]
                 var lasts: [String: Message] = [:]
@@ -106,7 +107,20 @@ final class ChatListModel: ObservableObject {
                         lasts[chat.id] = m
                     }
                 }
-                return ChatListSnapshot(chats: chats, peers: peers, lasts: lasts,
+                // the list order is the journal's: pins first, then the newest
+                // last message. lastActivityAt only stands in for a chat with
+                // no readable rows — the chat's own timestamp drifts from the
+                // journal (a backfill bumps it), the way the preview once did
+                let key: (Chat) -> Double = { chat in
+                    guard let m = lasts[chat.id] else { return chat.lastActivityAt }
+                    return m.serverTs ?? m.sentAt
+                }
+                let ordered = chats.sorted { a, b in
+                    if a.pinned != b.pinned { return a.pinned }
+                    let (ka, kb) = (key(a), key(b))
+                    return ka == kb ? a.id > b.id : ka > kb
+                }
+                return ChatListSnapshot(chats: ordered, peers: peers, lasts: lasts,
                                         mentions: mentions,
                                         folders: try ChatFolderStore.all(dbc),
                                         pins: try ChatFolderStore.pins(dbc))

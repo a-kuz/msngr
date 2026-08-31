@@ -115,6 +115,8 @@ struct ChatListCollection: UIViewRepresentable {
                     var bg = UIBackgroundConfiguration.listPlainCell()
                     if self.parent.keySelection == id {
                         bg.backgroundColor = UIColor(Theme.accent.opacity(0.12))
+                    } else if item.chat.pinned {
+                        bg.backgroundColor = .secondarySystemBackground
                     }
                     cell.backgroundConfiguration = bg
                 }
