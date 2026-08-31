@@ -442,6 +442,7 @@ final class VoiceMessageView: UIView {
     private var playIcon = "play.circle.fill"
     private var cancellables: Set<AnyCancellable> = []
     var onTranscript: (() -> Void)?
+    var onRetranscribe: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -463,6 +464,11 @@ final class VoiceMessageView: UIView {
         transcriptButton.addTarget(self, action: #selector(tapTranscript), for: .touchUpInside)
         transcriptButton.layer.cornerRadius = 8
         transcriptButton.layer.borderWidth = 1
+        // a long press on the button recognizes afresh, replacing the cache;
+        // the cell knows to keep its context menu off this button
+        let redo = UILongPressGestureRecognizer(target: self, action: #selector(handleTranscriptLongPress(_:)))
+        redo.minimumPressDuration = 0.35
+        transcriptButton.addGestureRecognizer(redo)
         transcriptSpinner.hidesWhenStopped = true
         addSubview(playButton)
         addSubview(waveform)
@@ -604,6 +610,20 @@ final class VoiceMessageView: UIView {
     @objc private func tapTranscript() {
         Haptics.light()
         onTranscript?()
+    }
+
+    @objc private func handleTranscriptLongPress(_ g: UILongPressGestureRecognizer) {
+        guard g.state == .began else { return }
+        Haptics.medium()
+        onRetranscribe?()
+    }
+
+    /// Whether a touch at `point` (in `view`'s coordinates) lands on the
+    /// visible transcript button: the cell keeps its context menu off it.
+    func transcriptButtonHit(_ point: CGPoint, in view: UIView) -> Bool {
+        guard !transcriptButton.isHidden else { return false }
+        return transcriptButton.frame.insetBy(dx: -6, dy: -6)
+            .contains(view.convert(point, to: self))
     }
 
     /// The button shows only where a tap can do something: a cached transcript

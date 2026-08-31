@@ -1471,6 +1471,7 @@ struct MessagesView: UIViewControllerRepresentable {
         vc.noteRecipients = max(model.members.count - 1, 1)
         vc.onVotePoll = { [weak model] msg, votes in model?.votePoll(msg, votes: votes) }
         vc.onTranscript = { [weak model] msg in model?.toggleTranscript(msg) }
+        vc.onRetranscribe = { [weak model] msg in model?.retranscribe(msg) }
         vc.onContextAction = { [weak model] msg, action in
             guard let model else { return }
             switch action {
