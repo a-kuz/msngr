@@ -66,5 +66,6 @@ hour, and the run surfaced three defects, fixed forward:
 ## Not verified here
 
 Recognition end to end inside the app needs a device: the simulator has no
-speech models of either API. The exact calls are proven by the host probe; the
-first run on a device is what closes this for real.
+speech models of either API. The exact calls are proven by the host probe.
+Closed by the device run: after the fixes above the owner confirmed the
+feature on their iPhone (2026-08-31) and called the line done.
