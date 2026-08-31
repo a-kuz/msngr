@@ -486,6 +486,16 @@ public actor SyncEngine {
             await applyIncomingBatch([f])
         case "sent":
             await applySentAck(f)
+        case "deferred":
+            // the server holds the envelope now; the outbox row stays for a
+            // later reschedule or edit, and the `sent` at the deadline ends it
+            if let clientMsgId = f.clientMsgId {
+                try? await db.write { dbc in
+                    try dbc.execute(
+                        sql: "UPDATE outbox SET state = 'deferred' WHERE clientMsgId = ? AND state = 'inflight'",
+                        arguments: [clientMsgId])
+                }
+            }
         case "receipt":
             await applyReceipt(f)
         case "typing":
@@ -2095,15 +2105,17 @@ public actor SyncEngine {
             }
         }
         if let scheduledFor, scheduledFor > now {
+            // the local timer is the backstop; the drain runs at once to hand
+            // the server the deferred envelope so it leaves on time without us
             await scheduleNextSend()
-        } else {
-            outboxWakeup.continuation.yield()
         }
+        outboxWakeup.continuation.yield()
     }
 
-    /// Cancels a scheduled send before its time: it never reached the wire,
-    /// so both the outbox entry and the row it queued disappear with it.
-    public func cancelScheduled(clientMsgId: String) async {
+    /// Cancels a scheduled send before its time. The row and the outbox entry
+    /// go at once; the envelope the server may already hold is recalled too,
+    /// through the action queue when the socket is down.
+    public func cancelScheduled(clientMsgId: String, chatId: String) async {
         try? await db.write { dbc in
             try dbc.execute(
                 sql: "DELETE FROM outbox WHERE clientMsgId = ? AND scheduledFor IS NOT NULL",
@@ -2111,29 +2123,48 @@ public actor SyncEngine {
             try dbc.execute(
                 sql: "DELETE FROM message WHERE clientMsgId = ? AND scheduledFor IS NOT NULL",
                 arguments: [clientMsgId])
+            let payload = String(data: try JSONEncoder().encode(
+                DeferCancelPayload(clientMsgId: clientMsgId)), encoding: .utf8)!
+            try dbc.execute(
+                sql: """
+                INSERT INTO pendingAction (id, type, chatId, payload, createdAt) VALUES (?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, attempts = 0
+                """,
+                arguments: ["deferCancel:\(clientMsgId)", "deferCancel", chatId, payload,
+                            Date().timeIntervalSince1970])
         }
         await scheduleNextSend()
+        actionWakeup.continuation.yield()
     }
 
+    struct DeferCancelPayload: Codable { var clientMsgId: String }
+
     /// Moves a scheduled send to a new time, or (`to: nil`) releases it to go
-    /// out at once, same as an ordinary send.
+    /// out at once, same as an ordinary send. An envelope the server already
+    /// holds is replaced by the drain re-sending it: the state goes back to
+    /// ready and the same clientMsgId overwrites the deferred copy.
     public func rescheduleSend(clientMsgId: String, to: Double?) async {
         try? await db.write { dbc in
-            try dbc.execute(sql: "UPDATE outbox SET scheduledFor = ? WHERE clientMsgId = ? AND state = 'ready'",
-                            arguments: [to, clientMsgId])
+            try dbc.execute(
+                sql: """
+                UPDATE outbox SET scheduledFor = ?, state = 'ready'
+                WHERE clientMsgId = ? AND state IN ('ready', 'inflight', 'deferred')
+                """,
+                arguments: [to, clientMsgId])
             try dbc.execute(sql: "UPDATE message SET scheduledFor = ? WHERE clientMsgId = ?",
                             arguments: [to, clientMsgId])
         }
         if let to, to > Date().timeIntervalSince1970 {
             await scheduleNextSend()
-        } else {
-            wakeOutbox()
         }
+        wakeOutbox()
     }
 
     /// Rewrites the text of a message still waiting for its time: it has
     /// never gone out, so this changes the row and the queued payload alike
     /// rather than going through the `edit` event a delivered message needs.
+    /// An envelope the server already holds is replaced: the state goes back
+    /// to ready and the drain re-encrypts under the same clientMsgId.
     public func editScheduledText(clientMsgId: String, text: String) async {
         try? await db.write { dbc in
             try dbc.execute(
@@ -2144,9 +2175,11 @@ public actor SyncEngine {
                   var content = try? JSONDecoder().decode(ContentPayload.self, from: payload) else { return }
             content.text = text
             let newPayload = try JSONEncoder().encode(content)
-            try dbc.execute(sql: "UPDATE outbox SET payload = ? WHERE clientMsgId = ?",
-                            arguments: [newPayload, clientMsgId])
+            try dbc.execute(
+                sql: "UPDATE outbox SET payload = ?, state = 'ready' WHERE clientMsgId = ?",
+                arguments: [newPayload, clientMsgId])
         }
+        wakeOutbox()
     }
 
     private var sendTimerTask: Task<Void, Never>?
@@ -2271,12 +2304,10 @@ public actor SyncEngine {
         var skipped: Set<String> = []
         while connected {
             guard let item = (try? await db.read { dbc in
+                // a scheduled item is ready too: it leaves now as a deferred
+                // envelope for the server to journal at its time
                 try OutboxItem.fetchAll(
-                    dbc, sql: """
-                    SELECT * FROM outbox
-                    WHERE state = 'ready' AND (scheduledFor IS NULL OR scheduledFor <= ?)
-                    ORDER BY createdAt
-                    """, arguments: [Date().timeIntervalSince1970])
+                    dbc, sql: "SELECT * FROM outbox WHERE state = 'ready' ORDER BY createdAt")
             })?.first(where: { !skipped.contains($0.clientMsgId) }) else { break }
 
             do {
@@ -2354,30 +2385,42 @@ public actor SyncEngine {
         }
 
         let service = Self.serviceKinds.contains(content.kind)
+        // a send whose time has not come leaves now as a deferred envelope:
+        // encrypted the same way, journaled by the server at its moment
+        let deferUntil = item.scheduledFor.flatMap { $0 > Date().timeIntervalSince1970 ? $0 : nil }
+        func dispatch(_ env: Envelope) async throws {
+            if let deferUntil {
+                try await ws.send(.defer_(chatId: item.chatId, clientMsgId: item.clientMsgId,
+                                          sentAt: item.createdAt, body: env,
+                                          dueAt: deferUntil * 1000))
+            } else {
+                try await ws.send(.send(chatId: item.chatId, clientMsgId: item.clientMsgId,
+                                        sentAt: item.createdAt, body: env, service: service))
+            }
+        }
         if let addressee = content.to {
             // an addressed frame (a repair request, a copy, a chain ack)
             // concerns two devices, so it goes pairwise even in a group
             let env = try await e2ee.encryptDirect(content: content, chatId: item.chatId,
                                                    toUserId: addressee)
-            try await ws.send(.send(chatId: item.chatId, clientMsgId: item.clientMsgId,
-                                    sentAt: item.createdAt, body: env, service: service))
+            try await dispatch(env)
         } else if info.kind == ChatKind.direct.rawValue || info.kind == ChatKind.saved.rawValue {
             // the chat with yourself has no peer: the envelope goes pairwise to
             // this user's other devices alone
             let peer = info.members.first { $0 != ownUserId } ?? ownUserId
             let env = try await e2ee.encryptDirect(content: content, chatId: item.chatId,
                                                    toUserId: peer)
-            try await ws.send(.send(chatId: item.chatId, clientMsgId: item.clientMsgId,
-                                    sentAt: item.createdAt, body: env, service: service))
+            try await dispatch(env)
         } else {
             let (skd, skdId, skm) = try await e2ee.encryptGroup(content: content, chatId: item.chatId,
                                                                 memberIds: info.members)
             if let skd, let skdId {
+                // the key handout travels now even for a deferred message: a
+                // sender key reveals nothing of the content it will open
                 try await ws.send(.send(chatId: item.chatId, clientMsgId: skdId,
                                         sentAt: item.createdAt, body: skd, service: true))
             }
-            try await ws.send(.send(chatId: item.chatId, clientMsgId: item.clientMsgId,
-                                    sentAt: item.createdAt, body: skm, service: service))
+            try await dispatch(skm)
         }
         // the outbox row goes on the "sent" ack; here it is only marked in
         // flight. attempts stays put: a frame that left without an ack yet is
@@ -2562,6 +2605,10 @@ public actor SyncEngine {
                 case "pin":
                     let p = try JSONDecoder().decode(PinActionPayload.self, from: Data(a.payload.utf8))
                     try await api.pinMessage(a.chatId ?? "", seq: p.seq, pinned: p.pinned ?? true)
+                case "deferCancel":
+                    // recall the deferred envelope the server holds for this send
+                    let p = try JSONDecoder().decode(DeferCancelPayload.self, from: Data(a.payload.utf8))
+                    try await ws.send(.deferCancel(chatId: a.chatId ?? "", clientMsgId: p.clientMsgId))
                 default:
                     break // an unknown type is dropped below
                 }

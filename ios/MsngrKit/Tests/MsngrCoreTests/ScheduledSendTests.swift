@@ -86,12 +86,68 @@ final class ScheduledSendTests: XCTestCase {
         try await engine.enqueue(content: ContentPayload(kind: "text"), chatId: "chat1",
                                  clientMsgId: "c1", scheduledFor: future)
 
-        await engine.cancelScheduled(clientMsgId: "c1")
+        await engine.cancelScheduled(clientMsgId: "c1", chatId: "chat1")
 
         let outbox = try await db.read { dbc in try OutboxItem.fetchOne(dbc, key: "c1") }
         let message = try await db.read { dbc in try Message.fetchOne(dbc, key: "c1") }
         XCTAssertNil(outbox)
         XCTAssertNil(message)
+        // the server may already hold the envelope: the recall waits its turn
+        // in the action queue, surviving a dead socket
+        let recall = try await db.read { dbc in
+            try Row.fetchOne(dbc, sql: "SELECT type, chatId FROM pendingAction WHERE id = ?",
+                             arguments: ["deferCancel:c1"])
+        }
+        XCTAssertEqual(recall?["type"] as String?, "deferCancel")
+        XCTAssertEqual(recall?["chatId"] as String?, "chat1")
+    }
+
+    /// The deferred ack parks the row: the server holds the envelope, the
+    /// outbox keeps it only for a later reschedule or edit.
+    func testDeferredAckParksTheRow() async throws {
+        let db = try AppDatabase.openInMemory()
+        let engine = try makeEngine(db: db)
+        let future = Date().addingTimeInterval(3600).timeIntervalSince1970
+        try await engine.enqueue(content: ContentPayload(kind: "text"), chatId: "chat1",
+                                 clientMsgId: "c1", scheduledFor: future)
+        try await db.write { dbc in
+            try dbc.execute(sql: "UPDATE outbox SET state = 'inflight' WHERE clientMsgId = 'c1'")
+        }
+
+        let frame = try JSONDecoder().decode(
+            WSIncoming.self,
+            from: Data(#"{"t":"deferred","chatId":"chat1","clientMsgId":"c1","dueAt":1}"#.utf8))
+        await engine.apply(frame)
+
+        let row = try await db.read { dbc in try OutboxItem.fetchOne(dbc, key: "c1") }
+        XCTAssertEqual(row?.state, "deferred")
+
+        // a reschedule takes it back: the drain re-sends and the same
+        // clientMsgId replaces the copy the server holds
+        await engine.rescheduleSend(clientMsgId: "c1", to: future + 60)
+        let back = try await db.read { dbc in try OutboxItem.fetchOne(dbc, key: "c1") }
+        XCTAssertEqual(back?.state, "ready")
+        XCTAssertEqual(back?.scheduledFor, future + 60)
+    }
+
+    /// An edit of a parked send returns it to ready: the drain re-encrypts
+    /// and the server's copy is replaced under the same clientMsgId.
+    func testEditReturnsAParkedSendToReady() async throws {
+        let db = try AppDatabase.openInMemory()
+        let engine = try makeEngine(db: db)
+        let future = Date().addingTimeInterval(3600).timeIntervalSince1970
+        var content = ContentPayload(kind: "text")
+        content.text = "original"
+        try await engine.enqueue(content: content, chatId: "chat1", clientMsgId: "c1",
+                                 scheduledFor: future)
+        try await db.write { dbc in
+            try dbc.execute(sql: "UPDATE outbox SET state = 'deferred' WHERE clientMsgId = 'c1'")
+        }
+
+        await engine.editScheduledText(clientMsgId: "c1", text: "edited")
+
+        let row = try await db.read { dbc in try OutboxItem.fetchOne(dbc, key: "c1") }
+        XCTAssertEqual(row?.state, "ready")
     }
 
     /// Rescheduling moves the due time on both rows; releasing it (`to: nil`)

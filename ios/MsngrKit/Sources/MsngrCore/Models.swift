@@ -363,10 +363,12 @@ public struct OutboxItem: Codable, FetchableRecord, PersistableRecord {
     public var attempts: Int = 0
     /// plaintext content (ContentPayload as JSON), encrypted when it is sent
     public var payload: Data
-    /// ready (waiting to be sent) | inflight (sent, waiting for the ack)
+    /// ready (waiting to be sent) | inflight (sent, waiting for the ack) |
+    /// deferred (the server holds the envelope and journals it at scheduledFor)
     public var state: String = "ready"
-    /// a scheduled send is 'ready' from the moment it is queued, but the drain
-    /// skips it until this time; nil sends at once
+    /// when a scheduled send is due, seconds since epoch; nil sends at once.
+    /// The drain hands it to the server as a deferred envelope right away,
+    /// and the server's `sent` at the deadline closes this row
     public var scheduledFor: Double?
 
     public init(clientMsgId: String, chatId: String, createdAt: Double, payload: Data,
