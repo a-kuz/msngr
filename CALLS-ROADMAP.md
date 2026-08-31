@@ -71,12 +71,6 @@ row is written by the inviter exactly once.
 
 ## Polish
 
-### Ring and dial sounds
-The call is silent until media flows: no dial tone for the caller, no
-ringtone for the callee, no hang-up click. Local audio assets played by
-CallManager phase transitions; respect the mute switch and stop cleanly on
-`connected`.
-
 ### ICE restart on network change
 Today `disconnected` just waits and `failed` hangs up. A Wi-Fi→LTE move
 should trigger an ICE restart (new offer with `iceRestart: true` over the
