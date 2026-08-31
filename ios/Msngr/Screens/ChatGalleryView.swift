@@ -18,6 +18,9 @@ final class ChatGalleryModel: ObservableObject {
     /// Tabs whose first page has been read; before that an empty tab means
     /// loading rather than "nothing here".
     @Published private(set) var opened: Set<GalleryTab> = []
+    /// The tab bar's counts, read once when the screen appears rather than
+    /// recomputed as pages load.
+    @Published private(set) var counts: [GalleryTab: Int] = [:]
 
     private var cursors: [GalleryTab: GalleryCursor] = [:]
     private var finished: Set<GalleryTab> = []
@@ -28,6 +31,15 @@ final class ChatGalleryModel: ObservableObject {
     }
 
     func items(_ tab: GalleryTab) -> [GalleryEntry] { entries[tab] ?? [] }
+
+    func loadCounts() {
+        guard let db = AppState.shared.db else { return }
+        let chatId = self.chatId
+        Task { [weak self] in
+            let counts = (try? await db.read { dbc in try ChatGallery.counts(dbc, chatId: chatId) }) ?? [:]
+            self?.counts = counts
+        }
+    }
 
     /// Loads more as the end of the list comes near; called by the cells at the bottom.
     func loadMoreIfNeeded(_ tab: GalleryTab, at entry: GalleryEntry) {
@@ -86,7 +98,7 @@ struct ChatGalleryView: View {
         VStack(spacing: 0) {
             Picker("", selection: $model.tab) {
                 ForEach(GalleryTab.allCases, id: \.self) { tab in
-                    Text(Self.title(tab)).tag(tab)
+                    Text(Self.tabLabel(tab, count: model.counts[tab])).tag(tab)
                 }
             }
             .pickerStyle(.segmented)
@@ -100,7 +112,10 @@ struct ChatGalleryView: View {
         .background(Theme.chatBackground.ignoresSafeArea())
         .navigationTitle("Attachments")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { model.load(model.tab) }
+        .onAppear {
+            model.load(model.tab)
+            model.loadCounts()
+        }
     }
 
     @ViewBuilder
@@ -305,6 +320,13 @@ struct ChatGalleryView: View {
         .padding(.horizontal, 40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("gallery.empty")
+    }
+
+    /// A segmented control renders one plain string per segment, so the count
+    /// sits next to the label rather than in a separately coloured `Text`.
+    static func tabLabel(_ tab: GalleryTab, count: Int?) -> String {
+        guard let count else { return title(tab) }
+        return "\(title(tab))  \(CountFormatter.short(count))"
     }
 
     static func title(_ tab: GalleryTab) -> String {
