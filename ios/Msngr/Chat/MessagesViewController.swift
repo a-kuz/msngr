@@ -28,6 +28,8 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     var onVotePoll: ((Message, [Int]) -> Void)?
     /// the footer tap of a non-anonymous poll, asking for the voters sheet
     var onShowPollVoters: ((Message) -> Void)?
+    var onOpenContact: ((Message) -> Void)?
+    var onOpenLocation: ((Message) -> Void)?
     var onTranscript: ((Message) -> Void)?
     var onRetranscribe: ((Message) -> Void)?
     /// The message the chat holds pinned, so the context menu of that one offers
@@ -567,6 +569,8 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         cell.ownUserId = ownUserId
         cell.onVotePoll = { [weak self] votes in self?.onVotePoll?(msg, votes) }
         cell.onShowPollVoters = { [weak self] in self?.onShowPollVoters?(msg) }
+        cell.onOpenContact = { [weak self] in self?.onOpenContact?(msg) }
+        cell.onOpenLocation = { [weak self] in self?.onOpenLocation?(msg) }
         cell.onTranscript = { [weak self] in self?.onTranscript?(msg) }
         cell.onRetranscribe = { [weak self] in self?.onRetranscribe?(msg) }
         cell.configure(msg: msg, plan: plan, avatar: avatar)
