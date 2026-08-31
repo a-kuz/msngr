@@ -258,6 +258,19 @@ enum BubbleLayout {
             voiceFrame = CGRect(x: hPadding, y: y, width: w, height: h) // a poll borrows the voiceFrame slot
             contentWidth = max(contentWidth, w)
             y += h
+        case .contact:
+            let w = min(attachmentWidth + 20, maxBubbleWidth - 2 * hPadding)
+            let h = attachmentHeight
+            voiceFrame = CGRect(x: hPadding, y: y, width: w, height: h) // a contact borrows the voiceFrame slot
+            contentWidth = max(contentWidth, w)
+            y += h
+        case .location:
+            // a map card in the shared slot, wide and 5:3
+            let w = min(attachmentWidth + 60, maxBubbleWidth - 2 * hPadding)
+            let h = floor(w * 0.6)
+            voiceFrame = CGRect(x: hPadding, y: y, width: w, height: h)
+            contentWidth = max(contentWidth, w)
+            y += h
         case .shader:
             // the shader takes a photo's width at 16:9, full bleed like a photo
             // with nothing above it, with the status capsule over the picture
@@ -551,6 +564,8 @@ enum BubbleLayout {
         case .poll: return "📊 " + (reply.text.isEmpty ? String(localized: "Poll") : reply.text)
         case .file: return "📎 " + (reply.text.isEmpty ? String(localized: "File") : reply.text)
         case .album: return String(localized: "🖼 Album")
+        case .contact: return "👤 " + (reply.text.isEmpty ? String(localized: "Contact") : reply.text)
+        case .location: return "📍 " + (reply.text.isEmpty ? String(localized: "Location") : reply.text)
         case .shader: return "✨ " + (reply.text.isEmpty ? String(localized: "Shader") : reply.text)
         case .sticker: return "✨ " + (reply.text.isEmpty ? String(localized: "Sticker") : reply.text)
         default: return reply.text.isEmpty ? String(localized: "Message") : reply.text

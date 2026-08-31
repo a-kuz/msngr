@@ -29,6 +29,10 @@ struct ChatScreen: View {
     @State private var pendingImages: [UIImage] = []
     @State private var showFilePicker = false
     @State private var showPollComposer = false
+    @State private var showContactPicker = false
+    @State private var showLocationPicker = false
+    @State private var shownContact: Message?
+    @State private var shownLocation: Message?
     @State private var forwardMessage: Message?
     @State private var forwardingSelection = false
     @State private var reactionRoster: ReactionRosterRequest?
@@ -149,6 +153,8 @@ struct ChatScreen: View {
                                  onAttachPhoto: { photoPickerPresented = true },
                                  onAttachFile: { showFilePicker = true },
                                  onAttachPoll: { showPollComposer = true },
+                                 onAttachContact: { showContactPicker = true },
+                                 onAttachLocation: { showLocationPicker = true },
                                  onAttachShader: { shaderComposer = .message },
                                  onAttachSticker: { showStickers = true },
                                  onAttachBubbleShader: { shaderComposer = .bubble },
@@ -336,6 +342,22 @@ struct ChatScreen: View {
         .sheet(isPresented: $showPollComposer) {
             PollComposerSheet { poll in sendPoll(poll) }
         }
+        .sheet(isPresented: $showContactPicker) {
+            ContactPickerSheet { card in sendContact(card) }
+        }
+        .sheet(isPresented: $showLocationPicker) {
+            LocationPickerSheet { point in sendLocation(point) }
+        }
+        .sheet(item: $shownContact) { msg in
+            if let card = msg.contact {
+                ContactViewerSheet(card: card)
+            }
+        }
+        .sheet(item: $shownLocation) { msg in
+            if let point = msg.location {
+                LocationViewerSheet(point: point)
+            }
+        }
         .onAppear { backgroundRunning = true }
         .onDisappear { backgroundRunning = false }
         // palette change: bubble colours are read in the cell's configure, so force a reload
@@ -516,6 +538,8 @@ struct ChatScreen: View {
                          }
                      },
                      onShowPollVoters: { pollVotersMessage = $0 },
+                     onOpenContact: { shownContact = $0 },
+                     onOpenLocation: { shownLocation = $0 },
                      onDateTap: { showCalendar = true })
     }
 
@@ -1241,6 +1265,20 @@ struct ChatScreen: View {
         model.enqueue(c)
     }
 
+    private func sendContact(_ card: ContactCard) {
+        var c = ContentPayload(kind: "contact")
+        c.contact = card
+        model.enqueue(c)
+        Haptics.light()
+    }
+
+    private func sendLocation(_ point: LocationInfo) {
+        var c = ContentPayload(kind: "location")
+        c.location = point
+        model.enqueue(c)
+        Haptics.light()
+    }
+
     /// A shader is text-sized and needs no upload: the document goes straight
     /// into the send queue.
     private func sendPoll(_ poll: PollInfo) {
@@ -1421,6 +1459,8 @@ struct MessagesView: UIViewControllerRepresentable {
     var onSwipeBack: () -> Void
     var onCapsuleTap: (Message, String) -> Void
     var onShowPollVoters: (Message) -> Void
+    var onOpenContact: (Message) -> Void
+    var onOpenLocation: (Message) -> Void
     var onDateTap: () -> Void
 
     func makeUIViewController(context: Context) -> MessagesViewController {
@@ -1516,6 +1556,8 @@ struct MessagesView: UIViewControllerRepresentable {
         vc.onSwipeBack = onSwipeBack
         vc.onReactionCapsuleTap = onCapsuleTap
         vc.onShowPollVoters = onShowPollVoters
+        vc.onOpenContact = onOpenContact
+        vc.onOpenLocation = onOpenLocation
         vc.onDateTap = onDateTap
         vc.pinnedSeqs = Set(model.chat?.pinnedSeqs ?? [])
         vc.ownUserId = model.ownUserId

@@ -11,6 +11,8 @@ struct InputBar: View {
     var onAttachPhoto: () -> Void
     var onAttachFile: () -> Void
     var onAttachPoll: () -> Void
+    var onAttachContact: () -> Void
+    var onAttachLocation: () -> Void
     var onAttachShader: () -> Void
     var onAttachSticker: () -> Void
     var onAttachBubbleShader: () -> Void
@@ -100,6 +102,14 @@ struct InputBar: View {
                         Button { onAttachFile() } label: {
                             Label("File", systemImage: "doc")
                         }
+                        Button { onAttachContact() } label: {
+                            Label(String(localized: "Contact"), systemImage: "person.crop.circle")
+                        }
+                        .accessibilityIdentifier("chat.attach.contact")
+                        Button { onAttachLocation() } label: {
+                            Label(String(localized: "Location"), systemImage: "mappin.and.ellipse")
+                        }
+                        .accessibilityIdentifier("chat.attach.location")
                         // the shader composer is the owner's debugging tool:
                         // its entries appear only when switched on in Settings
                         if surfaces.composerEnabled {
