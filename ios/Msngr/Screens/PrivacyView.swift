@@ -51,6 +51,12 @@ struct PrivacyView: View {
                     Label("Last seen", systemImage: "clock")
                 }
                 .accessibilityIdentifier("privacy.lastSeen")
+                NavigationLink {
+                    PrivacyExceptionsView(setting: "last_seen", title: "Last seen")
+                } label: {
+                    Text("Exceptions")
+                }
+                .accessibilityIdentifier("privacy.lastSeen.exceptions")
             } footer: {
                 Text("Hiding your last seen also hides everyone else's from you.")
             }
@@ -64,6 +70,11 @@ struct PrivacyView: View {
                     Label("Profile photo and bio", systemImage: "person.crop.circle")
                 }
                 .accessibilityIdentifier("privacy.avatar")
+                NavigationLink {
+                    PrivacyExceptionsView(setting: "avatar", title: "Profile photo and bio")
+                } label: {
+                    Text("Exceptions")
+                }
             } footer: {
                 Text("People you hide them from see your initials in place of the photo. Your name is always visible.")
             }
@@ -77,6 +88,11 @@ struct PrivacyView: View {
                     Label("Who can find me by number", systemImage: "magnifyingglass")
                 }
                 .accessibilityIdentifier("privacy.phoneDiscovery")
+                NavigationLink {
+                    PrivacyExceptionsView(setting: "phone_discovery", title: "Who can find me by number")
+                } label: {
+                    Text("Exceptions")
+                }
             } footer: {
                 Text("Whose address-book sync may match your number. Anyone can still find you by username.")
             }
@@ -90,6 +106,11 @@ struct PrivacyView: View {
                     Label("Who can add me to groups", systemImage: "person.2.badge.plus")
                 }
                 .accessibilityIdentifier("privacy.groupInvites")
+                NavigationLink {
+                    PrivacyExceptionsView(setting: "group_invites", title: "Who can add me to groups")
+                } label: {
+                    Text("Exceptions")
+                }
             } footer: {
                 Text("Anyone else can only send you an invite link.")
             }
