@@ -1108,13 +1108,16 @@ build takes it from the environment (`make device TEAM=…`, local.mk).
   circle, like the feed) — qa/runs/2026-08-30-ipad-review-run.md. The feed
   spans the full width with bubbles at the left edge; a bubble-column cap is
   the owner's design call.
-- 🟡 a menu bar on the Mac (UIMenuBuilder): the app delegate inserts Chats
+- ✅ a menu bar on the Mac (UIMenuBuilder): the app delegate inserts Chats
   (next/previous chat, edit last message) and Format (bold/italic/link),
   each item naming a composer selector so the responder chain enables it
   exactly where its key works; the keystrokes stay in keyCommands
-  (KeyboardMenuTests pins the selectors both ways). Not seen on a real Mac
-  yet — that run is the item below
-- ⬜ a signed run on a real Mac as «Designed for iPad»
+  (KeyboardMenuTests pins the selectors both ways; seen live on the
+  development Mac — qa/runs/2026-09-01-mac-run.md)
+- ✅ a signed run on a real Mac as «Designed for iPad»: the iphoneos build
+  wrapped the way the App Store installs iOS apps runs as a Mac window —
+  the feed, voice playback and the composer all live
+  (qa/runs/2026-09-01-mac-run.md, watched by the owner)
 
 ## Performance and animations
 
