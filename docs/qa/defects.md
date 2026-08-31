@@ -1004,11 +1004,12 @@ right after picking a timer, and the sender's own outgoing messages got no
 `disappearing` payload to the chat row in the same transaction that queues
 it, the way an edit already took effect at enqueue.
 
-### Smoke: «cmid swept behind the sender's ack» fails
-Found 2026-08-31 in passing while running `server/test/smoke.mjs` for the
-avatar-privacy work: the check at smoke.mjs:1900 fails on every run — the
-resend of `cm-w1` after the sweep never comes back with a fresh seq
-(`w1fresh` is null). Reproduced identically on a clean HEAD checkout
-(b013ccf) against its own stand on another port, so it is not introduced
-by the avatar-privacy change. Not investigated further; the dedup sweep or
-the test's expectations around it need a separate look.
+### Smoke: «cmid swept behind the sender's ack» fails — stand config, not a defect
+Found 2026-08-31 while running `server/test/smoke.mjs` for the avatar-privacy
+work; the resend of `cm-w1` after the sweep never came back with a fresh seq.
+Resolved the same day: the case exercises the idempotency-record sweep and
+needs the stand started with `--var CMID_MIN_AGE:0 --var CMID_SWEEP_EVERY:0`
+(the sweep otherwise refuses to touch records younger than its production
+minimum, so nothing is swept and the resend answers as a dupe). With those
+vars the case is green on the same code; the reproduction «on a clean HEAD»
+ran a stand without them. Closed as environment, no product change.

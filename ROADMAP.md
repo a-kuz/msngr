@@ -702,8 +702,13 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   - ⬜ exceptions for named people, for last seen and the settings below it
   - ✅ read receipts and «печатает…» turned off, in both directions (smoke
     `read receipt off reciprocally`, `typing off reciprocally`)
-  - ⬜ who sees my avatar, bio and name, with the same three answers and the same
-    exceptions
+  - ✅ who sees my avatar and bio: everyone or nobody, enforced by the server
+    (`privacy_settings.avatar_visibility`; the card, search, chat lists and the
+    avatar bytes themselves are withheld, and the profile frame the peers get
+    is already blanked). The name is never hidden — a nameless peer is
+    indistinguishable in a list; the "contacts" tier waits on the same missing
+    contacts primitive as last seen, so the picker offers two answers (smoke:
+    the avatar-privacy block; the placeholder switch seen live 2026-08-31)
   - ⬜ who can find me: by username always, by the number's hash only if I allow it
   - ⬜ who can add me to a group; everyone else can only send an invite
   - ⬜ who can call me, once calls exist
