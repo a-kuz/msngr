@@ -849,6 +849,8 @@ enum MessageContextAction {
     case setBackground
     /// a sticker goes into the local pack
     case saveSticker
+    /// a message still waiting for its scheduled time
+    case sendNow, reschedule, cancelScheduled
 }
 
 extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {

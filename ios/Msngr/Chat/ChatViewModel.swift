@@ -56,6 +56,8 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var typingUsers: [String] = []
     @Published var replyingTo: Message?
     @Published var editing: Message?
+    /// A scheduled message whose time is being moved: the picker sheet for it.
+    @Published var reschedulingMessage: Message?
     /// A shader chosen for the next text message, painted behind its bubble.
     @Published var pendingBubbleShader: ShaderDocument?
     /// The card of the first link in the field, ready to travel with the send.
@@ -785,7 +787,7 @@ final class ChatViewModel: ObservableObject {
     /// Puts content into the send queue. The queue is local and the network plays
     /// no part here: a failure means the row never made it into the database and
     /// the message is lost, which is worth telling the user about.
-    func enqueue(_ content: ContentPayload, chatId: String? = nil) {
+    func enqueue(_ content: ContentPayload, chatId: String? = nil, scheduledFor: Date? = nil) {
         let target = chatId ?? self.chatId
         if Self.movesFeedToEnd(kind: content.kind, target: target, chatId: self.chatId) {
             returnToBottom()
@@ -793,12 +795,40 @@ final class ChatViewModel: ObservableObject {
         }
         Task { [weak self] in
             do {
-                try await app.engine.enqueue(content: content, chatId: target)
+                try await app.engine.enqueue(content: content, chatId: target,
+                                             scheduledFor: scheduledFor?.timeIntervalSince1970)
             } catch {
                 MsngrLog.outbox.error("failed to enqueue \(content.kind): \(error)")
                 self?.sendFailure = String(localized: "Failed to save message")
             }
         }
+    }
+
+    /// Cancels a message still waiting for its scheduled time: it never went
+    /// out, so nothing is left behind for it once this returns.
+    func cancelScheduled(_ msg: Message) {
+        let id = msg.clientMsgId ?? msg.id
+        Task { [weak self] in await self?.app.engine.cancelScheduled(clientMsgId: id) }
+    }
+
+    /// Moves a scheduled message to a new time.
+    func rescheduleSend(_ msg: Message, to date: Date) {
+        let id = msg.clientMsgId ?? msg.id
+        Task { [weak self] in
+            await self?.app.engine.rescheduleSend(clientMsgId: id, to: date.timeIntervalSince1970)
+        }
+    }
+
+    /// Releases a scheduled message to go out at once.
+    func sendScheduledNow(_ msg: Message) {
+        let id = msg.clientMsgId ?? msg.id
+        Task { [weak self] in await self?.app.engine.rescheduleSend(clientMsgId: id, to: nil) }
+    }
+
+    /// Rewrites the text of a message still waiting for its scheduled time.
+    func editScheduledText(_ msg: Message, text: String) {
+        let id = msg.clientMsgId ?? msg.id
+        Task { [weak self] in await self?.app.engine.editScheduledText(clientMsgId: id, text: text) }
     }
 
     /// Puts a media placeholder into the feed before the attachment is ready:
@@ -831,13 +861,21 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    func send(text: String) {
+    func send(text: String, scheduledFor: Date? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         PerfTrace.shared.mark("send.tap")
         dismissUnreadMarker()
         let tokenized = MessageMarkdown.tokenizeMentions(trimmed, users: mentionCandidates)
         if let editing {
+            // still waiting for its time: it never went out, so the row and
+            // its queued payload are rewritten directly instead of through
+            // the `edit` event a delivered message needs
+            if editing.scheduledFor != nil {
+                editScheduledText(editing, text: tokenized)
+                self.editing = nil
+                return
+            }
             var c = ContentPayload(kind: "edit")
             c.targetLocalId = editing.id
             c.text = tokenized
@@ -865,7 +903,7 @@ final class ChatViewModel: ObservableObject {
         }
         replyingTo = nil
         saveDraft(nil, immediately: true)
-        enqueue(c)
+        enqueue(c, scheduledFor: scheduledFor)
         Haptics.light()
     }
 
