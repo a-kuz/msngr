@@ -12,6 +12,8 @@ configFiles:
 packages:
   MsngrKit:
     path: MsngrKit
+  MsngrCalls:
+    path: MsngrCalls
   Pulse:
     url: https://github.com/kean/Pulse
     from: 5.0.0
@@ -42,6 +44,8 @@ targets:
         product: MsngrCrypto
       - package: MsngrKit
         product: MsngrCore
+      - package: MsngrCalls
+        product: MsngrCalls
       - package: Pulse
         product: Pulse
       - package: Pulse

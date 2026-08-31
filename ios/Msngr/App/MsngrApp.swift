@@ -23,6 +23,13 @@ struct MsngrApp: App {
                     RegisterView()
                         .environmentObject(app)
                 }
+                // the call rides over the whole app and under the safety screens
+                if app.callState.phase != .idle {
+                    CallScreenView()
+                        .environmentObject(app)
+                        .transition(.opacity)
+                        .zIndex(7)
+                }
                 // revoked device: a dead end on top of everything but the passcode
                 if app.sessionRevoked {
                     SessionEndedView()
@@ -50,6 +57,7 @@ struct MsngrApp: App {
             .tint(Theme.accent)
             .pulseConsoleOnShake()
             .animation(.easeOut(duration: 0.2), value: app.isLocked)
+            .animation(.easeOut(duration: 0.2), value: app.callState.phase != .idle)
             .onChange(of: scenePhase) { _, phase in
                 app.scenePhaseChanged(phase)
             }

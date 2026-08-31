@@ -292,6 +292,11 @@ extension Theme {
         static let menuItem = TextRole(size: 17, relativeTo: .body, maxSize: 30)
         /// Oversized tappable glyph: keypad digit, quick-reaction emoji.
         static let largeControl = TextRole(size: 28, relativeTo: .title2, maxSize: 40)
+
+        // call screen
+        static let callName = TextRole(size: 26, weight: .semibold, relativeTo: .title2, maxSize: 38)
+        static let callStatus = TextRole(size: 15, relativeTo: .subheadline, maxSize: 26)
+        static let callControlLabel = TextRole(size: 13, relativeTo: .caption1, maxSize: 22)
         static let monospacedTag = TextRole(size: 11, relativeTo: .caption2, design: .monospaced, maxSize: 18)
         /// Label burned into a fixed-size thumbnail: grows barely, or it covers
         /// the picture it annotates.

@@ -145,6 +145,18 @@ func openPerson(name: String, display: String, dir: URL, base: URL) async throws
     }
 }
 
+/// Leaves the home ready for `fixture.py install`: the journal folded back
+/// into the database file and session.json beside it, the way the app reads it.
+func sealHome(_ p: Person) async throws {
+    try await p.db.writeWithoutTransaction { dbc in
+        try dbc.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
+    }
+    let location = StorageLocation(root: p.home)
+    let session = SessionFile(userId: p.userId, deviceId: p.meta.deviceId,
+                              token: p.meta.token, username: p.username)
+    try JSONEncoder().encode(session).write(to: location.sessionURL, options: .atomic)
+}
+
 func startEngine(_ p: Person, base: URL) async {
     p.e2ee = E2EEManager(store: p.store, api: p.api, ownUserId: p.userId, ownDeviceId: p.meta.deviceId)
     p.engine = SyncEngine(db: p.db, api: p.api, e2ee: p.e2ee,
@@ -492,6 +504,7 @@ func knock(dir: URL, base: URL, name: String, display: String, peer: String, tex
         } == 0
     }
     await p.engine.stop()
+    try await sealHome(p)
     print("· \(p.username) knocked on \(peer) with «\(text)» in \(chatId)")
 }
 
@@ -857,10 +870,11 @@ do {
         // just an account on the stand, no chats: what the UI smoke's search
         // needs on a throwaway stand
         let name = try arg("as")
-        _ = try await openPerson(name: name,
-                                 display: try arg("name", default: name),
-                                 dir: URL(fileURLWithPath: try arg("dir")),
-                                 base: URL(string: try arg("base", default: "http://localhost:8787"))!)
+        let p = try await openPerson(name: name,
+                                     display: try arg("name", default: name),
+                                     dir: URL(fileURLWithPath: try arg("dir")),
+                                     base: URL(string: try arg("base", default: "http://localhost:8787"))!)
+        try await sealHome(p)
     case "send":
         try await send(
             dir: URL(fileURLWithPath: try arg("dir")),
