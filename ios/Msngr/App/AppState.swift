@@ -243,6 +243,13 @@ final class AppState: ObservableObject {
                 "storage is ahead of this build: \(applied.joined(separator: ","), privacy: .public)")
             db = nil
             outdated = .storageAhead
+        } catch AppDatabaseError.corrupted(let underlying) {
+            // an unreadable file holds nothing to resume and nothing to save:
+            // the product's move is a clean start back to registration, the same
+            // as for storage owned by another account
+            MsngrLog.session.error(
+                "local database is corrupted, resetting to registration: \(underlying)")
+            await resetToRegistration()
         } catch {
             assertionFailure("bootstrap failed: \(error)")
         }
