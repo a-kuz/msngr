@@ -375,12 +375,12 @@ private struct GalleryThumbView: View {
                     .resizable()
                     .scaledToFill()
             } else {
-                Image(systemName: entry.kind == .video ? "film" : "photo")
+                Image(systemName: entry.kind == .video || entry.kind == .roundVideo ? "film" : "photo")
                     .font(.system(size: 20))
                     .foregroundStyle(.tertiary)
                     .accessibilityHidden(true)
             }
-            if entry.kind == .video {
+            if entry.kind == .video || entry.kind == .roundVideo {
                 VStack {
                     Spacer()
                     HStack(spacing: 3) {

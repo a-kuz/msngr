@@ -1,466 +1,6 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "Next chat" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Следующий чат"
-          }
-        }
-      }
-    },
-    "Previous chat" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Предыдущий чат"
-          }
-        }
-      }
-    },
-    "Edit last message" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Изменить последнее сообщение"
-          }
-        }
-      }
-    },
-    "Bold" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Жирный"
-          }
-        }
-      }
-    },
-    "Italic" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Курсив"
-          }
-        }
-      }
-    },
-    "Link" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ссылка"
-          }
-        }
-      }
-    },
-    "Media cache limit" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Лимит кэша медиа"
-          }
-        }
-      }
-    },
-    "No limit" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Без лимита"
-          }
-        }
-      }
-    },
-    "Over the limit, the media untouched the longest is removed from this device. Everything removed can be downloaded again." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сверх лимита с устройства удаляется медиа, которое дольше всего не открывали. Всё удалённое можно загрузить снова."
-          }
-        }
-      }
-    },
-    "Link previews" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Превью ссылок"
-          }
-        }
-      }
-    },
-    "To build a preview card this device fetches the page of a link you type. Turned off, no page is ever requested." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Для карточки превью устройство загружает страницу по введённой ссылке. Если выключено, страницы не запрашиваются вовсе."
-          }
-        }
-      }
-    },
-    "Format" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Формат"
-          }
-        }
-      }
-    },
-    "Everyone" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Все"
-          }
-        }
-      }
-    },
-    "Hiding your last seen also hides everyone else's from you." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Если скрыть своё время захода, вы перестанете видеть чужое."
-          }
-        }
-      }
-    },
-    "Last seen" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Последнее посещение"
-          }
-        }
-      }
-    },
-    "My contacts" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Мои контакты"
-          }
-        }
-      }
-    },
-    "Nobody" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Никто"
-          }
-        }
-      }
-    },
-    "Privacy" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Приватность"
-          }
-        }
-      }
-    },
-    "Read receipts" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Отчёты о прочтении"
-          }
-        }
-      }
-    },
-    "Turning this off also hides read receipts from people who turned theirs off." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Если выключить, вы также не увидите отчёты о прочтении у тех, кто выключил их у себя."
-          }
-        }
-      }
-    },
-    "Typing" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Набор текста"
-          }
-        }
-      }
-    },
-    "Whether people see when you're typing, and you see when they are." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Видят ли собеседники, что вы печатаете, и видите ли вы, что печатают они."
-          }
-        }
-      }
-    },
-    "Backup" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Резервная копия"
-          }
-        }
-      }
-    },
-    "Restore from backup" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Восстановление из копии"
-          }
-        }
-      }
-    },
-    "Could not build the backup" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось собрать резервную копию"
-          }
-        }
-      }
-    },
-    "Could not restore this backup" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось восстановить эту копию"
-          }
-        }
-      }
-    },
-    "That recovery code does not open this backup." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Этот код или пароль не открывает эту копию."
-          }
-        }
-      }
-    },
-    "No account matches this backup." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Этой копии не соответствует ни один аккаунт."
-          }
-        }
-      }
-    },
-    "The recovery code opened an account that does not match. Start over." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Код открыл аккаунт, который не совпадает. Начните заново."
-          }
-        }
-      }
-    },
-    "Could not open the file" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось открыть файл"
-          }
-        }
-      }
-    },
-    "Could not read the file" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось прочитать файл"
-          }
-        }
-      }
-    },
-    "Choose file…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выбрать файл…"
-          }
-        }
-      }
-    },
-    "Restore" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Восстановить"
-          }
-        }
-      }
-    },
-    "Last backup" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Последняя копия"
-          }
-        }
-      }
-    },
-    "Size" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Размер"
-          }
-        }
-      }
-    },
-    "I saved it" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Я сохранил(а)"
-          }
-        }
-      }
-    },
-    "Turn off backup" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Отключить резервную копию"
-          }
-        }
-      }
-    },
-    "Recovery code not available in this session; turn backup off and on again." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Код восстановления недоступен в этой сессии; выключите и снова включите резервную копию."
-          }
-        }
-      }
-    },
-    "Generate a recovery code" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сгенерировать код восстановления"
-          }
-        }
-      }
-    },
-    "Use my own password" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Использовать свой пароль"
-          }
-        }
-      }
-    },
-    "A generated code cannot be guessed. A password is yours to remember — the backup is only as strong as the password you pick." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сгенерированный код нельзя подобрать. Пароль вы запоминаете сами — копия защищена ровно настолько, насколько силён пароль."
-          }
-        }
-      }
-    },
-    "Backup password" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Пароль копии"
-          }
-        }
-      }
-    },
-    "Repeat it" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Повторите"
-          }
-        }
-      }
-    },
-    "Continue" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Продолжить"
-          }
-        }
-      }
-    },
-    "There is no reset: a forgotten password means the backup never opens again." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сброса нет: забытый пароль означает, что копия больше никогда не откроется."
-          }
-        }
-      }
-    },
     " " : {
       "comment" : "A placeholder text for a chat row.",
       "isCommentAutoGenerated" : true
@@ -800,6 +340,17 @@
         }
       }
     },
+    "📹 Video message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "📹 Видеосообщение"
+          }
+        }
+      }
+    },
     "🖼 Album" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -885,6 +436,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Папка собирает чаты по правилу — люди, группы, непрочитанные — и хранит всё, что вы добавили вручную."
+          }
+        }
+      }
+    },
+    "A generated code cannot be guessed. A password is yours to remember — the backup is only as strong as the password you pick." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сгенерированный код нельзя подобрать. Пароль вы запоминаете сами — копия защищена ровно настолько, насколько силён пароль."
           }
         }
       }
@@ -1186,6 +747,28 @@
         }
       }
     },
+    "Backup" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Резервная копия"
+          }
+        }
+      }
+    },
+    "Backup password" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пароль копии"
+          }
+        }
+      }
+    },
     "Behind the next message" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1241,6 +824,17 @@
         }
       }
     },
+    "Bold" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Жирный"
+          }
+        }
+      }
+    },
     "Bubble shader" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1263,6 +857,17 @@
         }
       }
     },
+    "Camera disabled" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Камера отключена"
+          }
+        }
+      }
+    },
     "Cancel" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1270,39 +875,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Отмена"
-          }
-        }
-      }
-    },
-    "Reschedule" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Перенести"
-          }
-        }
-      }
-    },
-    "Schedule Send" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Запланировать отправку"
-          }
-        }
-      }
-    },
-    "Send now" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Отправить сейчас"
           }
         }
       }
@@ -1402,6 +974,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Придумайте код-пароль"
+          }
+        }
+      }
+    },
+    "Choose file…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбрать файл…"
           }
         }
       }
@@ -1550,6 +1133,17 @@
         }
       }
     },
+    "Continue" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Продолжить"
+          }
+        }
+      }
+    },
     "Copied" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1605,6 +1199,17 @@
         }
       }
     },
+    "Could not build the backup" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось собрать резервную копию"
+          }
+        }
+      }
+    },
     "Could not change the username" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1649,6 +1254,17 @@
         }
       }
     },
+    "Could not open the file" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось открыть файл"
+          }
+        }
+      }
+    },
     "Could not reach the server" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1656,6 +1272,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не удалось связаться с сервером"
+          }
+        }
+      }
+    },
+    "Could not read the file" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось прочитать файл"
+          }
+        }
+      }
+    },
+    "Could not restore this backup" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось восстановить эту копию"
           }
         }
       }
@@ -1780,6 +1418,21 @@
         }
       }
     },
+    "Delivered to %@" : {
+      "comment" : "A heading that says \"Delivered to\" followed by the number of people who have received a message.",
+      "isCommentAutoGenerated" : true
+    },
+    "Delivered to %lld" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доставлено — %lld"
+          }
+        }
+      }
+    },
     "Description" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1891,46 +1544,13 @@
         }
       }
     },
-    "Read by" : {
-      "extractionState" : "manual",
+    "Edit last message" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Кто прочитал"
-          }
-        }
-      }
-    },
-    "Read by %lld" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Прочитали — %lld"
-          }
-        }
-      }
-    },
-    "Delivered to %lld" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Доставлено — %lld"
-          }
-        }
-      }
-    },
-    "No one has received this yet" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ещё никто не получил"
+            "value" : "Изменить последнее сообщение"
           }
         }
       }
@@ -2040,6 +1660,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "все"
+          }
+        }
+      }
+    },
+    "Everyone" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Все"
           }
         }
       }
@@ -2154,6 +1785,17 @@
         }
       }
     },
+    "Format" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Формат"
+          }
+        }
+      }
+    },
     "Forward" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2194,6 +1836,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Переслано от %@"
+          }
+        }
+      }
+    },
+    "Generate a recovery code" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сгенерировать код восстановления"
           }
         }
       }
@@ -2286,6 +1939,28 @@
         }
       }
     },
+    "Hiding your last seen also hides everyone else's from you." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Если скрыть своё время захода, вы перестанете видеть чужое."
+          }
+        }
+      }
+    },
+    "I saved it" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Я сохранил(а)"
+          }
+        }
+      }
+    },
     "If this is not your account, cancel the login." : {
       "localizations" : {
         "ru" : {
@@ -2318,6 +1993,17 @@
         }
       }
     },
+    "Italic" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Курсив"
+          }
+        }
+      }
+    },
     "keyboard" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2336,6 +2022,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Язык"
+          }
+        }
+      }
+    },
+    "Last backup" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Последняя копия"
+          }
+        }
+      }
+    },
+    "Last seen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Последнее посещение"
           }
         }
       }
@@ -2403,6 +2111,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "влево — отмена"
+          }
+        }
+      }
+    },
+    "Link" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ссылка"
+          }
+        }
+      }
+    },
+    "Link previews" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Превью ссылок"
           }
         }
       }
@@ -2533,6 +2263,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Медиа"
+          }
+        }
+      }
+    },
+    "Media cache limit" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Лимит кэша медиа"
           }
         }
       }
@@ -2706,6 +2447,17 @@
         }
       }
     },
+    "My contacts" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Мои контакты"
+          }
+        }
+      }
+    },
     "Name" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -2816,6 +2568,28 @@
         }
       }
     },
+    "Next chat" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Следующий чат"
+          }
+        }
+      }
+    },
+    "No account matches this backup." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этой копии не соответствует ни один аккаунт."
+          }
+        }
+      }
+    },
     "No chats" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2838,6 +2612,17 @@
         }
       }
     },
+    "No limit" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без лимита"
+          }
+        }
+      }
+    },
     "No messages in this chat match that text" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2849,6 +2634,17 @@
         }
       }
     },
+    "No one has received this yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ещё никто не получил"
+          }
+        }
+      }
+    },
     "No stickers yet. Write one from Shadertoy code, or add one a friend sent." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2856,6 +2652,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Стикеров пока нет. Напишите свой из кода Shadertoy или добавьте присланный."
+          }
+        }
+      }
+    },
+    "Nobody" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Никто"
           }
         }
       }
@@ -3021,6 +2828,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Здесь появятся другие устройства, на которых вы войдёте в аккаунт."
+          }
+        }
+      }
+    },
+    "Over the limit, the media untouched the longest is removed from this device. Everything removed can be downloaded again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сверх лимита с устройства удаляется медиа, которое дольше всего не открывали. Всё удалённое можно загрузить снова."
           }
         }
       }
@@ -3223,6 +3040,28 @@
         }
       }
     },
+    "Previous chat" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Предыдущий чат"
+          }
+        }
+      }
+    },
+    "Privacy" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Приватность"
+          }
+        }
+      }
+    },
     "Profile" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3245,6 +3084,43 @@
         }
       }
     },
+    "Read by" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Кто прочитал"
+          }
+        }
+      }
+    },
+    "Read by %@" : {
+      "comment" : "A heading that shows the number of people who have read a message.",
+      "isCommentAutoGenerated" : true
+    },
+    "Read by %lld" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прочитали — %lld"
+          }
+        }
+      }
+    },
+    "Read receipts" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отчёты о прочтении"
+          }
+        }
+      }
+    },
     "Recovery code" : {
       "comment" : "A label displayed above the recovery code.",
       "isCommentAutoGenerated" : true,
@@ -3253,6 +3129,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Код восстановления"
+          }
+        }
+      }
+    },
+    "Recovery code not available in this session; turn backup off and on again." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Код восстановления недоступен в этой сессии; выключите и снова включите резервную копию."
           }
         }
       }
@@ -3290,6 +3177,17 @@
         }
       }
     },
+    "Repeat it" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повторите"
+          }
+        }
+      }
+    },
     "Repeat the passcode" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3312,6 +3210,28 @@
         }
       }
     },
+    "Reschedule" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенести"
+          }
+        }
+      }
+    },
+    "Restore" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановить"
+          }
+        }
+      }
+    },
     "Restore from a backup" : {
       "comment" : "A link to restore an account from a backup.",
       "isCommentAutoGenerated" : true,
@@ -3320,6 +3240,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Восстановить из резервной копии"
+          }
+        }
+      }
+    },
+    "Restore from backup" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановление из копии"
           }
         }
       }
@@ -3431,6 +3362,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Избранное"
+          }
+        }
+      }
+    },
+    "Schedule Send" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запланировать отправку"
           }
         }
       }
@@ -3574,6 +3516,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Эффект отправки"
+          }
+        }
+      }
+    },
+    "Send now" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправить сейчас"
           }
         }
       }
@@ -3775,6 +3728,17 @@
         }
       }
     },
+    "Size" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Размер"
+          }
+        }
+      }
+    },
     "Source" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3852,6 +3816,17 @@
         }
       }
     },
+    "Stop" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Остановить"
+          }
+        }
+      }
+    },
     "Test data" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3859,6 +3834,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Тестовые данные"
+          }
+        }
+      }
+    },
+    "That recovery code does not open this backup." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот код или пароль не открывает эту копию."
           }
         }
       }
@@ -4016,6 +4002,17 @@
         }
       }
     },
+    "The recovery code opened an account that does not match. Start over." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Код открыл аккаунт, который не совпадает. Начните заново."
+          }
+        }
+      }
+    },
     "The safety code has changed" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4034,6 +4031,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Пароля нет: попасть в аккаунт с нового устройства можно только отсюда. Пока хотя бы одно устройство на руках, доступ не потерян."
+          }
+        }
+      }
+    },
+    "There is no reset: a forgotten password means the backup never opens again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сброса нет: забытый пароль означает, что копия больше никогда не откроется."
           }
         }
       }
@@ -4172,6 +4179,16 @@
         }
       }
     },
+    "To build a preview card this device fetches the page of a link you type. Turned off, no page is ever requested." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для карточки превью устройство загружает страницу по введённой ссылке. Если выключено, страницы не запрашиваются вовсе."
+          }
+        }
+      }
+    },
     "Today" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4194,6 +4211,17 @@
         }
       }
     },
+    "Turn off backup" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отключить резервную копию"
+          }
+        }
+      }
+    },
     "Turn on backup" : {
       "comment" : "A button that turns backup on.",
       "isCommentAutoGenerated" : true,
@@ -4202,6 +4230,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Включить резервную копию"
+          }
+        }
+      }
+    },
+    "Turning this off also hides read receipts from people who turned theirs off." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Если выключить, вы также не увидите отчёты о прочтении у тех, кто выключил их у себя."
+          }
+        }
+      }
+    },
+    "Typing" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Набор текста"
           }
         }
       }
@@ -4328,6 +4378,17 @@
         }
       }
     },
+    "Use my own password" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использовать свой пароль"
+          }
+        }
+      }
+    },
     "User" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4401,6 +4462,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Видео"
+          }
+        }
+      }
+    },
+    "Video message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Видеосообщение"
+          }
+        }
+      }
+    },
+    "Video messages are recorded with the camera and the microphone." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Видеосообщения записываются камерой и микрофоном."
+          }
+        }
+      }
+    },
+    "Video not recorded: camera is unavailable" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Видео не записано: камера недоступна"
+          }
+        }
+      }
+    },
+    "Video not sent: could not process the recording" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Видео не отправлено: не удалось обработать запись"
           }
         }
       }
@@ -4522,6 +4627,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Что входит автоматически"
+          }
+        }
+      }
+    },
+    "Whether people see when you're typing, and you see when they are." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Видят ли собеседники, что вы печатаете, и видите ли вы, что печатают они."
           }
         }
       }

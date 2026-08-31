@@ -102,6 +102,8 @@ enum BubbleLayout {
     static var avatarSize: CGFloat { TypeScale.scaled(30, max: 42) }
     /// A shader sticker's square.
     static var stickerSide: CGFloat { TypeScale.scaled(180, max: 260) }
+    /// A round video message's diameter.
+    static var roundVideoSide: CGFloat { TypeScale.scaled(200, max: 280) }
     /// Horizontal room the avatar column takes: the picture plus its gap.
     static var avatarSpan: CGFloat { avatarSize + 6 }
 
@@ -250,6 +252,15 @@ enum BubbleLayout {
             mediaFrame = shaderFrame
             contentWidth = mw - 2 * hPadding
             y = shaderFrame!.maxY
+            statusOnMedia = true
+        case .roundVideo:
+            // a circle with no bubble behind it; the time capsule sits on the
+            // circle's lower edge, centered, where the round shape leaves room
+            let side = min(roundVideoSide, maxBubbleWidth)
+            let bare = authorNameFrame == nil && forwardFrame == nil && replyFrame == nil
+            mediaFrame = CGRect(x: 0, y: bare ? 0 : y, width: side, height: side)
+            contentWidth = side - 2 * hPadding
+            y = mediaFrame!.maxY
             statusOnMedia = true
         case .sticker:
             // a sticker is a square with no bubble behind it: the shader's own
@@ -464,7 +475,11 @@ enum BubbleLayout {
             authorNameFrame = nf
         }
         // the status is pinned to the right edge of the bubble
-        if statusOnMedia {
+        if msg.kind == .roundVideo {
+            // centered on the circle's lower edge: the square's corners are
+            // empty, so the right-pinned capsule would float in blank space
+            statusFrame.origin.x = (bubbleWidth - statusFrame.width) / 2
+        } else if statusOnMedia {
             statusFrame.origin.x = bubbleWidth - statusWidth - 18
         } else {
             statusFrame.origin.x = bubbleWidth - statusWidth - hPadding
@@ -516,6 +531,7 @@ enum BubbleLayout {
         case .photo: return String(localized: "📷 Photo")
         case .video: return String(localized: "🎥 Video")
         case .voice: return String(localized: "🎤 Voice message")
+        case .roundVideo: return String(localized: "📹 Video message")
         case .file: return "📎 " + (reply.text.isEmpty ? String(localized: "File") : reply.text)
         case .album: return String(localized: "🖼 Album")
         case .shader: return "✨ " + (reply.text.isEmpty ? String(localized: "Shader") : reply.text)
@@ -605,11 +621,17 @@ enum BubbleLayout {
         return hmFormatter.string(from: Date(timeIntervalSince1970: msg.serverTs ?? msg.sentAt))
     }
 
+    /// Room in the status line for the listened dots of a voice or round video.
+    static let noteDotsSpan: CGFloat = 14
+
     static func statusWidth(_ msg: Message, timeString: String) -> CGFloat {
         let font = timeFont
         var w = timeString.size(withAttributes: [.font: font]).width
         if msg.edited { w += editedMark.size(withAttributes: [.font: font]).width }
         if msg.isOutgoing { w += tickWidth }
+        // the dots' slot is always reserved: the time must not shift when a
+        // note flips between heard and unheard
+        if msg.kind == .voice || msg.kind == .roundVideo { w += noteDotsSpan }
         return ceil(w) + 2
     }
 }
