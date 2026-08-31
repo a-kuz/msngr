@@ -151,6 +151,7 @@ struct ChatInfoView: View {
                     Text("Off").tag(0)
                     Text("24 hours").tag(86400)
                     Text("7 days").tag(604800)
+                    Text("1 month").tag(2_592_000)
                     Text("90 days").tag(7_776_000)
                 } label: {
                     Label("Auto-delete", systemImage: "timer")

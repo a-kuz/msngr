@@ -154,8 +154,9 @@ final class ChatSearchModel: ObservableObject {
 enum DirectChat {
     static func open(userId: String) async -> String? {
         let app = AppState.shared
-        guard let chatId = try? await app.api.createChat(kind: "direct", memberIds: [userId],
-                                                         title: nil) else { return nil }
+        guard let created = try? await app.api.createChatDetailed(kind: "direct", memberIds: [userId],
+                                                                  title: nil) else { return nil }
+        let chatId = created.chatId
         // the chat may be one this device deleted: opening it is a decision to
         // have it back, so the tombstone that would drop its state is lifted
         if let db = await MainActor.run(body: { app.db }) {
@@ -164,6 +165,7 @@ enum DirectChat {
             }
         }
         try? await app.engine.refreshSnapshot()
+        await DefaultDisappearingTimer.apply(chatId: chatId, existedBefore: created.existed ?? false)
         return chatId
     }
 }
