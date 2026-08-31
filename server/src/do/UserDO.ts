@@ -933,6 +933,8 @@ export class UserDO implements DurableObject {
           t: "msg", chatId,
           seq: m.seq as number,
           from: m.from as string, fromDevice: m.fromDevice as string,
+          // the author's own devices close their outbox row from the echo
+          ...(m.clientMsgId ? { clientMsgId: m.clientMsgId as string } : {}),
           sentAt: m.sentAt as number, ts: m.ts as number, body: m.body,
           ...(m.service ? { service: true } : {}),
         });

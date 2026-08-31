@@ -789,6 +789,11 @@ check("interrupted catch-up resumes from the cursor",
   resumed.done && !resumedMsgs.some((f) => f.seq <= firstState.cursor)
   && resumedMsgs.some((f) => f.seq === lastBulk.seq),
   `${resumedMsgs.length} msg(s) after seq ${firstState.cursor}`);
+// replayed frames name the outbox row they answer, the way live echoes do:
+// an author offline at a deferred deadline finalizes from this very path
+check("catch-up msg frames carry the clientMsgId",
+  resumedMsgs.length > 0 && resumedMsgs.every((f) => typeof f.clientMsgId === "string"),
+  JSON.stringify(resumedMsgs[0]));
 
 // 20. Blocking inside an existing chat
 const henry = await api("/api/register", { body: {
