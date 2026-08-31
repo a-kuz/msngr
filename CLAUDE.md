@@ -65,8 +65,10 @@ Write its log to `.claude/gates/<branch>.log`; the dispatcher reads the tail on
 its tick, and a red there is a defect report to be fixed forward, not a reason
 to have waited. The smoke test needs `wrangler dev` running.
 
-The UI smoke is a separate target — `make uicheck DEV_UDID=<yours>` — run when
-the change touches the UI layer, on your own simulator.
+The UI smoke — `make uicheck DEV_UDID=<yours>` — is not part of the process:
+no change requires it (the owner's call, 2026-08-31: in its whole history every
+red was the test or the host, never the product). Run it only when explicitly
+asked, on your own simulator.
 
 The Makefile builds on the owner's simulator by default, so an agent runs the
 gate with its own:
