@@ -683,6 +683,29 @@ public final class APIClient: @unchecked Sendable {
         try await get("api/privacy", as: PrivacyResponse.self).privacy
     }
 
+    /// A named-person override of one privacy tier: allow shows the setting
+    /// to them whatever the tier says, deny hides it the same way.
+    public struct PrivacyExceptionDTO: Decodable, Sendable, Equatable, Identifiable {
+        public let setting: String
+        public let peerId: String
+        public let allow: Bool
+        public let username: String
+        public let displayName: String
+        public var id: String { setting + ":" + peerId }
+    }
+    private struct ExceptionsResponse: Decodable { let exceptions: [PrivacyExceptionDTO] }
+
+    public func privacyExceptions() async throws -> [PrivacyExceptionDTO] {
+        try await get("api/privacy/exceptions", as: ExceptionsResponse.self).exceptions
+    }
+
+    /// allow nil clears the override.
+    public func setPrivacyException(setting: String, peerId: String, allow: Bool?) async throws {
+        struct Body: Encodable { let setting: String; let peerId: String; let allow: Bool? }
+        _ = try await request("api/privacy/exceptions", method: "POST",
+                              jsonBody: Body(setting: setting, peerId: peerId, allow: allow))
+    }
+
     /// Any argument left nil keeps the server's current value for it.
     @discardableResult
     public func setPrivacy(
