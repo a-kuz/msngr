@@ -2085,6 +2085,12 @@ public actor SyncEngine {
                 try dbc.execute(sql: "UPDATE chat SET lastActivityAt = ? WHERE id = ?", arguments: [now, chatId])
             }
             // an edit takes effect here before it is sent
+            if content.kind == "disappearing" {
+                // the sender's own record of the timer: the incoming path skips
+                // own echoes, so this write is the only one this device gets
+                try dbc.execute(sql: "UPDATE chat SET ttlSeconds = ? WHERE id = ?",
+                                arguments: [content.ttlSeconds ?? 0, chatId])
+            }
             if content.kind == "edit", let target = content.targetLocalId {
                 try SyncEngine.applyEdit(dbc, chatId: chatId, targetId: target,
                                          newText: content.text, sentAt: now)
