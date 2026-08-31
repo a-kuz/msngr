@@ -3293,6 +3293,28 @@
         }
       }
     },
+    "Profile photo and bio" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Фото профиля и био"
+          }
+        }
+      }
+    },
+    "People you hide them from see your initials in place of the photo. Your name is always visible." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Те, от кого они скрыты, видят вместо фото ваши инициалы. Имя видно всегда."
+          }
+        }
+      }
+    },
     "Reaction effect" : {
       "extractionState" : "manual",
       "localizations" : {
