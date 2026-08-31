@@ -9,6 +9,8 @@ import MsngrCore
 final class PollMessageView: UIView {
     /// The full set of chosen indices after the tap.
     var onVote: (([Int]) -> Void)?
+    /// A tap on the footer of a non-anonymous poll with visible results.
+    var onShowVoters: (() -> Void)?
 
     private let questionLabel = UILabel()
     private let metaLabel = UILabel()
@@ -28,7 +30,12 @@ final class PollMessageView: UIView {
         addSubview(questionLabel)
         addSubview(metaLabel)
         addSubview(footerLabel)
+        footerLabel.accessibilityIdentifier = "poll.voted"
+        footerLabel.addGestureRecognizer(UITapGestureRecognizer(target: self,
+                                                                action: #selector(footerTapped)))
     }
+
+    @objc private func footerTapped() { onShowVoters?() }
 
     required init?(coder: NSCoder) { fatalError() }
 
@@ -89,7 +96,6 @@ final class PollMessageView: UIView {
         if poll.multiple { meta += " · " + String(localized: "several answers") }
         metaLabel.text = meta
         footerLabel.font = Theme.Text.pollMeta.uiFont
-        footerLabel.textColor = metaColor
 
         if rows.count != poll.options.count || !sameMessage {
             rows.forEach { $0.removeFromSuperview() }
@@ -121,6 +127,11 @@ final class PollMessageView: UIView {
         footerLabel.text = voters == 0
             ? String(localized: "Nobody has voted yet")
             : String(localized: "\(voters) voted")
+        // the footer opens the voters, so it reads as a control only when
+        // there is something behind it: names exist and the results are earned
+        let opensVoters = !poll.anonymous && showResults && voters > 0
+        footerLabel.isUserInteractionEnabled = opensVoters
+        footerLabel.textColor = opensVoters ? tint : metaColor
         setNeedsLayout()
     }
 
@@ -320,5 +331,66 @@ struct PollComposerSheet: View {
 
     private func ensureFloor() {
         while options.count < 2 { options.append("") }
+    }
+}
+
+/// The people behind a non-anonymous poll, grouped by the option they chose.
+/// The footer tap on the poll bubble opens this as a sheet.
+struct PollVoters {
+    struct Entry: Equatable, Identifiable {
+        let id: String          // userId
+        let name: String
+        let avatarId: String?
+    }
+    struct Section: Equatable, Identifiable {
+        let option: String
+        let entries: [Entry]
+        var id: String { option }
+    }
+
+    /// One section per option that anyone chose, in the poll's own order.
+    /// Inside a section people sort by name; a voter missing from the roster
+    /// (left the group) is listed under their id rather than dropped.
+    static func sections(poll: PollInfo, votes: [String: [Int]], users: [User]) -> [Section] {
+        let byId = Dictionary(users.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        return poll.options.indices.compactMap { i in
+            let entries = votes
+                .filter { $0.value.contains(i) }
+                .map { id, _ in
+                    let user = byId[id]
+                    return Entry(id: id, name: user?.displayName ?? user?.username ?? id,
+                                 avatarId: user?.avatarId)
+                }
+                .sorted { $0.name < $1.name }
+            return entries.isEmpty ? nil : Section(option: poll.options[i], entries: entries)
+        }
+    }
+}
+
+struct PollVotersSheet: View {
+    let sections: [PollVoters.Section]
+
+    var body: some View {
+        List {
+            ForEach(sections) { section in
+                SwiftUI.Section {
+                    ForEach(section.entries) { entry in
+                        HStack(spacing: 12) {
+                            AvatarView(name: entry.name, avatarId: entry.avatarId)
+                                .frame(width: 36, height: 36)
+                            Text(entry.name)
+                            Spacer()
+                        }
+                        .accessibilityIdentifier("poll.voter")
+                    }
+                } header: {
+                    Text("\(section.option) · \(section.entries.count)")
+                        .font(.subheadline)
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 }
