@@ -217,6 +217,19 @@ struct ChatScreen: View {
             } else if !searching {
                 ToolbarItem(placement: .principal) { header }
                 if !model.contentHidden {
+                    if model.chat?.kind == .direct, let peerId = model.peer?.id {
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Button {
+                                Task { await AppState.shared.callManager?.startCall(chatId: chatId, peerUserId: peerId) }
+                            } label: {
+                                Image(systemName: "phone")
+                                    .font(Theme.glyph(17, max: 24))
+                                    .foregroundStyle(Color.primary)
+                            }
+                            .accessibilityLabel(String(localized: "Call"))
+                            .accessibilityIdentifier("chat.call")
+                        }
+                    }
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button { openSearch() } label: {
                             // the same colour as the back chevron beside it: the two
