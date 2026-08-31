@@ -71,12 +71,11 @@ row is written by the inviter exactly once.
 
 ## Polish
 
-### ICE restart on network change
-Today `disconnected` just waits and `failed` hangs up. A Wi-Fi→LTE move
-should trigger an ICE restart (new offer with `iceRestart: true` over the
-same signaling) instead of dropping the call. Testable on the simulator by
-toggling the host network only roughly; the honest check is a device walking
-out of Wi-Fi range.
+### ICE restart: the device check
+The restart itself is shipped: a disconnect the caller sees for longer than
+the delay sends a fresh offer with new ICE credentials over the same
+signaling, and the callee answers it on the live transport. What remains is
+the honest check — a device walking out of Wi-Fi range into LTE.
 
 ### Ephemeral relay frame for ICE candidates
 Candidate batches ride the chat journal as service frames: a few rows per

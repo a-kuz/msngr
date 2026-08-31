@@ -86,6 +86,16 @@ public final class WebRTCTransport: NSObject, CallMediaTransport, @unchecked Sen
         return offer.sdp
     }
 
+    public func restartOffer() async throws -> String {
+        let constraints = RTCMediaConstraints(
+            mandatoryConstraints: [kRTCMediaConstraintsOfferToReceiveAudio: kRTCMediaConstraintsValueTrue,
+                                   kRTCMediaConstraintsIceRestart: kRTCMediaConstraintsValueTrue],
+            optionalConstraints: nil)
+        let offer = try await pc.offer(for: constraints)
+        try await pc.setLocalDescription(offer)
+        return offer.sdp
+    }
+
     public func answerOffer(_ sdp: String) async throws -> String {
         try await pc.setRemoteDescription(RTCSessionDescription(type: .offer, sdp: sdp))
         let constraints = RTCMediaConstraints(

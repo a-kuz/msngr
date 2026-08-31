@@ -18,6 +18,9 @@ public enum CallTransportEvent: Sendable {
 public protocol CallMediaTransport: AnyObject, Sendable {
     /// caller: builds the local offer
     func makeOffer() async throws -> String
+    /// caller: builds a fresh offer with new ICE credentials, for the restart
+    /// after a network change; the peer answers it like any other offer
+    func restartOffer() async throws -> String
     /// caller: applies the peer's answer
     func acceptAnswer(_ sdp: String) async throws
     /// callee: applies the peer's offer and builds the answer
@@ -103,18 +106,24 @@ public actor CallManager {
     /// locally gathered candidates waiting for their debounce flush
     private var outgoingCandidates: [CallSignal.IceCandidate] = []
     private var candidateFlushTask: Task<Void, Never>?
+    /// pending ICE restart after a disconnect; cancelled when media returns
+    private var iceRestartTask: Task<Void, Never>?
+    /// how long a disconnect may last before the caller restarts ICE
+    private let iceRestartDelay: TimeInterval
 
     public init(ownUserId: String, sendSignal: @escaping SignalSender,
                 sendLog: @escaping LogSender = { _, _ in },
                 mayCall: @escaping CallGate = { _ in true },
                 makeTransport: @escaping TransportFactory,
-                dialTimeout: TimeInterval = CallSignal.offerLifetime) {
+                dialTimeout: TimeInterval = CallSignal.offerLifetime,
+                iceRestartDelay: TimeInterval = 3.0) {
         self.ownUserId = ownUserId
         self.sendSignal = sendSignal
         self.sendLog = sendLog
         self.mayCall = mayCall
         self.makeTransport = makeTransport
         self.dialTimeout = dialTimeout
+        self.iceRestartDelay = iceRestartDelay
     }
 
     /// Wires the manager to a running engine: signals out through it, signals
@@ -227,14 +236,26 @@ public actor CallManager {
         case .offer:
             await handleOffer(event)
         case .answer:
-            guard event.signal.callId == state.callId, state.phase == .dialing,
+            guard event.signal.callId == state.callId,
                   let sdp = event.signal.sdp, let transport else { return }
-            dialTimeoutTask?.cancel()
-            state.phase = .connecting
-            do {
-                try await transport.acceptAnswer(sdp)
-            } catch {
-                await finish(reason: .failed, notifyPeer: true)
+            switch state.phase {
+            case .dialing:
+                dialTimeoutTask?.cancel()
+                state.phase = .connecting
+                do {
+                    try await transport.acceptAnswer(sdp)
+                } catch {
+                    await finish(reason: .failed, notifyPeer: true)
+                }
+            case .active, .connecting:
+                // the answer to an ICE-restart offer; the call stays up
+                do {
+                    try await transport.acceptAnswer(sdp)
+                } catch {
+                    await finish(reason: .failed, notifyPeer: true)
+                }
+            default:
+                return
             }
         case .ice:
             guard event.signal.callId == state.callId,
@@ -251,6 +272,17 @@ public actor CallManager {
     }
 
     private func handleOffer(_ event: CallSignalEvent) async {
+        // a fresh offer for the running call is the caller restarting ICE
+        // after a network change: answer it on the live transport, in place
+        if event.signal.callId == state.callId,
+           state.phase == .active || state.phase == .connecting,
+           let sdp = event.signal.sdp, let transport,
+           let chatId = state.chatId, let callId = state.callId {
+            if let answer = try? await transport.answerOffer(sdp) {
+                await sendSignal(CallSignal(type: .answer, callId: callId, sdp: answer), chatId)
+            }
+            return
+        }
         // glare: both sides dialed the same chat. The smaller call id survives
         // as the call and its side ignores the other offer; the larger side
         // cancels its own dial and answers the survivor.
@@ -315,14 +347,42 @@ public actor CallManager {
             outgoingCandidates.append(contentsOf: list)
             scheduleCandidateFlush()
         case .connected:
+            iceRestartTask?.cancel()
+            iceRestartTask = nil
             guard state.phase == .connecting || state.phase == .active else { return }
             if state.phase != .active {
                 state.phase = .active
                 state.connectedAt = Date().timeIntervalSince1970
             }
         case .disconnected:
-            break // the transport keeps trying; the UI keeps the call up
+            // the transport keeps trying on its own; a disconnect that
+            // outlives the delay (a Wi-Fi to LTE move) gets an ICE restart
+            // from the caller — one side only, or the offers would glare
+            scheduleIceRestart()
         case .failed:
+            await finish(reason: .failed, notifyPeer: true)
+        }
+    }
+
+    private func scheduleIceRestart() {
+        guard isCaller, iceRestartTask == nil, state.phase == .active else { return }
+        let callId = state.callId
+        iceRestartTask = Task { [weak self, iceRestartDelay] in
+            try? await Task.sleep(nanoseconds: UInt64(iceRestartDelay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await self?.restartIce(callId: callId)
+        }
+    }
+
+    private func restartIce(callId: String?) async {
+        iceRestartTask = nil
+        guard isCaller, state.phase == .active, state.callId == callId,
+              let chatId = state.chatId, let callId, let transport else { return }
+        do {
+            let sdp = try await transport.restartOffer()
+            guard state.callId == callId else { return }
+            await sendSignal(CallSignal(type: .offer, callId: callId, sdp: sdp), chatId)
+        } catch {
             await finish(reason: .failed, notifyPeer: true)
         }
     }
@@ -405,6 +465,8 @@ public actor CallManager {
         dialTimeoutTask = nil
         candidateFlushTask?.cancel()
         candidateFlushTask = nil
+        iceRestartTask?.cancel()
+        iceRestartTask = nil
         transportTask?.cancel()
         transportTask = nil
         outgoingCandidates = []
