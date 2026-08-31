@@ -111,14 +111,30 @@ export function shouldArmAlarm(pending: number | null, at: number, now: number):
 /// (for gating receipts, typing and presence fanout).
 export async function readPrivacy(db: D1Database, userId: string): Promise<PrivacySettings> {
   const row = await db.prepare(
-    "SELECT last_seen, read_receipts, typing FROM privacy_settings WHERE user_id = ?"
-  ).bind(userId).first<{ last_seen: string; read_receipts: number; typing: number }>();
-  if (!row) return { lastSeen: "everyone", readReceipts: true, typing: true };
+    "SELECT last_seen, avatar_visibility, read_receipts, typing FROM privacy_settings WHERE user_id = ?"
+  ).bind(userId).first<{
+    last_seen: string; avatar_visibility: string; read_receipts: number; typing: number;
+  }>();
+  if (!row) return { lastSeen: "everyone", avatar: "everyone", readReceipts: true, typing: true };
   return {
     lastSeen: row.last_seen as PrivacySettings["lastSeen"],
+    avatar: row.avatar_visibility as PrivacySettings["avatar"],
     readReceipts: row.read_receipts === 1,
     typing: row.typing === 1,
   };
+}
+
+/// The user ids among `ids` whose profile photo and bio are hidden from other
+/// users. "contacts" counts as visible: there is no contacts primitive on the
+/// server yet, so it is enforced as "everyone".
+export async function hiddenAvatarOwners(db: D1Database, ids: string[]): Promise<Set<string>> {
+  if (!ids.length) return new Set();
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = await db.prepare(
+    `SELECT user_id FROM privacy_settings
+     WHERE avatar_visibility = 'nobody' AND user_id IN (${placeholders})`
+  ).bind(...ids).all<{ user_id: string }>();
+  return new Set(rows.results.map((r) => r.user_id));
 }
 
 export const SEQ_PAD = 10;
