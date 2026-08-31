@@ -423,6 +423,23 @@ export class UserDO implements DurableObject {
         return json({ ok: true });
       }
 
+      case "/person-sound": {
+        const b = (await req.json()) as { userId?: string; sound?: string | null; read?: boolean };
+        if (!b.userId) return err("bad_request");
+        if (b.read) {
+          const sound = await this.state.storage.get<string>(`usnd:${b.userId}`);
+          return json({ ok: true, sound: sound ?? null });
+        }
+        if (b.sound === null || b.sound === undefined || b.sound === "default") {
+          await this.state.storage.delete(`usnd:${b.userId}`);
+        } else if (SOUND_NAME.test(b.sound)) {
+          await this.state.storage.put(`usnd:${b.userId}`, b.sound);
+        } else {
+          return err("bad_sound");
+        }
+        return json({ ok: true });
+      }
+
       case "/notify-sounds": {
         if (req.method === "GET" || url.searchParams.get("read") === "1") {
           const sounds = (await this.state.storage.get<NotifySounds>("notifySounds")) ?? {};
@@ -918,10 +935,13 @@ export class UserDO implements DurableObject {
     const badge = await this.totalUnread();
     const badgeStamp = await this.nextBadgeStamp();
     const userId = await this.getUserId();
-    // the chat's own sound wins; then the user's default for the chat's shape
+    // the chat's own sound wins; then the sender's personal sound wherever
+    // they write; then the user's default for the chat's shape
     const flags = await this.state.storage.get<ChatFlags>("chat:" + frame.chatId);
+    const personal = frame.from
+      ? await this.state.storage.get<string>(`usnd:${frame.from}`) : undefined;
     const defaults = (await this.state.storage.get<NotifySounds>("notifySounds")) ?? {};
-    const sound = flags?.sound ?? defaults[chatShape(frame.chatId)];
+    const sound = flags?.sound ?? personal ?? defaults[chatShape(frame.chatId)];
     // Every device is handled independently: one failure neither cancels the
     // others nor fails the frame delivery that already went over the socket.
     const results = await Promise.all(

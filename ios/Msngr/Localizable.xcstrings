@@ -1308,6 +1308,17 @@
         }
       }
     },
+    "Their sound everywhere" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Их звук повсюду"
+          }
+        }
+      }
+    },
     "Notification sound" : {
       "extractionState" : "manual",
       "localizations" : {

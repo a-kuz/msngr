@@ -42,6 +42,7 @@ struct ChatInfoView: View {
     @State private var ttl: Int = 0
     @State private var showMuteOptions = false
     @State private var notifySound = NotifySound.standard
+    @State private var personSound = NotifySound.standard
     @State private var soundLoaded = false
     @State private var showBlockConfirm = false
     @State private var showLeaveConfirm = false
@@ -163,6 +164,22 @@ struct ChatInfoView: View {
                     Task { try? await app.api.setChatFlags(model.chatId, sound: new.rawValue) }
                 }
 
+                if !isGroup, !isSaved, let peerId = model.peer?.id {
+                    Picker(selection: $personSound) {
+                        ForEach(NotifySound.allCases) { option in
+                            Text(option.label).tag(option)
+                        }
+                    } label: {
+                        Label("Their sound everywhere", systemImage: "person.wave.2")
+                    }
+                    .accessibilityIdentifier("chatInfo.personSound")
+                    .onChange(of: personSound) { _, new in
+                        guard soundLoaded else { return }
+                        new.preview()
+                        Task { try? await app.api.setPersonSound(peerId, sound: new.rawValue) }
+                    }
+                }
+
                 Picker(selection: $ttl) {
                     Text("Off").tag(0)
                     Text("24 hours").tag(86400)
@@ -261,6 +278,10 @@ struct ChatInfoView: View {
         .task {
             let sound = (try? await app.api.chatFlags(model.chatId))?.sound
             notifySound = sound.flatMap(NotifySound.init(rawValue:)) ?? .standard
+            if let peerId = model.peer?.id {
+                let personal = try? await app.api.personSound(peerId)
+                personSound = personal.flatMap(NotifySound.init(rawValue:)) ?? .standard
+            }
             soundLoaded = true
         }
         .sheet(isPresented: $showAddMembers) {

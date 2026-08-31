@@ -1562,6 +1562,22 @@ check("service frame does not grow the badge", pushSvc?.body.aps.badge === 1,
   const sndPush3 = await waitPush(pushFor("olga-sim-udid", s4));
   check("clearing both returns the push to default",
     sndPush3?.body.aps.sound === "default", JSON.stringify(sndPush3?.body.aps));
+  // the sender's personal sound follows them into any chat, under the chat's own
+  await api(`/api/notify-sounds/person/${nils.userId}`, { token: olga.token,
+    body: { sound: "chime3.caf" } });
+  const s5 = await gsend("cm-snd4");
+  const sndPush4 = await waitPush(pushFor("olga-sim-udid", s5));
+  check("a person's sound rides their message",
+    sndPush4?.body.aps.sound === "chime3.caf", JSON.stringify(sndPush4?.body.aps));
+  await api(`/api/chats/${gchat.chatId}/flags`, { token: olga.token,
+    body: { sound: "chime2.caf" } });
+  const s6 = await gsend("cm-snd5");
+  const sndPush5 = await waitPush(pushFor("olga-sim-udid", s6));
+  check("the chat's explicit sound still wins over the person's",
+    sndPush5?.body.aps.sound === "chime2.caf", JSON.stringify(sndPush5?.body.aps));
+  await api(`/api/chats/${gchat.chatId}/flags`, { token: olga.token, body: { sound: null } });
+  await api(`/api/notify-sounds/person/${nils.userId}`, { token: olga.token,
+    body: { sound: null } });
   cni.ws.close();
 }
 
