@@ -658,6 +658,8 @@ public final class APIClient: @unchecked Sendable {
 
     public struct PrivacyDTO: Codable, Sendable, Equatable {
         public let lastSeen: String
+        /// Who sees the profile photo and bio; the display name is always visible.
+        public let avatar: String
         public let readReceipts: Bool
         public let typing: Bool
     }
@@ -670,11 +672,15 @@ public final class APIClient: @unchecked Sendable {
     /// Any argument left nil keeps the server's current value for it.
     @discardableResult
     public func setPrivacy(
-        lastSeen: String? = nil, readReceipts: Bool? = nil, typing: Bool? = nil
+        lastSeen: String? = nil, avatar: String? = nil,
+        readReceipts: Bool? = nil, typing: Bool? = nil
     ) async throws -> PrivacyDTO {
-        struct Body: Encodable { let lastSeen: String?; let readReceipts: Bool?; let typing: Bool? }
+        struct Body: Encodable {
+            let lastSeen: String?; let avatar: String?
+            let readReceipts: Bool?; let typing: Bool?
+        }
         return try await post("api/privacy",
-            body: Body(lastSeen: lastSeen, readReceipts: readReceipts, typing: typing),
+            body: Body(lastSeen: lastSeen, avatar: avatar, readReceipts: readReceipts, typing: typing),
             as: PrivacyResponse.self).privacy
     }
 }

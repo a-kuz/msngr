@@ -4,6 +4,7 @@ import { authenticate } from "./auth";
 import {
   ulid, newToken, sha256hex, json, err, directChatName, b64url, provisionCode,
   isValidUsername, isValidDisplayName, USERNAME_QUARANTINE_MS, verifyEd25519, readPrivacy,
+  hiddenAvatarOwners,
 } from "./util";
 import type { LastSeenVisibility } from "./types";
 import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "./version";
@@ -461,7 +462,12 @@ app.get("/api/users", async (c) => {
      WHERE LOWER(u.username) LIKE ? OR LOWER(u.display_name) LIKE ?
      ORDER BY CASE WHEN LOWER(u.username) = ? THEN 0 ELSE 1 END, u.username
      LIMIT 20`
-  ).bind(like, like, q.toLowerCase()).all();
+  ).bind(like, like, q.toLowerCase()).all<{ id: string; avatar_id: string | null }>();
+  const { userId } = c.get("auth");
+  const hidden = await hiddenAvatarOwners(c.env.DB, rows.results.map((r) => r.id));
+  for (const r of rows.results) {
+    if (hidden.has(r.id) && r.id !== userId) r.avatar_id = null;
+  }
   return json({ ok: true, users: rows.results });
 });
 
@@ -473,8 +479,12 @@ app.get("/api/users/:id", async (c) => {
   const targetId = c.req.param("id");
   const u = await c.env.DB.prepare(
     "SELECT id, username, display_name, bio, avatar_id FROM users WHERE id = ?"
-  ).bind(targetId).first();
+  ).bind(targetId).first<PublicUser>();
   if (!u) return err("not_found", 404);
+  if (userId !== targetId && (await readPrivacy(c.env.DB, targetId)).avatar === "nobody") {
+    u.bio = null;
+    u.avatar_id = null;
+  }
   let presence: { online: boolean; lastSeen: number } | null = null;
   if (await presenceVisible(c.env, userId, targetId)) {
     const p = await userStub(c.env, targetId).fetch("https://do/presence-info");
@@ -652,9 +662,15 @@ async function broadcastProfile(env: Env, userId: string) {
     "SELECT id, username, display_name, bio, avatar_id FROM users WHERE id = ?"
   ).bind(userId).first<PublicUser>();
   if (!user) return;
+  // peers get the card as they may see it: a hidden photo and bio travel only
+  // to the user's own devices
+  let peerUser = user;
+  if ((await readPrivacy(env.DB, userId)).avatar === "nobody") {
+    peerUser = { ...user, bio: null, avatar_id: null };
+  }
   await userStub(env, userId).fetch("https://do/profile-changed", {
     method: "POST",
-    body: JSON.stringify({ user }),
+    body: JSON.stringify({ user, peerUser }),
   });
 }
 
@@ -705,7 +721,14 @@ app.get("/api/chats", async (c) => {
     const placeholders = memberIds.map(() => "?").join(",");
     const rows = await c.env.DB.prepare(
       `SELECT id, username, display_name, bio, avatar_id FROM users WHERE id IN (${placeholders})`
-    ).bind(...memberIds).all();
+    ).bind(...memberIds).all<PublicUser>();
+    const hidden = await hiddenAvatarOwners(c.env.DB, memberIds);
+    for (const u of rows.results) {
+      if (hidden.has(u.id) && u.id !== userId) {
+        u.bio = null;
+        u.avatar_id = null;
+      }
+    }
     users = rows.results;
   }
   return json({ ok: true, chats: states, users });
@@ -946,7 +969,17 @@ app.post("/api/avatar", async (c) => {
 });
 
 app.get("/api/avatar/:id", async (c) => {
-  const obj = await c.env.MEDIA.get(c.req.param("id"));
+  // A user avatar whose owner hid it is withheld at the bytes too, not only by
+  // blanking avatar_id in the cards: an id learned earlier must stop answering.
+  // Chat avatars match no users row and stay open to any authenticated caller.
+  const mediaId = c.req.param("id");
+  const owner = await c.env.DB.prepare("SELECT id FROM users WHERE avatar_id = ?")
+    .bind(mediaId).first<{ id: string }>();
+  if (owner && owner.id !== c.get("auth").userId &&
+      (await readPrivacy(c.env.DB, owner.id)).avatar === "nobody") {
+    return err("not_found", 404);
+  }
+  const obj = await c.env.MEDIA.get(mediaId);
   if (!obj) return err("not_found", 404);
   const headers = new Headers();
   obj.writeHttpMetadata(headers);
@@ -973,14 +1006,19 @@ app.post("/api/contacts/discover", async (c) => {
   const b = await c.req.json<{ hashes: string[] }>();
   const hashes = [...new Set(b.hashes)].slice(0, 5000);
   if (!hashes.length) return json({ ok: true, matches: [] });
-  const matches: unknown[] = [];
+  const matches: Array<{ id: string; avatar_id: string | null }> = [];
   for (let i = 0; i < hashes.length; i += 100) {
     const chunk = hashes.slice(i, i + 100);
     const placeholders = chunk.map(() => "?").join(",");
     const rows = await c.env.DB.prepare(
       `SELECT id, username, display_name, avatar_id, phone_hash FROM users WHERE phone_hash IN (${placeholders})`
-    ).bind(...chunk).all();
+    ).bind(...chunk).all<{ id: string; avatar_id: string | null }>();
     matches.push(...rows.results);
+  }
+  const { userId } = c.get("auth");
+  const hidden = await hiddenAvatarOwners(c.env.DB, matches.map((m) => m.id));
+  for (const m of matches) {
+    if (hidden.has(m.id) && m.id !== userId) m.avatar_id = null;
   }
   return json({ ok: true, matches });
 });
@@ -1033,24 +1071,33 @@ app.get("/api/privacy", async (c) => {
 app.post("/api/privacy", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{
-    lastSeen?: string; readReceipts?: boolean; typing?: boolean;
+    lastSeen?: string; avatar?: string; readReceipts?: boolean; typing?: boolean;
   }>();
   if (b.lastSeen !== undefined && !LAST_SEEN_VALUES.includes(b.lastSeen as LastSeenVisibility)) {
+    return err("bad_privacy");
+  }
+  if (b.avatar !== undefined && !LAST_SEEN_VALUES.includes(b.avatar as LastSeenVisibility)) {
     return err("bad_privacy");
   }
   const current = await readPrivacy(c.env.DB, userId);
   const next = {
     lastSeen: (b.lastSeen as LastSeenVisibility | undefined) ?? current.lastSeen,
+    avatar: (b.avatar as LastSeenVisibility | undefined) ?? current.avatar,
     readReceipts: b.readReceipts ?? current.readReceipts,
     typing: b.typing ?? current.typing,
   };
   await c.env.DB.prepare(
-    `INSERT INTO privacy_settings (user_id, last_seen, read_receipts, typing, updated_at)
-     VALUES (?,?,?,?,?)
+    `INSERT INTO privacy_settings (user_id, last_seen, avatar_visibility, read_receipts, typing, updated_at)
+     VALUES (?,?,?,?,?,?)
      ON CONFLICT(user_id) DO UPDATE SET last_seen = excluded.last_seen,
+       avatar_visibility = excluded.avatar_visibility,
        read_receipts = excluded.read_receipts, typing = excluded.typing,
        updated_at = excluded.updated_at`
-  ).bind(userId, next.lastSeen, next.readReceipts ? 1 : 0, next.typing ? 1 : 0, Date.now()).run();
+  ).bind(userId, next.lastSeen, next.avatar, next.readReceipts ? 1 : 0,
+         next.typing ? 1 : 0, Date.now()).run();
+  // peers hold the card from the last profile frame, so a photo hidden or shown
+  // again travels to them at once instead of waiting for a refetch
+  if (next.avatar !== current.avatar) await broadcastProfile(c.env, userId);
   return json({ ok: true, privacy: next });
 });
 

@@ -895,6 +895,7 @@ ch.ws.close(); ci.ws.close(); ci2.ws.close();
 
   const defaults = await api("/api/privacy", { token: priya.token });
   check("privacy defaults", defaults.ok && defaults.privacy.lastSeen === "everyone"
+    && defaults.privacy.avatar === "everyone"
     && defaults.privacy.readReceipts === true && defaults.privacy.typing === true,
     JSON.stringify(defaults));
 
@@ -999,6 +1000,63 @@ ch.ws.close(); ci.ws.close(); ci2.ws.close();
   const restored = await api(`/api/users/${priya.userId}`, { token: milo.token });
   check("last seen visible again after restoring", restored.ok && restored.presence !== null,
     JSON.stringify(restored));
+
+  // -- avatar and bio --
+  const avUpload = await (await fetch(BASE + "/api/avatar", {
+    method: "POST",
+    headers: { authorization: `Bearer ${priya.token}`, "content-type": "image/png" },
+    body: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+  })).json();
+  check("avatar uploaded for the privacy check", avUpload.ok, JSON.stringify(avUpload));
+  check("bio set", (await api("/api/profile", { token: priya.token,
+    body: { bio: "reachable by pigeon" } })).ok);
+
+  const cardOpen = await api(`/api/users/${priya.userId}`, { token: milo.token });
+  check("avatar and bio visible by default", cardOpen.ok
+    && cardOpen.user.avatar_id === avUpload.avatarId && cardOpen.user.bio === "reachable by pigeon",
+    JSON.stringify(cardOpen));
+
+  const clMark5 = cl.mark();
+  check("avatar hidden", (await api("/api/privacy", { token: priya.token,
+    body: { avatar: "nobody" } })).ok);
+  check("hiding pushes the blanked card to the peer",
+    !!(await cl.waitAfter(clMark5, (f) => f.t === "profile" && f.user.id === priya.userId
+      && f.user.avatar_id === null && f.user.bio === null)));
+  const cardHidden = await api(`/api/users/${priya.userId}`, { token: milo.token });
+  check("hidden avatar and bio withheld from the peer", cardHidden.ok
+    && cardHidden.user.avatar_id === null && cardHidden.user.bio === null,
+    JSON.stringify(cardHidden));
+  check("the name stays visible with the avatar hidden",
+    cardHidden.user.display_name === "Priya", JSON.stringify(cardHidden));
+  check("hidden avatar bytes answer 404 to the peer",
+    (await fetch(BASE + "/api/avatar/" + avUpload.avatarId,
+      { headers: { authorization: `Bearer ${milo.token}` } })).status === 404);
+  const cardOwn = await api(`/api/users/${priya.userId}`, { token: priya.token });
+  check("hidden avatar and bio still served to the owner", cardOwn.ok
+    && cardOwn.user.avatar_id === avUpload.avatarId && cardOwn.user.bio === "reachable by pigeon",
+    JSON.stringify(cardOwn));
+  check("hidden avatar bytes still served to the owner",
+    (await fetch(BASE + "/api/avatar/" + avUpload.avatarId,
+      { headers: { authorization: `Bearer ${priya.token}` } })).status === 200);
+  const searchHidden = await api(`/api/users?q=priya_${suffix}`, { token: milo.token });
+  check("hidden avatar blank in search results", searchHidden.ok
+    && searchHidden.users.some((u) => u.id === priya.userId && u.avatar_id === null),
+    JSON.stringify(searchHidden));
+  const chatsHidden = await api("/api/chats", { token: milo.token });
+  const priyaInChats = chatsHidden.users.find((u) => u.id === priya.userId);
+  check("hidden avatar and bio blank in the chat list card",
+    priyaInChats && priyaInChats.avatar_id === null && priyaInChats.bio === null,
+    JSON.stringify(priyaInChats));
+
+  check("avatar restored", (await api("/api/privacy", { token: priya.token,
+    body: { avatar: "everyone" } })).ok);
+  const cardBack = await api(`/api/users/${priya.userId}`, { token: milo.token });
+  check("avatar and bio visible again after restoring", cardBack.ok
+    && cardBack.user.avatar_id === avUpload.avatarId && cardBack.user.bio === "reachable by pigeon",
+    JSON.stringify(cardBack));
+  check("avatar bytes served again after restoring",
+    (await fetch(BASE + "/api/avatar/" + avUpload.avatarId,
+      { headers: { authorization: `Bearer ${milo.token}` } })).status === 200);
 
   ck.ws.close(); cl.ws.close();
 }
