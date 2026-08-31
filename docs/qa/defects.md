@@ -992,3 +992,14 @@ Reported by the owner on 2026-08-28 («некрасиво сетчатый фо�
 Pond sticker drew its pebbles on a visible square lattice. Closed: the bottom
 is mottled sand under a caustic web, both from value noise with no lattice
 (`ShaderGallery.pond`).
+
+### The sender's own device never records the auto-delete timer it set
+Found 2026-08-31 while wiring the default disappearing timer for new chats:
+changing auto-delete from the chat info screen sends the `disappearing`
+message, the peer applies it, but on the sending device `chat.ttlSeconds`
+stays 0 — the incoming path skips own echoes (`own_echo`), the sent ack
+writes no TTL, and nothing else does. Reopening chat info showed «Off»
+right after picking a timer, and the sender's own outgoing messages got no
+`expiresAt` on their device. Closed: `SyncEngine.enqueue` applies a
+`disappearing` payload to the chat row in the same transaction that queues
+it, the way an edit already took effect at enqueue.
