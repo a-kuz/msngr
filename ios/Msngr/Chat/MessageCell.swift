@@ -66,6 +66,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     /// the full chosen set after a tap on a poll option
     var onVotePoll: (([Int]) -> Void)?
     var onTranscript: (() -> Void)?
+    var onRetranscribe: (() -> Void)?
     private let shaderView = ShaderMessageView()
     /// A sticker: the same live view with nothing painted behind the shader.
     private let stickerView = ShaderMessageView(transparent: true)
@@ -145,6 +146,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         pollView.isHidden = true
         pollView.onVote = { [weak self] votes in self?.onVotePoll?(votes) }
         voiceView.onTranscript = { [weak self] in self?.onTranscript?() }
+        voiceView.onRetranscribe = { [weak self] in self?.onRetranscribe?() }
         bubbleView.addSubview(pollView)
         shaderView.isHidden = true
         shaderView.isUserInteractionEnabled = true
@@ -1559,6 +1561,12 @@ extension MessageCell {
     @objc private func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
         guard gesture.state == .began, let msg, !msg.deletedForAll,
               let window = window else { return }
+        // a hold on the transcript button re-recognizes the take; the menu
+        // stays out of its way
+        if !voiceView.isHidden,
+           voiceView.transcriptButtonHit(gesture.location(in: bubbleView), in: bubbleView) {
+            return
+        }
         Haptics.medium()
 
         var items: [MessageContextOverlay.Item] = []

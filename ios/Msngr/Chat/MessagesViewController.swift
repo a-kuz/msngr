@@ -27,6 +27,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     /// a tap on a poll option: the message and the full chosen set
     var onVotePoll: ((Message, [Int]) -> Void)?
     var onTranscript: ((Message) -> Void)?
+    var onRetranscribe: ((Message) -> Void)?
     /// The message the chat holds pinned, so the context menu of that one offers
     /// to take the pin off instead of putting it on again.
     var pinnedSeqs: Set<Int> = []
@@ -564,6 +565,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         cell.ownUserId = ownUserId
         cell.onVotePoll = { [weak self] votes in self?.onVotePoll?(msg, votes) }
         cell.onTranscript = { [weak self] in self?.onTranscript?(msg) }
+        cell.onRetranscribe = { [weak self] in self?.onRetranscribe?(msg) }
         cell.configure(msg: msg, plan: plan, avatar: avatar)
         cell.onReply = { [weak self] in self?.onReply?(msg) }
         cell.onReact = { [weak self] emoji in self?.onReact?(msg, emoji) }
