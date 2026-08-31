@@ -130,6 +130,39 @@ final class ScheduledSendTests: XCTestCase {
         XCTAssertEqual(back?.scheduledFor, future + 60)
     }
 
+    /// A parked send whose `sent` ack was lost — the device was offline at the
+    /// deadline — is closed by the author's own journal echo: the msg frame
+    /// carries the clientMsgId, the row takes the seq and the outbox empties.
+    func testOwnEchoClosesAParkedSend() async throws {
+        let db = try AppDatabase.openInMemory()
+        let engine = try makeEngine(db: db)
+        let past = Date().addingTimeInterval(-60).timeIntervalSince1970
+        var content = ContentPayload(kind: "text")
+        content.text = "left on time"
+        try await engine.enqueue(content: content, chatId: "chat1", clientMsgId: "c1",
+                                 scheduledFor: past + 30)
+        try await db.write { dbc in
+            try dbc.execute(sql: "UPDATE outbox SET state = 'deferred' WHERE clientMsgId = 'c1'")
+            try dbc.execute(sql: "INSERT INTO chat (id, kind, createdBy, createdAt) VALUES ('chat1','direct','me',0)")
+        }
+
+        let frame = try JSONDecoder().decode(
+            WSIncoming.self,
+            from: Data("""
+                {"t":"msg","chatId":"chat1","seq":7,"from":"me","fromDevice":"dev",
+                 "sentAt":\(past),"ts":\(past + 30),"clientMsgId":"c1","body":{"v":1}}
+                """.utf8))
+        await engine.apply(frame)
+
+        let row = try await db.read { dbc in try OutboxItem.fetchOne(dbc, key: "c1") }
+        XCTAssertNil(row, "the echo ends the deferred row")
+        let msg = try await db.read { dbc in
+            try Row.fetchOne(dbc, sql: "SELECT seq, scheduledFor FROM message WHERE clientMsgId = 'c1'")
+        }
+        XCTAssertEqual(msg?["seq"], 7)
+        XCTAssertNil(msg?["scheduledFor"] as Double?)
+    }
+
     /// An edit of a parked send returns it to ready: the drain re-encrypts
     /// and the server's copy is replaced under the same clientMsgId.
     func testEditReturnsAParkedSendToReady() async throws {

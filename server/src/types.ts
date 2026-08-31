@@ -70,7 +70,7 @@ export type ServerFrame =
   | { t: "sent"; chatId: string; clientMsgId: string; seq: number; ts: number }
   /// a defer frame's ack: the server holds the envelope and will journal it at dueAt
   | { t: "deferred"; chatId: string; clientMsgId: string; dueAt: number }
-  | { t: "msg"; chatId: string; seq: number; from: string; fromDevice: string; sentAt: number; ts: number; body: unknown; service?: boolean }
+  | { t: "msg"; chatId: string; seq: number; from: string; fromDevice: string; clientMsgId?: string; sentAt: number; ts: number; body: unknown; service?: boolean }
   | { t: "receipt"; chatId: string; kind: "delivered" | "read"; upToSeq?: number; seqs?: number[]; by: string }
   | { t: "typing"; chatId: string; from: string; kind: string | null }
   | { t: "presence"; userId: string; online: boolean; lastSeen: number }

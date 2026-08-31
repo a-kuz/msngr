@@ -679,6 +679,7 @@ public actor SyncEngine {
     private struct IncomingFrame {
         let chatId: String, seq: Int
         let from: String, fromDevice: String
+        let clientMsgId: String?
         let sentAt: Double, ts: Double
         let body: JSONValue?
         let isService: Bool
@@ -700,7 +701,8 @@ public actor SyncEngine {
             guard let chatId = f.chatId, let seq = f.seq,
                   let from = f.from, let fromDevice = f.fromDevice else { return nil }
             return IncomingFrame(chatId: chatId, seq: seq, from: from,
-                                 fromDevice: fromDevice, sentAt: f.sentAt ?? 0, ts: f.ts ?? 0,
+                                 fromDevice: fromDevice, clientMsgId: f.clientMsgId,
+                                 sentAt: f.sentAt ?? 0, ts: f.ts ?? 0,
                                  body: f.body, isService: f.service == true)
         }
         guard !items.isEmpty else { return }
@@ -791,6 +793,14 @@ public actor SyncEngine {
             if fresh, let body = item.body {
                 let result: DecryptedIncoming
                 if item.from == ownUserId && item.fromDevice == ownDeviceId {
+                    if let cmid = item.clientMsgId {
+                        await flush()
+                        if await finalizeOwnEcho(clientMsgId: cmid, chatId: item.chatId,
+                                                 seq: item.seq, ts: item.ts) {
+                            touched.insert(item.chatId)
+                            continue
+                        }
+                    }
                     result = .undecryptable(reason: "own_echo") // already stored under its clientMsgId
                 } else {
                     result = (try? e2ee.decrypt(envelopeJSON: body, chatId: item.chatId,
@@ -1721,6 +1731,10 @@ public actor SyncEngine {
                 continue
             }
             guard m.from != ownUserId || m.fromDevice != ownDeviceId else {
+                if let cmid = m.clientMsgId,
+                   await finalizeOwnEcho(clientMsgId: cmid, chatId: chatId, seq: m.seq, ts: m.ts) {
+                    continue    // the echo closed its outbox row and owns a feed row now
+                }
                 reasons[m.seq] = "own_echo"   // own content already stored under its clientMsgId
                 continue
             }
@@ -1780,6 +1794,24 @@ public actor SyncEngine {
     private func applySentAck(_ f: WSIncoming) async {
         guard let clientMsgId = f.clientMsgId,
               let seq = f.seq, let chatId = f.chatId else { return }
+        await finalizeSent(clientMsgId: clientMsgId, chatId: chatId, seq: seq, ts: f.ts)
+    }
+
+    /// The author's own echo carries the clientMsgId of the row it answers, so
+    /// a send whose `sent` ack was lost — the deferred envelope of a device
+    /// that was offline at the deadline — is closed by the journal itself.
+    /// Returns false when no outbox row waits on this id.
+    private func finalizeOwnEcho(clientMsgId: String, chatId: String, seq: Int, ts: Double?) async -> Bool {
+        let waiting = (try? await db.read { dbc in
+            try Bool.fetchOne(dbc, sql: "SELECT 1 FROM outbox WHERE clientMsgId = ?",
+                              arguments: [clientMsgId])
+        } ?? false) ?? false
+        guard waiting else { return false }
+        await finalizeSent(clientMsgId: clientMsgId, chatId: chatId, seq: seq, ts: ts)
+        return true
+    }
+
+    private func finalizeSent(clientMsgId: String, chatId: String, seq: Int, ts: Double?) async {
         try? await db.write { dbc in
             // a disappearing message's clock runs from the moment it went out:
             // one sitting in the queue without a network has been shown to no one
@@ -1791,7 +1823,7 @@ public actor SyncEngine {
                   failReason = NULL, expiresAt = ?, scheduledFor = NULL
                 WHERE clientMsgId = ?
                 """,
-                arguments: [seq, f.ts,
+                arguments: [seq, ts,
                             ttl > 0 ? Date().timeIntervalSince1970 + Double(ttl) : nil,
                             clientMsgId])
             // a send the reader can see: only that one marks the chat read up
@@ -1847,7 +1879,7 @@ public actor SyncEngine {
                 WHERE id = ?
                 """,
                 arguments: [seq, seq, seq, visibleSend, seq, visibleSend,
-                            f.ts ?? Date().timeIntervalSince1970, chatId])
+                            ts ?? Date().timeIntervalSince1970, chatId])
         }
         outboxWakeup.continuation.yield()
     }

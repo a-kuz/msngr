@@ -456,6 +456,7 @@ public final class APIClient: @unchecked Sendable {
             public let seq: Int
             public let from: String
             public let fromDevice: String
+            public let clientMsgId: String?
             public let sentAt: Double
             public let ts: Double
             public let body: JSONValue?

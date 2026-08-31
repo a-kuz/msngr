@@ -509,6 +509,9 @@ export class ConversationDO implements DurableObject {
     const frame: ServerFrame = {
       t: "msg", chatId: meta.chatId, seq,
       from: msg.from, fromDevice: msg.fromDevice,
+      // the author's own devices close their outbox row from the echo alone:
+      // the `sent` ack rides the live socket and does not survive one being down
+      clientMsgId: msg.clientMsgId,
       sentAt: msg.sentAt, ts: msg.ts, body: msg.body,
       ...(msg.service ? { service: true } : {}),
     };

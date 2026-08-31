@@ -193,7 +193,9 @@ line; the rest are listed in `SyncEngine.rowlessKinds`.
 {t:"hello",   serverTime, protocol, minProtocol}
 {t:"sent",    chatId, clientMsgId, msgId, seq, ts}
 {t:"deferred",chatId, clientMsgId, dueAt}   // the server holds the envelope until dueAt
-{t:"msg",     chatId, seq, msgId, from, fromDevice, sentAt, ts, body, service?}
+{t:"msg",     chatId, seq, msgId, from, fromDevice, clientMsgId, sentAt, ts, body, service?}
+              // clientMsgId lets the author's own devices close their outbox
+              // row from the echo when the `sent` ack found no live socket
 {t:"receipt", chatId, kind:"delivered"|"read", upToSeq, by}
 {t:"typing",  chatId, from, kind}
 {t:"presence",userId, online, lastSeen}
