@@ -65,6 +65,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     var ownUserId = ""
     /// the full chosen set after a tap on a poll option
     var onVotePoll: (([Int]) -> Void)?
+    /// the footer tap of a non-anonymous poll, asking for the voters sheet
+    var onShowPollVoters: (() -> Void)?
     var onTranscript: (() -> Void)?
     var onRetranscribe: (() -> Void)?
     private let shaderView = ShaderMessageView()
@@ -145,6 +147,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         bubbleView.addSubview(voiceView)
         pollView.isHidden = true
         pollView.onVote = { [weak self] votes in self?.onVotePoll?(votes) }
+        pollView.onShowVoters = { [weak self] in self?.onShowPollVoters?() }
         voiceView.onTranscript = { [weak self] in self?.onTranscript?() }
         voiceView.onRetranscribe = { [weak self] in self?.onRetranscribe?() }
         bubbleView.addSubview(pollView)

@@ -32,6 +32,7 @@ struct ChatScreen: View {
     @State private var forwardMessage: Message?
     @State private var forwardingSelection = false
     @State private var reactionRoster: ReactionRosterRequest?
+    @State private var pollVotersMessage: Message?
     @State private var editHistoryMessage: Message?
     @State private var readByMessage: Message?
     @State private var messagesVC = MessagesViewController()
@@ -350,6 +351,12 @@ struct ChatScreen: View {
         .sheet(item: $editHistoryMessage) { msg in
             EditHistorySheet(message: msg)
         }
+        .sheet(item: $pollVotersMessage) { msg in
+            if let poll = msg.poll {
+                PollVotersSheet(sections: PollVoters.sections(
+                    poll: poll, votes: msg.pollVotes, users: model.members))
+            }
+        }
         .sheet(item: $readByMessage) { msg in
             ReadBySheet(message: msg, model: model)
         }
@@ -508,6 +515,7 @@ struct ChatScreen: View {
                              model.react(msg, emoji: emoji)
                          }
                      },
+                     onShowPollVoters: { pollVotersMessage = $0 },
                      onDateTap: { showCalendar = true })
     }
 
@@ -1412,6 +1420,7 @@ struct MessagesView: UIViewControllerRepresentable {
     @Binding var showScrollDown: Bool
     var onSwipeBack: () -> Void
     var onCapsuleTap: (Message, String) -> Void
+    var onShowPollVoters: (Message) -> Void
     var onDateTap: () -> Void
 
     func makeUIViewController(context: Context) -> MessagesViewController {
@@ -1506,6 +1515,7 @@ struct MessagesView: UIViewControllerRepresentable {
         }
         vc.onSwipeBack = onSwipeBack
         vc.onReactionCapsuleTap = onCapsuleTap
+        vc.onShowPollVoters = onShowPollVoters
         vc.onDateTap = onDateTap
         vc.pinnedSeqs = Set(model.chat?.pinnedSeqs ?? [])
         vc.ownUserId = model.ownUserId
