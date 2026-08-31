@@ -74,13 +74,17 @@ public struct CallState: Equatable, Sendable {
 public actor CallManager {
     public typealias TransportFactory = @Sendable () throws -> CallMediaTransport
     public typealias SignalSender = @Sendable (CallSignal, String) async -> Void
+    public typealias LogSender = @Sendable (CallLog, String) async -> Void
 
     public nonisolated let stateStream = Broadcast<CallState>(initial: CallState())
 
     private let ownUserId: String
     private let sendSignal: SignalSender
+    private let sendLog: LogSender
     private let makeTransport: TransportFactory
     private let dialTimeout: TimeInterval
+    /// this device dialed the running call; the caller alone publishes its log
+    private var isCaller = false
 
     private var state = CallState() {
         didSet { stateStream.send(state) }
@@ -97,10 +101,12 @@ public actor CallManager {
     private var candidateFlushTask: Task<Void, Never>?
 
     public init(ownUserId: String, sendSignal: @escaping SignalSender,
+                sendLog: @escaping LogSender = { _, _ in },
                 makeTransport: @escaping TransportFactory,
                 dialTimeout: TimeInterval = CallSignal.offerLifetime) {
         self.ownUserId = ownUserId
         self.sendSignal = sendSignal
+        self.sendLog = sendLog
         self.makeTransport = makeTransport
         self.dialTimeout = dialTimeout
     }
@@ -111,6 +117,9 @@ public actor CallManager {
         self.init(ownUserId: engine.ownUserId,
                   sendSignal: { [weak engine] signal, chatId in
                       await engine?.sendCallSignal(signal, chatId: chatId)
+                  },
+                  sendLog: { [weak engine] log, chatId in
+                      await engine?.sendCallLog(log, chatId: chatId)
                   },
                   makeTransport: makeTransport)
         let signals = engine.callSignalStream.subscribe()
@@ -130,6 +139,7 @@ public actor CallManager {
     public func startCall(chatId: String, peerUserId: String) async {
         guard case .idle = state.phase else { return }
         let callId = UUID().uuidString
+        isCaller = true
         state = CallState(phase: .dialing, chatId: chatId, peerUserId: peerUserId, callId: callId)
         do {
             let transport = try makeTransport()
@@ -242,6 +252,7 @@ public actor CallManager {
             await sendSignal(CallSignal(type: .end, callId: myCallId, reason: .cancel), chatId)
             await teardown(showing: CallState())
             pendingOffer = event
+            isCaller = false
             state = CallState(phase: .ringing, chatId: event.chatId,
                               peerUserId: event.fromUserId, callId: event.signal.callId)
             await accept()
@@ -257,6 +268,7 @@ public actor CallManager {
         }
         pendingOffer = event
         heldRemoteCandidates = []
+        isCaller = false
         state = CallState(phase: .ringing, chatId: event.chatId,
                           peerUserId: event.fromUserId, callId: event.signal.callId)
     }
@@ -336,10 +348,31 @@ public actor CallManager {
     }
 
     private func teardown(showing phase: CallPhase) async {
+        if case .ended(let reason) = phase { await publishLog(reason: reason) }
         var next = state
         next.phase = phase
         next.muted = false
         await teardown(showing: next)
+    }
+
+    /// The caller alone writes the call into the feed, once the outcome is
+    /// known: how it ended, and for a completed call how long it ran.
+    private func publishLog(reason: CallSignal.EndReason) async {
+        guard isCaller, let chatId = state.chatId, let callId = state.callId else { return }
+        let outcome: CallLog.Outcome
+        var duration: Double?
+        if let connectedAt = state.connectedAt {
+            outcome = .completed
+            duration = max(0, Date().timeIntervalSince1970 - connectedAt)
+        } else {
+            switch reason {
+            case .decline: outcome = .declined
+            case .busy: outcome = .busy
+            case .failed: outcome = .failed
+            case .hangup, .cancel, .timeout: outcome = .missed
+            }
+        }
+        await sendLog(CallLog(outcome: outcome, duration: duration, callId: callId), chatId)
     }
 
     private func teardown(showing next: CallState) async {

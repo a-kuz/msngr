@@ -139,6 +139,7 @@ struct ChatRowView: View {
                 case .album: Label("Album", systemImage: "photo.on.rectangle").labelStyle(PreviewLabelStyle())
                 case .contact: Label(last.contact?.name ?? String(localized: "Contact"), systemImage: "person.crop.circle").labelStyle(PreviewLabelStyle())
                 case .location: Label(last.location?.name ?? String(localized: "Location"), systemImage: "mappin.and.ellipse").labelStyle(PreviewLabelStyle())
+                case .call: Label(CallMessageView.preview(last), systemImage: "phone.fill").labelStyle(PreviewLabelStyle())
                 case .shader: Label(last.shader?.name ?? String(localized: "Shader"), systemImage: "sparkles").labelStyle(PreviewLabelStyle())
                 case .sticker: Label(last.shader?.name ?? String(localized: "Sticker"), systemImage: "sparkles").labelStyle(PreviewLabelStyle())
                 default: Text(MessageMarkdown.mentionsStripped(last.text ?? ""))
