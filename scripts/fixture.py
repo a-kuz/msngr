@@ -207,8 +207,10 @@ def main():
     s.add_argument("--base", default=os.environ.get("MSNGR_SERVER", "http://localhost:8787"))
     s.add_argument("--reset", action="store_true", help="throw the current trio away first")
 
+    # any seeded home installs, not only the cast: one-off accounts made with
+    # `msngrfixture register`/`knock` are handed to a simulator the same way
     i = sub.add_parser("install", help="log a simulator in as one of them")
-    i.add_argument("name", choices=NAMES + SHOWCASE)
+    i.add_argument("name")
     i.add_argument("udid")
     i.add_argument("--launch", action="store_true", help="start the app straight away")
 
@@ -216,7 +218,7 @@ def main():
     g.add_argument("udid")
 
     u = sub.add_parser("pull", help="take a simulator's state back into the fixture")
-    u.add_argument("name", choices=NAMES + SHOWCASE)
+    u.add_argument("name")
     u.add_argument("udid")
 
     sub.add_parser("show", help="what is seeded")
