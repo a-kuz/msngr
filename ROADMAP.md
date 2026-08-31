@@ -173,9 +173,13 @@ A ✅ goes in only together with a link to the evidence.
     "@prefix", a tap inserts the handle, sending resolves it into the mention
     token by the chat's members (qa/runs/2026-08-28-mention-token;
     tokenizeMentions in MentionMarkdownTests)
-  - ⬜ sending at a chosen time: the message waits in the outbox, the chat shows
-    what is queued for when, and it can be edited or cancelled before it leaves
-  - ⬜ a send that survives a killed app and a cold start at the appointed time
+  - ✅ sending at a chosen time: the message waits in the outbox, the chat shows
+    what is queued for when, and it can be edited, rescheduled, sent now or
+    cancelled before it leaves (qa/runs/2026-08-30-scheduled-send;
+    ScheduledSendTests)
+  - ✅ a send that survives a killed app and a cold start at the appointed time
+    (the same run: killed before the deadline, launched after it, the message
+    left on its own)
 
 ## Message kinds
 
@@ -850,6 +854,10 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ✅ the username on its own screen, with the taken case seen live
   (qa/runs/2026-08-17-profile)
 - ✅ picking a palette from cards with instant application (palettes/live-*, settings-appearance)
+- ✅ a muted count beside every row that leads to a list — blocked users, active
+  devices, members and attachments in the chat info — and on the attachment
+  tabs, shortened as 9/550/1k by one shared formatter
+  (qa/runs/2026-08-31-counts; CountFormatterTests)
 - ⬜ a background for the feed: a set to pick from and a picture of your own, set
   everywhere or for one chat
 - ✅ the PIN: setting it, repeating it, a mismatch resetting the setup, a wrong
