@@ -6,14 +6,17 @@ with the commit that closed it.
 
 ## Open
 
-### The bravo fixture home is corrupted
+### The bravo and charlie fixture homes are corrupted
 Found 2026-08-31 while reproducing the chat-list preview defect:
 `.claude/fixtures/bravo/msngr.sqlite` answers `database disk image is
-malformed` (SQLite error 11) to `PRAGMA integrity_check` — confirmed on the
-fixture file itself, before any hand-out. The keys in the home are unusable
-with it, so two-sided runs on bravo are blocked. Reseeding the trio
-(`scripts/fixture.py seed --reset`) discards the shared history, so the call
-is the owner's.
+malformed` and charlie's answers `malformed database schema
+(sqlite_autoindex_savedSticker_1) - invalid rootpage` to `PRAGMA
+integrity_check` — confirmed on the fixture files themselves, before any
+hand-out. A sweep over every home found only these two broken (alfa,
+delta7b, demo, echo7b, iris, nova, roundpeer are ok), which points at a copy
+taken without a WAL checkpoint on some earlier pull. Two-sided runs on the
+trio are blocked past alfa. Reseeding the trio (`scripts/fixture.py seed
+--reset`) discards the shared history, so the call is the owner's.
 
 ### iPad with a hardware keyboard: a tap around the settings sheet crashes the app
 Found 2026-08-30 on the iPad Pro 11" simulator with ConnectHardwareKeyboard on

@@ -344,7 +344,20 @@ A growing `UITextView` (17 pt, corner radius 18) from 36 pt up to six lines
 the right is the send arrow when there is text or a locked recording, and the
 microphone otherwise.
 
-The attachment menu behind the `plus` icon offers «Фото или видео» and «Файл».
+The attachment menu behind the `plus` icon offers «Фото или видео», «Опрос»
+and «Файл».
+
+«Опрос» opens the composer sheet: the question, two to ten options, and the
+«Несколько ответов» / «Анонимное голосование» switches. The poll bubble
+carries the question, the option rows and a footer with the voter count. An
+incoming poll shows plain circles until this device votes; the author sees
+the shares from the start. A tap on an option votes, a tap on the chosen one
+takes the vote back (a multiple-answer poll toggles options one by one), and
+every tap sends the whole current choice as an encrypted `pollVote` service
+frame — the shares are counted on the device, the server never sees them.
+The results animate: the share bars grow on a spring, the pick mark pops,
+the percents cross-fade. An anonymous poll hides who voted everywhere and
+says so in the composer.
 
 Photos picked in the system picker land in the input bar as waiting
 thumbnails (the same strip pasted images use), open to a caption and to
