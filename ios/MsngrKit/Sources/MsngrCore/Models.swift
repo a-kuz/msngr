@@ -120,7 +120,7 @@ public enum MessageStatus: Int, Codable, Comparable {
 }
 
 public enum MessageKind: String, Codable {
-    case text, photo, video, file, voice, album, contact, system, shader, sticker
+    case text, photo, video, file, voice, album, contact, system, shader, sticker, roundVideo
 }
 
 public struct MediaInfo: Codable, Equatable {
@@ -255,6 +255,13 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
     /// when this outgoing message is due to be sent; nil once it has, or for
     /// a message that was never scheduled
     public var scheduledFor: Double?
+    /// voice / roundVideo: when this device started playing it. Local only —
+    /// it never travels — and it is what the play-one-after-another chain
+    /// walks past: a note already listened to does not start again on its own.
+    public var listenedAt: Double?
+    /// voice / roundVideo: who has started listening, filled by the peers'
+    /// `listened` events. What the sender's listened dots are drawn from.
+    public var listenedBy: [String] = []
 
     public init(id: String, chatId: String, fromUserId: String, sentAt: Double,
                 kind: MessageKind, text: String?, status: MessageStatus, isOutgoing: Bool) {
@@ -273,7 +280,7 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
         case id, chatId, seq, clientMsgId, fromUserId, sentAt, serverTs,
              kind, text, media, album, replyTo, forward, shader, bubbleShader, edited, editHistory,
              editedAt, deletedForAll, status, isOutgoing, reactions, expiresAt,
-             failReason, scheduledFor
+             failReason, scheduledFor, listenedAt, listenedBy
     }
 
     /// Local row id of a message the server numbered: the identity every

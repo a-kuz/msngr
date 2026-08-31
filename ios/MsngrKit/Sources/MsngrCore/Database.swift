@@ -516,6 +516,14 @@ public enum AppDatabase {
                 t.add(column: "scheduledFor", .double)
             }
         }
+        m.registerMigration("v29-noteListened") { db in
+            try db.alter(table: "message") { t in
+                // when this device started playing a voice or round video; local only
+                t.add(column: "listenedAt", .double)
+                // who has started listening, from the peers' `listened` events (JSON)
+                t.add(column: "listenedBy", .text).notNull().defaults(to: "[]")
+            }
+        }
         return m
     }
 }
@@ -561,6 +569,8 @@ extension Message {
         expiresAt = row["expiresAt"]
         failReason = row["failReason"]
         scheduledFor = row["scheduledFor"]
+        listenedAt = row["listenedAt"]
+        listenedBy = (row["listenedBy"] as String?).flatMap { try? dec.decode([String].self, from: Data($0.utf8)) } ?? []
     }
 
     public func encode(to container: inout PersistenceContainer) throws {
@@ -595,5 +605,7 @@ extension Message {
         container["expiresAt"] = expiresAt
         container["failReason"] = failReason
         container["scheduledFor"] = scheduledFor
+        container["listenedAt"] = listenedAt
+        container["listenedBy"] = js(listenedBy) ?? "[]"
     }
 }
