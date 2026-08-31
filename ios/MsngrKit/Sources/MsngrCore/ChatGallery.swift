@@ -209,4 +209,33 @@ public enum ChatGallery {
     }
 
     static func order(_ message: Message) -> Int { message.seq ?? HistoryWindow.unsentOrder }
+
+    // MARK: - Counts
+
+    /// The entry count of every tab, read once for the tab bar: an album row
+    /// contributes one entry per attachment, and a links entry is one per link
+    /// found in a text message rather than one per message.
+    public static func counts(_ dbc: GRDB.Database, chatId: String) throws -> [GalleryTab: Int] {
+        var result: [GalleryTab: Int] = [:]
+        let plainPhotoVideo = try Int.fetchOne(dbc, sql: """
+            SELECT COUNT(*) FROM message
+            WHERE chatId = ? AND kind IN (?, ?) AND deletedForAll = 0
+            """, arguments: [chatId, MessageKind.photo.rawValue, MessageKind.video.rawValue]) ?? 0
+        let albums = try Message.fetchAll(dbc, sql: """
+            SELECT * FROM message WHERE chatId = ? AND kind = ? AND deletedForAll = 0
+            """, arguments: [chatId, MessageKind.album.rawValue])
+        result[.media] = plainPhotoVideo + albums.reduce(0) { $0 + ($1.album?.count ?? 0) }
+
+        for tab: GalleryTab in [.files, .voice] {
+            result[tab] = try Int.fetchOne(dbc, sql: """
+                SELECT COUNT(*) FROM message WHERE chatId = ? AND kind = ? AND deletedForAll = 0
+                """, arguments: [chatId, tab.kinds[0].rawValue]) ?? 0
+        }
+
+        let texts = try Message.fetchAll(dbc, sql: """
+            SELECT * FROM message WHERE chatId = ? AND kind = ? AND deletedForAll = 0
+            """, arguments: [chatId, MessageKind.text.rawValue])
+        result[.links] = texts.reduce(0) { $0 + linkEntries(of: $1).count }
+        return result
+    }
 }
