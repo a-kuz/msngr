@@ -424,7 +424,10 @@ A ✅ goes in only together with a link to the evidence.
     dressing fresh demo accounts on the stand, and the script of the demo in
     `docs/demo/shaders-showcase.md`
 - Other
-  - ⬜ contact and location
+  - ✅ contact and location: the card from the system picker and the point
+    under the map picker's pin; bubbles with initials or a map snapshot, a
+    tap opens the card sheet or the full map
+    (qa/runs/2026-08-31-contact-location; ContactLocationTests)
   - 🟡 GIFs: an animated one is sent unchanged and plays in the feed and the
     viewer (qa/runs/2026-08-21-gif-run.md); a GIF picker and stickers are not
     built
