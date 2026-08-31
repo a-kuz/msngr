@@ -180,7 +180,7 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ a send that survives a killed app and a cold start at the appointed time
     (the same run: killed before the deadline, launched after it, the message
     left on its own)
-  - ⬜ leaving on time with the app backgrounded, killed or the phone off:
+  - ✅ leaving on time with the app backgrounded, killed or the phone off:
     a deferred envelope. The device encrypts at scheduling time exactly as a
     normal send would and hands the server the ciphertext with the moment it
     is due; at that moment the ConversationDO journals it as an ordinary
@@ -189,10 +189,14 @@ A ✅ goes in only together with a link to the evidence.
     time of the deferral; cancel, reschedule and edit before the deadline
     are a delete or replace of the stored envelope. The late delivery rides
     the ratchet's skipped-message keys; a recipient device enrolled after
-    scheduling cannot open it and heals through the usual repair path.
+    scheduling cannot open it and heals through the usual repair path. The
+    author who is offline at the deadline learns the outcome from the echo:
+    msg frames carry the clientMsgId on every transport, and the row closes
+    from the journal when the `sent` ack found no live socket.
     (Cloud-plaintext messengers schedule on the server; E2EE ones either
     lack the feature or send from the device — this keeps E2EE and the
-    server's reliability at once)
+    server's reliability at once; qa/runs/2026-08-31-deferred-envelope,
+    ScheduledSendTests, the defer block in smoke)
 
 ## Message kinds
 
