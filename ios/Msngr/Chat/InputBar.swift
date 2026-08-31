@@ -14,6 +14,10 @@ struct InputBar: View {
     var onAttachSticker: () -> Void
     var onAttachBubbleShader: () -> Void
     var onSendVoice: (URL, TimeInterval, [Int]) -> Void
+    /// The round video recorder lives on the chat screen: the live circle is
+    /// drawn over the feed, outside this bar's bounds.
+    @ObservedObject var videoRecorder: RoundVideoRecorder
+    var onSendRoundVideo: (URL, TimeInterval) -> Void
     var onSendImages: ([UIImage], String) -> Void
     /// ↑/↓ from the hardware keyboard over an empty composer (true is up):
     /// the chat screen walks the feed with it.
@@ -34,6 +38,11 @@ struct InputBar: View {
     /// the microphone is denied in the system: the only thing left to do from here is
     /// open Settings, so that is where the button leads
     @State private var micDenied = false
+    @State private var cameraDenied = false
+    /// what a hold of the button records: the microphone or the front camera.
+    /// A tap on the idle button flips it, and the choice is the device's, not
+    /// the chat's — the same key every chat reads.
+    @AppStorage("chat.recordVideoMode") private var videoMode = false
     /// long press on the send button: the schedule-time picker
     @State private var showSchedulePicker = false
 
@@ -72,7 +81,7 @@ struct InputBar: View {
             mentionBar
             pendingImagesBar
             HStack(alignment: .bottom, spacing: 8) {
-                if recorder.isRecording {
+                if isTaking {
                     recordingView
                 } else {
                     Menu {
@@ -149,14 +158,25 @@ struct InputBar: View {
         } message: {
             Text(String(localized: "Voice messages are recorded from the microphone."))
         }
+        .alert(String(localized: "Camera disabled"), isPresented: $cameraDenied) {
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                Button(String(localized: "Settings")) { UIApplication.shared.open(url) }
+            }
+            Button(String(localized: "Got it"), role: .cancel) { }
+        } message: {
+            Text(String(localized: "Video messages are recorded with the camera and the microphone."))
+        }
         // the hint about how recording works floats above the bar until recording is locked
         .overlay(alignment: .top) {
-            if recorder.isRecording && !gesture.isLocked {
+            if isTaking && !gesture.isLocked {
                 recordingHint
                     .offset(y: -40)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
+        // the cap ends a take the finger let go of; set here because the
+        // recorder outlives no chat screen and the gesture lives in this one
+        .onAppear { videoRecorder.onCap = { handle(gesture.send()) } }
         // a take is held by this screen and by nothing else: leaving the chat, leaving
         // the app or a call taking the microphone away drops it whole, so that no stump
         // of one goes out unnoticed
@@ -171,8 +191,15 @@ struct InputBar: View {
             guard AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
             handle(gesture.interrupted())
         }
-        .animation(Theme.springFast, value: recorder.isRecording)
+        .animation(Theme.springFast, value: isTaking)
         .animation(Theme.springFast, value: gesture.isLocked)
+    }
+
+    /// A take of either kind is running: the composer row gives way to the strip.
+    private var isTaking: Bool { recorder.isRecording || videoRecorder.isRecording }
+
+    private var takeDuration: TimeInterval {
+        videoRecorder.isRecording ? videoRecorder.duration : recorder.duration
     }
 
     /// Autocomplete for a mention: appears while the field ends with an open
@@ -443,26 +470,35 @@ struct InputBar: View {
     }
 
     private var micButton: some View {
-        Image(systemName: "mic.fill")
+        Image(systemName: videoMode ? "video.fill" : "mic.fill")
             .font(Theme.glyph(22, max: 34))
-            .foregroundStyle(recorder.isRecording ? .red : .secondary)
+            .foregroundStyle(isTaking ? .red : .secondary)
             .frame(width: TypeScale.scaled(36, max: 48), height: TypeScale.scaled(36, max: 48))
-            .accessibilityIdentifier("chat.mic")
-            .scaleEffect(recorder.isRecording ? 1.6 : 1)
-            .animation(recorder.isRecording
+            .contentShape(Rectangle())
+            .accessibilityIdentifier(videoMode ? "chat.camera" : "chat.mic")
+            .scaleEffect(isTaking ? 1.6 : 1)
+            .animation(isTaking
                        ? .easeInOut(duration: 0.6).repeatForever(autoreverses: true)
-                       : Theme.springFast, value: recorder.isRecording)
+                       : Theme.springFast, value: isTaking)
+            // a quick tap flips microphone ↔ camera; only a hold records, so
+            // the flip never has to ask the system for anything
+            .onTapGesture {
+                guard !isTaking else { return }
+                Haptics.light()
+                videoMode.toggle()
+            }
             .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        handle(gesture.touchDown())
-                        dragOffset = value.translation.width
-                        handle(gesture.moved(value.translation))
-                    }
-                    .onEnded { _ in
-                        dragOffset = 0
-                        handle(gesture.touchUp())
-                    }
+                LongPressGesture(minimumDuration: 0.22)
+                    .onEnded { _ in handle(gesture.touchDown()) }
+                    .sequenced(before: DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            dragOffset = value.translation.width
+                            handle(gesture.moved(value.translation))
+                        }
+                        .onEnded { _ in
+                            dragOffset = 0
+                            handle(gesture.touchUp())
+                        })
             )
     }
 
@@ -474,20 +510,26 @@ struct InputBar: View {
         case .none:
             break
         case .ask:
+            let wantsVideo = videoMode
             Task {
-                let granted = await VoiceRecorder.requestPermission()
+                let granted = wantsVideo ? await CameraGate.requestPermission()
+                                         : await VoiceRecorder.requestPermission()
                 await MainActor.run {
-                    if !granted { micDenied = true }
+                    if !granted {
+                        if wantsVideo { cameraDenied = true } else { micDenied = true }
+                    }
                     handle(gesture.permitted(granted))
                 }
             }
         case .start:
             Haptics.medium()
             do {
-                try recorder.start()
+                if videoMode { try videoRecorder.start() } else { try recorder.start() }
             } catch {
                 MsngrLog.outbox.error("failed to start recording: \(error)")
-                model.sendFailure = String(localized: "Voice not recorded: microphone is in use by another app")
+                model.sendFailure = videoMode
+                    ? String(localized: "Video not recorded: camera is unavailable")
+                    : String(localized: "Voice not recorded: microphone is in use by another app")
                 handle(gesture.interrupted())
             }
         case .lock:
@@ -496,23 +538,27 @@ struct InputBar: View {
             dragOffset = 0
             Haptics.success()
         case .cancel:
-            recorder.cancel()
+            if videoRecorder.isRecording { videoRecorder.cancel() } else { recorder.cancel() }
             Haptics.rigid()
         case .finish:
-            finishRecording()
+            if videoRecorder.isRecording { finishVideoRecording() } else { finishRecording() }
         }
     }
 
     private var recordingView: some View {
         HStack(spacing: 10) {
             Circle().fill(.red).frame(width: 10, height: 10)
-                .opacity(0.5 + 0.5 * sin(recorder.duration * 4))
-            Text(String(format: "%d:%02d,%01d", Int(recorder.duration) / 60,
-                        Int(recorder.duration) % 60,
-                        Int(recorder.duration * 10) % 10))
+                .opacity(0.5 + 0.5 * sin(takeDuration * 4))
+            Text(String(format: "%d:%02d,%01d", Int(takeDuration) / 60,
+                        Int(takeDuration) % 60,
+                        Int(takeDuration * 10) % 10))
                 .textRole(Theme.Text.recordTimer)
-            LiveWaveView(amplitudes: recorder.liveAmplitudes)
-                .frame(height: 26)
+            // the voice take draws its live wave; the video take is watched in
+            // the circle over the feed and the strip stays with the timer
+            if recorder.isRecording {
+                LiveWaveView(amplitudes: recorder.liveAmplitudes)
+                    .frame(height: 26)
+            }
             Spacer()
             if gesture.isLocked {
                 Button(String(localized: "Cancel"), role: .destructive) {
@@ -545,6 +591,18 @@ struct InputBar: View {
         }
         Haptics.light()
         onSendVoice(result.url, result.duration, result.waveform)
+    }
+
+    private func finishVideoRecording() {
+        let duration = videoRecorder.duration
+        videoRecorder.stop { url in
+            guard let url else {
+                Haptics.rigid()
+                return
+            }
+            Haptics.light()
+            onSendRoundVideo(url, duration)
+        }
     }
 }
 

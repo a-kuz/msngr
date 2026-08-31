@@ -102,6 +102,8 @@ final class ChatViewModel: ObservableObject {
     private var obscuredAtLastSeq = 0
     private var lastMsgs: [Message] = []
     private var obscuredCancellable: AnyCancellable?
+    /// hears both note players; whatever starts playing is marked listened
+    private var notesCancellable: AnyCancellable?
     private var pinCancellable: AnyCancellable?
     /// The pinnedSeqs the pin observation is installed for.
     private var observedPinSeqs: [Int] = []
@@ -180,6 +182,14 @@ final class ChatViewModel: ObservableObject {
                 self.connected = up
             }
         }
+
+        // whichever way a note starts playing — a tap on the bubble, the wave,
+        // the chain — the row is marked listened and the sender is told once
+        notesCancellable = VoicePlayer.shared.$state.map(\.msgId)
+            .merge(with: RoundVideoPlayer.shared.$state.map(\.msgId))
+            .removeDuplicates()
+            .compactMap { $0 }
+            .sink { [weak self] id in self?.markNoteListened(id) }
 
         typingTask?.cancel()
         typingTask = Task { [weak self] in
@@ -418,6 +428,7 @@ final class ChatViewModel: ObservableObject {
         cancellable = nil
         chatCancellable = nil
         obscuredCancellable = nil
+        notesCancellable = nil
         pinCancellable = nil
         observedPinSeqs = []
         typingTask?.cancel()
@@ -945,11 +956,53 @@ final class ChatViewModel: ObservableObject {
         target == chatId && !SyncEngine.serviceKinds.contains(kind)
     }
 
+    /// Whatever note starts playing is marked once: `listenedAt` locally, and
+    /// for a peer's message a `listened` event back to its sender.
+    private func markNoteListened(_ msgId: String) {
+        guard let db = app.db else { return }
+        Task {
+            let target: Message? = try? await db.write { dbc in
+                guard let msg = try Message.fetchOne(dbc, key: msgId),
+                      msg.kind == .voice || msg.kind == .roundVideo,
+                      msg.listenedAt == nil else { return nil }
+                try dbc.execute(sql: "UPDATE message SET listenedAt = ? WHERE id = ?",
+                                arguments: [Date().timeIntervalSince1970, msgId])
+                return msg
+            }
+            guard let target, !target.isOutgoing, target.seq != nil else { return }
+            var c = ContentPayload(kind: "listened")
+            c.targetLocalId = target.id
+            try? await app.engine?.enqueue(content: c, chatId: target.chatId)
+        }
+    }
+
+    /// The next unheard note above the finished one, walking towards the newest
+    /// message: notes play one after another and the chain stops at the first
+    /// note already heard — or at one of our own.
+    func nextMediaNote(after msgId: String) -> Message? {
+        guard let idx = feed.firstIndex(where: { item in
+            if case .message(let m, _, _, _, _, _, _) = item { return m.id == msgId }
+            return false
+        }) else { return nil }
+        var i = idx - 1
+        while i >= 0 {
+            if case .message(let m, _, _, _, _, _, _) = feed[i],
+               m.kind == .voice || m.kind == .roundVideo {
+                guard !m.isOutgoing, m.listenedAt == nil, !m.deletedForAll,
+                      m.media != nil else { return nil }
+                return m
+            }
+            i -= 1
+        }
+        return nil
+    }
+
     static func previewText(_ m: Message) -> String {
         switch m.kind {
         case .photo: return String(localized: "Photo")
         case .video: return String(localized: "Video")
         case .voice: return String(localized: "Voice message")
+        case .roundVideo: return String(localized: "Video message")
         case .file: return m.media?.name ?? String(localized: "File")
         case .album: return String(localized: "Album")
         case .shader: return m.shader?.name ?? String(localized: "Shader")

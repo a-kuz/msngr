@@ -1,6 +1,7 @@
 import UIKit
 import SwiftUI
 import SafariServices
+import Combine
 import MsngrCore
 
 /// Inverted message list: a UICollectionView flipped along Y, with the cells
@@ -20,6 +21,9 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     var onContextAction: ((Message, MessageContextAction) -> Void)?
     /// an outgoing message in a group offers the read-by list in its menu
     var isGroupChat = false
+    /// how many people besides the sender a note reaches: the listened dots
+    /// compare it against who has actually listened
+    var noteRecipients = 1
     /// The message the chat holds pinned, so the context menu of that one offers
     /// to take the pin off instead of putting it on again.
     var pinnedSeqs: Set<Int> = []
@@ -134,6 +138,49 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
                                                name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(typeScaleChanged),
                                                name: .typeScaleChanged, object: nil)
+
+        // the docked circle a round video keeps playing in once its bubble is
+        // scrolled away; hidden while the bubble itself is on screen
+        roundDock.isHidden = true
+        roundDock.onTap = { [weak self] in
+            guard let self, let id = RoundVideoPlayer.shared.state.msgId else { return }
+            _ = self.scrollTo(id: id, highlight: false)
+        }
+        view.addSubview(roundDock)
+        roundDockCancellable = RoundVideoPlayer.shared.$state
+            .sink { [weak self] state in self?.updateRoundDock(state) }
+    }
+
+    private let roundDock = RoundVideoDockView()
+    private var roundDockCancellable: AnyCancellable?
+
+    /// The dock shows while a round video has the sound and its bubble is not
+    /// visible; called on every player change and every cell entering or
+    /// leaving the screen.
+    private func updateRoundDock(_ state: RoundVideoPlayback? = nil) {
+        let state = state ?? RoundVideoPlayer.shared.state
+        guard let msgId = state.msgId else {
+            roundDock.isHidden = true
+            roundDock.attach(nil)
+            return
+        }
+        let bubbleVisible = collectionView.visibleCells
+            .contains { ($0 as? MessageCell)?.messageId == msgId }
+        if bubbleVisible {
+            roundDock.isHidden = true
+            roundDock.attach(nil)
+        } else {
+            if roundDock.isHidden {
+                let side = RoundVideoDockView.side
+                roundDock.frame = CGRect(x: view.bounds.width - side - 10,
+                                         y: view.safeAreaInsets.top + 8,
+                                         width: side, height: side)
+                roundDock.attach(RoundVideoPlayer.shared.player)
+                roundDock.isHidden = false
+                view.bringSubviewToFront(roundDock)
+            }
+            roundDock.setProgress(state.progress)
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -208,6 +255,9 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         frameLink = nil
         lastFrame = 0
         PerfTrace.shared.flush()
+        // the sound and its circle belong to this chat: leaving it stops both
+        // (voice keeps playing across chats, a picture without its feed does not)
+        RoundVideoPlayer.shared.stop()
     }
 
     override func viewDidLayoutSubviews() {
@@ -508,6 +558,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
                                       avatar: FeedAvatar? = nil) {
         cell.configure(msg: msg, plan: plan, avatar: avatar)
         cell.isGroupChat = isGroupChat
+        cell.noteRecipients = noteRecipients
         cell.onReply = { [weak self] in self?.onReply?(msg) }
         cell.onReact = { [weak self] emoji in self?.onReact?(msg, emoji) }
         cell.onCapsuleTap = { [weak self] emoji in self?.onReactionCapsuleTap?(msg, emoji) }
@@ -863,11 +914,13 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
     func collectionView(_ cv: UICollectionView, willDisplay cell: UICollectionViewCell,
                         forItemAt indexPath: IndexPath) {
         (cell as? MessageCell)?.setAutoplayActive(true)
+        if RoundVideoPlayer.shared.state.msgId != nil { updateRoundDock() }
     }
 
     func collectionView(_ cv: UICollectionView, didEndDisplaying cell: UICollectionViewCell,
                         forItemAt indexPath: IndexPath) {
         (cell as? MessageCell)?.setAutoplayActive(false)
+        if RoundVideoPlayer.shared.state.msgId != nil { updateRoundDock() }
     }
 
     func collectionView(_ cv: UICollectionView, didSelectItemAt indexPath: IndexPath) {

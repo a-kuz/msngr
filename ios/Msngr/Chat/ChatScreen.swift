@@ -6,6 +6,9 @@ import MsngrCore
 struct ChatScreen: View {
     let chatId: String
     @StateObject private var model: ChatViewModel
+    /// Round video recording: owned here so the live circle can float over the
+    /// feed while the input bar drives the take.
+    @StateObject private var videoRecorder = RoundVideoRecorder()
     /// Search inside this chat: the field in the header, the matches over the feed.
     @StateObject private var search: ChatSearchSession
     @State private var searching = false
@@ -137,6 +140,8 @@ struct ChatScreen: View {
                                  onAttachSticker: { showStickers = true },
                                  onAttachBubbleShader: { shaderComposer = .bubble },
                                  onSendVoice: sendVoice,
+                                 videoRecorder: videoRecorder,
+                                 onSendRoundVideo: sendRoundVideo,
                                  onSendImages: { images, caption in
                                      Task { await sendImages(images, caption: caption) }
                                  },
@@ -156,6 +161,13 @@ struct ChatScreen: View {
             if !model.selecting {
                 scrollDownButton
                 mentionJumpButton
+            }
+            // the live circle of a round video take, over the feed; touches go
+            // through it — the finger is on the record button underneath
+            if videoRecorder.isRecording {
+                RoundRecordingPreview(recorder: videoRecorder)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
             }
             // the fade dissolves bubbles running under the navigation bar; while
             // searching the bar is gone and the field stands in its own row
@@ -205,6 +217,16 @@ struct ChatScreen: View {
         .onAppear {
             PerfTrace.shared.mark("chat.open")
             model.start()
+            // media notes play one after another: a finished voice or circle
+            // starts the next one up the feed, whichever of the two it is
+            VoicePlayer.shared.onFinish = { [weak model] id in
+                guard let next = model?.nextMediaNote(after: id) else { return }
+                Self.playMediaNote(next)
+            }
+            RoundVideoPlayer.shared.onFinish = { [weak model] id in
+                guard let next = model?.nextMediaNote(after: id) else { return }
+                Self.playMediaNote(next)
+            }
             // the draft is restored only into an empty field: coming back from
             // ChatInfo the typed text is still in @State and must not be overwritten
             if text.isEmpty { text = model.chat?.draft ?? "" }
@@ -1189,6 +1211,111 @@ struct ChatScreen: View {
             try? FileManager.default.removeItem(at: url)
         }
     }
+
+    /// A finished round video take: cropped to a square, stashed and queued.
+    /// The clip is short and already small, so unlike a picked video there is
+    /// no progress ring — by the time the bubble draws, the file is ready.
+    private func sendRoundVideo(_ url: URL, duration: TimeInterval) {
+        Task {
+            defer { try? FileManager.default.removeItem(at: url) }
+            guard let clip = await Self.exportRoundClip(AVURLAsset(url: url)),
+                  let data = try? Data(contentsOf: clip),
+                  let localName = stash(data, mime: "video/mp4") else {
+                model.sendFailure = String(localized: "Video not sent: could not process the recording")
+                return
+            }
+            var info = MediaInfo(type: "video", mediaId: "", key: "",
+                                 hash: "", size: data.count, mime: "video/mp4")
+            info.localPath = localName
+            info.w = Self.roundClipSide
+            info.h = Self.roundClipSide
+            info.dur = duration
+            let gen = AVAssetImageGenerator(asset: AVURLAsset(url: clip))
+            gen.appliesPreferredTrackTransform = true
+            if let cg = try? gen.copyCGImage(at: .init(seconds: 0, preferredTimescale: 600), actualTime: nil),
+               let jpeg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.7) {
+                if let px = ImageProcessor.rgbaPixels(jpeg) {
+                    info.blurhash = BlurHash.encode(pixels: px.pixels, width: px.width, height: px.height)
+                }
+                info.thumbLocalPath = try? app.media.stash(jpeg, mime: "image/jpeg")
+            }
+            var c = ContentPayload(kind: "roundVideo")
+            c.media = info
+            model.enqueue(c)
+            try? FileManager.default.removeItem(at: clip)
+        }
+    }
+
+    static let roundClipSide = 400
+
+    /// Starts a note the play-one-after-another chain picked: a circle plays
+    /// with sound where its bubble or the dock draws it, a voice goes through
+    /// the voice player.
+    static func playMediaNote(_ msg: Message) {
+        guard let media = msg.media else { return }
+        Task {
+            guard let mm = AppState.shared.media,
+                  let url = try? await mm.fetch(media) else { return }
+            await MainActor.run {
+                if msg.kind == .roundVideo {
+                    RoundVideoPlayer.shared.play(msgId: msg.id, url: url)
+                } else {
+                    // the decrypted file under a name AVAudioPlayer will take,
+                    // the same link the voice plate makes
+                    let linked = url.deletingPathExtension().appendingPathExtension("m4a")
+                    if !FileManager.default.fileExists(atPath: linked.path) {
+                        try? FileManager.default.copyItem(at: url, to: linked)
+                    }
+                    VoicePlayer.shared.play(msgId: msg.id, url: linked)
+                }
+            }
+        }
+    }
+
+    /// Center-crops the camera take into a square mp4 of `roundClipSide`,
+    /// whatever orientation the capture came in.
+    static func exportRoundClip(_ asset: AVAsset) async -> URL? {
+        guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+              let natural = try? await track.load(.naturalSize),
+              let transform = try? await track.load(.preferredTransform),
+              let duration = try? await asset.load(.duration) else { return nil }
+        let oriented = CGRect(origin: .zero, size: natural).applying(transform)
+        let w = abs(oriented.width), h = abs(oriented.height)
+        let side = min(w, h)
+        guard side > 0 else { return nil }
+        let out = CGFloat(roundClipSide)
+
+        // orient the frames upright, slide the middle square to the origin, scale it out
+        var t = transform
+        t = t.concatenating(CGAffineTransform(translationX: -oriented.minX, y: -oriented.minY))
+        t = t.concatenating(CGAffineTransform(translationX: -(w - side) / 2, y: -(h - side) / 2))
+        t = t.concatenating(CGAffineTransform(scaleX: out / side, y: out / side))
+
+        let composition = AVMutableVideoComposition()
+        composition.renderSize = CGSize(width: out, height: out)
+        composition.frameDuration = CMTime(value: 1, timescale: 30)
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
+        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
+        layerInstruction.setTransform(t, at: .zero)
+        instruction.layerInstructions = [layerInstruction]
+        composition.instructions = [instruction]
+
+        guard let export = AVAssetExportSession(asset: asset,
+                                                presetName: AVAssetExportPresetMediumQuality) else { return nil }
+        let outURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("round-\(UUID().uuidString).mp4")
+        export.outputURL = outURL
+        export.outputFileType = .mp4
+        export.videoComposition = composition
+        export.shouldOptimizeForNetworkUse = true
+        await export.export()
+        guard export.status == .completed else {
+            try? FileManager.default.removeItem(at: outURL)
+            return nil
+        }
+        return outURL
+    }
 }
 
 struct VideoTransferable: Transferable {
@@ -1281,6 +1408,7 @@ struct MessagesView: UIViewControllerRepresentable {
         // callbacks that capture bindings are reinstalled on every update: a binding
         // captured in makeUIViewController outlives the body that produced it
         vc.isGroupChat = model.chat?.kind == .group
+        vc.noteRecipients = max(model.members.count - 1, 1)
         vc.onContextAction = { [weak model] msg, action in
             guard let model else { return }
             switch action {

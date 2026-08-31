@@ -49,6 +49,14 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private var progressCancellable: AnyCancellable?
     /// The play glyph over each video tile, by slot; hidden while its ring shows.
     private var playGlyphs: [Int: UIImageView] = [:]
+    /// A layer over the shared sound player while this cell's round video owns
+    /// it, with the progress ring; both go the moment the sound moves on.
+    private var roundSoundLayer: AVPlayerLayer?
+    private let roundRing = RoundProgressRing()
+    private var roundCancellable: AnyCancellable?
+    /// how many people besides the sender this chat's notes reach
+    var noteRecipients = 1
+    private let noteDots = NoteDotsView()
     private var reactionViews: [ReactionCapsuleView] = []
     private let voiceView = VoiceMessageView()
     private let shaderView = ShaderMessageView()
@@ -124,6 +132,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         bubbleView.addSubview(timeLabel)
         tickView.contentMode = .scaleAspectFit
         bubbleView.addSubview(tickView)
+        noteDots.isHidden = true
+        bubbleView.addSubview(noteDots)
         bubbleView.addSubview(voiceView)
         shaderView.isHidden = true
         shaderView.isUserInteractionEnabled = true
@@ -139,6 +149,11 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         progressCancellable = MediaProgress.shared.$fractions
             .receive(on: DispatchQueue.main)
             .sink { [weak self] fractions in self?.applyProgress(fractions) }
+
+        // the circle follows the sound player the way voice plates follow theirs:
+        // a round video playing in another chat is right the moment this cell is reused
+        roundCancellable = RoundVideoPlayer.shared.$state
+            .sink { [weak self] state in self?.applyRoundVideo(state) }
 
         // the avatar lives outside the bubble: press dips and swipe-to-reply move
         // the bubble alone, the face stays put the way it does in Telegram
@@ -517,10 +532,38 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             tickView.isHidden = true
         }
         timeLabel.frame = timeFrame
+
+        // listened dots of a note, in the slot the plan reserved at the start
+        // of the status line
+        if msg.kind == .voice || msg.kind == .roundVideo, !msg.deletedForAll {
+            let dots: [Bool]
+            if msg.isOutgoing {
+                let someone = !msg.listenedBy.isEmpty
+                // a small group waits for everyone; a big one only says "someone"
+                if isGroupChat && noteRecipients < 15 {
+                    dots = [someone, msg.listenedBy.count >= noteRecipients]
+                } else {
+                    dots = [someone]
+                }
+            } else {
+                // the reader's own unheard mark, gone once the note has played
+                dots = msg.listenedAt == nil ? [true] : []
+            }
+            noteDots.isHidden = dots.isEmpty
+            noteDots.dots = dots
+            noteDots.color = plan.statusOnMedia ? .white
+                : (plan.isOutgoing ? UIColor(Theme.outgoingTickRead) : UIColor(Theme.accent))
+            noteDots.frame = CGRect(x: plan.statusFrame.minX, y: plan.statusFrame.minY,
+                                    width: BubbleLayout.noteDotsSpan, height: plan.statusFrame.height)
+        } else {
+            noteDots.isHidden = true
+        }
+
         // media views are added after the status, so the time capsule is raised back on top
         bubbleView.bringSubviewToFront(statusBackdrop)
         bubbleView.bringSubviewToFront(timeLabel)
         bubbleView.bringSubviewToFront(tickView)
+        bubbleView.bringSubviewToFront(noteDots)
 
         // reactions: capsules are reused by emoji, so a count change or a shifted frame
         // animates in place when configure runs inside an animation block. Only a
@@ -604,6 +647,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             }
             mediaSignatures = signatures
             syncProgressRings(msg)
+            if msg.kind == .roundVideo { applyRoundVideo(RoundVideoPlayer.shared.state) }
             return
         }
 
@@ -650,6 +694,9 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             }
         }
         syncProgressRings(msg)
+        // scrolled back to a circle whose sound is on: the fresh media view
+        // picks the player's layer back up (the subscription only fires on change)
+        if msg.kind == .roundVideo { applyRoundVideo(RoundVideoPlayer.shared.state) }
     }
 
     /// A message on its way out carries a ring per tile with the fraction of
@@ -717,7 +764,11 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             player?.play()
         }
         autoplay.append((layer, looper))
-        playGlyph.isHidden = true
+        // the glyph is taken out, not just hidden: syncProgressRings unhides
+        // the glyphs it knows about on every reconfigure (an ack, a read), and
+        // a playing tile must not get its play button back for a frame
+        playGlyphs.removeValue(forKey: iv.tag)
+        playGlyph.removeFromSuperview()
         player.play()
     }
 
@@ -726,6 +777,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     }()
 
     private func teardownAutoplay() {
+        detachRoundSound()
         for (layer, looper) in autoplay {
             NotificationCenter.default.removeObserver(looper)
             layer.player?.pause()
@@ -745,7 +797,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         stickerView.setActive(active && !stickerView.isHidden)
         bubbleShaderCanvas.setRunning(active && !bubbleShaderCanvas.isHidden)
         for (layer, _) in autoplay {
-            if active { layer.player?.play() } else { layer.player?.pause() }
+            // while the sound player owns this circle the muted loop stays paused
+            if active && roundSoundLayer == nil { layer.player?.play() } else if !active { layer.player?.pause() }
         }
         for loop in gifLoops { loop.setPaused(!active) }
     }
@@ -801,6 +854,13 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     /// Rounds a media view: a single photo gets the bubble radius on all corners, a
     /// mosaic tile only where it touches the outer corners of the grid.
     private func applyMediaCorners(_ iv: UIImageView, rect: CGRect, plan: BubbleLayoutPlan) {
+        if msg?.kind == .roundVideo {
+            iv.layer.cornerRadius = rect.width / 2
+            iv.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner,
+                                      .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+            iv.layer.cornerCurve = .circular
+            return
+        }
         if plan.albumRects.isEmpty {
             iv.layer.cornerRadius = Theme.bubbleCorner
             iv.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner,
@@ -820,7 +880,70 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
     @objc private func mediaTapped(_ g: UITapGestureRecognizer) {
         guard let v = g.view else { return }
+        // a round video answers the tap with sound instead of the viewer
+        if msg?.kind == .roundVideo {
+            toggleRoundSound()
+            return
+        }
         onTapMedia?(v.tag, v)
+    }
+
+    /// A tap on the circle: the decrypted file goes to the shared sound player,
+    /// which starts it from the top or pauses the one already running.
+    private func toggleRoundSound() {
+        guard let msg, let media = msg.media else { return }
+        Haptics.light()
+        Task {
+            guard let mm = AppState.shared.media,
+                  let url = try? await mm.fetch(media) else { return }
+            await MainActor.run { RoundVideoPlayer.shared.toggle(msgId: msg.id, url: url) }
+        }
+    }
+
+    /// The sound player moved: only the circle of the message it is on renders
+    /// its layer and the progress ring; every other circle goes back to the
+    /// muted loop.
+    private func applyRoundVideo(_ state: RoundVideoPlayback) {
+        guard let msg, msg.kind == .roundVideo, state.msgId == msg.id,
+              let iv = mediaViews.first else {
+            detachRoundSound()
+            return
+        }
+        if roundSoundLayer == nil, let player = RoundVideoPlayer.shared.player {
+            let layer = AVPlayerLayer(player: player)
+            layer.videoGravity = .resizeAspectFill
+            layer.frame = iv.bounds
+            iv.layer.addSublayer(layer)
+            roundSoundLayer = layer
+            // the muted loop pauses underneath: two decoders over one file, one hidden
+            for (l, _) in autoplay { l.player?.pause(); l.isHidden = true }
+            roundRing.frame = iv.bounds
+            iv.addSubview(roundRing)
+        }
+        roundRing.progress = state.progress
+        // the circle swells a little while the sound runs and settles on pause
+        let scale: CGFloat = state.isPlaying ? 1.07 : 1.0
+        if abs(iv.transform.a - scale) > 0.001 {
+            UIView.animate(withDuration: 0.4, delay: 0, usingSpringWithDamping: 0.65,
+                           initialSpringVelocity: 0.4, options: [.allowUserInteraction]) {
+                iv.transform = scale == 1 ? .identity : CGAffineTransform(scaleX: scale, y: scale)
+            }
+        }
+    }
+
+    private func detachRoundSound() {
+        guard roundSoundLayer != nil else { return }
+        roundSoundLayer?.removeFromSuperlayer()
+        roundSoundLayer = nil
+        roundRing.removeFromSuperview()
+        roundRing.progress = 0
+        if let iv = mediaViews.first, iv.transform != .identity {
+            UIView.animate(withDuration: 0.3) { iv.transform = .identity }
+        }
+        for (l, _) in autoplay {
+            l.isHidden = false
+            if onScreen { l.player?.play() }
+        }
     }
 
     @objc private func shaderTapped() {

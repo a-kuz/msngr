@@ -266,6 +266,9 @@ struct VoicePlayback: Equatable {
 final class VoicePlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
     static let shared = VoicePlayer()
     @Published private(set) var state = VoicePlayback()
+    /// Called with the message id when a take plays to its end (not on stop):
+    /// what the play-one-after-another chain hangs off.
+    var onFinish: ((String) -> Void)?
 
     private var player: AVAudioPlayer?
     private var displayLink: CADisplayLink?
@@ -342,7 +345,9 @@ final class VoicePlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
     }
 
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        let finished = state.msgId
         stop()
+        if flag, let finished { onFinish?(finished) }
     }
 }
 
