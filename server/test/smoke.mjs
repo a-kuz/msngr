@@ -1883,8 +1883,13 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
   const landed = await cb2.waitFor((f) => f.t === "msg" && f.chatId === chat.chatId
     && f.at >= due - 250 && f.from === alice.userId, 8000);
   check("deferred envelope arrives once due", !!landed, JSON.stringify(landed));
-  const echoMark = ca.frames.findIndex((f) => f.t === "msg" && f.seq === landed?.seq);
+  const echoMark = ca.frames.findIndex((f) =>
+    f.t === "msg" && f.chatId === chat.chatId && f.seq === landed?.seq);
   check("sender gets the echo of the deferred send", echoMark >= 0);
+  // the echo names the outbox row it closes: an author offline at the deadline
+  // finalizes from the journal instead of the sent ack
+  check("msg echo carries the clientMsgId",
+    ca.frames[echoMark]?.clientMsgId === "cm-def1", JSON.stringify(ca.frames[echoMark]));
 
   // a reschedule replaces the envelope in place; a cancel removes it
   ca.send({ t: "defer", chatId: chat.chatId, clientMsgId: "cm-def2", sentAt: Date.now(),
