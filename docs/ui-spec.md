@@ -459,6 +459,13 @@ disturbing the screen, and both sides dialing each other at once settles into
 one call with no human involved. The ring works while the app is running; a
 push that wakes a closed app for a call is not built yet.
 
+A finished call leaves a row in the feed on both sides: a phone glyph with the
+direction («Исходящий звонок» / «Входящий звонок», or «Пропущенный звонок» in
+red for a call nobody picked up) and a second line with the talk duration or
+how it ended («Нет ответа», «Занято»…). The row raises no unread count and no
+push, but it does move the chat up the list, and its preview there reads
+«📞 Пропущенный звонок». Tapping the row dials the peer again.
+
 ## Chat info
 
 For a direct chat: the safety number (60 digits in groups of 5, fetching the

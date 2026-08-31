@@ -1558,6 +1558,16 @@ public actor SyncEngine {
         try? await enqueue(content: content, chatId: chatId)
     }
 
+    /// Publishes the finished call into the feed: service content that leaves
+    /// a call row on both sides. The caller alone sends it, so the record
+    /// appears exactly once; the id is deterministic so a retry collapses
+    /// under the server's dedup.
+    public func sendCallLog(_ log: CallLog, chatId: String) async {
+        var content = ContentPayload(kind: CallLog.kind)
+        content.text = log.encoded
+        try? await enqueue(content: content, chatId: chatId, clientMsgId: "clog:\(log.callId)")
+    }
+
     func applyContent(_ content: ContentPayload, chatId: String,
                       seq: Int, from: String, sentAt: Double, ts: Double) async {
         try? await db.write { [ownUserId] dbc in
@@ -1617,6 +1627,11 @@ public actor SyncEngine {
                             arguments: [content.ttlSeconds ?? 0, chatId])
         case CallSignal.kind:
             break // in-memory only, delivered before the write reaches here
+        case CallLog.kind:
+            try SyncEngine.storeCallLog(dbc, content, chatId: chatId, seq: seq,
+                                        from: from, sentAt: sentAt, ts: ts, ownUserId: ownUserId)
+            try dbc.execute(sql: "UPDATE chat SET lastActivityAt = ? WHERE id = ?",
+                            arguments: [max(ts, sentAt), chatId])
         case GroupEvent.kind:
             try SyncEngine.storeGroupEvent(dbc, content, chatId: chatId, seq: seq,
                                            from: from, sentAt: sentAt, ts: ts, ownUserId: ownUserId)
@@ -1655,6 +1670,21 @@ public actor SyncEngine {
         var msg = Message(id: Message.feedId(chatId: chatId, seq: seq), chatId: chatId,
                           fromUserId: from, sentAt: sentAt,
                           kind: .system, text: content.text, status: .sent,
+                          isOutgoing: from == ownUserId)
+        msg.seq = seq
+        msg.serverTs = ts
+        try msg.upsert(dbc)
+    }
+
+    /// A call log: service on the wire, a call row in the feed. Unlike a group
+    /// event it does move the chat up the list — a missed call is exactly the
+    /// thing the list has to show.
+    static func storeCallLog(_ dbc: GRDB.Database, _ content: ContentPayload, chatId: String,
+                             seq: Int, from: String, sentAt: Double, ts: Double,
+                             ownUserId: String) throws {
+        var msg = Message(id: Message.feedId(chatId: chatId, seq: seq), chatId: chatId,
+                          fromUserId: from, sentAt: sentAt,
+                          kind: .call, text: content.text, status: .sent,
                           isOutgoing: from == ownUserId)
         msg.seq = seq
         msg.serverTs = ts
@@ -1716,6 +1746,11 @@ public actor SyncEngine {
                 break // the chat's current TTL is in its state; a historic change is not replayed
             case CallSignal.kind:
                 break // history never rings; a live signal reaches the engine on the socket path
+            case CallLog.kind:
+                // history is older than whatever the chat is doing now, so the
+                // row goes in without moving the chat up the list
+                try SyncEngine.storeCallLog(dbc, content, chatId: chatId, seq: seq,
+                                            from: from, sentAt: sentAt, ts: ts, ownUserId: ownUserId)
             case GroupEvent.kind:
                 try SyncEngine.storeGroupEvent(dbc, content, chatId: chatId, seq: seq,
                                                from: from, sentAt: sentAt, ts: ts, ownUserId: ownUserId)
@@ -2100,12 +2135,13 @@ public actor SyncEngine {
     /// Content that goes out service-flagged: it takes a seq and reaches
     /// everyone, but raises no unread count and no push.
     public static let serviceKinds: Set<String> =
-        Set(["edit", "reaction", "disappearing", "listened", "pollVote", CallSignal.kind, GroupEvent.kind])
+        Set(["edit", "reaction", "disappearing", "listened", "pollVote",
+             CallSignal.kind, CallLog.kind, GroupEvent.kind])
         .union(SyncEngine.repairKinds)
 
-    /// Service content with no feed row of its own. A group event is the
-    /// exception: it is service on the wire and a system message in the feed.
-    public static let rowlessKinds: Set<String> = serviceKinds.subtracting([GroupEvent.kind])
+    /// Service content with no feed row of its own. A group event and a call
+    /// log are the exceptions: service on the wire, a row in the feed.
+    public static let rowlessKinds: Set<String> = serviceKinds.subtracting([GroupEvent.kind, CallLog.kind])
 
     /// Rowless kinds whose sent payload is kept under its seq
     /// (`sentServiceFrame`): they leave no message row to rebuild a repair
@@ -2143,8 +2179,11 @@ public actor SyncEngine {
                         clientMsgId: String = UUID().uuidString, scheduledFor: Double? = nil) async throws {
         let now = Date().timeIntervalSince1970
         let isGroupEvent = content.kind == GroupEvent.kind
+        let rowKind: MessageKind = isGroupEvent ? .system
+            : content.kind == CallLog.kind ? .call
+            : (MessageKind(rawValue: content.kind) ?? .text)
         var msg = Message(id: clientMsgId, chatId: chatId, fromUserId: ownUserId, sentAt: now,
-                          kind: isGroupEvent ? .system : (MessageKind(rawValue: content.kind) ?? .text),
+                          kind: rowKind,
                           text: content.text, status: .sending, isOutgoing: true)
         msg.clientMsgId = clientMsgId
         msg.media = content.media

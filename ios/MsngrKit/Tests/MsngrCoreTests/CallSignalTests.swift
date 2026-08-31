@@ -51,4 +51,23 @@ final class CallSignalTests: XCTestCase {
         XCTAssertTrue(SyncEngine.rowlessKinds.contains(CallSignal.kind))
         XCTAssertFalse(SyncEngine.recordedServiceKinds.contains(CallSignal.kind))
     }
+
+    func testCallLogRoundTrip() {
+        let log = CallLog(outcome: .completed, duration: 42.5, callId: "c1")
+        XCTAssertEqual(CallLog.decode(log.encoded), log)
+        XCTAssertNil(CallLog.decode("group:{}"))
+        XCTAssertNil(CallLog.decode(nil))
+        var msg = Message(id: "m", chatId: "c", fromUserId: "u", sentAt: 0,
+                          kind: .call, text: log.encoded, status: .sent, isOutgoing: true)
+        XCTAssertEqual(msg.callLog, log)
+        msg.text = "plain"
+        XCTAssertNil(msg.callLog)
+    }
+
+    /// A call log is service on the wire — no unread, no push — but it does
+    /// leave a feed row, the way a group event does.
+    func testCallLogKindIsServiceWithARow() {
+        XCTAssertTrue(SyncEngine.serviceKinds.contains(CallLog.kind))
+        XCTAssertFalse(SyncEngine.rowlessKinds.contains(CallLog.kind))
+    }
 }
