@@ -524,7 +524,15 @@ public enum AppDatabase {
                 t.add(column: "listenedBy", .text).notNull().defaults(to: "[]")
             }
         }
-        m.registerMigration("v30-dropActivityIndex") { db in
+        m.registerMigration("v30-poll") { db in
+            try db.alter(table: "message") { t in
+                // the poll as composed (JSON PollInfo)
+                t.add(column: "poll", .text)
+                // userId -> chosen option indices, from the `pollVote` events (JSON)
+                t.add(column: "pollVotes", .text).notNull().defaults(to: "{}")
+            }
+        }
+        m.registerMigration("v31-dropActivityIndex") { db in
             // The chat list previewed a row by timestamp, which let a backfilled
             // message with an equal-or-later serverTs than the one already shown
             // replace it with an older seq. The preview now reads the feed order
@@ -578,6 +586,8 @@ extension Message {
         scheduledFor = row["scheduledFor"]
         listenedAt = row["listenedAt"]
         listenedBy = (row["listenedBy"] as String?).flatMap { try? dec.decode([String].self, from: Data($0.utf8)) } ?? []
+        poll = (row["poll"] as String?).flatMap { try? dec.decode(PollInfo.self, from: Data($0.utf8)) }
+        pollVotes = (row["pollVotes"] as String?).flatMap { try? dec.decode([String: [Int]].self, from: Data($0.utf8)) } ?? [:]
     }
 
     public func encode(to container: inout PersistenceContainer) throws {
@@ -614,5 +624,7 @@ extension Message {
         container["scheduledFor"] = scheduledFor
         container["listenedAt"] = listenedAt
         container["listenedBy"] = js(listenedBy) ?? "[]"
+        container["poll"] = js(poll)
+        container["pollVotes"] = js(pollVotes) ?? "{}"
     }
 }

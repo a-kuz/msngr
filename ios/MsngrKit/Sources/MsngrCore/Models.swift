@@ -120,7 +120,27 @@ public enum MessageStatus: Int, Codable, Comparable {
 }
 
 public enum MessageKind: String, Codable {
-    case text, photo, video, file, voice, album, contact, system, shader, sticker, roundVideo
+    case text, photo, video, file, voice, album, contact, system, shader, sticker, roundVideo, poll
+}
+
+/// A poll as its author composed it. Votes travel separately, as `pollVote`
+/// service events, and are aggregated on every device; anonymity is a display
+/// promise — the events themselves always name their sender, the way any
+/// end-to-end encrypted frame does.
+public struct PollInfo: Codable, Equatable {
+    public var question: String
+    public var options: [String]
+    /// several answers may be picked at once
+    public var multiple: Bool
+    /// the voters' names are not shown (the count still is)
+    public var anonymous: Bool
+
+    public init(question: String, options: [String], multiple: Bool, anonymous: Bool) {
+        self.question = question
+        self.options = options
+        self.multiple = multiple
+        self.anonymous = anonymous
+    }
 }
 
 public struct MediaInfo: Codable, Equatable {
@@ -262,6 +282,11 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
     /// voice / roundVideo: who has started listening, filled by the peers'
     /// `listened` events. What the sender's listened dots are drawn from.
     public var listenedBy: [String] = []
+    /// poll: the question and its options.
+    public var poll: PollInfo?
+    /// poll: userId -> chosen option indices, aggregated from `pollVote`
+    /// events. A retraction removes the user's entry.
+    public var pollVotes: [String: [Int]] = [:]
 
     public init(id: String, chatId: String, fromUserId: String, sentAt: Double,
                 kind: MessageKind, text: String?, status: MessageStatus, isOutgoing: Bool) {
@@ -280,7 +305,7 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
         case id, chatId, seq, clientMsgId, fromUserId, sentAt, serverTs,
              kind, text, media, album, replyTo, forward, shader, bubbleShader, edited, editHistory,
              editedAt, deletedForAll, status, isOutgoing, reactions, expiresAt,
-             failReason, scheduledFor, listenedAt, listenedBy
+             failReason, scheduledFor, listenedAt, listenedBy, poll, pollVotes
     }
 
     /// Local row id of a message the server numbered: the identity every
@@ -354,6 +379,10 @@ public struct ContentPayload: Codable {
     public var orig: String?
     /// skdAck: the sender key chain the recipient stored.
     public var keyId: String?
+    /// poll: the question and its options.
+    public var poll: PollInfo?
+    /// pollVote: the chosen option indices; empty retracts the vote.
+    public var votes: [Int]?
 
     public init(kind: String) { self.kind = kind }
 }

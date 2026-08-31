@@ -1549,6 +1549,16 @@ public actor SyncEngine {
                                                       payload: SyncEngine.payloadJSON(content), seq: seq)
                 }
             }
+        case "pollVote":
+            if let target = content.targetSeq {
+                let found = try SyncEngine.applyPollVote(dbc, chatId: chatId, targetSeq: target,
+                                                         userId: from, votes: content.votes ?? [])
+                if !found {
+                    try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetSeq: target,
+                                                      kind: "pollVote", fromUserId: from,
+                                                      payload: SyncEngine.payloadJSON(content), seq: seq)
+                }
+            }
         case "disappearing":
             try dbc.execute(sql: "UPDATE chat SET ttlSeconds = ? WHERE id = ?",
                             arguments: [content.ttlSeconds ?? 0, chatId])
@@ -1569,6 +1579,7 @@ public actor SyncEngine {
             msg.shader = content.shader
             msg.bubbleShader = content.bubbleShader
             msg.linkPreview = content.preview
+            msg.poll = content.poll
             let ttl = try Int.fetchOne(dbc, sql: "SELECT ttlSeconds FROM chat WHERE id = ?", arguments: [chatId]) ?? 0
             if ttl > 0 { msg.expiresAt = Date().timeIntervalSince1970 + Double(ttl) }
             try msg.save(dbc)
@@ -1634,6 +1645,16 @@ public actor SyncEngine {
                                                           payload: SyncEngine.payloadJSON(content), seq: seq)
                     }
                 }
+            case "pollVote":
+                if let target = content.targetSeq {
+                    let found = try SyncEngine.applyPollVote(dbc, chatId: chatId, targetSeq: target,
+                                                             userId: from, votes: content.votes ?? [])
+                    if !found {
+                        try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetSeq: target,
+                                                          kind: "pollVote", fromUserId: from,
+                                                          payload: SyncEngine.payloadJSON(content), seq: seq)
+                    }
+                }
             case "disappearing":
                 break // the chat's current TTL is in its state; a historic change is not replayed
             case GroupEvent.kind:
@@ -1653,6 +1674,7 @@ public actor SyncEngine {
                 msg.shader = content.shader
                 msg.bubbleShader = content.bubbleShader
                 msg.linkPreview = content.preview
+                msg.poll = content.poll
                 // a historic copy of a disappearing message is stamped the same way
                 // as one that arrived live: otherwise paging up would bring back
                 // what has already expired, and it would stay forever
@@ -1995,7 +2017,7 @@ public actor SyncEngine {
     /// Content that goes out service-flagged: it takes a seq and reaches
     /// everyone, but raises no unread count and no push.
     public static let serviceKinds: Set<String> =
-        Set(["edit", "reaction", "disappearing", "listened", GroupEvent.kind])
+        Set(["edit", "reaction", "disappearing", "listened", "pollVote", GroupEvent.kind])
         .union(SyncEngine.repairKinds)
 
     /// Service content with no feed row of its own. A group event is the
@@ -2005,7 +2027,7 @@ public actor SyncEngine {
     /// Rowless kinds whose sent payload is kept under its seq
     /// (`sentServiceFrame`): they leave no message row to rebuild a repair
     /// answer from, so the copy a peer asks for comes from that record.
-    public static let recordedServiceKinds: Set<String> = ["edit", "reaction", "disappearing", "listened"]
+    public static let recordedServiceKinds: Set<String> = ["edit", "reaction", "disappearing", "listened", "pollVote"]
 
     /// Publishes what just happened to the group, from whoever did it. The frame
     /// is service content: it takes a seq and reaches every member, raises no
@@ -2049,6 +2071,7 @@ public actor SyncEngine {
         msg.shader = content.shader
         msg.bubbleShader = content.bubbleShader
         msg.linkPreview = content.preview
+        msg.poll = content.poll
         msg.scheduledFor = scheduledFor
         let payload = try JSONEncoder().encode(content)
         try await db.write { [msg] dbc in
@@ -2960,6 +2983,24 @@ public actor SyncEngine {
         return true
     }
 
+    /// Applies one voter's current choice to a poll: the entry is replaced
+    /// whole, an empty choice retracts it. Returns false when the poll is not
+    /// stored yet.
+    @discardableResult
+    static func applyPollVote(_ dbc: GRDB.Database, chatId: String, targetSeq: Int,
+                              userId: String, votes: [Int]) throws -> Bool {
+        guard let row = try Row.fetchOne(
+            dbc, sql: "SELECT id, pollVotes FROM message WHERE chatId = ? AND seq = ?",
+            arguments: [chatId, targetSeq]) else { return false }
+        var all = (try? JSONDecoder().decode([String: [Int]].self,
+                                             from: Data((row["pollVotes"] as String).utf8))) ?? [:]
+        if votes.isEmpty { all.removeValue(forKey: userId) } else { all[userId] = votes.sorted() }
+        let json = String(data: try JSONEncoder().encode(all), encoding: .utf8)!
+        try dbc.execute(sql: "UPDATE message SET pollVotes = ? WHERE id = ?",
+                        arguments: [json, row["id"] as String])
+        return true
+    }
+
     @discardableResult
     static func applyReaction(_ dbc: GRDB.Database, chatId: String, targetId: String?,
                               targetSeq: Int? = nil, userId: String, emoji: String?) throws -> Bool {
@@ -3031,6 +3072,11 @@ public actor SyncEngine {
                     arguments: [chatId, seq])
             case "listened":
                 try applyListened(dbc, chatId: chatId, targetSeq: seq, userId: row["fromUserId"])
+            case "pollVote":
+                if let content {
+                    try applyPollVote(dbc, chatId: chatId, targetSeq: seq,
+                                      userId: row["fromUserId"], votes: content.votes ?? [])
+                }
             default:
                 break
             }

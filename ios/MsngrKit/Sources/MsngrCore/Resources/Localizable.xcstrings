@@ -199,6 +199,17 @@
         }
       }
     },
+    "📊 Poll" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "📊 Опрос"
+          }
+        }
+      }
+    },
     "🎥 Video" : {
       "extractionState" : "manual",
       "localizations" : {
