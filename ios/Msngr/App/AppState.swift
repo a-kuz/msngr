@@ -211,7 +211,14 @@ final class AppState: ObservableObject {
             engine = SyncEngine(db: db, api: api, e2ee: e2ee, media: media, wsURL: comps.url!,
                                 ownUserId: s.userId, ownDeviceId: s.deviceId)
             await engine.start()
-            callManager = CallManager(engine: engine, makeTransport: { try WebRTCTransport() })
+            // the call gate fails closed: an offer whose permission cannot be
+            // judged is answered busy rather than rung through the setting
+            callManager = CallManager(
+                engine: engine,
+                mayCall: { [api] caller in
+                    (try? await api?.mayCall(peerId: caller)) ?? false
+                },
+                makeTransport: { try WebRTCTransport() })
             observeCallState(callManager)
             observeSessionRevoked(engine)
             observeProtocolOutdated(engine)

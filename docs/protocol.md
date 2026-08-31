@@ -65,7 +65,9 @@ POST /api/provision/:id/claim     (x-provision-token) {identityKey, identitySign
                                   → {userId, deviceId, token}
 POST /api/provision/:id/cancel    (x-provision-token)
 GET  /api/users?q=                search by username/displayName (LOWER LIKE, limit 20)
-GET  /api/users/:id               → {user, presence:{online,lastSeen}}
+GET  /api/users/:id               → {user, presence:{online,lastSeen}, canCall}
+                                  canCall: the target's call tier judged for the
+                                  viewer, what the dial button is shown by
 GET  /api/devices?ids=a,b,c       devices and identity keys, plus versions:{userId:
                                   version}; each user's list and version are one
                                   snapshot from that user's object; spends nothing
@@ -113,11 +115,16 @@ POST /api/contacts/discover       {hashes[], remove?[]} → {matches[]}  (up to 
                                   phone_hash at question time, so registrations propagate
                                   nowhere. Matches are gated by each owner's phone_discovery.
 GET/POST /api/privacy             {lastSeen?, avatar?, phoneDiscovery?, groupInvites?,
-                                  readReceipts?, typing?} — each tier is
+                                  callPrivacy?, readReceipts?, typing?} — each tier is
                                   everyone|contacts|nobody and is enforced by the server;
                                   "contacts" reads the owner's synced book. A group create
                                   or member add answers {…, invited:[userId]} for users
                                   whose group_invites kept them out.
+GET  /api/privacy/may-call/:peerId → {allow} — the caller's own call tier judged
+                                  against :peerId, exceptions included. Asked by
+                                  the callee's device when an offer arrives: the
+                                  signaling is E2EE, so the send path cannot gate
+                                  a call, and a refused offer is answered busy.
 POST /api/block                   {userId, blocked}
 GET  /api/blocked                 → {blocked:[userId]}
 POST /api/dev/fault               {failEvents} — dev hook: the caller's own session

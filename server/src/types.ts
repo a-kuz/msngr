@@ -58,6 +58,9 @@ export interface PrivacySettings {
   /// Who may put this user straight into a group; anyone else can only send
   /// an invite link.
   groupInvites: LastSeenVisibility;
+  /// Who may ring this user. Enforced on the callee's device — the signaling
+  /// is E2EE — and mirrored to a viewer as `canCall` on the user card.
+  callPrivacy: LastSeenVisibility;
   readReceipts: boolean;
   typing: boolean;
 }
