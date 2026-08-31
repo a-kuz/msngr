@@ -698,7 +698,10 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     takes the peer's away too (smoke `hiding your own last seen blinds you to
     everyone else's`); the "contacts" tier is enforced against the synced
     address book (qa/runs/2026-08-31-contacts-discovery)
-  - ⬜ exceptions for named people, for last seen and the settings below it
+  - ✅ exceptions for named people: always/never lists behind every tier
+    (last seen, avatar and bio, phone discovery, group adds), enforced ahead
+    of the tier by the same server checks
+    (qa/runs/2026-08-31-privacy-exceptions; the exceptions block in smoke)
   - ✅ read receipts and «печатает…» turned off, in both directions (smoke
     `read receipt off reciprocally`, `typing off reciprocally`)
   - ✅ who sees my avatar and bio: everyone, my contacts or nobody, enforced

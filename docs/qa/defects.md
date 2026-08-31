@@ -6,6 +6,13 @@ with the commit that closed it.
 
 ## Open
 
+### User search does not fold Cyrillic case
+Found 2026-08-31 in passing during the privacy-exceptions live run: SQLite's
+LOWER folds ASCII only, so `GET /api/users?q=Икфм` does not find a user whose
+display name is «икфмц» — any non-ASCII query is effectively case-sensitive.
+Fold the case in JS (the worker) on both the query and a stored lowercase
+column, or match with a collation that folds Unicode.
+
 ### The bravo and charlie fixture homes are corrupted
 Found 2026-08-31 while reproducing the chat-list preview defect:
 `.claude/fixtures/bravo/msngr.sqlite` answers `database disk image is

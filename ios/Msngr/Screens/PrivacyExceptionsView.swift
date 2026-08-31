@@ -90,7 +90,7 @@ private struct ExceptionUserPicker: View {
                     onPick(user)
                 } label: {
                     VStack(alignment: .leading) {
-                        Text(user.displayName)
+                        Text(user.display_name)
                         Text("@" + user.username).font(.footnote).foregroundStyle(.secondary)
                     }
                 }
