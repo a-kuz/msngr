@@ -33,9 +33,13 @@ final class ShaderGalleryTests: XCTestCase {
         XCTAssertEqual(hashes.count, ShaderGallery.all.count)
     }
 
+    /// A sticker travels as one message, so the ceiling it has to stay under is
+    /// the one a message carries: `maxSourceBytes`, which is what fits in the
+    /// conversation's 128 KiB storage value once the source is base64-encoded
+    /// inside the envelope.
     func testStickersStayWithinTheMessageCeiling() {
         for doc in ShaderGallery.stickers {
-            XCTAssertLessThan(doc.sourceBytes, ShaderTranspiler.maxSourceBytes / 4, doc.name ?? "?")
+            XCTAssertLessThan(doc.sourceBytes, ShaderTranspiler.maxSourceBytes, doc.name ?? "?")
         }
     }
 }
