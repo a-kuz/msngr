@@ -334,6 +334,9 @@ public final class APIClient: @unchecked Sendable {
     public struct UserResponse: Decodable {
         public let user: UserDTO
         public let presence: PresenceDTO?
+        /// whether this account's call tier lets the asking viewer ring them;
+        /// absent on an old server means unrestricted
+        public let canCall: Bool?
     }
     public func user(_ id: String) async throws -> UserResponse {
         try await get("api/users/\(id)", as: UserResponse.self)
@@ -674,6 +677,8 @@ public final class APIClient: @unchecked Sendable {
         /// Who may put this account straight into a group; anyone else can
         /// only send an invite link.
         public let groupInvites: String
+        /// Who may ring this account; judged by this device when an offer arrives.
+        public let callPrivacy: String
         public let readReceipts: Bool
         public let typing: Bool
     }
@@ -710,15 +715,25 @@ public final class APIClient: @unchecked Sendable {
     @discardableResult
     public func setPrivacy(
         lastSeen: String? = nil, avatar: String? = nil, phoneDiscovery: String? = nil,
-        groupInvites: String? = nil, readReceipts: Bool? = nil, typing: Bool? = nil
+        groupInvites: String? = nil, callPrivacy: String? = nil,
+        readReceipts: Bool? = nil, typing: Bool? = nil
     ) async throws -> PrivacyDTO {
         struct Body: Encodable {
             let lastSeen: String?; let avatar: String?; let phoneDiscovery: String?
-            let groupInvites: String?; let readReceipts: Bool?; let typing: Bool?
+            let groupInvites: String?; let callPrivacy: String?
+            let readReceipts: Bool?; let typing: Bool?
         }
         return try await post("api/privacy",
             body: Body(lastSeen: lastSeen, avatar: avatar, phoneDiscovery: phoneDiscovery,
-                       groupInvites: groupInvites, readReceipts: readReceipts, typing: typing),
+                       groupInvites: groupInvites, callPrivacy: callPrivacy,
+                       readReceipts: readReceipts, typing: typing),
             as: PrivacyResponse.self).privacy
+    }
+
+    /// The callee's side of the call gate: whether this account's own call
+    /// tier lets `peerId` ring it, exceptions included.
+    public func mayCall(peerId: String) async throws -> Bool {
+        struct R: Decodable { let allow: Bool }
+        return try await get("api/privacy/may-call/\(peerId)", as: R.self).allow
     }
 }
