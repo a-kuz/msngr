@@ -467,13 +467,13 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ the ack right after the seq is assigned, before the fanout and the push (smoke `ack precedes push`, `ack while apns still hanging`)
   - ✅ «не отправлено» when the server refuses the send, and «Отправить заново»
     repeating the message from the payload it was written with (receipts-run)
-  - 🟡 the «не отправлено» status once the attempts are spent: the accounting
-    is under units now (`spendSendAttempt` — the ceiling, the failed pair,
-    «send again» after it, SendFailureTests), while the live path stays
-    unwatched: ~50 stand restarts never spent an attempt — a stopped stand
-    waits at `guard connected` and retries forever by design; reaching it
-    needs a send caught mid-flight by a dying socket
-    (qa/runs/2026-08-28-undelivered-status-run)
+  - ✅ the «не отправлено» status once the attempts are spent: the accounting
+    under units (`spendSendAttempt` — the ceiling, the failed pair,
+    SendFailureTests), and the live path watched end to end — a stand whose
+    media uploads answer 500 while the socket stays alive spends the eleven
+    attempts, the bubble takes the failure mark, and «Отправить заново» with
+    the uploads healed delivers the same payload
+    (qa/runs/2026-09-01-send-failed.md)
 - Fanout
   - ✅ an alarm queue in ConversationDO: the cursor in storage, batches, retry until exhausted (smoke `fanout is queued, not inline`, `queue replays the whole burst`, `queue drains to empty cursor`)
   - ✅ a failing recipient does not break delivery to the rest, retry with backoff, typing is not retried (smoke `delivery survives a broken recipient`, `failed recipient gets retry`, `typing not retried`)
