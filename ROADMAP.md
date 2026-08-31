@@ -696,20 +696,23 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   - ✅ who sees «был(а) в сети» and «в сети»: everyone, my contacts, or nobody
     (server: `privacy_settings.last_seen`, `GET/POST /api/privacy`); hiding it
     takes the peer's away too (smoke `hiding your own last seen blinds you to
-    everyone else's`) — the "contacts" tier is stored and selectable but not
-    yet enforced as distinct from "everyone", since there is no contacts-list
-    primitive in this codebase to check against
+    everyone else's`); the "contacts" tier is enforced against the synced
+    address book (qa/runs/2026-08-31-contacts-discovery)
   - ⬜ exceptions for named people, for last seen and the settings below it
   - ✅ read receipts and «печатает…» turned off, in both directions (smoke
     `read receipt off reciprocally`, `typing off reciprocally`)
-  - ✅ who sees my avatar and bio: everyone or nobody, enforced by the server
-    (`privacy_settings.avatar_visibility`; the card, search, chat lists and the
-    avatar bytes themselves are withheld, and the profile frame the peers get
-    is already blanked). The name is never hidden — a nameless peer is
-    indistinguishable in a list; the "contacts" tier waits on the same missing
-    contacts primitive as last seen, so the picker offers two answers (smoke:
-    the avatar-privacy block; the placeholder switch seen live 2026-08-31)
-  - ⬜ who can find me: by username always, by the number's hash only if I allow it
+  - ✅ who sees my avatar and bio: everyone, my contacts or nobody, enforced
+    by the server (`privacy_settings.avatar_visibility`; the card, search,
+    chat lists and the avatar bytes themselves are withheld, and the profile
+    frame the peers get is already blanked — under the contacts tier for
+    every peer, contacts refetch the full card from the pull paths). The
+    name is never hidden — a nameless peer is indistinguishable in a list
+    (smoke: the avatar-privacy and discovery blocks; the placeholder switch
+    seen live 2026-08-31)
+  - ✅ who can find me: by username always, by the number's hash under
+    everyone / my contacts / nobody — "my contacts" answers only searchers
+    whose number the found user holds in their own synced book
+    (qa/runs/2026-08-31-contacts-discovery; the discovery block in smoke)
   - ⬜ who can add me to a group; everyone else can only send an invite
   - ⬜ who can call me, once calls exist
   - ✅ a default disappearing timer for new chats: a Privacy picker (off / 1
