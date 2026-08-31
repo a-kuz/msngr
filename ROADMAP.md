@@ -264,10 +264,20 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ a take interrupted by the screen or the app going away is dropped (voice-run)
   - ⬜ a transcript of a voice message on demand, on the device
 - Round video messages
-  - ⬜ recording from the front camera by holding, the same gesture as a voice
-    message, with slide-to-cancel and lock
-  - ⬜ a round bubble in the feed, playing without sound until it is tapped
-  - ⬜ playback continuing in a small circle while the reader scrolls away
+  - ✅ recording from the front camera by holding, the same gesture as a voice
+    message, with slide-to-cancel and lock; a tap flips microphone ↔ camera,
+    persisted device-wide (qa/runs/2026-08-31-round-video; the simulator has
+    no camera, capture itself verified on the owner's device)
+  - ✅ a round bubble in the feed, playing without sound until it is tapped;
+    the tap gives it sound, a swell and a progress ring
+    (qa/runs/2026-08-31-round-video, RoundVideoTests)
+  - ✅ playback continuing in a small circle while the reader scrolls away;
+    tapping the dock returns to the bubble (qa/runs/2026-08-31-round-video)
+  - ✅ notes play one after another: a finished voice or circle starts the
+    next unheard incoming note (RoundVideoTests chain cases, live two-sim run)
+  - ✅ listened marks: the sender sees who started playing a voice or circle —
+    a dot for someone, a second dot in groups under 15 for everyone; the
+    event travels encrypted as a service frame (NoteListenedTests, live run)
 - Files
   - ✅ sending up to 100 MB with the name: a 99.6 MB file sent from the Files
     app, acked and stored as one encrypted blob on the stand
