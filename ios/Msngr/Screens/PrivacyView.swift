@@ -17,21 +17,11 @@ enum LastSeenVisibility: String, CaseIterable, Identifiable {
     }
 }
 
-/// Who sees the profile photo and bio; the name is always visible. "My contacts"
-/// is not offered here: the server has no contacts primitive yet and enforces it
-/// as everyone. To everyone hidden from, the photo gives way to the initials
-/// placeholder — the same one a user with no photo gets.
-enum AvatarVisibility: String, CaseIterable, Identifiable {
-    case everyone, nobody
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .everyone: String(localized: "Everyone")
-        case .nobody: String(localized: "Nobody")
-        }
-    }
-}
+/// Who sees the profile photo and bio; the name is always visible. To everyone
+/// hidden from, the photo gives way to the initials placeholder — the same one
+/// a user with no photo gets. "My contacts" means the people whose numbers are
+/// in this account's synced address book.
+typealias AvatarVisibility = LastSeenVisibility
 
 /// The privacy screen: three settings, each applied on the server, not only hidden in
 /// the interface. Loads the current values and saves each change as it is made.
@@ -39,6 +29,7 @@ struct PrivacyView: View {
     @EnvironmentObject var app: AppState
     @State private var lastSeen = LastSeenVisibility.everyone
     @State private var avatar = AvatarVisibility.everyone
+    @State private var phoneDiscovery = LastSeenVisibility.everyone
     @State private var readReceipts = true
     @State private var typing = true
     @State private var loaded = false
@@ -74,6 +65,19 @@ struct PrivacyView: View {
                 .accessibilityIdentifier("privacy.avatar")
             } footer: {
                 Text("People you hide them from see your initials in place of the photo. Your name is always visible.")
+            }
+
+            Section {
+                Picker(selection: $phoneDiscovery) {
+                    ForEach(LastSeenVisibility.allCases) { option in
+                        Text(option.label).tag(option)
+                    }
+                } label: {
+                    Label("Who can find me by number", systemImage: "magnifyingglass")
+                }
+                .accessibilityIdentifier("privacy.phoneDiscovery")
+            } footer: {
+                Text("Whose address-book sync may match your number. Anyone can still find you by username.")
             }
 
             Section {
@@ -134,6 +138,13 @@ struct PrivacyView: View {
                 if (try? await api.setPrivacy(avatar: new.rawValue)) == nil { avatar = old }
             }
         }
+        .onChange(of: phoneDiscovery) { old, new in
+            guard loaded else { return }
+            Task {
+                guard let api = app.api else { return }
+                if (try? await api.setPrivacy(phoneDiscovery: new.rawValue)) == nil { phoneDiscovery = old }
+            }
+        }
         .onChange(of: readReceipts) { old, new in
             guard loaded else { return }
             Task {
@@ -154,6 +165,7 @@ struct PrivacyView: View {
         guard let api = app.api, let p = try? await api.privacy() else { loaded = true; return }
         lastSeen = LastSeenVisibility(rawValue: p.lastSeen) ?? .everyone
         avatar = AvatarVisibility(rawValue: p.avatar) ?? .everyone
+        phoneDiscovery = LastSeenVisibility(rawValue: p.phoneDiscovery) ?? .everyone
         readReceipts = p.readReceipts
         typing = p.typing
         loaded = true

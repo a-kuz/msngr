@@ -1165,6 +1165,28 @@
         }
       }
     },
+    "Who can find me by number" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Кто может найти меня по номеру"
+          }
+        }
+      }
+    },
+    "Whose address-book sync may match your number. Anyone can still find you by username." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чья синхронизация контактов может сматчить ваш номер. По юзернейму вас по-прежнему может найти любой."
+          }
+        }
+      }
+    },
     "Check the connection and pull to refresh." : {
       "extractionState" : "manual",
       "localizations" : {
