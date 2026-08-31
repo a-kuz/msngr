@@ -14,6 +14,7 @@ enum AttachmentSeed {
             await sendPhoto(chatId: chatId, round: round)
             await sendAlbum(chatId: chatId, round: round, count: 3)
             await sendVideo(chatId: chatId, round: round)
+            await sendRoundVideo(chatId: chatId, round: round)
             sendFile(chatId: chatId, round: round)
             await sendVoice(chatId: chatId, round: round)
             sendLinks(chatId: chatId, round: round)
@@ -87,25 +88,41 @@ enum AttachmentSeed {
     }
 
     private static func sendVideo(chatId: String, round: Int) async {
-        guard let url = await renderVideo(round), let data = try? Data(contentsOf: url),
-              let name = try? AppState.shared.media.stash(data, mime: "video/mp4"),
-              let frame = image(round, size: CGSize(width: 480, height: 480)),
-              let thumb = try? AppState.shared.media.stash(frame, mime: "image/jpeg")
-        else { return }
+        await sendClip(chatId: chatId, resource: "seed-video", kind: "video",
+                       width: 640, height: 360)
+    }
+
+    private static func sendRoundVideo(chatId: String, round: Int) async {
+        await sendClip(chatId: chatId, resource: "seed-round", kind: "roundVideo",
+                       width: 480, height: 480)
+    }
+
+    /// A bundled stock clip (Big Buck Bunny, Blender Foundation) sent through
+    /// the regular path, with a poster frame and its BlurHash.
+    private static func sendClip(chatId: String, resource: String, kind: String,
+                                 width: Int, height: Int) async {
+        guard let url = Bundle.main.url(forResource: resource, withExtension: "mp4"),
+              let data = try? Data(contentsOf: url),
+              let name = try? AppState.shared.media.stash(data, mime: "video/mp4") else { return }
         var media = MediaInfo(type: "video", mediaId: "", key: "", hash: "",
                               size: data.count, mime: "video/mp4")
         media.localPath = name
-        media.thumbLocalPath = thumb
-        media.w = 480
-        media.h = 480
-        media.dur = 2
-        media.blurhash = ImageProcessor.rgbaPixels(frame).flatMap {
-            BlurHash.encode(pixels: $0.pixels, width: $0.width, height: $0.height)
+        media.w = width
+        media.h = height
+        let asset = AVURLAsset(url: url)
+        if let dur = try? await asset.load(.duration) { media.dur = dur.seconds }
+        let gen = AVAssetImageGenerator(asset: asset)
+        gen.appliesPreferredTrackTransform = true
+        if let cg = try? gen.copyCGImage(at: .init(seconds: 0.1, preferredTimescale: 600), actualTime: nil),
+           let jpeg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.7) {
+            if let px = ImageProcessor.rgbaPixels(jpeg) {
+                media.blurhash = BlurHash.encode(pixels: px.pixels, width: px.width, height: px.height)
+            }
+            media.thumbLocalPath = try? AppState.shared.media.stash(jpeg, mime: "image/jpeg")
         }
-        var content = ContentPayload(kind: "video")
+        var content = ContentPayload(kind: kind)
         content.media = media
         try? await AppState.shared.engine?.enqueue(content: content, chatId: chatId)
-        try? FileManager.default.removeItem(at: url)
     }
 
     private static func sendFile(chatId: String, round: Int) {
@@ -165,54 +182,6 @@ enum AttachmentSeed {
     }
 
     // MARK: - File generation
-
-    /// Two seconds of solid colour as mp4: a real container the viewer plays and
-    /// which yields a preview frame.
-    private static func renderVideo(_ number: Int) async -> URL? {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("seed-\(UUID().uuidString).mp4")
-        guard let writer = try? AVAssetWriter(outputURL: url, fileType: .mp4) else { return nil }
-        let settings: [String: Any] = [
-            AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: 480, AVVideoHeightKey: 480,
-        ]
-        let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input,
-                                                           sourcePixelBufferAttributes: nil)
-        writer.add(input)
-        writer.startWriting()
-        writer.startSession(atSourceTime: .zero)
-        guard let pool = adaptor.pixelBufferPool else { return nil }
-        for frame in 0..<60 {
-            var buffer: CVPixelBuffer?
-            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer)
-            guard let buffer else { break }
-            fill(buffer, hue: Double((number + frame / 20) % 12) / 12)
-            while !input.isReadyForMoreMediaData { try? await Task.sleep(nanoseconds: 5_000_000) }
-            adaptor.append(buffer, withPresentationTime: CMTime(value: Int64(frame), timescale: 30))
-        }
-        input.markAsFinished()
-        await writer.finishWriting()
-        return writer.status == .completed ? url : nil
-    }
-
-    private static func fill(_ buffer: CVPixelBuffer, hue: Double) {
-        CVPixelBufferLockBaseAddress(buffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
-        guard let base = CVPixelBufferGetBaseAddress(buffer),
-              let space = CGColorSpace(name: CGColorSpace.sRGB),
-              let ctx = CGContext(data: base,
-                                  width: CVPixelBufferGetWidth(buffer),
-                                  height: CVPixelBufferGetHeight(buffer),
-                                  bitsPerComponent: 8,
-                                  bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
-                                  space: space,
-                                  bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
-                                      | CGBitmapInfo.byteOrder32Little.rawValue)
-        else { return }
-        ctx.setFillColor(UIColor(hue: hue, saturation: 0.6, brightness: 0.9, alpha: 1).cgColor)
-        ctx.fill(CGRect(x: 0, y: 0, width: ctx.width, height: ctx.height))
-    }
 
     /// Three seconds of a tone as m4a: the voice player opens the file as if it
     /// had been recorded.
