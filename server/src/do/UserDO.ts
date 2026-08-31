@@ -1055,6 +1055,45 @@ export class UserDO implements DurableObject {
         return;
       }
 
+      case "defer": {
+        const res = await this.convStub(frame.chatId).fetch("https://do/defer", {
+          method: "POST",
+          body: JSON.stringify({
+            from: userId, fromDevice: att.deviceId,
+            clientMsgId: frame.clientMsgId, sentAt: frame.sentAt,
+            body: frame.body, dueAt: frame.dueAt,
+          }),
+        });
+        const r = (await res.json()) as {
+          ok: boolean; dueAt?: number; seq?: number; ts?: number; error?: string;
+        };
+        if (r.ok && r.seq) {
+          // the journal already holds this clientMsgId: answer the way a resend is answered
+          this.send(ws, {
+            t: "sent", chatId: frame.chatId, clientMsgId: frame.clientMsgId,
+            seq: r.seq, ts: r.ts!,
+          });
+        } else if (r.ok) {
+          this.send(ws, {
+            t: "deferred", chatId: frame.chatId, clientMsgId: frame.clientMsgId,
+            dueAt: r.dueAt!,
+          });
+        } else {
+          this.send(ws, {
+            t: "error", error: r.error ?? "defer_failed",
+            chatId: frame.chatId, clientMsgId: frame.clientMsgId,
+          });
+        }
+        return;
+      }
+
+      case "deferCancel":
+        await this.convStub(frame.chatId).fetch("https://do/defer-cancel", {
+          method: "POST",
+          body: JSON.stringify({ from: userId, clientMsgId: frame.clientMsgId }),
+        });
+        return;
+
       case "recv":
         await this.convStub(frame.chatId).fetch("https://do/recv", {
           method: "POST",
