@@ -853,6 +853,14 @@ do {
         }
     case "show":
         try show(dir: URL(fileURLWithPath: try arg("dir")))
+    case "register":
+        // just an account on the stand, no chats: what the UI smoke's search
+        // needs on a throwaway stand
+        let name = try arg("as")
+        _ = try await openPerson(name: name,
+                                 display: try arg("name", default: name),
+                                 dir: URL(fileURLWithPath: try arg("dir")),
+                                 base: URL(string: try arg("base", default: "http://localhost:8787"))!)
     case "send":
         try await send(
             dir: URL(fileURLWithPath: try arg("dir")),
