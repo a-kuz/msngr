@@ -912,6 +912,72 @@
         }
       }
     },
+    "Busy" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Занято"
+          }
+        }
+      }
+    },
+    "Call" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Позвонить"
+          }
+        }
+      }
+    },
+    "Call declined" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звонок отклонён"
+          }
+        }
+      }
+    },
+    "Call ended" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звонок завершён"
+          }
+        }
+      }
+    },
+    "Call failed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось соединиться"
+          }
+        }
+      }
+    },
+    "Calling…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вызов…"
+          }
+        }
+      }
+    },
     "Chats" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1352,6 +1418,28 @@
         }
       }
     },
+    "Connecting…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Соединение…"
+          }
+        }
+      }
+    },
+    "Decline" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отклонить"
+          }
+        }
+      }
+    },
     "Delete" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1539,6 +1627,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Задайте вопрос"
+          }
+        }
+      }
+    },
+    "No answer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет ответа"
           }
         }
       }
@@ -1749,6 +1848,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Эффекты при отправке и реакции"
+          }
+        }
+      }
+    },
+    "End call" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завершить"
           }
         }
       }
@@ -2132,6 +2242,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Если это не ваш аккаунт, отмените вход."
+          }
+        }
+      }
+    },
+    "Incoming call" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Входящий звонок"
           }
         }
       }

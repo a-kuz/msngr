@@ -51,6 +51,16 @@ public struct CallState: Equatable, Sendable {
     public var muted = false
     /// when media started flowing, for the duration timer
     public var connectedAt: Double?
+
+    public init(phase: CallPhase = .idle, chatId: String? = nil, peerUserId: String? = nil,
+                callId: String? = nil, muted: Bool = false, connectedAt: Double? = nil) {
+        self.phase = phase
+        self.chatId = chatId
+        self.peerUserId = peerUserId
+        self.callId = callId
+        self.muted = muted
+        self.connectedAt = connectedAt
+    }
 }
 
 /// Runs the one call this device can be in: dials, rings, answers, trickles
@@ -97,7 +107,7 @@ public actor CallManager {
 
     /// Wires the manager to a running engine: signals out through it, signals
     /// in from its stream.
-    public convenience init(engine: SyncEngine, makeTransport: @escaping TransportFactory) {
+    public init(engine: SyncEngine, makeTransport: @escaping TransportFactory) {
         self.init(ownUserId: engine.ownUserId,
                   sendSignal: { [weak engine] signal, chatId in
                       await engine?.sendCallSignal(signal, chatId: chatId)

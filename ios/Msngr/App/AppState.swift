@@ -1,6 +1,7 @@
 import SwiftUI
 import GRDB
 import MsngrCore
+import MsngrCalls
 import LocalAuthentication
 
 /// What this build has run into that a newer one handles. Both endings look the
@@ -53,9 +54,14 @@ final class AppState: ObservableObject {
     /// this build is behind what it has to work with; the screen states it
     @Published var outdated: OutdatedBuild?
 
+    /// the one call this device can be in, mirrored for the overlay
+    @Published var callState = CallState()
+
     private(set) var db: DatabaseQueue!
     private(set) var api: APIClient!
     private(set) var engine: SyncEngine!
+    private(set) var callManager: CallManager!
+    private var callStateTask: Task<Void, Never>?
     private(set) var e2ee: E2EEManager!
     private(set) var media: MediaManager!
     private(set) var store: IdentityStore!
@@ -133,6 +139,11 @@ final class AppState: ObservableObject {
         revokedTask = nil
         outdatedTask?.cancel()
         outdatedTask = nil
+        if let callManager { await callManager.hangUp() }
+        callStateTask?.cancel()
+        callStateTask = nil
+        callManager = nil
+        callState = CallState()
         if let engine { await engine.stop() }
         NotificationCoordinator.shared.detach()
         media?.clearCache()
@@ -200,6 +211,8 @@ final class AppState: ObservableObject {
             engine = SyncEngine(db: db, api: api, e2ee: e2ee, media: media, wsURL: comps.url!,
                                 ownUserId: s.userId, ownDeviceId: s.deviceId)
             await engine.start()
+            callManager = CallManager(engine: engine, makeTransport: { try WebRTCTransport() })
+            observeCallState(callManager)
             observeSessionRevoked(engine)
             observeProtocolOutdated(engine)
             ready = true
@@ -253,6 +266,16 @@ final class AppState: ObservableObject {
 
     /// The server has cut this device off the account: there is nothing left to
     /// reconnect to, so the session-ended screen goes up.
+    private func observeCallState(_ manager: CallManager) {
+        callStateTask?.cancel()
+        let states = manager.stateStream.subscribe()
+        callStateTask = Task { [weak self] in
+            for await state in states {
+                self?.callState = state
+            }
+        }
+    }
+
     private func observeSessionRevoked(_ engine: SyncEngine) {
         revokedTask?.cancel()
         revokedTask = Task { [weak self] in
