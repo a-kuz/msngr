@@ -549,6 +549,14 @@ public enum AppDatabase {
                 t.add(column: "transcriptShown", .boolean).notNull().defaults(to: false)
             }
         }
+        m.registerMigration("v33-contactLocation") { db in
+            try db.alter(table: "message") { t in
+                // the shared card (JSON ContactCard)
+                t.add(column: "contact", .text)
+                // the shared point (JSON LocationInfo)
+                t.add(column: "location", .text)
+            }
+        }
         return m
     }
 }
@@ -598,6 +606,8 @@ extension Message {
         listenedBy = (row["listenedBy"] as String?).flatMap { try? dec.decode([String].self, from: Data($0.utf8)) } ?? []
         poll = (row["poll"] as String?).flatMap { try? dec.decode(PollInfo.self, from: Data($0.utf8)) }
         pollVotes = (row["pollVotes"] as String?).flatMap { try? dec.decode([String: [Int]].self, from: Data($0.utf8)) } ?? [:]
+        contact = (row["contact"] as String?).flatMap { try? dec.decode(ContactCard.self, from: Data($0.utf8)) }
+        location = (row["location"] as String?).flatMap { try? dec.decode(LocationInfo.self, from: Data($0.utf8)) }
         transcript = row["transcript"]
         transcriptSpans = (row["transcriptSpans"] as String?).flatMap { try? dec.decode([TranscriptSpan].self, from: Data($0.utf8)) } ?? []
         transcriptShown = row["transcriptShown"]
@@ -639,6 +649,8 @@ extension Message {
         container["listenedBy"] = js(listenedBy) ?? "[]"
         container["poll"] = js(poll)
         container["pollVotes"] = js(pollVotes) ?? "{}"
+        container["contact"] = js(contact)
+        container["location"] = js(location)
         container["transcript"] = transcript
         container["transcriptSpans"] = js(transcriptSpans) ?? "[]"
         container["transcriptShown"] = transcriptShown

@@ -177,6 +177,17 @@
         }
       }
     },
+    "📍 Location" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "📍 Геопозиция"
+          }
+        }
+      }
+    },
     "🎤 Voice message" : {
       "extractionState" : "manual",
       "localizations" : {

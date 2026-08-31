@@ -137,6 +137,8 @@ struct ChatRowView: View {
                 case .poll: Label(last.poll?.question ?? String(localized: "Poll"), systemImage: "chart.bar").labelStyle(PreviewLabelStyle())
                 case .file: Label(last.media?.name ?? String(localized: "File"), systemImage: "doc.fill").labelStyle(PreviewLabelStyle())
                 case .album: Label("Album", systemImage: "photo.on.rectangle").labelStyle(PreviewLabelStyle())
+                case .contact: Label(last.contact?.name ?? String(localized: "Contact"), systemImage: "person.crop.circle").labelStyle(PreviewLabelStyle())
+                case .location: Label(last.location?.name ?? String(localized: "Location"), systemImage: "mappin.and.ellipse").labelStyle(PreviewLabelStyle())
                 case .shader: Label(last.shader?.name ?? String(localized: "Shader"), systemImage: "sparkles").labelStyle(PreviewLabelStyle())
                 case .sticker: Label(last.shader?.name ?? String(localized: "Sticker"), systemImage: "sparkles").labelStyle(PreviewLabelStyle())
                 default: Text(MessageMarkdown.mentionsStripped(last.text ?? ""))

@@ -139,7 +139,10 @@ public enum NotificationContentBuilder {
         case "poll": return withCaption(CoreStrings.string("📊 Poll"),
                                         truncate(payload.poll?.question ?? ""))
         case "album": return withCaption(CoreStrings.string("🖼 Album"), caption)
-        case "contact": return withCaption(CoreStrings.string("👤 Contact"), caption)
+        case "contact": return withCaption(CoreStrings.string("👤 Contact"),
+                                           truncate(payload.contact?.name ?? ""))
+        case "location": return withCaption(CoreStrings.string("📍 Location"),
+                                            truncate(payload.location?.name ?? ""))
         case "shader": return withCaption(CoreStrings.string("✨ Shader"), caption)
         case "sticker": return withCaption(CoreStrings.string("✨ Sticker"), caption)
         case "file":
