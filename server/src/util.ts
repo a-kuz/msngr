@@ -1,5 +1,5 @@
 import { verifyAsync as ed25519VerifyAsync } from "@noble/ed25519";
-import type { PrivacySettings } from "./types";
+import type { PrivacySettings, LastSeenVisibility } from "./types";
 
 const ULID_CHARS = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
@@ -111,20 +111,21 @@ export function shouldArmAlarm(pending: number | null, at: number, now: number):
 /// (for gating receipts, typing and presence fanout).
 export async function readPrivacy(db: D1Database, userId: string): Promise<PrivacySettings> {
   const row = await db.prepare(
-    `SELECT last_seen, avatar_visibility, phone_discovery, read_receipts, typing
+    `SELECT last_seen, avatar_visibility, phone_discovery, group_invites, read_receipts, typing
      FROM privacy_settings WHERE user_id = ?`
   ).bind(userId).first<{
     last_seen: string; avatar_visibility: string; phone_discovery: string;
-    read_receipts: number; typing: number;
+    group_invites: string; read_receipts: number; typing: number;
   }>();
   if (!row) {
     return { lastSeen: "everyone", avatar: "everyone", phoneDiscovery: "everyone",
-             readReceipts: true, typing: true };
+             groupInvites: "everyone", readReceipts: true, typing: true };
   }
   return {
     lastSeen: row.last_seen as PrivacySettings["lastSeen"],
     avatar: row.avatar_visibility as PrivacySettings["avatar"],
     phoneDiscovery: row.phone_discovery as PrivacySettings["phoneDiscovery"],
+    groupInvites: row.group_invites as PrivacySettings["groupInvites"],
     readReceipts: row.read_receipts === 1,
     typing: row.typing === 1,
   };
@@ -147,9 +148,30 @@ export async function isContactOf(
   return r.contact;
 }
 
+/// One question every tier answers: may `viewerId` see `ownerId`'s `setting`?
+/// A named exception decides first — an allow row opens it whatever the tier
+/// says, a deny row closes it the same way — and only then the tier itself:
+/// everyone, contacts (the owner's synced book), nobody.
+export async function privacyAllows(
+  env: { DB: D1Database; USER_DO: DurableObjectNamespace },
+  ownerId: string, viewerId: string,
+  setting: "last_seen" | "avatar" | "phone_discovery" | "group_invites",
+  tier: LastSeenVisibility
+): Promise<boolean> {
+  if (ownerId === viewerId) return true;
+  const exception = await env.DB.prepare(
+    "SELECT allow FROM privacy_exceptions WHERE user_id = ? AND setting = ? AND peer_id = ?"
+  ).bind(ownerId, setting, viewerId).first<{ allow: number }>();
+  if (exception) return exception.allow === 1;
+  if (tier === "everyone") return true;
+  if (tier === "nobody") return false;
+  return isContactOf(env, ownerId, viewerId);
+}
+
 /// The user ids among `ids` whose profile photo and bio are hidden from this
 /// viewer: "nobody" hides from everyone, "contacts" from whoever the owner
-/// does not hold in their own address book.
+/// does not hold in their own address book, either way overridden by the
+/// owner's named exceptions.
 export async function hiddenAvatarOwners(
   env: { DB: D1Database; USER_DO: DurableObjectNamespace },
   viewerId: string, ids: string[]
@@ -157,16 +179,20 @@ export async function hiddenAvatarOwners(
   const hidden = new Set<string>();
   if (!ids.length) return hidden;
   const placeholders = ids.map(() => "?").join(",");
-  const rows = await env.DB.prepare(
+  const restricted = await env.DB.prepare(
     `SELECT user_id, avatar_visibility FROM privacy_settings
      WHERE avatar_visibility != 'everyone' AND user_id IN (${placeholders})`
   ).bind(...ids).all<{ user_id: string; avatar_visibility: string }>();
-  for (const row of rows.results) {
-    if (row.user_id === viewerId) continue;
-    if (row.avatar_visibility === "nobody" ||
-        !(await isContactOf(env, row.user_id, viewerId))) {
-      hidden.add(row.user_id);
-    }
+  const denied = await env.DB.prepare(
+    `SELECT user_id FROM privacy_exceptions
+     WHERE setting = 'avatar' AND allow = 0 AND peer_id = ? AND user_id IN (${placeholders})`
+  ).bind(viewerId, ...ids).all<{ user_id: string }>();
+  const candidates = new Map(restricted.results.map((r) => [r.user_id, r.avatar_visibility]));
+  for (const row of denied.results) candidates.set(row.user_id, "nobody-exception");
+  for (const [ownerId, tierRaw] of candidates) {
+    if (ownerId === viewerId) continue;
+    const tier = (tierRaw === "nobody-exception" ? "nobody" : tierRaw) as LastSeenVisibility;
+    if (!(await privacyAllows(env, ownerId, viewerId, "avatar", tier))) hidden.add(ownerId);
   }
   return hidden;
 }

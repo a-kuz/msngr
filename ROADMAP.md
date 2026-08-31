@@ -698,7 +698,10 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     takes the peer's away too (smoke `hiding your own last seen blinds you to
     everyone else's`); the "contacts" tier is enforced against the synced
     address book (qa/runs/2026-08-31-contacts-discovery)
-  - ⬜ exceptions for named people, for last seen and the settings below it
+  - ✅ exceptions for named people: always/never lists behind every tier
+    (last seen, avatar and bio, phone discovery, group adds), enforced ahead
+    of the tier by the same server checks
+    (qa/runs/2026-08-31-privacy-exceptions; the exceptions block in smoke)
   - ✅ read receipts and «печатает…» turned off, in both directions (smoke
     `read receipt off reciprocally`, `typing off reciprocally`)
   - ✅ who sees my avatar and bio: everyone, my contacts or nobody, enforced
@@ -713,7 +716,10 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     everyone / my contacts / nobody — "my contacts" answers only searchers
     whose number the found user holds in their own synced book
     (qa/runs/2026-08-31-contacts-discovery; the discovery block in smoke)
-  - ⬜ who can add me to a group; everyone else can only send an invite
+  - ✅ who can add me to a group (everyone / my contacts / nobody): the
+    protected are left out on the server and the adder's client sends them
+    the invite link as a message instead; joining by the link stays open
+    (qa/runs/2026-08-31-group-invites; the group-invites block in smoke)
   - ⬜ who can call me, once calls exist
   - ✅ a default disappearing timer for new chats: a Privacy picker (off / 1
     day / 1 week / 1 month) local to the device; a chat this device creates —

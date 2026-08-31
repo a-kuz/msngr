@@ -430,6 +430,9 @@ public final class APIClient: @unchecked Sendable {
         public let chatId: String
         /// True when the chat was already there and the call only reopened it.
         public let existed: Bool?
+        /// Users whose privacy keeps them from being put straight into a
+        /// group: they were not added, an invite link is what may reach them.
+        public let invited: [String]?
     }
     public func createChat(kind: String, memberIds: [String], title: String?) async throws -> String {
         try await createChatDetailed(kind: kind, memberIds: memberIds, title: title).chatId
@@ -496,9 +499,15 @@ public final class APIClient: @unchecked Sendable {
     public func deleteChat(_ chatId: String) async throws {
         _ = try await request("api/chats/\(chatId)/delete", method: "POST", jsonBody: [String: String]())
     }
-    public func updateMembers(_ chatId: String, add: [String], remove: [String]) async throws {
+    /// Returns the users whose privacy kept them from being added: they get
+    /// an invite link instead of a membership.
+    @discardableResult
+    public func updateMembers(_ chatId: String, add: [String], remove: [String]) async throws -> [String] {
         struct Body: Encodable { let add: [String]; let remove: [String] }
-        _ = try await request("api/chats/\(chatId)/members", method: "POST", jsonBody: Body(add: add, remove: remove))
+        struct Reply: Decodable { let invited: [String]? }
+        let data = try await request("api/chats/\(chatId)/members", method: "POST",
+                                     jsonBody: Body(add: add, remove: remove))
+        return ((try? JSONDecoder().decode(Reply.self, from: data))?.invited) ?? []
     }
     public func chatSettings(_ chatId: String, title: String? = nil,
                              avatarId: String? = nil, description: String? = nil,
@@ -662,6 +671,9 @@ public final class APIClient: @unchecked Sendable {
         public let avatar: String
         /// Who may find this account by its phone hash; the username search is open.
         public let phoneDiscovery: String
+        /// Who may put this account straight into a group; anyone else can
+        /// only send an invite link.
+        public let groupInvites: String
         public let readReceipts: Bool
         public let typing: Bool
     }
@@ -671,19 +683,42 @@ public final class APIClient: @unchecked Sendable {
         try await get("api/privacy", as: PrivacyResponse.self).privacy
     }
 
+    /// A named-person override of one privacy tier: allow shows the setting
+    /// to them whatever the tier says, deny hides it the same way.
+    public struct PrivacyExceptionDTO: Decodable, Sendable, Equatable, Identifiable {
+        public let setting: String
+        public let peerId: String
+        public let allow: Bool
+        public let username: String
+        public let displayName: String
+        public var id: String { setting + ":" + peerId }
+    }
+    private struct ExceptionsResponse: Decodable { let exceptions: [PrivacyExceptionDTO] }
+
+    public func privacyExceptions() async throws -> [PrivacyExceptionDTO] {
+        try await get("api/privacy/exceptions", as: ExceptionsResponse.self).exceptions
+    }
+
+    /// allow nil clears the override.
+    public func setPrivacyException(setting: String, peerId: String, allow: Bool?) async throws {
+        struct Body: Encodable { let setting: String; let peerId: String; let allow: Bool? }
+        _ = try await request("api/privacy/exceptions", method: "POST",
+                              jsonBody: Body(setting: setting, peerId: peerId, allow: allow))
+    }
+
     /// Any argument left nil keeps the server's current value for it.
     @discardableResult
     public func setPrivacy(
         lastSeen: String? = nil, avatar: String? = nil, phoneDiscovery: String? = nil,
-        readReceipts: Bool? = nil, typing: Bool? = nil
+        groupInvites: String? = nil, readReceipts: Bool? = nil, typing: Bool? = nil
     ) async throws -> PrivacyDTO {
         struct Body: Encodable {
             let lastSeen: String?; let avatar: String?; let phoneDiscovery: String?
-            let readReceipts: Bool?; let typing: Bool?
+            let groupInvites: String?; let readReceipts: Bool?; let typing: Bool?
         }
         return try await post("api/privacy",
             body: Body(lastSeen: lastSeen, avatar: avatar, phoneDiscovery: phoneDiscovery,
-                       readReceipts: readReceipts, typing: typing),
+                       groupInvites: groupInvites, readReceipts: readReceipts, typing: typing),
             as: PrivacyResponse.self).privacy
     }
 }
