@@ -46,7 +46,11 @@ A ✅ goes in only together with a link to the evidence.
     (qa/runs/2026-08-16-second-device-run.md)
   - ⬜ moving the history to a new device (today it starts at the chat's current end)
   - ⬜ a QR code instead of typing the code (the simulator has no camera)
-  - ⬜ recovering an account when no device is left
+  - ✅ recovering an account when no device is left: restoring from the
+    sealed backup during registration — the identity outlives its devices in
+    `UserDO`, the claim proves possession of the identity key (the Backup
+    section below; smoke `restore: start with zero devices`, live run
+    2026-08-30)
   - ✅ server: a list of active devices, logout and revoking a specific device
     (smoke `sessions lists current device`, `logout ok`, `revoked token rejected on api`,
     `revoked token rejected on ws upgrade`, `revoke device by id`)
@@ -729,9 +733,14 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     day / 1 week / 1 month) local to the device; a chat this device creates —
     direct or group — gets one disappearing message with the chosen TTL right
     after creation, existing chats keep theirs
-  - ⬜ every one of these is enforced by the server, not only hidden in the
-    interface: a hidden last seen is not in the state it sends, a receipt that is
-    off never leaves the device
+  - ✅ every one of these is enforced by the server, not only hidden in the
+    interface: a hidden last seen is not in the state the server sends
+    (`presenceVisible`), a receipt or typing that is off is dropped by the
+    ConversationDO fanout for both directions, the avatar bytes and the card
+    are withheld, discovery and group adds are refused at the API, and the
+    named exceptions ride the same single check (`privacyAllows`; the
+    privacy, discovery, group-invites, exceptions and receipts blocks in
+    smoke)
   - ⬜ reporting a chat or a message: what leaves the device is only what the
     reporter chose to attach, and blocking is offered in the same step
   - ✅ a request's content is hidden until it is accepted: the feed, the chat list,
