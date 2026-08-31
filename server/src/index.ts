@@ -900,6 +900,31 @@ app.post("/api/chats/:id/pin-message", async (c) => {
   return new Response(r.body, r);
 });
 
+// The user's default push sounds by chat shape; a chat's own sound (a flag)
+// overrides them, and both resolve on the object that sends the push.
+app.get("/api/notify-sounds", async (c) => {
+  const { userId } = c.get("auth");
+  const r = await userStub(c.env, userId).fetch("https://do/notify-sounds?read=1", {
+    method: "POST", body: "{}",
+  });
+  return new Response(r.body, r);
+});
+app.post("/api/notify-sounds", async (c) => {
+  const { userId } = c.get("auth");
+  const r = await userStub(c.env, userId).fetch("https://do/notify-sounds", {
+    method: "POST", body: JSON.stringify(await c.req.json()),
+  });
+  return new Response(r.body, r);
+});
+
+app.get("/api/chats/:id/flags", async (c) => {
+  const { userId } = c.get("auth");
+  const r = await userStub(c.env, userId).fetch("https://do/flags-read", {
+    method: "POST", body: JSON.stringify({ chatId: c.req.param("id") }),
+  });
+  return new Response(r.body, r);
+});
+
 app.post("/api/chats/:id/flags", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json();

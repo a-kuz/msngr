@@ -42,6 +42,10 @@ async function apnsJwt(env: Env, force: boolean): Promise<string | null> {
 
 export interface PushPayload {
   chatId: string;
+  /// APNs sound name: a caf file bundled with the app, or "default". Resolved
+  /// by the sender's object from the chat's own sound, then the user's
+  /// direct/group default.
+  sound?: string;
   seq?: number; // position of the message in its chat; the client shows a burst in this order
   sentAt?: number; // send time in ms, which orders messages across chats
   badge?: number; // the user's total unread over all chats
@@ -93,7 +97,7 @@ export function pushBody(payload: PushPayload): string {
       aps: {
         alert: payload.alert,
         ...(payload.badge !== undefined ? { badge: payload.badge } : {}),
-        sound: "default",
+        sound: payload.sound ?? "default",
         "thread-id": payload.chatId,
       },
       chatId: payload.chatId,
@@ -105,7 +109,7 @@ export function pushBody(payload: PushPayload): string {
       aps: {
         alert: { title: "Msngr", body: "Новое сообщение" },
         ...(payload.badge !== undefined ? { badge: payload.badge } : {}),
-        sound: "default",
+        sound: payload.sound ?? "default",
         "mutable-content": 1,
         "thread-id": payload.chatId,
       },

@@ -41,6 +41,8 @@ struct ChatInfoView: View {
     @State private var editDescription = ""
     @State private var ttl: Int = 0
     @State private var showMuteOptions = false
+    @State private var notifySound = NotifySound.standard
+    @State private var soundLoaded = false
     @State private var showBlockConfirm = false
     @State private var showLeaveConfirm = false
     @State private var showClearConfirm = false
@@ -147,6 +149,20 @@ struct ChatInfoView: View {
                 }
                 .accessibilityIdentifier("chatInfo.mute")
 
+                Picker(selection: $notifySound) {
+                    ForEach(NotifySound.allCases) { option in
+                        Text(option.label).tag(option)
+                    }
+                } label: {
+                    Label("Notification sound", systemImage: "bell.badge")
+                }
+                .accessibilityIdentifier("chatInfo.sound")
+                .onChange(of: notifySound) { _, new in
+                    guard soundLoaded else { return }
+                    new.preview()
+                    Task { try? await app.api.setChatFlags(model.chatId, sound: new.rawValue) }
+                }
+
                 Picker(selection: $ttl) {
                     Text("Off").tag(0)
                     Text("24 hours").tag(86400)
@@ -242,6 +258,11 @@ struct ChatInfoView: View {
             if !titleChanged || editTitle.isEmpty { editTitle = new ?? "" }
         }
         .task { await app.engine?.refreshBlocked() }
+        .task {
+            let sound = (try? await app.api.chatFlags(model.chatId))?.sound
+            notifySound = sound.flatMap(NotifySound.init(rawValue:)) ?? .standard
+            soundLoaded = true
+        }
         .sheet(isPresented: $showAddMembers) {
             AddMembersView(chatId: model.chatId, existing: Set(model.members.map(\.id))) { user in
                 model.announce(.added, member: user.displayName, memberId: user.id)

@@ -1286,6 +1286,83 @@
         }
       }
     },
+    "Notification sound" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звук уведомлений"
+          }
+        }
+      }
+    },
+    "Sound: direct chats" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звук: личные чаты"
+          }
+        }
+      }
+    },
+    "Sound: groups" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звук: группы"
+          }
+        }
+      }
+    },
+    "Default" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Стандартный"
+          }
+        }
+      }
+    },
+    "Chime" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перезвон"
+          }
+        }
+      }
+    },
+    "Bell" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Колокольчик"
+          }
+        }
+      }
+    },
+    "Triad" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Трезвучие"
+          }
+        }
+      }
+    },
     "Who can find me by number" : {
       "extractionState" : "manual",
       "localizations" : {
