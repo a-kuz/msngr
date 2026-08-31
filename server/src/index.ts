@@ -926,6 +926,24 @@ app.get("/api/notify-sounds", async (c) => {
   });
   return new Response(r.body, r);
 });
+// A person's own sound, applied to their messages wherever they write; a
+// chat's explicit sound still wins inside that chat.
+app.get("/api/notify-sounds/person/:id", async (c) => {
+  const { userId } = c.get("auth");
+  const r = await userStub(c.env, userId).fetch("https://do/person-sound", {
+    method: "POST", body: JSON.stringify({ userId: c.req.param("id"), read: true }),
+  });
+  return new Response(r.body, r);
+});
+app.post("/api/notify-sounds/person/:id", async (c) => {
+  const { userId } = c.get("auth");
+  const b = await c.req.json<{ sound?: string | null }>();
+  const r = await userStub(c.env, userId).fetch("https://do/person-sound", {
+    method: "POST", body: JSON.stringify({ userId: c.req.param("id"), sound: b.sound ?? null }),
+  });
+  return new Response(r.body, r);
+});
+
 app.post("/api/notify-sounds", async (c) => {
   const { userId } = c.get("auth");
   const r = await userStub(c.env, userId).fetch("https://do/notify-sounds", {

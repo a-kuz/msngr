@@ -568,6 +568,19 @@ public final class APIClient: @unchecked Sendable {
     public func notifySounds() async throws -> NotifySoundsDTO {
         try await get("api/notify-sounds", as: NotifySoundsResponse.self).sounds
     }
+    /// A person's own sound, applied to their messages wherever they write;
+    /// "default" clears it. A chat's explicit sound still wins in that chat.
+    public func personSound(_ userId: String) async throws -> String? {
+        struct Reply: Decodable { let sound: String? }
+        let data = try await request("api/notify-sounds/person/\(userId)")
+        return (try? JSONDecoder().decode(Reply.self, from: data))?.sound
+    }
+    public func setPersonSound(_ userId: String, sound: String) async throws {
+        struct Body: Encodable { let sound: String }
+        _ = try await request("api/notify-sounds/person/\(userId)", method: "POST",
+                              jsonBody: Body(sound: sound))
+    }
+
     public func setNotifySounds(direct: String? = nil, group: String? = nil) async throws {
         struct Body: Encodable { let direct: String?; let group: String? }
         _ = try await request("api/notify-sounds", method: "POST",
