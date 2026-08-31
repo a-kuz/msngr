@@ -507,6 +507,15 @@ public enum AppDatabase {
                 t.add(column: "linkPreview", .text)
             }
         }
+        m.registerMigration("v28-scheduledSend") { db in
+            // when a scheduled send is due; nil for an ordinary message
+            try db.alter(table: "message") { t in
+                t.add(column: "scheduledFor", .double)
+            }
+            try db.alter(table: "outbox") { t in
+                t.add(column: "scheduledFor", .double)
+            }
+        }
         return m
     }
 }
@@ -551,6 +560,7 @@ extension Message {
         reactions = (row["reactions"] as String?).flatMap { try? dec.decode([String: [String]].self, from: Data($0.utf8)) } ?? [:]
         expiresAt = row["expiresAt"]
         failReason = row["failReason"]
+        scheduledFor = row["scheduledFor"]
     }
 
     public func encode(to container: inout PersistenceContainer) throws {
@@ -584,5 +594,6 @@ extension Message {
         container["reactions"] = js(reactions) ?? "{}"
         container["expiresAt"] = expiresAt
         container["failReason"] = failReason
+        container["scheduledFor"] = scheduledFor
     }
 }

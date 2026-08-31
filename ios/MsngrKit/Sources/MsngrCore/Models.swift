@@ -252,6 +252,9 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
     public var expiresAt: Double?      // disappearing
     /// why it failed when status == .failed (codes live in SendFailure)
     public var failReason: String?
+    /// when this outgoing message is due to be sent; nil once it has, or for
+    /// a message that was never scheduled
+    public var scheduledFor: Double?
 
     public init(id: String, chatId: String, fromUserId: String, sentAt: Double,
                 kind: MessageKind, text: String?, status: MessageStatus, isOutgoing: Bool) {
@@ -270,7 +273,7 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
         case id, chatId, seq, clientMsgId, fromUserId, sentAt, serverTs,
              kind, text, media, album, replyTo, forward, shader, bubbleShader, edited, editHistory,
              editedAt, deletedForAll, status, isOutgoing, reactions, expiresAt,
-             failReason
+             failReason, scheduledFor
     }
 
     /// Local row id of a message the server numbered: the identity every
@@ -290,13 +293,18 @@ public struct OutboxItem: Codable, FetchableRecord, PersistableRecord {
     public var payload: Data
     /// ready (waiting to be sent) | inflight (sent, waiting for the ack)
     public var state: String = "ready"
+    /// a scheduled send is 'ready' from the moment it is queued, but the drain
+    /// skips it until this time; nil sends at once
+    public var scheduledFor: Double?
 
-    public init(clientMsgId: String, chatId: String, createdAt: Double, payload: Data, state: String = "ready") {
+    public init(clientMsgId: String, chatId: String, createdAt: Double, payload: Data,
+               state: String = "ready", scheduledFor: Double? = nil) {
         self.clientMsgId = clientMsgId
         self.chatId = chatId
         self.createdAt = createdAt
         self.payload = payload
         self.state = state
+        self.scheduledFor = scheduledFor
     }
 }
 
