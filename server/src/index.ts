@@ -80,8 +80,8 @@ app.post("/api/register", async (c) => {
   try {
     await c.env.DB.batch([
       c.env.DB.prepare(
-        "INSERT INTO users (id, username, display_name, phone_hash, created_at) VALUES (?,?,?,?,?)"
-      ).bind(userId, b.username, b.displayName.trim(), b.phoneHash ?? null, now),
+        "INSERT INTO users (id, username, display_name, display_name_lc, phone_hash, created_at) VALUES (?,?,?,?,?,?)"
+      ).bind(userId, b.username, b.displayName.trim(), b.displayName.trim().toLowerCase(), b.phoneHash ?? null, now),
       c.env.DB.prepare(
         "INSERT INTO devices (id, user_id, name, token_hash, created_at) VALUES (?,?,?,?,?)"
       ).bind(deviceId, userId, b.device?.name ?? null, tokenHash, now),
@@ -454,12 +454,14 @@ app.get("/api/users", async (c) => {
   // a username gets typed with a leading @ and stray spaces often enough
   const q = (c.req.query("q") ?? "").trim().replace(/^@+/, "");
   if (q.length < 2) return json({ ok: true, users: [] });
-  // LOWER() on both sides keeps the match case-insensitive, non-ASCII names included
+  // The query is folded in JS and matched against the JS-folded display_name_lc
+  // column: SQLite's LOWER folds ASCII only, and display names are free Unicode.
+  // Usernames are ASCII by the registration rule, so LOWER is enough there.
   const like = `%${q.toLowerCase()}%`;
   const rows = await c.env.DB.prepare(
     `SELECT u.id, u.username, u.display_name, u.avatar_id
      FROM users u
-     WHERE LOWER(u.username) LIKE ? OR LOWER(u.display_name) LIKE ?
+     WHERE LOWER(u.username) LIKE ? OR u.display_name_lc LIKE ?
      ORDER BY CASE WHEN LOWER(u.username) = ? THEN 0 ELSE 1 END, u.username
      LIMIT 20`
   ).bind(like, like, q.toLowerCase()).all<{ id: string; avatar_id: string | null }>();
@@ -633,8 +635,10 @@ app.post("/api/profile", async (c) => {
   if (b.displayName !== undefined && !isValidDisplayName(b.displayName)) return err("bad_name");
   await c.env.DB.prepare(
     `UPDATE users SET display_name = COALESCE(?, display_name),
+     display_name_lc = COALESCE(?, display_name_lc),
      bio = COALESCE(?, bio), avatar_id = COALESCE(?, avatar_id) WHERE id = ?`
-  ).bind(b.displayName?.trim() ?? null, b.bio ?? null, b.avatarId ?? null, userId).run();
+  ).bind(b.displayName?.trim() ?? null, b.displayName?.trim().toLowerCase() ?? null,
+         b.bio ?? null, b.avatarId ?? null, userId).run();
   await broadcastProfile(c.env, userId);
   return json({ ok: true });
 });

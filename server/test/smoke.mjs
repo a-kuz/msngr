@@ -138,6 +138,16 @@ check("username uniqueness", !dupe.ok && dupe.error === "username_taken");
 const found = await api(`/api/users?q=bob_${suffix}`, { token: alice.token });
 check("user search", found.ok && found.users.length === 1);
 
+// Case folding beyond ASCII: a Cyrillic display name is found by a query in
+// the other case.
+const cyrUser = await api("/api/register", { body: {
+  username: "cyr_" + suffix, displayName: `Икфмц ${suffix}`, ...fakeKeys("cy") } });
+const foundCyr = await api(
+  `/api/users?q=${encodeURIComponent(`икфмц ${suffix}`)}`, { token: alice.token });
+check("user search folds Cyrillic case",
+  cyrUser.ok && foundCyr.ok && foundCyr.users.length === 1
+  && foundCyr.users[0].id === cyrUser.userId, JSON.stringify(foundCyr));
+
 const bundle = await api(`/api/users/${bob.userId}/prekeys`, { token: alice.token });
 check("prekey bundle", bundle.ok && bundle.bundles[0].oneTimePrekey?.key === "otp1_b");
 const bundle2 = await api(`/api/users/${bob.userId}/prekeys`, { token: alice.token });
@@ -281,6 +291,16 @@ check("profile update", renamed.ok);
 const nameFrame = await ca.waitAfter(renameMark, (f) => f.t === "profile" && f.user?.id === bob.userId);
 check("rename reaches the peer", !!nameFrame && nameFrame.user.display_name === "Bob Renamed",
   JSON.stringify(nameFrame));
+
+// A renamed display name keeps the Unicode fold: the new Cyrillic name is
+// found case-insensitively and the old one is not found at all.
+const cyrRename = await api("/api/profile", { token: bob.token,
+  body: { displayName: `Цфмки ${suffix}` } });
+const foundRenamed = await api(
+  `/api/users?q=${encodeURIComponent(`цфмки ${suffix}`)}`, { token: alice.token });
+check("renamed Cyrillic name found case-insensitively",
+  cyrRename.ok && foundRenamed.ok && foundRenamed.users.length === 1
+  && foundRenamed.users[0].id === bob.userId, JSON.stringify(foundRenamed));
 
 check("empty name refused on profile",
   (await api("/api/profile", { token: bob.token, body: { displayName: "  " } })).error === "bad_name");
