@@ -713,7 +713,10 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     everyone / my contacts / nobody — "my contacts" answers only searchers
     whose number the found user holds in their own synced book
     (qa/runs/2026-08-31-contacts-discovery; the discovery block in smoke)
-  - ⬜ who can add me to a group; everyone else can only send an invite
+  - ✅ who can add me to a group (everyone / my contacts / nobody): the
+    protected are left out on the server and the adder's client sends them
+    the invite link as a message instead; joining by the link stays open
+    (qa/runs/2026-08-31-group-invites; the group-invites block in smoke)
   - ⬜ who can call me, once calls exist
   - ✅ a default disappearing timer for new chats: a Privacy picker (off / 1
     day / 1 week / 1 month) local to the device; a chat this device creates —
