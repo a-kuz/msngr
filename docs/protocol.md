@@ -107,7 +107,17 @@ POST /api/media                   raw body (ciphertext) → {mediaId, size}
 GET  /api/media/:id               streams the blob, supports Range (206)
 POST /api/push-token              {apnsToken, env}
 POST /api/phone                   {phoneHash|null}
-POST /api/contacts/discover       {hashes[]} → {matches[]}  (up to 5000 hashes, in chunks of 100)
+POST /api/contacts/discover       {hashes[], remove?[]} → {matches[]}  (up to 5000 hashes).
+                                  The book lands in the caller's UserDO as their contact
+                                  set; contact-ness is checked against the peer's current
+                                  phone_hash at question time, so registrations propagate
+                                  nowhere. Matches are gated by each owner's phone_discovery.
+GET/POST /api/privacy             {lastSeen?, avatar?, phoneDiscovery?, groupInvites?,
+                                  readReceipts?, typing?} — each tier is
+                                  everyone|contacts|nobody and is enforced by the server;
+                                  "contacts" reads the owner's synced book. A group create
+                                  or member add answers {…, invited:[userId]} for users
+                                  whose group_invites kept them out.
 POST /api/block                   {userId, blocked}
 GET  /api/blocked                 → {blocked:[userId]}
 POST /api/dev/fault               {failEvents} — dev hook: the caller's own session
