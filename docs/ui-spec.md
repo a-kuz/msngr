@@ -346,6 +346,20 @@ microphone otherwise.
 
 The attachment menu behind the `plus` icon offers «Фото или видео» and «Файл».
 
+Photos picked in the system picker land in the input bar as waiting
+thumbnails (the same strip pasted images use), open to a caption and to
+markup; a selection with a video or a GIF is sent at once, the way it always
+was. A tap on a waiting thumbnail opens the markup editor full screen: a pen
+(a straight pen line held still at its end turns into an arrow whose tip the
+finger keeps dragging), an arrow, a line, a rectangle, an ellipse, a region
+blur with a soft edge, and text in the same palette — retyped by tapping it
+with the text tool, moved by dragging. The top bar holds cancel (a discard
+confirmation once anything was drawn), undo, redo, rotate, crop and «Готово»;
+the bottom — eight colours, a width slider and the tools. A photo already in
+the chat opens the same editor through the pencil button of the full-screen
+viewer; «Готово» closes the viewer and puts the marked-up copy into the input
+bar as a new attachment, leaving the original message untouched.
+
 The strip above the field serves both replying and editing, with editing taking
 precedence: a title of «Редактирование» or the author's name, a one-line preview
 below it, and a cross that leaves the mode. The draft is written to `chat.draft`

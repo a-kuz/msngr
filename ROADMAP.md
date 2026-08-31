@@ -570,15 +570,24 @@ A ✅ goes in only together with a link to the evidence.
 
 Screenshot-level tools, not a photo editor: the point is to point at something.
 
-- ⬜ the markup opens from the attachment sheet and from the viewer, over the
-  picture that is already picked
-- ⬜ an arrow, a line, a rectangle and an ellipse, drawn by dragging
-- ⬜ freehand drawing, with a colour and a thickness
-- ⬜ text on the picture with the same palette
-- ⬜ blurring a region, for what should not be readable
-- ⬜ cropping and rotating
-- ⬜ undo and redo of every step, and leaving without saving
-- ⬜ the result is a new image: the original stays untouched in the library
+- ✅ the markup opens over the picture that is already picked: photos from the
+  picker and the clipboard wait in the input bar, and a tap on the waiting
+  thumbnail opens the editor (the run 2026-08-31-markup)
+- ✅ the viewer of a photo already in the chat opens the same editor; the
+  marked-up copy lands in the input bar as a new attachment (same run)
+- ✅ an arrow, a line, a rectangle and an ellipse, drawn by dragging (same run)
+- ✅ freehand drawing, with a colour and a thickness; a pen line held still at
+  its end straightens into an arrow, and the finger keeps dragging its tip
+  (MarkupTests, the run)
+- ✅ text on the picture with the same palette, retyped and dragged by the
+  text tool (MarkupTests, the run)
+- ✅ blurring a region, for what should not be readable — the blur fades out
+  at its edge instead of ending at a seam (MarkupTests, the run)
+- ✅ cropping and rotating (MarkupTests, the run)
+- ✅ undo and redo of every step, and leaving without saving asks once
+  (MarkupTests, the run)
+- ✅ the result is a new image: the original message and the library stay
+  untouched (the run)
 
 ## E2EE, trust, privacy
 
