@@ -25,6 +25,9 @@ struct SettingsView: View {
     @State private var nameError: String?
     @State private var phone = ""
     @State private var phoneError: String?
+    /// The blocked-users and active-devices rows' counts, read once on appear.
+    @State private var blockedCount: Int?
+    @State private var devicesCount: Int?
     @ObservedObject private var surfaces = ShaderSurfaces.shared
     /// the shader composer, open for the avatar or one of the effects
     @State private var shaderComposer: ShaderComposerPurpose?
@@ -164,12 +167,26 @@ struct SettingsView: View {
                     NavigationLink {
                         BlockedListView()
                     } label: {
-                        Label("Blocked users", systemImage: "hand.raised")
+                        HStack {
+                            Label("Blocked users", systemImage: "hand.raised")
+                            Spacer()
+                            if let blockedCount {
+                                Text(CountFormatter.short(blockedCount))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
                     NavigationLink {
                         SessionsView()
                     } label: {
-                        Label("Active devices", systemImage: "laptopcomputer.and.iphone")
+                        HStack {
+                            Label("Active devices", systemImage: "laptopcomputer.and.iphone")
+                            Spacer()
+                            if let devicesCount {
+                                Text(CountFormatter.short(devicesCount))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
                 }
 
@@ -234,6 +251,7 @@ struct SettingsView: View {
                 }
             }
             .task { await loadMe() }
+            .task { await loadCounts() }
             .onChange(of: displayName) { _, _ in nameError = nil }
             .onChange(of: phone) { _, _ in phoneError = nil }
             .onChange(of: avatarItem) { _, item in
@@ -296,6 +314,13 @@ struct SettingsView: View {
         phone = ((try? await app.db.read { dbc in
             try String.fetchOne(dbc, sql: "SELECT value FROM kv WHERE key = 'myPhone'")
         }) ?? nil) ?? ""
+    }
+
+    private func loadCounts() async {
+        blockedCount = try? await app.db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM user WHERE isBlocked = 1")
+        }
+        devicesCount = try? await app.api.sessions().count
     }
 
     /// A name has to be there: it is what a peer reads instead of a handle.
