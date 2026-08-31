@@ -30,15 +30,35 @@ struct CallScreenView: View {
                     .padding(.bottom, 56)
             }
         }
-        .task(id: state.peerUserId) { await loadPeer() }
-        .onChange(of: state.phase) { _, phase in
-            guard case .ended = phase else { return }
-            Task {
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
-                await app.callManager?.reset()
+        .overlay(alignment: .topLeading) {
+            if minimizable {
+                Button {
+                    app.callMinimized = true
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(Theme.glyph(17, max: 22))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .padding(.leading, 8)
+                .accessibilityIdentifier("call.minimize")
             }
         }
+        // the screen owns the display whole: a keyboard left up by the chat
+        // underneath must not squeeze the controls upward
+        .ignoresSafeArea(.keyboard)
+        .task(id: state.peerUserId) { await loadPeer() }
         .accessibilityIdentifier("call.screen")
+    }
+
+    /// An ended call is about to dismiss itself; folding it away would only
+    /// strand the outcome in the tile.
+    private var minimizable: Bool {
+        switch state.phase {
+        case .dialing, .ringing, .connecting, .active: return true
+        case .idle, .ended: return false
+        }
     }
 
     private var statusLine: some View {
