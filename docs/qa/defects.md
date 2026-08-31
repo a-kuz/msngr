@@ -6,6 +6,15 @@ with the commit that closed it.
 
 ## Open
 
+### Round video playback stutters on the device (owner's report, Debug build)
+Reported 2026-08-31 by the owner from a device run: playback of a round video
+made the app stutter noticeably and the tap answered after about a second.
+Causes found and fixed the same day (48c6468): the sound player waited for
+buffering (`playImmediately` now), the audio session was claimed on the main
+thread (off it now), and the progress published per frame to every cell in the
+reuse pool (10 Hz now, the ring smooths the steps). Stays open until the owner
+confirms on a Release device build.
+
 ### iPad with a hardware keyboard: a tap around the settings sheet crashes the app
 Found 2026-08-30 on the iPad Pro 11" simulator with ConnectHardwareKeyboard on
 (the Mac «Designed for iPad» case has a hardware keyboard always). Repro: open
