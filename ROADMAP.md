@@ -266,9 +266,8 @@ A ✅ goes in only together with a link to the evidence.
     by the waveform recognizes locally (SpeechAnalyzer, or SFSpeechRecognizer
     pinned on-device for languages the new models lack — Russian among them),
     caches the result, unfolds it under the wave, and playback underlines the
-    words as they are spoken (qa/runs/2026-08-31-voice-transcript; the
-    simulator has no speech models, recognition itself proven by a host-side
-    probe of the same calls, to be confirmed on a device)
+    words as they are spoken (qa/runs/2026-08-31-voice-transcript; confirmed
+    by the owner on a device, 2026-08-31)
 - Round video messages
   - ✅ recording from the front camera by holding, the same gesture as a voice
     message, with slide-to-cancel and lock; a tap flips microphone ↔ camera,
