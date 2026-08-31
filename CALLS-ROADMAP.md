@@ -24,15 +24,13 @@ in the system log. Only worth building together with the VoIP push (CallKit
 without a wake-up path only covers the app-open case the in-app screen
 already handles), and not verifiable on the simulator.
 
-### Push on a missed call
-A closed app never learns it was called: the `callLog` frame is service, so
-no push and no badge. The caller's device, on giving up (`cancel`/`timeout`),
-should raise exactly one notification on the callee. The server cannot tell a
-missed call from any other frame — the signaling is E2EE — so the shape is
-the caller sending the callLog envelope push-raising (NSE decrypts and shows
-«Пропущенный звонок») without letting it grow unread as a message. Needs a
-frame that pushes but does not count; today those two travel together on the
-`service` flag.
+### Push on a missed call: the device check
+The mechanics are shipped: the caller's missed-call `callLog` travels
+`service` + `notify` — a push without unread — and the banner says
+«Пропущенный звонок». The NSE path (decrypt, write the row, rewrite the
+banner) is device work, blocked with the rest of device pushes on the K2
+certificate; on the simulator only the server side is verifiable and is
+covered by the smoke test.
 
 ## Features not built yet
 

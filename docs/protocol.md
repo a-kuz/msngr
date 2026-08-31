@@ -185,7 +185,7 @@ history.
 {t:"sync",  cursors:{chatId: lastSeq, ...},    // the whole world as the client knows it
             deviceVersions?:{userId: v, ...}}  // the device cache held across the reconnect
 {t:"catchup", cursors:{chatId: cursor, ...}}   // the next catch-up portion
-{t:"send",  chatId, clientMsgId, sentAt, body, service?}   // body is the E2E envelope
+{t:"send",  chatId, clientMsgId, sentAt, body, service?, notify?}   // body is the E2E envelope
 {t:"defer", chatId, clientMsgId, sentAt, body, dueAt}      // scheduled: journaled at dueAt (ms)
 {t:"deferCancel", chatId, clientMsgId}                     // recall a deferred envelope
 {t:"recv",  chatId, seqs:[...]}                            // → delivered receipts to the author
@@ -203,6 +203,11 @@ does not grow unread and raises no push. The client marks `edit`, `reaction`,
 `disappearing` and `groupEvent` this way (`SyncEngine.serviceKinds`), along with
 every skd envelope. Of those only `groupEvent` leaves a row in the feed, a system
 line; the rest are listed in `SyncEngine.rowlessKinds`.
+
+`notify: true` on a service frame keeps everything above — no unread, the chat is
+not relisted — but still raises the push, on live delivery only. The one sender
+is a missed call's `callLog`: the callee's closed app learns it was called. The
+badge in that push carries the unchanged unread total.
 
 ## WS: server → client
 

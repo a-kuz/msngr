@@ -1460,6 +1460,18 @@ ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p4", sentAt: Date.n
 const p4 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p4");
 check("no push for service", !(await waitPush(pushFor("eve-sim-udid", p4), 1200)));
 
+// (c0) a service frame flagged notify (a missed-call record) does push, and
+// still does not grow the badge
+ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p4n", sentAt: Date.now(),
+  service: true, notify: true, body: { v: 1, mode: "pw", msgs: {} } });
+const p4n = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p4n");
+const push4n = await waitPush(pushFor("eve-sim-udid", p4n));
+check("notify service frame pushes", !!push4n);
+check("notify service frame keeps the badge", push4n?.body.aps.badge === 1,
+  `badge=${push4n?.body.aps.badge}`);
+check("notify frame travels service on ws", !!(await ce.waitFor((f) =>
+  f.t === "msg" && f.seq === p4n.seq && f.service === true)));
+
 // (c1) A service frame takes a seq but does not grow the badge: in a read chat the read
 // mark absorbs it, exactly the way the client moves the cursor. The server counts the
 // badge, so these two counts must not diverge.

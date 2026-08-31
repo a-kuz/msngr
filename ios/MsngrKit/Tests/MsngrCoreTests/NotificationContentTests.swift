@@ -196,4 +196,20 @@ final class NotificationContentTests: XCTestCase {
         let body = build(payload("text", text: text))?.body ?? ""
         XCTAssertLessThanOrEqual(body.count, NotificationContentBuilder.textLimit + 1)
     }
+
+    // MARK: - Call rows
+
+    func testMissedCallNotifies() {
+        let log = CallLog(outcome: .missed, callId: "c1")
+        let content = build(payload(CallLog.kind, text: log.encoded))
+        XCTAssertEqual(content?.title, "Anna")
+        XCTAssertEqual(content?.body, s("📞 Missed call"))
+    }
+
+    func testFinishedCallStaysSilent() {
+        var log = CallLog(outcome: .completed, callId: "c1")
+        log.duration = 12
+        XCTAssertNil(build(payload(CallLog.kind, text: log.encoded)))
+        XCTAssertNil(build(payload(CallLog.kind, text: CallLog(outcome: .declined, callId: "c2").encoded)))
+    }
 }
