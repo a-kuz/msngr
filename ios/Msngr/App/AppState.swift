@@ -281,6 +281,7 @@ final class AppState: ObservableObject {
         callStateTask = Task { [weak self] in
             for await state in states {
                 self?.callState = state
+                CallSounds.shared.apply(state.phase)
                 switch state.phase {
                 case .idle:
                     self?.callMinimized = false
