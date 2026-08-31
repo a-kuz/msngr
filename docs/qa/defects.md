@@ -998,10 +998,15 @@ shaders on a chat's first open all draw without a scroll.
 
 ### A theme switch leaves one bubble light with unreadable text
 Seen 2026-08-29 in passing during the showcase run: switching the appearance
-to dark while the chat was open left one text bubble with its light
-background and its text repainted to white — unreadable until the cell was
-reconfigured by a scroll. The bubble image and the text colour are updated
-by different paths on a trait change. Open.
+to dark while the chat was open left a text bubble with its light background
+and its text repainted to white — unreadable until the cell was reconfigured
+by a scroll. The bubble plate is an image baked per appearance in the cell's
+configure while the text repaints dynamically, and nothing reconfigured the
+visible cells on a system light/dark switch (only a palette change did).
+Closed 2026-09-01: the feed reloads on a `UITraitUserInterfaceStyle` change;
+`ThemeSwitchTests.testAppearanceSwitchRebakesTheVisibleBubble` is red on the
+old code, and the live switch over an open chat shows the bubble re-baked
+under readable text.
 
 ### The pond sticker's bottom read as a dot grid
 Reported by the owner on 2026-08-28 («некрасиво сетчатый фон»): the bundled
