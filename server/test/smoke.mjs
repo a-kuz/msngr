@@ -551,6 +551,49 @@ const disc = await api("/api/contacts/discover", { token: alice.token,
 check("contact discovery", ph.ok && disc.ok && disc.matches.length === 1
   && disc.matches[0].id === bob.userId);
 
+// 15a. Contact-ness reads the current state at the moment of the question:
+// a number that registers later needs no propagation into anyone's book
+const laterHash = "hash_later_" + suffix;
+await api("/api/contacts/discover", { token: alice.token, body: { hashes: [laterHash] } });
+const noraA = await api("/api/register", { body: {
+  username: "nora_" + suffix, displayName: "Nora", phoneHash: laterHash, ...fakeKeys("n") } });
+check("register with a phone hash", noraA.ok);
+// nora hides discovery behind her contacts; alice holds nora's number but
+// nora does not hold alice's, so alice no longer finds her
+await api("/api/privacy", { token: noraA.token, body: { phoneDiscovery: "contacts" } });
+const noraHidden = await api("/api/contacts/discover", { token: alice.token,
+  body: { hashes: [laterHash] } });
+check("contacts-tier discovery hides from a stranger",
+  noraHidden.ok && noraHidden.matches.length === 0, JSON.stringify(noraHidden.matches));
+// nora lists alice's number: alice becomes nora's contact the moment the
+// check asks, because the check reads alice's current hash
+const aliceHash = "hash_alice_" + suffix;
+await api("/api/phone", { token: alice.token, body: { phoneHash: aliceHash } });
+await api("/api/contacts/discover", { token: noraA.token, body: { hashes: [aliceHash] } });
+const noraVisible = await api("/api/contacts/discover", { token: alice.token,
+  body: { hashes: [laterHash] } });
+check("contacts-tier discovery opens to a contact",
+  noraVisible.ok && noraVisible.matches.length === 1 && noraVisible.matches[0].id === noraA.userId,
+  JSON.stringify(noraVisible.matches));
+// 15b. The contacts tier of the profile card reads the same book: nora's bio
+// shows to alice (whose number nora holds) and blanks to bob (a stranger)
+await api("/api/profile", { token: noraA.token, body: { bio: "ask my contacts" } });
+await api("/api/privacy", { token: noraA.token, body: { avatar: "contacts" } });
+const noraToAlice = await api("/api/users/" + noraA.userId, { token: alice.token });
+const noraToBob = await api("/api/users/" + noraA.userId, { token: bob.token });
+check("contacts-tier bio shows to a contact",
+  noraToAlice.ok && noraToAlice.user.bio === "ask my contacts",
+  JSON.stringify(noraToAlice.user));
+check("contacts-tier bio blanks to a stranger",
+  noraToBob.ok && noraToBob.user.bio === null, JSON.stringify(noraToBob.user));
+
+// nobody: not even a contact finds her
+await api("/api/privacy", { token: noraA.token, body: { phoneDiscovery: "nobody" } });
+const noraGone = await api("/api/contacts/discover", { token: alice.token,
+  body: { hashes: [laterHash] } });
+check("nobody-tier discovery hides from everyone",
+  noraGone.ok && noraGone.matches.length === 0, JSON.stringify(noraGone.matches));
+
 // 16. Invite link: only a member can create one, joining by code works
 const dave = await api("/api/register", { body: {
   username: "dave_" + suffix, displayName: "Dave", ...fakeKeys("d") } });

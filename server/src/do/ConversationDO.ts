@@ -1,5 +1,5 @@
 import type { Env, ChatState, ChatMember, ChatPolicy, StoredMsg, ServerFrame, PublicUser } from "../types";
-import { json, err, seqKey, SEQ_PAD, nowSec, shouldArmAlarm, readPrivacy } from "../util";
+import { json, err, seqKey, SEQ_PAD, nowSec, shouldArmAlarm, readPrivacy, isContactOf } from "../util";
 import {
   newCounters, snapshot, diff, logPerf, wrapState, wrapDB, wrapStub, type PerfCounters,
 } from "../perf";
@@ -1230,12 +1230,19 @@ export class ConversationDO implements DurableObject {
         if (!members.get(b.userId)?.accepted) return json({ ok: true });
         if (await this.blockedEitherWay(b.userId)) return json({ ok: true });
         // last seen hidden by the person it belongs to: nobody in the chat gets the frame
-        if ((await readPrivacy(this.env.DB, b.userId)).lastSeen === "nobody") return json({ ok: true });
+        const ownTier = (await readPrivacy(this.env.DB, b.userId)).lastSeen;
+        if (ownTier === "nobody") return json({ ok: true });
         // hiding last seen also blinds you to everyone else's, so a member who hid
-        // their own is skipped the same as a blocked one
+        // their own is skipped the same as a blocked one; the contacts tier skips
+        // whoever the owner does not hold in their own address book
         const hidden = await Promise.all(
-          [...members.keys()].map((u) =>
-            readPrivacy(this.env.DB, u).then((p) => ({ u, hidden: p.lastSeen === "nobody" })))
+          [...members.keys()].map(async (u) => {
+            if ((await readPrivacy(this.env.DB, u)).lastSeen === "nobody") return { u, hidden: true };
+            if (ownTier === "contacts" && u !== b.userId) {
+              return { u, hidden: !(await isContactOf(this.env, b.userId, u)) };
+            }
+            return { u, hidden: false };
+          })
         );
         const skip = [...await this.blockedPeers(b.userId), ...hidden.filter((h) => h.hidden).map((h) => h.u)];
         await this.fanout(
