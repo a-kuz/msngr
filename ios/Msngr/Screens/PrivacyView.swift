@@ -28,6 +28,8 @@ struct PrivacyView: View {
     /// Local, this device only: whether the composer fetches a typed link's
     /// page to build the card. Off means no page is ever requested.
     @AppStorage(LinkPreviewSetting.key) private var linkPreviews = true
+    /// Local too: the auto-delete timer stamped on chats this device creates.
+    @AppStorage(DefaultDisappearingTimer.key) private var defaultTTL = 0
 
     var body: some View {
         List {
@@ -69,6 +71,19 @@ struct PrivacyView: View {
                 .accessibilityIdentifier("privacy.linkPreviews")
             } footer: {
                 Text("To build a preview card this device fetches the page of a link you type. Turned off, no page is ever requested.")
+            }
+
+            Section {
+                Picker(selection: $defaultTTL) {
+                    ForEach(DefaultDisappearingTimer.allCases) { option in
+                        Text(option.label).tag(option.rawValue)
+                    }
+                } label: {
+                    Label("Auto-delete in new chats", systemImage: "timer")
+                }
+                .accessibilityIdentifier("privacy.defaultDisappearing")
+            } footer: {
+                Text("Chats you create start with this auto-delete timer. Existing chats keep theirs.")
             }
         }
         .navigationTitle("Privacy")
