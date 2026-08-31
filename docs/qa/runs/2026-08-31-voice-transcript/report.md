@@ -40,6 +40,29 @@ host microphone while the record button was held.
   cell. Green.
 - Full suites: MsngrTests 304/304, MsngrCoreTests 497 (18 integration skips).
 
+## The first device run and its fixes
+
+The owner ran the feature on an iPhone (ru system) and on the Mac the same
+hour, and the run surfaced three defects, fixed forward:
+
+- **The language came out wrong.** A Russian take was recognized by the
+  English model («раз два три…» → «Russ, and what, three…»): the picker took
+  the first preferred language the new engine supports instead of the first
+  language of the user. Now the candidates are the user's languages (system
+  plus keyboards), and with more than one the take is recognized in each
+  on-device and the confident one wins (segment confidence, weighted by word
+  length). A long press on the button recognizes afresh, replacing a cache
+  made under the old pick.
+- **The button and the spinner froze.** The sinks on TranscriptWork read the
+  shared property at emit time, but @Published emits on willSet — the read saw
+  the state from before the change, so the availability answer left buttons
+  hidden (the Mac screen) and a finished recognition left the spinner running
+  (the iPhone screen). The sinks now use the emitted value;
+  `VoiceTranscriptButtonTests` holds the regression.
+- **The underline vanished after playback** — by the owner's call it should
+  stay. The boundary is now left where it stands when the player moves on, and
+  a take that plays out is underlined whole before the player lets go.
+
 ## Not verified here
 
 Recognition end to end inside the app needs a device: the simulator has no

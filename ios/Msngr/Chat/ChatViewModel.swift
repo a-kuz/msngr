@@ -1015,7 +1015,18 @@ final class ChatViewModel: ObservableObject {
             }
             return
         }
-        guard !TranscriptWork.shared.inFlight.contains(message.id) else { return }
+        recognize(message)
+    }
+
+    /// A long press on the transcript button: recognize afresh, replacing the
+    /// cache — the way out of a take recognized in the wrong language.
+    func retranscribe(_ message: Message) {
+        guard message.kind == .voice else { return }
+        recognize(message)
+    }
+
+    private func recognize(_ message: Message) {
+        guard let db = app.db, !TranscriptWork.shared.inFlight.contains(message.id) else { return }
         TranscriptWork.shared.begin(message.id)
         Task {
             defer { TranscriptWork.shared.end(message.id) }

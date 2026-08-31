@@ -346,6 +346,9 @@ final class VoicePlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
 
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         let finished = state.msgId
+        // the last displaylink tick lands short of the end: the transcript
+        // highlight is told the take played out whole before the player lets go
+        state.progress = 1
         stop()
         if flag, let finished { onFinish?(finished) }
     }
@@ -485,12 +488,18 @@ final class VoiceMessageView: UIView {
 
         // the spinner follows recognition wherever it was started, so a cell
         // reused mid-work still shows it; the availability probe answers
-        // asynchronously and unhides the button when it lands
+        // asynchronously and unhides the button when it lands. @Published
+        // emits on willSet, so the sinks must use the emitted value — reading
+        // the shared property here would see the state from before the change
         TranscriptWork.shared.$inFlight
-            .sink { [weak self] _ in self?.applyTranscriptWork() }
+            .sink { [weak self] ids in
+                self?.applyTranscriptWork(inFlight: ids, available: TranscriptWork.shared.available)
+            }
             .store(in: &cancellables)
         TranscriptWork.shared.$available
-            .sink { [weak self] _ in self?.applyTranscriptWork() }
+            .sink { [weak self] avail in
+                self?.applyTranscriptWork(inFlight: TranscriptWork.shared.inFlight, available: avail)
+            }
             .store(in: &cancellables)
     }
 
@@ -531,7 +540,8 @@ final class VoiceMessageView: UIView {
         transcriptButton.backgroundColor = msg.transcriptShown ? tint.withAlphaComponent(0.25) : .clear
         transcriptSpinner.color = tint
         if isVoice { TranscriptWork.shared.probeIfNeeded() }
-        applyTranscriptWork()
+        applyTranscriptWork(inFlight: TranscriptWork.shared.inFlight,
+                            available: TranscriptWork.shared.available)
         if isVoice {
             waveform.amplitudes = msg.media?.waveform ?? []
             let raw = msg.media?.dur ?? 0
@@ -599,14 +609,14 @@ final class VoiceMessageView: UIView {
     /// The button shows only where a tap can do something: a cached transcript
     /// always folds and unfolds, a fresh take needs recognition available on
     /// this device. While recognition runs the button gives way to a spinner.
-    private func applyTranscriptWork() {
+    private func applyTranscriptWork(inFlight: Set<String>, available: Bool?) {
         guard let msg, msg.kind == .voice else {
             transcriptButton.isHidden = true
             transcriptSpinner.stopAnimating()
             return
         }
-        let working = TranscriptWork.shared.inFlight.contains(msg.id)
-        let usable = !(msg.transcript ?? "").isEmpty || TranscriptWork.shared.available == true
+        let working = inFlight.contains(msg.id)
+        let usable = !(msg.transcript ?? "").isEmpty || available == true
         transcriptButton.isHidden = working || !usable
         if working { transcriptSpinner.startAnimating() } else { transcriptSpinner.stopAnimating() }
         setNeedsLayout()
