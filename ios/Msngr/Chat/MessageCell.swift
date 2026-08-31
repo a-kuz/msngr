@@ -933,10 +933,9 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private func applyKaraoke(_ state: VoicePlayback) {
         guard let msg, msg.kind == .voice, msg.transcriptShown,
               !msg.transcriptSpans.isEmpty, !textView.isHidden else { return }
-        guard state.msgId == msg.id else {
-            textView.setKaraoke(length: 0)
-            return
-        }
+        // another message playing (or none) leaves the boundary where it
+        // stands: what has been listened to stays underlined
+        guard state.msgId == msg.id else { return }
         let time = state.progress * (msg.media?.dur ?? 0)
         textView.setKaraoke(length: TranscriptSpan.spokenLength(msg.transcriptSpans, at: time))
     }
