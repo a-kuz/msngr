@@ -6,7 +6,6 @@ with the commit that closed it.
 
 ## Open
 
-
 ### iPad with a hardware keyboard: a tap around the settings sheet crashes the app
 Found 2026-08-30 on the iPad Pro 11" simulator with ConnectHardwareKeyboard on
 (the Mac «Designed for iPad» case has a hardware keyboard always). Repro: open
@@ -302,6 +301,17 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### The scheduled-send menu's own items show up in English on a ru host
+Found 2026-08-30 in passing while running the scheduled-send scenario
+(qa/runs/2026-08-30-scheduled-send-run.md): the long-press menu on a
+still-pending scheduled message showed «Send now», «Reschedule», «Отмена» —
+two of the four items in English on a Russian host, because their
+`String(localized:)` keys had never been added to the localization catalog
+(«Edit», the fourth, happened to already exist from the ordinary edit menu, so
+it alone came out translated). Closed in the same change: `Send now`,
+`Reschedule` and the sheet's own `Schedule Send` title added to
+`Localizable.xcstrings`, ru value alongside the English base.
 
 ### A shader avatar in the chat list is drawn unclipped on iPad
 Found 2026-08-30 on the first iPad run (fable-ipad, the alfa home): Charlie
