@@ -56,7 +56,7 @@ public enum NotificationContentBuilder {
 
     /// Content kinds that raise no notification: an edit, a reaction, a timer change,
     /// a service row of the feed and a message already deleted.
-    public static let silentKinds: Set<String> = ["edit", "reaction", "disappearing", "system", "deleted"]
+    public static let silentKinds: Set<String> = ["edit", "reaction", "disappearing", "system", "deleted", "listened"]
 
     /// nil means this message must raise no notification.
     /// - Parameters:
@@ -135,6 +135,7 @@ public enum NotificationContentBuilder {
         case "photo": return withCaption(CoreStrings.string("📷 Photo"), caption)
         case "video": return withCaption(CoreStrings.string("🎥 Video"), caption)
         case "voice": return withCaption(CoreStrings.string("🎤 Voice message"), caption)
+        case "roundVideo": return withCaption(CoreStrings.string("📹 Video message"), caption)
         case "album": return withCaption(CoreStrings.string("🖼 Album"), caption)
         case "contact": return withCaption(CoreStrings.string("👤 Contact"), caption)
         case "shader": return withCaption(CoreStrings.string("✨ Shader"), caption)

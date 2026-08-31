@@ -11,7 +11,7 @@ public enum GalleryTab: String, CaseIterable, Sendable {
     /// column returns the rows unordered and costs a sort of the whole chat.
     var kinds: [MessageKind] {
         switch self {
-        case .media: return [.photo, .video, .album]
+        case .media: return [.photo, .video, .album, .roundVideo]
         case .files: return [.file]
         case .voice: return [.voice]
         case .links: return [.text]

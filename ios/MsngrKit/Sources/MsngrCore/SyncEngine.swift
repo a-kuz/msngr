@@ -1539,6 +1539,16 @@ public actor SyncEngine {
                                                       payload: SyncEngine.payloadJSON(content), seq: seq)
                 }
             }
+        case "listened":
+            if let target = content.targetSeq {
+                let found = try SyncEngine.applyListened(dbc, chatId: chatId, targetSeq: target,
+                                                         userId: from)
+                if !found {
+                    try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetSeq: target,
+                                                      kind: "listened", fromUserId: from,
+                                                      payload: SyncEngine.payloadJSON(content), seq: seq)
+                }
+            }
         case "disappearing":
             try dbc.execute(sql: "UPDATE chat SET ttlSeconds = ? WHERE id = ?",
                             arguments: [content.ttlSeconds ?? 0, chatId])
@@ -1611,6 +1621,16 @@ public actor SyncEngine {
                     if !found {
                         try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetSeq: target,
                                                           kind: "reaction", fromUserId: from,
+                                                          payload: SyncEngine.payloadJSON(content), seq: seq)
+                    }
+                }
+            case "listened":
+                if let target = content.targetSeq {
+                    let found = try SyncEngine.applyListened(dbc, chatId: chatId, targetSeq: target,
+                                                             userId: from)
+                    if !found {
+                        try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetSeq: target,
+                                                          kind: "listened", fromUserId: from,
                                                           payload: SyncEngine.payloadJSON(content), seq: seq)
                     }
                 }
@@ -1975,7 +1995,7 @@ public actor SyncEngine {
     /// Content that goes out service-flagged: it takes a seq and reaches
     /// everyone, but raises no unread count and no push.
     public static let serviceKinds: Set<String> =
-        Set(["edit", "reaction", "disappearing", GroupEvent.kind])
+        Set(["edit", "reaction", "disappearing", "listened", GroupEvent.kind])
         .union(SyncEngine.repairKinds)
 
     /// Service content with no feed row of its own. A group event is the
@@ -1985,7 +2005,7 @@ public actor SyncEngine {
     /// Rowless kinds whose sent payload is kept under its seq
     /// (`sentServiceFrame`): they leave no message row to rebuild a repair
     /// answer from, so the copy a peer asks for comes from that record.
-    public static let recordedServiceKinds: Set<String> = ["edit", "reaction", "disappearing"]
+    public static let recordedServiceKinds: Set<String> = ["edit", "reaction", "disappearing", "listened"]
 
     /// Publishes what just happened to the group, from whoever did it. The frame
     /// is service content: it takes a seq and reaches every member, raises no
@@ -2922,6 +2942,24 @@ public actor SyncEngine {
                           userId: userId, emoji: emoji)
     }
 
+    /// Marks who has started listening to a voice or round video. Returns
+    /// false when the target message is not stored yet.
+    @discardableResult
+    static func applyListened(_ dbc: GRDB.Database, chatId: String, targetSeq: Int,
+                              userId: String) throws -> Bool {
+        guard let row = try Row.fetchOne(
+            dbc, sql: "SELECT id, listenedBy FROM message WHERE chatId = ? AND seq = ?",
+            arguments: [chatId, targetSeq]) else { return false }
+        var listeners = (try? JSONDecoder().decode([String].self,
+                                                   from: Data((row["listenedBy"] as String).utf8))) ?? []
+        guard !listeners.contains(userId) else { return true }
+        listeners.append(userId)
+        let json = String(data: try JSONEncoder().encode(listeners), encoding: .utf8)!
+        try dbc.execute(sql: "UPDATE message SET listenedBy = ? WHERE id = ?",
+                        arguments: [json, row["id"] as String])
+        return true
+    }
+
     @discardableResult
     static func applyReaction(_ dbc: GRDB.Database, chatId: String, targetId: String?,
                               targetSeq: Int? = nil, userId: String, emoji: String?) throws -> Bool {
@@ -2991,6 +3029,8 @@ public actor SyncEngine {
                     album = NULL, kind = 'text' WHERE chatId = ? AND seq = ?
                     """,
                     arguments: [chatId, seq])
+            case "listened":
+                try applyListened(dbc, chatId: chatId, targetSeq: seq, userId: row["fromUserId"])
             default:
                 break
             }

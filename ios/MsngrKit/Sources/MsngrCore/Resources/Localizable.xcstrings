@@ -188,6 +188,17 @@
         }
       }
     },
+    "📹 Video message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "📹 Видеосообщение"
+          }
+        }
+      }
+    },
     "🎥 Video" : {
       "extractionState" : "manual",
       "localizations" : {
