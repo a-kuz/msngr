@@ -2505,6 +2505,10 @@ public actor SyncEngine {
         }
 
         let service = Self.serviceKinds.contains(content.kind)
+        // a missed call must reach a closed app: its record is the one
+        // service frame that still raises a push, without growing unread
+        let notify = content.kind == CallLog.kind
+            && CallLog.decode(content.text)?.outcome == .missed
         // a send whose time has not come leaves now as a deferred envelope:
         // encrypted the same way, journaled by the server at its moment
         let deferUntil = item.scheduledFor.flatMap { $0 > Date().timeIntervalSince1970 ? $0 : nil }
@@ -2515,7 +2519,8 @@ public actor SyncEngine {
                                           dueAt: deferUntil * 1000))
             } else {
                 try await ws.send(.send(chatId: item.chatId, clientMsgId: item.clientMsgId,
-                                        sentAt: item.createdAt, body: env, service: service))
+                                        sentAt: item.createdAt, body: env, service: service,
+                                        notify: notify))
             }
         }
         if let addressee = content.to {

@@ -1,6 +1,17 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "📞 Missed call" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "📞 Пропущенный звонок"
+          }
+        }
+      }
+    },
     "✨ Shader" : {
       "extractionState" : "manual",
       "localizations" : {
