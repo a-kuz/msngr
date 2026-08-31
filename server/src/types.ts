@@ -51,6 +51,8 @@ export type LastSeenVisibility = "everyone" | "contacts" | "nobody";
 /// these defaults.
 export interface PrivacySettings {
   lastSeen: LastSeenVisibility;
+  /// Who sees the profile photo and bio; the display name is always visible.
+  avatar: LastSeenVisibility;
   readReceipts: boolean;
   typing: boolean;
 }
