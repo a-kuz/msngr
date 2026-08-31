@@ -720,7 +720,10 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     protected are left out on the server and the adder's client sends them
     the invite link as a message instead; joining by the link stays open
     (qa/runs/2026-08-31-group-invites; the group-invites block in smoke)
-  - ⬜ who can call me, once calls exist
+  - ✅ who can call me (everyone / my contacts / nobody, with the named
+    exceptions): the callee's CallManager answers a gated offer busy without
+    ringing, fail-closed; the viewer's dial button follows `canCall` in the
+    user card (CallManagerTests gate tests; live two-simulator run 2026-09-01)
   - ✅ a default disappearing timer for new chats: a Privacy picker (off / 1
     day / 1 week / 1 month) local to the device; a chat this device creates —
     direct or group — gets one disappearing message with the chosen TTL right
@@ -837,8 +840,12 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     the NSE to render it, device-gated)
   - ⬜ a photo preview as an image in the notification
 - Sounds and exceptions
-  - ⬜ a sound of its own for one chat, overriding the default
-  - ⬜ separate defaults for direct chats and for groups
+  - ✅ a sound of its own for one chat, overriding the default: a flag on the
+    receiver's object, resolved when the push is sent; three bundled chimes
+    with a preview in the chat-info picker (qa/runs/2026-09-01-notify-sounds;
+    the sound block in smoke)
+  - ✅ separate defaults for direct chats and for groups (the same run; the
+    pickers in Settings → Notifications)
   - ⬜ a sound of its own for a person, applied wherever they write
   - ⬜ a sound of its own for a mention, louder than the chat's own
   - ✅ a muted chat still notifying on a mention or a reply to you
