@@ -1165,6 +1165,17 @@
         }
       }
     },
+    "A call from anyone else is answered busy, without ringing." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звонок от любого другого получает «занято» и не звонит у вас."
+          }
+        }
+      }
+    },
     "Who can add me to groups" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1172,6 +1183,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Кто может добавлять меня в группы"
+          }
+        }
+      }
+    },
+    "Who can call me" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Кто может мне звонить"
           }
         }
       }

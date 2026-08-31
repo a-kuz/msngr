@@ -223,7 +223,7 @@ struct ChatScreen: View {
             } else if !searching {
                 ToolbarItem(placement: .principal) { header }
                 if !model.contentHidden {
-                    if model.chat?.kind == .direct, let peerId = model.peer?.id {
+                    if model.chat?.kind == .direct, model.peerCanCall, let peerId = model.peer?.id {
                         ToolbarItem(placement: .navigationBarTrailing) {
                             Button {
                                 Task { await AppState.shared.callManager?.startCall(chatId: chatId, peerUserId: peerId) }

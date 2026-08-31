@@ -48,6 +48,9 @@ final class ChatViewModel: ObservableObject {
     let chatId: String
     @Published var chat: Chat?
     @Published var peer: User?
+    /// whether the peer's call tier lets this user ring them: the dial button
+    /// is not shown for a call that would only come back busy
+    @Published var peerCanCall = true
     @Published var members: [User] = []
     /// My role in this chat; nil while it is being read or once I am out of it.
     @Published var myRole: String?
@@ -151,6 +154,7 @@ final class ChatViewModel: ObservableObject {
     func start() {
         guard chatCancellable == nil, app.db != nil else { return }
         observeChatRow()
+        refreshPeerCanCall()
 
         // background or notification shade: the unread banner goes away, whatever
         // arrives meanwhile accumulates and comes back as a new banner
@@ -442,6 +446,27 @@ final class ChatViewModel: ObservableObject {
         presenceTask?.cancel()
         presenceTask = nil
         presenceAsked = false
+    }
+
+    /// Whether the peer may be rung, from their user card. Unknown or offline
+    /// keeps the button: the callee's own device is the enforcing side.
+    private func refreshPeerCanCall() {
+        guard chatId.hasPrefix("direct:") else { return }
+        Task { [weak self] in
+            guard let self, let api = self.app.api, let peerId = await self.waitForPeerId() else { return }
+            if let canCall = (try? await api.user(peerId))?.canCall {
+                await MainActor.run { self.peerCanCall = canCall }
+            }
+        }
+    }
+
+    /// The peer row lands with the first chat snapshot, a beat after start().
+    private func waitForPeerId() async -> String? {
+        for _ in 0..<20 {
+            if let id = peer?.id { return id }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return peer?.id
     }
 
     /// Where the peer is right now. Presence arrives as a transition, so a device

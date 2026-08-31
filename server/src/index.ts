@@ -493,7 +493,24 @@ app.get("/api/users/:id", async (c) => {
     const p = await userStub(c.env, targetId).fetch("https://do/presence-info");
     presence = (await p.json()) as { online: boolean; lastSeen: number };
   }
-  return json({ ok: true, user: u, presence });
+  // whether the target's call tier lets this viewer ring them: the dial
+  // button is not worth showing on a call that would only come back busy
+  let canCall = true;
+  if (userId !== targetId) {
+    const callTier = (await readPrivacy(c.env.DB, targetId)).callPrivacy;
+    canCall = await privacyAllows(c.env, targetId, userId, "call", callTier);
+  }
+  return json({ ok: true, user: u, presence, canCall });
+});
+
+// The caller's own call gate, asked by the callee's device when an offer
+// arrives: whether this account's call tier lets `peerId` ring it. The
+// signaling is E2EE, so this judgement cannot live on the send path.
+app.get("/api/privacy/may-call/:peerId", async (c) => {
+  const { userId } = c.get("auth");
+  const peerId = c.req.param("peerId");
+  const tier = (await readPrivacy(c.env.DB, userId)).callPrivacy;
+  return json({ ok: true, allow: await privacyAllows(c.env, userId, peerId, "call", tier) });
 });
 
 /// Whether the viewer may see the target's presence: they share a direct chat the
@@ -1156,7 +1173,7 @@ app.get("/api/privacy", async (c) => {
   return json({ ok: true, privacy: await readPrivacy(c.env.DB, userId) });
 });
 
-const EXCEPTION_SETTINGS = ["last_seen", "avatar", "phone_discovery", "group_invites"];
+const EXCEPTION_SETTINGS = ["last_seen", "avatar", "phone_discovery", "group_invites", "call"];
 
 // Named-people overrides of the tiers: who is always shown the setting and
 // who never is, whatever the tier says.
@@ -1208,9 +1225,9 @@ app.post("/api/privacy", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{
     lastSeen?: string; avatar?: string; phoneDiscovery?: string; groupInvites?: string;
-    readReceipts?: boolean; typing?: boolean;
+    callPrivacy?: string; readReceipts?: boolean; typing?: boolean;
   }>();
-  for (const tier of [b.lastSeen, b.avatar, b.phoneDiscovery, b.groupInvites]) {
+  for (const tier of [b.lastSeen, b.avatar, b.phoneDiscovery, b.groupInvites, b.callPrivacy]) {
     if (tier !== undefined && !LAST_SEEN_VALUES.includes(tier as LastSeenVisibility)) {
       return err("bad_privacy");
     }
@@ -1221,21 +1238,23 @@ app.post("/api/privacy", async (c) => {
     avatar: (b.avatar as LastSeenVisibility | undefined) ?? current.avatar,
     phoneDiscovery: (b.phoneDiscovery as LastSeenVisibility | undefined) ?? current.phoneDiscovery,
     groupInvites: (b.groupInvites as LastSeenVisibility | undefined) ?? current.groupInvites,
+    callPrivacy: (b.callPrivacy as LastSeenVisibility | undefined) ?? current.callPrivacy,
     readReceipts: b.readReceipts ?? current.readReceipts,
     typing: b.typing ?? current.typing,
   };
   await c.env.DB.prepare(
     `INSERT INTO privacy_settings (user_id, last_seen, avatar_visibility, phone_discovery,
-       group_invites, read_receipts, typing, updated_at)
-     VALUES (?,?,?,?,?,?,?,?)
+       group_invites, call_privacy, read_receipts, typing, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?)
      ON CONFLICT(user_id) DO UPDATE SET last_seen = excluded.last_seen,
        avatar_visibility = excluded.avatar_visibility,
        phone_discovery = excluded.phone_discovery,
        group_invites = excluded.group_invites,
+       call_privacy = excluded.call_privacy,
        read_receipts = excluded.read_receipts, typing = excluded.typing,
        updated_at = excluded.updated_at`
   ).bind(userId, next.lastSeen, next.avatar, next.phoneDiscovery, next.groupInvites,
-         next.readReceipts ? 1 : 0, next.typing ? 1 : 0, Date.now()).run();
+         next.callPrivacy, next.readReceipts ? 1 : 0, next.typing ? 1 : 0, Date.now()).run();
   // peers hold the card from the last profile frame, so a photo hidden or shown
   // again travels to them at once instead of waiting for a refetch
   if (next.avatar !== current.avatar) await broadcastProfile(c.env, userId);
