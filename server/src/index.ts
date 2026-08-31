@@ -682,11 +682,34 @@ async function broadcastProfile(env: Env, userId: string) {
   });
 }
 
+/// Splits the users `actor` wants to put into a group by their group_invites
+/// tier: the protected are not added — an invite link is all that reaches them.
+async function addableToGroup(
+  env: Env, actor: string, ids: string[]
+): Promise<{ addable: string[]; invited: string[] }> {
+  const addable: string[] = [];
+  const invited: string[] = [];
+  if (!ids.length) return { addable, invited };
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = await env.DB.prepare(
+    `SELECT user_id, group_invites FROM privacy_settings
+     WHERE group_invites != 'everyone' AND user_id IN (${placeholders})`
+  ).bind(...ids).all<{ user_id: string; group_invites: string }>();
+  const tier = new Map(rows.results.map((r) => [r.user_id, r.group_invites]));
+  for (const id of ids) {
+    const t = tier.get(id);
+    if (id === actor || t === undefined) { addable.push(id); continue; }
+    if (t === "nobody") { invited.push(id); continue; }
+    if (await isContactOf(env, id, actor)) addable.push(id); else invited.push(id);
+  }
+  return { addable, invited };
+}
+
 // --- chats ---
 app.post("/api/chats", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{ kind: "direct" | "group" | "self"; memberIds: string[]; title?: string }>();
-  const members = [...new Set(b.memberIds)].filter((m) => m !== userId);
+  let members = [...new Set(b.memberIds)].filter((m) => m !== userId);
   if (b.kind === "direct" && members.length !== 1) return err("direct_needs_one_peer");
   if (b.kind === "self" && members.length !== 0) return err("self_has_no_peers");
 
@@ -699,6 +722,12 @@ app.post("/api/chats", async (c) => {
   }
 
   // one saved-messages chat per user, so creating it again opens the same one
+  // whoever guards being added to groups is left out here; the creator's
+  // client offers them the invite link instead
+  let invited: string[] = [];
+  if (b.kind === "group") {
+    ({ addable: members, invited } = await addableToGroup(c.env, userId, members));
+  }
   const chatId = b.kind === "direct" ? directChatName(userId, members[0])
     : b.kind === "self" ? "self:" + userId
     : ulid();
@@ -708,7 +737,9 @@ app.post("/api/chats", async (c) => {
       chatId, kind: b.kind, title: b.title ?? null, memberIds: members, createdBy: userId,
     }),
   });
-  return new Response(res.body, res);
+  if (!res.ok || !invited.length) return new Response(res.body, res);
+  const body = (await res.json()) as Record<string, unknown>;
+  return json({ ...body, invited });
 });
 
 app.get("/api/chats", async (c) => {
@@ -781,11 +812,18 @@ app.post("/api/dev/fault", async (c) => {
 app.post("/api/chats/:id/members", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{ add?: string[]; remove?: string[] }>();
+  // whoever guards being added is left out; the adder's client offers the
+  // invite link instead. Joining yourself by that link is not an add.
+  const { addable, invited } = await addableToGroup(c.env, userId,
+    [...new Set(b.add ?? [])].filter((u) => u !== userId));
+  const selfJoin = (b.add ?? []).includes(userId) ? [userId] : [];
   const r = await convStub(c.env, c.req.param("id")).fetch("https://do/members", {
     method: "POST",
-    body: JSON.stringify({ actor: userId, add: b.add ?? [], remove: b.remove ?? [] }),
+    body: JSON.stringify({ actor: userId, add: [...selfJoin, ...addable], remove: b.remove ?? [] }),
   });
-  return new Response(r.body, r);
+  if (!r.ok || !invited.length) return new Response(r.body, r);
+  const body = (await r.json()) as Record<string, unknown>;
+  return json({ ...body, invited });
 });
 
 // The delivery receipt with no socket to send it on. The notification extension
@@ -1110,10 +1148,10 @@ app.get("/api/privacy", async (c) => {
 app.post("/api/privacy", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{
-    lastSeen?: string; avatar?: string; phoneDiscovery?: string;
+    lastSeen?: string; avatar?: string; phoneDiscovery?: string; groupInvites?: string;
     readReceipts?: boolean; typing?: boolean;
   }>();
-  for (const tier of [b.lastSeen, b.avatar, b.phoneDiscovery]) {
+  for (const tier of [b.lastSeen, b.avatar, b.phoneDiscovery, b.groupInvites]) {
     if (tier !== undefined && !LAST_SEEN_VALUES.includes(tier as LastSeenVisibility)) {
       return err("bad_privacy");
     }
@@ -1123,20 +1161,22 @@ app.post("/api/privacy", async (c) => {
     lastSeen: (b.lastSeen as LastSeenVisibility | undefined) ?? current.lastSeen,
     avatar: (b.avatar as LastSeenVisibility | undefined) ?? current.avatar,
     phoneDiscovery: (b.phoneDiscovery as LastSeenVisibility | undefined) ?? current.phoneDiscovery,
+    groupInvites: (b.groupInvites as LastSeenVisibility | undefined) ?? current.groupInvites,
     readReceipts: b.readReceipts ?? current.readReceipts,
     typing: b.typing ?? current.typing,
   };
   await c.env.DB.prepare(
     `INSERT INTO privacy_settings (user_id, last_seen, avatar_visibility, phone_discovery,
-       read_receipts, typing, updated_at)
-     VALUES (?,?,?,?,?,?,?)
+       group_invites, read_receipts, typing, updated_at)
+     VALUES (?,?,?,?,?,?,?,?)
      ON CONFLICT(user_id) DO UPDATE SET last_seen = excluded.last_seen,
        avatar_visibility = excluded.avatar_visibility,
        phone_discovery = excluded.phone_discovery,
+       group_invites = excluded.group_invites,
        read_receipts = excluded.read_receipts, typing = excluded.typing,
        updated_at = excluded.updated_at`
-  ).bind(userId, next.lastSeen, next.avatar, next.phoneDiscovery, next.readReceipts ? 1 : 0,
-         next.typing ? 1 : 0, Date.now()).run();
+  ).bind(userId, next.lastSeen, next.avatar, next.phoneDiscovery, next.groupInvites,
+         next.readReceipts ? 1 : 0, next.typing ? 1 : 0, Date.now()).run();
   // peers hold the card from the last profile frame, so a photo hidden or shown
   // again travels to them at once instead of waiting for a refetch
   if (next.avatar !== current.avatar) await broadcastProfile(c.env, userId);

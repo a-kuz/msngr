@@ -587,6 +587,27 @@ check("contacts-tier bio shows to a contact",
 check("contacts-tier bio blanks to a stranger",
   noraToBob.ok && noraToBob.user.bio === null, JSON.stringify(noraToBob.user));
 
+// 15c. Who can add me to a group: the protected are not added, the response
+// names them so the client can offer the invite link instead
+await api("/api/privacy", { token: noraA.token, body: { groupInvites: "nobody" } });
+const gByBob = await api("/api/chats", { token: bob.token,
+  body: { kind: "group", memberIds: [noraA.userId, alice.userId], title: "no nora" } });
+check("group create leaves the protected out and names them",
+  gByBob.ok && gByBob.invited?.length === 1 && gByBob.invited[0] === noraA.userId,
+  JSON.stringify(gByBob));
+const gByBobState = await api("/api/chats", { token: bob.token });
+const noNora = gByBobState.chats.find((ch) => ch.state.chatId === gByBob.chatId);
+check("the protected user is really not a member",
+  noNora && !noNora.state.members.some((m) => m.userId === noraA.userId),
+  JSON.stringify(noNora?.state.members?.map((m) => m.userId)));
+// contacts: nora holds alice's number, so alice may add her
+await api("/api/privacy", { token: noraA.token, body: { groupInvites: "contacts" } });
+const gByAlice = await api("/api/chats", { token: alice.token,
+  body: { kind: "group", memberIds: [noraA.userId], title: "with nora" } });
+check("a contact adds the protected user straight in",
+  gByAlice.ok && !gByAlice.invited,
+  JSON.stringify(gByAlice));
+
 // nobody: not even a contact finds her
 await api("/api/privacy", { token: noraA.token, body: { phoneDiscovery: "nobody" } });
 const noraGone = await api("/api/contacts/discover", { token: alice.token,

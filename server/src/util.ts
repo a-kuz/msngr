@@ -111,20 +111,21 @@ export function shouldArmAlarm(pending: number | null, at: number, now: number):
 /// (for gating receipts, typing and presence fanout).
 export async function readPrivacy(db: D1Database, userId: string): Promise<PrivacySettings> {
   const row = await db.prepare(
-    `SELECT last_seen, avatar_visibility, phone_discovery, read_receipts, typing
+    `SELECT last_seen, avatar_visibility, phone_discovery, group_invites, read_receipts, typing
      FROM privacy_settings WHERE user_id = ?`
   ).bind(userId).first<{
     last_seen: string; avatar_visibility: string; phone_discovery: string;
-    read_receipts: number; typing: number;
+    group_invites: string; read_receipts: number; typing: number;
   }>();
   if (!row) {
     return { lastSeen: "everyone", avatar: "everyone", phoneDiscovery: "everyone",
-             readReceipts: true, typing: true };
+             groupInvites: "everyone", readReceipts: true, typing: true };
   }
   return {
     lastSeen: row.last_seen as PrivacySettings["lastSeen"],
     avatar: row.avatar_visibility as PrivacySettings["avatar"],
     phoneDiscovery: row.phone_discovery as PrivacySettings["phoneDiscovery"],
+    groupInvites: row.group_invites as PrivacySettings["groupInvites"],
     readReceipts: row.read_receipts === 1,
     typing: row.typing === 1,
   };

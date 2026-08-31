@@ -55,6 +55,9 @@ export interface PrivacySettings {
   avatar: LastSeenVisibility;
   /// Who may find this user by their phone hash; the username search is open.
   phoneDiscovery: LastSeenVisibility;
+  /// Who may put this user straight into a group; anyone else can only send
+  /// an invite link.
+  groupInvites: LastSeenVisibility;
   readReceipts: boolean;
   typing: boolean;
 }
