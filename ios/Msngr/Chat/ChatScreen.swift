@@ -82,7 +82,14 @@ struct ChatScreen: View {
         _search = StateObject(wrappedValue: ChatSearchSession(chatId: chatId))
     }
 
+    // the screen is assembled in three stages (the stack, the chrome, the
+    // sheets) so the compiler type-checks each chain on its own: as one
+    // expression the body had outgrown what it can check in reasonable time
     var body: some View {
+        withSheets(chromed)
+    }
+
+    private var screenStack: some View {
         ZStack(alignment: .bottom) {
             Theme.chatBackground.ignoresSafeArea()
             // the chat's shader background, this device's own choice; it runs
@@ -179,6 +186,10 @@ struct ChatScreen: View {
             // searching the bar is gone and the field stands in its own row
             if !searching { headerFade }
         }
+    }
+
+    private var chromed: some View {
+        screenStack
         .navigationBarTitleDisplayMode(.inline)
         // the back button stays the system one. A leading item of our own in its
         // place left the list's bar in the pushed state on the way back — no
@@ -285,6 +296,10 @@ struct ChatScreen: View {
         .modifier(ChatKeyNotifications(onEscape: escapeWalksBack,
                                        onEditLast: editLastFromKeyboard,
                                        onSwitch: performChatSwitch))
+    }
+
+    private func withSheets<V: View>(_ content: V) -> some View {
+        content
         .onChange(of: model.editing?.id) { _, _ in
             if let e = model.editing {
                 // entering the mode, and switching which message is edited (A → B),
@@ -298,20 +313,7 @@ struct ChatScreen: View {
         }
         .photosPicker(isPresented: $photoPickerPresented, selection: $photoItems,
                       maxSelectionCount: 10, matching: .any(of: [.images, .videos]))
-        .onChange(of: photoItems) { _, items in
-            guard !items.isEmpty else { return }
-            photoItems = []
-            // plain photos wait in the bar, open to markup and a caption; a
-            // video or a GIF has nothing to mark up and keeps the instant path
-            let editable = items.allSatisfy { item in
-                !item.supportedContentTypes.contains { $0.conforms(to: .movie) || $0.conforms(to: .gif) }
-            }
-            if editable {
-                Task { await stagePicked(items) }
-            } else {
-                Task { await sendPicked(items) }
-            }
-        }
+        .onChange(of: photoItems) { _, items in handlePicked(items) }
         .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.item]) { result in
             if case .success(let url) = result {
                 Task { await sendFile(url) }
@@ -1017,6 +1019,22 @@ struct ChatScreen: View {
 
     /// Picked photos land in the input bar as waiting attachments: the sender
     /// can mark them up and add a caption before they leave.
+    /// What a finished pick does: plain photos wait in the bar, open to markup
+    /// and a caption; a video or a GIF has nothing to mark up and keeps the
+    /// instant path.
+    private func handlePicked(_ items: [PhotosPickerItem]) {
+        guard !items.isEmpty else { return }
+        photoItems = []
+        let editable = items.allSatisfy { item in
+            !item.supportedContentTypes.contains { $0.conforms(to: .movie) || $0.conforms(to: .gif) }
+        }
+        if editable {
+            Task { await stagePicked(items) }
+        } else {
+            Task { await sendPicked(items) }
+        }
+    }
+
     private func stagePicked(_ items: [PhotosPickerItem]) async {
         for item in items {
             let image = await retrying("load picked photo") { () async -> UIImage? in
@@ -1452,6 +1470,7 @@ struct MessagesView: UIViewControllerRepresentable {
         vc.isGroupChat = model.chat?.kind == .group
         vc.noteRecipients = max(model.members.count - 1, 1)
         vc.onVotePoll = { [weak model] msg, votes in model?.votePoll(msg, votes: votes) }
+        vc.onTranscript = { [weak model] msg in model?.toggleTranscript(msg) }
         vc.onContextAction = { [weak model] msg, action in
             guard let model else { return }
             switch action {

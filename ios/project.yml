@@ -2,7 +2,7 @@ name: Msngr
 options:
   bundleIdPrefix: msngr
   deploymentTarget:
-    iOS: "17.0"
+    iOS: "26.0"
   createIntermediateGroups: true
 # the signing team is machine-local: Config/Signing.xcconfig is gitignored and
 # included from Local.xcconfig only if it exists
@@ -67,6 +67,7 @@ targets:
         NSPhotoLibraryUsageDescription: "Выбор фото и видео для отправки"
         NSContactsUsageDescription: "Поиск знакомых, которые уже в Msngr"
         NSFaceIDUsageDescription: "Разблокировка приложения"
+        NSSpeechRecognitionUsageDescription: "Транскрипт голосовых сообщений на устройстве"
         UIBackgroundModes: [remote-notification]
         NSUserActivityTypes: [INSendMessageIntent]
         ITSAppUsesNonExemptEncryption: false

@@ -117,7 +117,7 @@ enum BubbleLayout {
     static func cacheKey(_ msg: Message, width: CGFloat, tightGap: Bool, showTail: Bool,
                          showName: Bool, avatarInset: Bool, ownId: String) -> NSString {
         let reactions = msg.reactions.map { "\($0.key)\($0.value.count)\($0.value.contains(ownId) ? "*" : "")" }.sorted().joined()
-        let ver = "\(msg.text ?? "")|\(msg.status.rawValue)|\(msg.edited)|\(reactions)|\(msg.deletedForAll)|\(msg.linkPreview?.url ?? "")|\(msg.linkPreview?.image?.mediaId ?? (msg.linkPreview?.image != nil ? "local" : ""))"
+        let ver = "\(msg.text ?? "")|\(msg.status.rawValue)|\(msg.edited)|\(reactions)|\(msg.deletedForAll)|\(msg.linkPreview?.url ?? "")|\(msg.linkPreview?.image?.mediaId ?? (msg.linkPreview?.image != nil ? "local" : ""))|\(msg.transcriptShown ? msg.transcript ?? "" : "")"
         return "\(msg.id)|\(Int(width))|\(TypeScale.category.rawValue)|\(tightGap)|\(showTail)|\(showName)|\(avatarInset)|\(ver.hashValue)" as NSString
     }
 
@@ -236,6 +236,16 @@ enum BubbleLayout {
             voiceFrame = CGRect(x: hPadding, y: y, width: w, height: h)
             contentWidth = max(contentWidth, w)
             y += h
+            // the unfolded transcript reads as ordinary message text under the
+            // waveform; the status then follows the text rules further down
+            if msg.transcriptShown, let t = msg.transcript, !t.isEmpty {
+                y += 4
+                let (f, a) = measureText(t, maxWidth: maxBubbleWidth - 2 * hPadding, startY: y)
+                textFrame = f
+                attrText = a
+                contentWidth = max(contentWidth, f.width)
+                y = f.maxY
+            }
         case .file:
             let w = min(attachmentWidth + 20, maxBubbleWidth - 2 * hPadding)
             let h = attachmentHeight

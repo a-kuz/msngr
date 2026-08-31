@@ -33,8 +33,34 @@ final class MessageTextView: UIView {
         let mutable = Self.coloured(attr, color: color, linkColor: linkColor)
         self.codeBackground = codeBackground
         storage.setAttributedString(mutable)
+        karaokeLength = 0
         accessibilityLabel = mutable.string
         applyContainerWidth()
+        setNeedsDisplay()
+    }
+
+    /// The playback highlight of a voice transcript: the first `length` UTF-16
+    /// units are underlined. Underline instead of a weight change on purpose —
+    /// weight moves the glyphs and the text would breathe with the voice.
+    /// Called every playback frame; an unmoved boundary redraws nothing.
+    private var karaokeLength = 0
+    func setKaraoke(length: Int) {
+        let target = max(0, min(length, storage.length))
+        guard target != karaokeLength else { return }
+        if target > karaokeLength {
+            storage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue,
+                                 range: NSRange(location: karaokeLength, length: target - karaokeLength))
+        } else {
+            let removed = NSRange(location: target, length: karaokeLength - target)
+            storage.removeAttribute(.underlineStyle, range: removed)
+            // links keep their permanent underline
+            storage.enumerateAttribute(.msngrLink, in: removed) { value, range, _ in
+                guard value != nil else { return }
+                storage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue,
+                                     range: range)
+            }
+        }
+        karaokeLength = target
         setNeedsDisplay()
     }
 

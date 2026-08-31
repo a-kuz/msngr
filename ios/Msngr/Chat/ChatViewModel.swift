@@ -999,6 +999,49 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    /// A tap on the transcript button. A cached transcript folds and unfolds;
+    /// a message without one is recognized on the device first, and the result
+    /// is written into the row so the next tap is instant. The feed follows
+    /// through the ordinary observation.
+    func toggleTranscript(_ message: Message) {
+        guard message.kind == .voice, let db = app.db else { return }
+        if let cached = message.transcript, !cached.isEmpty {
+            let shown = !message.transcriptShown
+            Task {
+                try? await db.write { dbc in
+                    try dbc.execute(sql: "UPDATE message SET transcriptShown = ? WHERE id = ?",
+                                    arguments: [shown, message.id])
+                }
+            }
+            return
+        }
+        guard !TranscriptWork.shared.inFlight.contains(message.id) else { return }
+        TranscriptWork.shared.begin(message.id)
+        Task {
+            defer { TranscriptWork.shared.end(message.id) }
+            do {
+                guard let media = message.media, let mm = app.media else { return }
+                let raw = try await mm.fetch(media)
+                // AVAudioFile wants the container named by its extension
+                let m4a = raw.deletingPathExtension().appendingPathExtension("m4a")
+                if !FileManager.default.fileExists(atPath: m4a.path) {
+                    try FileManager.default.copyItem(at: raw, to: m4a)
+                }
+                let (text, spans) = try await VoiceTranscriber.transcribe(url: m4a)
+                let json = String(data: try JSONEncoder().encode(spans), encoding: .utf8)!
+                try await db.write { dbc in
+                    try dbc.execute(sql: """
+                        UPDATE message SET transcript = ?, transcriptSpans = ?, transcriptShown = 1
+                        WHERE id = ?
+                        """, arguments: [text, json, message.id])
+                }
+            } catch {
+                MsngrLog.transcript.error("transcript failed: \(error)")
+                Haptics.error()
+            }
+        }
+    }
+
     /// The next unheard note above the finished one, walking towards the newest
     /// message: notes play one after another and the chain stops at the first
     /// note already heard — or at one of our own.

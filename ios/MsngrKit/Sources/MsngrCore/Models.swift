@@ -287,6 +287,14 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
     /// poll: userId -> chosen option indices, aggregated from `pollVote`
     /// events. A retraction removes the user's entry.
     public var pollVotes: [String: [Int]] = [:]
+    /// voice: the on-device transcript, recognized on demand. Local only —
+    /// it never travels.
+    public var transcript: String?
+    /// voice: the transcript's word timings; concatenating the spans' text
+    /// yields `transcript` exactly.
+    public var transcriptSpans: [TranscriptSpan] = []
+    /// voice: whether the transcript is unfolded under the waveform.
+    public var transcriptShown: Bool = false
 
     public init(id: String, chatId: String, fromUserId: String, sentAt: Double,
                 kind: MessageKind, text: String?, status: MessageStatus, isOutgoing: Bool) {
@@ -305,13 +313,45 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
         case id, chatId, seq, clientMsgId, fromUserId, sentAt, serverTs,
              kind, text, media, album, replyTo, forward, shader, bubbleShader, edited, editHistory,
              editedAt, deletedForAll, status, isOutgoing, reactions, expiresAt,
-             failReason, scheduledFor, listenedAt, listenedBy, poll, pollVotes
+             failReason, scheduledFor, listenedAt, listenedBy, poll, pollVotes,
+             transcript, transcriptSpans, transcriptShown
     }
 
     /// Local row id of a message the server numbered: the identity every
     /// incoming reference resolves through.
     public static func feedId(chatId: String, seq: Int) -> String {
         "\(chatId)/\(seq)"
+    }
+}
+
+/// A stretch of a voice transcript with the seconds it was spoken at: what the
+/// playback highlight walks along.
+public struct TranscriptSpan: Codable, Equatable {
+    public var text: String
+    public var start: Double
+    public var end: Double
+
+    public init(text: String, start: Double, end: Double) {
+        self.text = text
+        self.start = start
+        self.end = end
+    }
+
+    /// How much of the concatenated transcript is spoken by `time`, in UTF-16
+    /// units (what an NSRange over the drawn text counts in), interpolated
+    /// inside the current span so the highlight moves smoothly rather than
+    /// jumping a word at a stride.
+    public static func spokenLength(_ spans: [TranscriptSpan], at time: Double) -> Int {
+        var length = 0.0
+        for span in spans {
+            if time >= span.end {
+                length += Double(span.text.utf16.count)
+            } else if time > span.start {
+                let f = (time - span.start) / max(span.end - span.start, 0.001)
+                length += Double(span.text.utf16.count) * f
+            }
+        }
+        return Int(length.rounded())
     }
 }
 

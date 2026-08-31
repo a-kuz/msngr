@@ -470,4 +470,5 @@ enum Haptics {
     static func medium() { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
     static func rigid() { UIImpactFeedbackGenerator(style: .rigid).impactOccurred() }
     static func success() { UINotificationFeedbackGenerator().notificationOccurred(.success) }
+    static func error() { UINotificationFeedbackGenerator().notificationOccurred(.error) }
 }

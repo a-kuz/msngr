@@ -1587,6 +1587,17 @@
         }
       }
     },
+    "Transcript" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Транскрипт"
+          }
+        }
+      }
+    },
     "Question" : {
       "extractionState" : "manual",
       "localizations" : {

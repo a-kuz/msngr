@@ -18,4 +18,6 @@ public enum MsngrLog {
     public static let notifications = Logger(subsystem: subsystem, category: "notifications")
     /// compiling and running user shaders
     public static let shader = Logger(subsystem: subsystem, category: "shader")
+    /// on-device voice transcription: model availability and failed takes
+    public static let transcript = Logger(subsystem: subsystem, category: "transcript")
 }
