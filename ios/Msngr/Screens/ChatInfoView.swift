@@ -46,6 +46,9 @@ struct ChatInfoView: View {
     @State private var showClearConfirm = false
     @State private var avatarItem: PhotosPickerItem?
     @State private var savingSettings = false
+    /// The attachments row's count: every gallery tab's entries, read once on
+    /// appear rather than kept live.
+    @State private var attachmentsCount: Int?
     #if DEBUG
     @State var seeding = false
     @State var seedSent = 0
@@ -113,7 +116,14 @@ struct ChatInfoView: View {
                 NavigationLink {
                     ChatGalleryView(chatId: model.chatId)
                 } label: {
-                    Label("Attachments", systemImage: "photo.on.rectangle.angled")
+                    HStack {
+                        Label("Attachments", systemImage: "photo.on.rectangle.angled")
+                        Spacer()
+                        if let attachmentsCount {
+                            Text(CountFormatter.short(attachmentsCount))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
                 .accessibilityIdentifier("chatInfo.gallery")
             }
@@ -177,7 +187,7 @@ struct ChatInfoView: View {
 
             if isGroup {
                 if canEditSettings { rightsSection }
-                Section("Members") {
+                Section {
                     ForEach(model.members) { member in
                         memberRow(member)
                     }
@@ -201,6 +211,12 @@ struct ChatInfoView: View {
                         }
                         .accessibilityIdentifier("chatInfo.invite")
                     }
+                } header: {
+                    HStack {
+                        Text("Members")
+                        Spacer()
+                        Text(CountFormatter.short(model.members.count))
+                    }
                 }
             }
             destructiveSection
@@ -215,6 +231,7 @@ struct ChatInfoView: View {
             editTitle = model.chat?.title ?? ""
             editDescription = model.chat?.chatDescription ?? ""
             rolesModel.start(chatId: model.chatId, db: app.db)
+            loadAttachmentsCount()
         }
         .onChange(of: model.chat?.chatDescription) { _, new in
             if !descriptionChanged || editDescription.isEmpty { editDescription = new ?? "" }
@@ -559,6 +576,15 @@ struct ChatInfoView: View {
     private func deleteChat() {
         model.deleteChat()
         dismiss()
+    }
+
+    private func loadAttachmentsCount() {
+        guard let db = app.db else { return }
+        let chatId = model.chatId
+        Task {
+            let counts = (try? await db.read { dbc in try ChatGallery.counts(dbc, chatId: chatId) }) ?? [:]
+            attachmentsCount = counts.values.reduce(0, +)
+        }
     }
 
     private func computeSafetyNumber(_ peer: User) {
