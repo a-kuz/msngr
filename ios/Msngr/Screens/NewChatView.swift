@@ -172,11 +172,12 @@ struct NewChatView: View {
     }
 
     private func createGroup() async {
-        guard let chatId = try? await app.api.createChat(kind: "group",
-                                                         memberIds: Array(selected),
-                                                         title: groupTitle) else { return }
+        guard let created = try? await app.api.createChatDetailed(kind: "group",
+                                                                  memberIds: Array(selected),
+                                                                  title: groupTitle) else { return }
         try? await app.engine.refreshSnapshot()
-        onOpen(chatId)
+        await DefaultDisappearingTimer.apply(chatId: created.chatId, existedBefore: created.existed ?? false)
+        onOpen(created.chatId)
     }
 
     /// Asks for contacts access on an explicit user action, then syncs.
