@@ -326,6 +326,15 @@ frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
 
+### The gallery tab bar counts zero over a grid of round videos
+Reported 2026-08-31 by the owner («везде 0», a screenshot of «Вложения» with
+four round videos in the grid and 0 on every tab): `ChatGallery.counts`
+counted media as `photo`, `video` and album attachments while the media page
+also shows `roundVideo`, so a chat holding only round videos said «Медиа 0»
+above a full grid. Closed 2026-08-31: the count reads the same kind list the
+tab does (`GalleryTab.media.kinds`), and a test holds counts equal to the
+page's entries (`ChatGalleryTests.testCountsMatchWhatTheTabsShow`).
+
 ### A chat row's preview is replaced by an older message during install
 Reported 2026-08-31 by the owner: right after an install, a chat row in the
 list showed its last message and was then overwritten by an older one.

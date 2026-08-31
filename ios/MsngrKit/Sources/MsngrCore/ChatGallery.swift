@@ -217,10 +217,12 @@ public enum ChatGallery {
     /// found in a text message rather than one per message.
     public static func counts(_ dbc: GRDB.Database, chatId: String) throws -> [GalleryTab: Int] {
         var result: [GalleryTab: Int] = [:]
+        let plainKinds = GalleryTab.media.kinds.filter { $0 != .album }
+        let placeholders = Array(repeating: "?", count: plainKinds.count).joined(separator: ", ")
         let plainPhotoVideo = try Int.fetchOne(dbc, sql: """
             SELECT COUNT(*) FROM message
-            WHERE chatId = ? AND kind IN (?, ?) AND deletedForAll = 0
-            """, arguments: [chatId, MessageKind.photo.rawValue, MessageKind.video.rawValue]) ?? 0
+            WHERE chatId = ? AND kind IN (\(placeholders)) AND deletedForAll = 0
+            """, arguments: StatementArguments([chatId] + plainKinds.map(\.rawValue))) ?? 0
         let albums = try Message.fetchAll(dbc, sql: """
             SELECT * FROM message WHERE chatId = ? AND kind = ? AND deletedForAll = 0
             """, arguments: [chatId, MessageKind.album.rawValue])

@@ -136,6 +136,34 @@ final class ChatGalleryTests: XCTestCase {
         XCTAssertTrue(page.entries.isEmpty)
     }
 
+    /// The tab bar's count answers for the same entries the tab shows: a round
+    /// video is media, and an album counts one per attachment.
+    func testCountsMatchWhatTheTabsShow() throws {
+        let db = try AppDatabase.openInMemory()
+        try db.write { dbc in
+            for (i, kind) in [MessageKind.photo, .video, .roundVideo, .voice].enumerated() {
+                var msg = Message(id: "m\(i)", chatId: "c1", fromUserId: "peer",
+                                  sentAt: Double(i), kind: kind, text: nil,
+                                  status: .sent, isOutgoing: false)
+                msg.seq = i + 1
+                msg.media = photo("blob\(i)")
+                try msg.save(dbc)
+            }
+            var album = Message(id: "a1", chatId: "c1", fromUserId: "peer", sentAt: 10,
+                                kind: .album, text: nil, status: .sent, isOutgoing: false)
+            album.seq = 5
+            album.album = [photo("one"), photo("two")]
+            try album.save(dbc)
+        }
+        let counts = try db.read { dbc in try ChatGallery.counts(dbc, chatId: "c1") }
+        let media = try db.read { dbc in
+            try ChatGallery.page(dbc, chatId: "c1", tab: .media, after: nil)
+        }
+        XCTAssertEqual(counts[.media], media.entries.count)
+        XCTAssertEqual(counts[.media], 5)
+        XCTAssertEqual(counts[.voice], 1)
+    }
+
     /// A page is a seek into the index and a short walk: no scan of the chat and
     /// no sort. This is what keeps the grid smooth over thousands of messages.
     func testPageReadsThroughTheIndex() throws {
