@@ -175,6 +175,7 @@ struct MessageHitRow: View {
         case .album: return "photo.on.rectangle"
         case .voice: return "mic.fill"
         case .roundVideo: return "video.circle.fill"
+        case .poll: return "chart.bar"
         case .shader, .sticker: return "sparkles"
         default: return nil
         }

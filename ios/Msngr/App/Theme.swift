@@ -254,6 +254,10 @@ extension Theme {
         static let reaction = TextRole(size: 14, relativeTo: .footnote, maxSize: 26)
         static let feedNote = TextRole(size: 13, weight: .medium, relativeTo: .footnote, maxSize: 26)
         static let voiceDuration = TextRole(size: 11, relativeTo: .caption2, maxSize: 22)
+        static let pollQuestion = TextRole(size: 16, weight: .semibold, relativeTo: .subheadline, maxSize: 34)
+        static let pollOption = TextRole(size: 15, relativeTo: .subheadline, maxSize: 32)
+        static let pollMeta = TextRole(size: 12, relativeTo: .caption1, maxSize: 24)
+        static let pollPercent = TextRole(size: 13, weight: .semibold, relativeTo: .caption1, maxSize: 26)
         static let fileName = TextRole(size: 15, weight: .medium, relativeTo: .subheadline, maxSize: 32)
         /// Code spans and blocks inside a bubble: two points under body text.
         static let bubbleCode = TextRole(size: 15, relativeTo: .body, design: .monospaced, maxSize: 48)

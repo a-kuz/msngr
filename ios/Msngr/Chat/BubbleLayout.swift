@@ -242,6 +242,12 @@ enum BubbleLayout {
             voiceFrame = CGRect(x: hPadding, y: y, width: w, height: h) // a file borrows the voiceFrame slot
             contentWidth = max(contentWidth, w)
             y += h
+        case .poll:
+            let w = min(attachmentWidth + 40, maxBubbleWidth - 2 * hPadding)
+            let h = msg.poll.map { PollMessageView.height(for: $0, width: w) } ?? attachmentHeight
+            voiceFrame = CGRect(x: hPadding, y: y, width: w, height: h) // a poll borrows the voiceFrame slot
+            contentWidth = max(contentWidth, w)
+            y += h
         case .shader:
             // the shader takes a photo's width at 16:9, full bleed like a photo
             // with nothing above it, with the status capsule over the picture
@@ -532,6 +538,7 @@ enum BubbleLayout {
         case .video: return String(localized: "🎥 Video")
         case .voice: return String(localized: "🎤 Voice message")
         case .roundVideo: return String(localized: "📹 Video message")
+        case .poll: return "📊 " + (reply.text.isEmpty ? String(localized: "Poll") : reply.text)
         case .file: return "📎 " + (reply.text.isEmpty ? String(localized: "File") : reply.text)
         case .album: return String(localized: "🖼 Album")
         case .shader: return "✨ " + (reply.text.isEmpty ? String(localized: "Shader") : reply.text)
