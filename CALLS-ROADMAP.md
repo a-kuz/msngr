@@ -34,13 +34,6 @@ the caller sending the callLog envelope push-raising (NSE decrypts and shows
 frame that pushes but does not count; today those two travel together on the
 `service` flag.
 
-### Self-hosted TURN (coturn on adad)
-STUN-only ICE fails where both ends sit behind symmetric NAT (typical LTE).
-coturn on the adad server relays those calls; a package install and a
-10-line config, plus the `turn:` entry with credentials in
-`WebRTCTransport.iceServers`. Installing anything on the shared server is
-the owner's call.
-
 ## Features not built yet
 
 ### 1:1 video

@@ -26,12 +26,36 @@ public final class WebRTCTransport: NSObject, CallMediaTransport, @unchecked Sen
     private let eventStream: AsyncStream<CallTransportEvent>
     private let continuation: AsyncStream<CallTransportEvent>.Continuation
 
-    /// Servers for NAT traversal. The default is plain STUN — address
-    /// discovery only, no media through anyone. A relay for the paths STUN
-    /// cannot open would be our own coturn, added here when it exists.
-    public init(iceServers: [String] = ["stun:stun.l.google.com:19302"]) throws {
+    /// Servers for NAT traversal: plain STUN for address discovery, and our
+    /// own coturn on the stand's server relaying the paths STUN cannot open
+    /// (both ends behind symmetric NAT). Media through the relay is still
+    /// DTLS-SRTP: the relay forwards ciphertext it cannot read.
+    public struct IceServer {
+        public var urls: [String]
+        public var username: String?
+        public var credential: String?
+        public init(urls: [String], username: String? = nil, credential: String? = nil) {
+            self.urls = urls
+            self.username = username
+            self.credential = credential
+        }
+    }
+
+    public static let defaultIceServers = [
+        IceServer(urls: ["stun:stun.l.google.com:19302"]),
+        IceServer(urls: ["turn:167.235.200.232:3478?transport=udp",
+                         "turn:167.235.200.232:3478?transport=tcp"],
+                  username: "msngr", credential: "2SPcjPIWJVo-y8IYZLYTE9CJ"),
+    ]
+
+    public init(iceServers: [IceServer] = WebRTCTransport.defaultIceServers) throws {
         let config = RTCConfiguration()
-        config.iceServers = [RTCIceServer(urlStrings: iceServers)]
+        config.iceServers = iceServers.map { server in
+            if let user = server.username, let pass = server.credential {
+                return RTCIceServer(urlStrings: server.urls, username: user, credential: pass)
+            }
+            return RTCIceServer(urlStrings: server.urls)
+        }
         config.sdpSemantics = .unifiedPlan
         config.continualGatheringPolicy = .gatherContinually
         let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
