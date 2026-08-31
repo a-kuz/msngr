@@ -260,24 +260,6 @@ renamed account's old username is up for grabs the same second, so whoever
 watches it inherits the searches for @oldname. Worth deciding: highlight the
 @handle in search, a cool-down before a freed name re-enters circulation.
 
-### A chat climbs the list with no new message in it
-Seen 2026-08-27 while recording the README demo on the simulator (alfa
-fixture). After a ❤️ reaction was put on a message in «Standup», the row moved
-from fifth to second place, above chats whose last message was hours newer;
-its own time label kept saying 21.08.26. Earlier the same session «Design»
-rose above «Bravo Service» while showing «Сообщение ещё не загружено» as its
-last row, again with no content message of its own. The list is ordered by
-`chat.lastActivityAt`.
-The reaction case is closed: `applySentAck` stamped `lastActivityAt`
-unconditionally on every own ack — a reaction, an edit, a repair answer all
-lifted the chat — and now stamps it only for a send with a message row
-(`testAServiceAckDoesNotLiftTheChat`). Live on the alfa fixture: a 👍 put on
-a message in «Standup» landed on the bubble while the row stayed in place
-and its `lastActivityAt` kept its old timestamp. The «Design» sighting fits the same
-write (the repair answers the fixture kept acking), with one alternative
-still open: an incoming unreadable envelope also moves `lastActivityAt`,
-which is arguably right — it is a real message, merely unreadable yet.
-
 ### A row moving up the chat list flies through the rows above it
 Seen 2026-08-27 in the README demo recording (simulator, alfa fixture). When a
 message from «Charlie Service» lifted its row from the bottom to second place,
@@ -325,6 +307,25 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### A chat climbs the list with no new message in it
+Seen 2026-08-27 while recording the README demo on the simulator (alfa
+fixture). After a ❤️ reaction was put on a message in «Standup», the row moved
+from fifth to second place, above chats whose last message was hours newer;
+its own time label kept saying 21.08.26. Earlier the same session «Design»
+rose above «Bravo Service» while showing «Сообщение ещё не загружено» as its
+last row, again with no content message of its own. The list was ordered by
+`chat.lastActivityAt`.
+The reaction case was closed first: `applySentAck` stamped `lastActivityAt`
+unconditionally on every own ack — a reaction, an edit, a repair answer all
+lifted the chat — and now stamps it only for a send with a message row
+(`testAServiceAckDoesNotLiftTheChat`). Closed whole 2026-08-31 (5947a4a),
+after the owner reported the ordering wrong again («поправь сортировку чат
+листа», Poll Peer with today's message sat under rows from 28.08): the list
+no longer orders by `lastActivityAt` at all — the snapshot sorts by the last
+message of the journal (`serverTs`, `sentAt` unsent), pins first, and
+`lastActivityAt` stands in only for a chat with no readable rows. Live on the
+alfa fixture: pins in one tinted block, then today's rows above 27.08's.
 
 ### The gallery tab bar counts zero over a grid of round videos
 Reported 2026-08-31 by the owner («везде 0», a screenshot of «Вложения» with
