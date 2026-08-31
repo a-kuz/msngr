@@ -331,6 +331,17 @@
         }
       }
     },
+    "Saved Messages" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Избранное"
+          }
+        }
+      }
+    },
     "Message not delivered" : {
       "extractionState" : "manual",
       "localizations" : {
