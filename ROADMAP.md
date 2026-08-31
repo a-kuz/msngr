@@ -302,6 +302,14 @@ A ✅ goes in only together with a link to the evidence.
     server-side count would mean plaintext votes; anonymity is a display
     promise, the events always name their sender. (Left: showing the voters
     of a non-anonymous poll by name.)
+  - ⬜ really anonymous polls: the vote of an anonymous poll carries a
+    per-poll pseudonym — an HMAC of the account key over the poll id —
+    instead of the voter's name, so even a modified client of a member
+    cannot tell who chose what; the pseudonym stays stable across the
+    account's devices, which keeps replace-and-retract and one-person-one-vote
+    working. The server envelope still names the sender for routing: hiding
+    the voter from the server too would take blind signatures and a mix, and
+    in a three-member group the anonymity set is small whatever the crypto
 - System messages
   - ✅ «Код безопасности собеседника изменился» inserted into the feed on a
     real key change (qa/runs/2026-08-27-key-change-run.md)
