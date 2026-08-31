@@ -989,9 +989,11 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   stale label)
 - ⬜ notification settings: previews on the banner, the default sound, and the
   per-chat and per-person exceptions listed under Notifications → Sounds
-- ⬜ a privacy screen gathering what E2EE, trust, privacy lists: last seen,
-  receipts and typing, the profile's visibility, who finds me and who adds me,
-  the default disappearing timer
+- ✅ a privacy screen gathering what E2EE, trust, privacy lists: last seen,
+  receipts and typing, the profile's visibility, who finds me and who adds
+  me, who can call me, link previews and the default disappearing timer —
+  each tier with its named exceptions
+  (qa/runs/2026-09-01-privacy-screen.md)
 - ✅ language choice: the bundle ships English and Russian, iOS offers the
   per-app language on the app's page in Settings, and the app's settings show
   a «Язык» row with the current language that opens Settings
