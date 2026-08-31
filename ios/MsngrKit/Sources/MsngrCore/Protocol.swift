@@ -36,6 +36,11 @@ public enum WSOutgoing {
     case catchup(cursors: [String: Int])
     // service: a service frame (skd/reaction/edit/disappearing)
     case send(chatId: String, clientMsgId: String, sentAt: Double, body: Envelope, service: Bool)
+    /// A scheduled send: the envelope is encrypted now and journaled by the
+    /// server at dueAt (ms since epoch). The same clientMsgId sent again
+    /// before the deadline replaces the envelope and the deadline.
+    case defer_(chatId: String, clientMsgId: String, sentAt: Double, body: Envelope, dueAt: Double)
+    case deferCancel(chatId: String, clientMsgId: String)
     case recv(chatId: String, seqs: [Int])
     case read(chatId: String, upToSeq: Int)
     case typing(chatId: String, kind: String?)
@@ -54,6 +59,11 @@ public enum WSOutgoing {
             obj = ["t": "send", "chatId": chatId, "clientMsgId": clientMsgId,
                    "sentAt": sentAt, "body": try body.jsonObject()]
             if service { obj["service"] = true }
+        case .defer_(let chatId, let clientMsgId, let sentAt, let body, let dueAt):
+            obj = ["t": "defer", "chatId": chatId, "clientMsgId": clientMsgId,
+                   "sentAt": sentAt, "body": try body.jsonObject(), "dueAt": dueAt]
+        case .deferCancel(let chatId, let clientMsgId):
+            obj = ["t": "deferCancel", "chatId": chatId, "clientMsgId": clientMsgId]
         case .recv(let chatId, let seqs):
             obj = ["t": "recv", "chatId": chatId, "seqs": seqs]
         case .read(let chatId, let upToSeq):
@@ -142,6 +152,8 @@ public struct WSIncoming: Decodable {
     public let version: Int?
     /// deviceVersions: the current devices_version of every user the sync asked about
     public let versions: [String: Int]?
+    /// deferred: when the server will journal the envelope, ms since epoch
+    public let dueAt: Double?
 }
 
 public struct ChatStateDTO: Decodable {

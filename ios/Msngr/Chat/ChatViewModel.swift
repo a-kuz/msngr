@@ -819,7 +819,9 @@ final class ChatViewModel: ObservableObject {
     /// out, so nothing is left behind for it once this returns.
     func cancelScheduled(_ msg: Message) {
         let id = msg.clientMsgId ?? msg.id
-        Task { [weak self] in await self?.app.engine.cancelScheduled(clientMsgId: id) }
+        Task { [weak self] in
+            await self?.app.engine.cancelScheduled(clientMsgId: id, chatId: msg.chatId)
+        }
     }
 
     /// Moves a scheduled message to a new time.

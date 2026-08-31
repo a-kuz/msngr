@@ -169,6 +169,8 @@ history.
             deviceVersions?:{userId: v, ...}}  // the device cache held across the reconnect
 {t:"catchup", cursors:{chatId: cursor, ...}}   // the next catch-up portion
 {t:"send",  chatId, clientMsgId, sentAt, body, service?}   // body is the E2E envelope
+{t:"defer", chatId, clientMsgId, sentAt, body, dueAt}      // scheduled: journaled at dueAt (ms)
+{t:"deferCancel", chatId, clientMsgId}                     // recall a deferred envelope
 {t:"recv",  chatId, seqs:[...]}                            // → delivered receipts to the author
 {t:"read",  chatId, upToSeq}
 {t:"typing",chatId, kind}                                  // kind: a string or null (stop)
@@ -190,6 +192,7 @@ line; the rest are listed in `SyncEngine.rowlessKinds`.
 ```
 {t:"hello",   serverTime, protocol, minProtocol}
 {t:"sent",    chatId, clientMsgId, msgId, seq, ts}
+{t:"deferred",chatId, clientMsgId, dueAt}   // the server holds the envelope until dueAt
 {t:"msg",     chatId, seq, msgId, from, fromDevice, sentAt, ts, body, service?}
 {t:"receipt", chatId, kind:"delivered"|"read", upToSeq, by}
 {t:"typing",  chatId, from, kind}
