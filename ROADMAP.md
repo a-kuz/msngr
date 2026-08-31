@@ -698,7 +698,10 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   - ⬜ who can find me: by username always, by the number's hash only if I allow it
   - ⬜ who can add me to a group; everyone else can only send an invite
   - ⬜ who can call me, once calls exist
-  - ⬜ a default disappearing timer for new chats
+  - ✅ a default disappearing timer for new chats: a Privacy picker (off / 1
+    day / 1 week / 1 month) local to the device; a chat this device creates —
+    direct or group — gets one disappearing message with the chosen TTL right
+    after creation, existing chats keep theirs
   - ⬜ every one of these is enforced by the server, not only hidden in the
     interface: a hidden last seen is not in the state it sends, a receipt that is
     off never leaves the device
