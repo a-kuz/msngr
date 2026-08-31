@@ -50,6 +50,8 @@ targets:
         product: PulseProxy
       - target: NotificationService
         embed: true
+      - target: ShareExtension
+        embed: true
     info:
       path: Msngr/Info.plist
       properties:
@@ -137,6 +139,43 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ${MSNGR_APP_ID}.NotificationService
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 0.1.0
+        GENERATE_INFOPLIST_FILE: false
+
+  ShareExtension:
+    type: app-extension
+    platform: iOS
+    sources: [ShareExtension]
+    entitlements:
+      path: ShareExtension/ShareExtension.entitlements
+      properties:
+        com.apple.security.application-groups: [group.msngr.msngr]
+    dependencies:
+      - package: MsngrKit
+        product: MsngrCrypto
+      - package: MsngrKit
+        product: MsngrCore
+    info:
+      path: ShareExtension/Info.plist
+      properties:
+        CFBundleDisplayName: Msngr
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareNavigationController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsImageWithMaxCount: 10
+              NSExtensionActivationSupportsMovieWithMaxCount: 10
+              NSExtensionActivationSupportsFileWithMaxCount: 10
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsText: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ${MSNGR_APP_ID}.ShareExtension
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
