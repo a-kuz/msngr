@@ -1,6 +1,6 @@
 # Msngr — feature map
 
-Updated: 2026-08-17. The state of the `main` branch.
+Updated: 2026-09-01. The state of the `main` branch.
 
 Statuses: ✅ — in the code and confirmed by a live run, a screenshot or the
 server smoke test; 🟡 — partly done, or the code is there but it has not been
@@ -1183,19 +1183,22 @@ Decided in `docs/research/2026-08-19-per-user-do.md`; the queue orders the steps
 
 ## Up next
 
-From the open backlog (`docs/audits/2026-08-12-code-audit.md`, 37 items) and the
-topics still not closed:
+From the open backlog (`docs/audits/2026-08-12-code-audit.md`) and the topics
+still not closed:
 
-1. The badge from one source with a monotonic order, a queue in the dev APNs
-   mock (in progress).
-2. Reaction animations: particles on appearance, a rolling counter (waiting for a
-   model that can debug animation frame by frame).
-3. The media gallery, chat folders.
-4. The NSE on hardware: the extension comes up, fits into the limits, sees the
-   group container; the same run checks that what was read in the banner is in
-   the chat in airplane mode, and measures the call ceiling during an avalanche —
-   on the simulator `simctl push` does not launch the extension at all.
-5. English across the whole repository: documentation, comments, commit history;
-   an interface string catalog with English as the base language.
+1. The device run that closes the NSE family of 🟡 lines: the extension comes
+   up on hardware, fits into the limits, sees the group container; the same
+   run checks the banner-to-chat write in airplane mode, quick reply and mute
+   from the push, the coalescing window, and measures the call ceiling during
+   an avalanche — `simctl push` does not launch the extension on the simulator
+   at all. Data Protection on a locked screen rides along.
+2. Calls v2 by `CALLS-ROADMAP.md`: the SFU path, E2EE over insertable streams,
+   video; the VoIP push stays blocked on the device signing certificate.
+3. The per-user DO rework's tail: `HandleDO`, subscriptions between objects,
+   the last D1 tables moving into the user's object.
+4. Channels, stories, bots — the three plaintext surfaces not yet started.
+5. Translating the Russian that remains in older documentation by separate
+   passes; new content is English already, the interface strings live in the
+   catalog.
 6. Working through the remaining audit items in order: crashes and data loss →
    offline reliability → E2EE edge cases → UI.
