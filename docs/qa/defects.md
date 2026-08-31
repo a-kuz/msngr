@@ -6,6 +6,11 @@ with the commit that closed it.
 
 ## Open
 
+### A chat row's preview is replaced by an older message during install
+Reported 2026-08-31 by the owner: right after an install, a chat row in the
+list shows its last message and is then overwritten by an older one. The
+preview of a row must never step back to an older seq while history backfills.
+
 ### iPad with a hardware keyboard: a tap around the settings sheet crashes the app
 Found 2026-08-30 on the iPad Pro 11" simulator with ConnectHardwareKeyboard on
 (the Mac «Designed for iPad» case has a hardware keyboard always). Repro: open
