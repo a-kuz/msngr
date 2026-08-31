@@ -50,13 +50,11 @@ camera on/off toggle and front/back flip. The signaling does not change
 (the SDP renegotiates media by itself); the offer may carry `video: true`
 so the ringing screen can say what kind of call it is.
 
-### Picture-in-picture
-The ongoing call shrinks into a floating tile instead of owning the whole
-screen: in-app first (the user browses chats while talking; the tile returns
-to the full screen on tap), then the system PiP (AVPictureInPictureController
-over the remote video track) when the app goes to background. In-app PiP is
-simulator-checkable; system PiP for video calls needs a device entitlement
-check.
+### System picture-in-picture
+The in-app fold (the floating tile over the chats) is shipped; what remains
+is the system PiP — AVPictureInPictureController over the remote video track
+when the app goes to background. Needs 1:1 video first, and a device for the
+entitlement check.
 
 ### Group calls
 A different animal: P2P mesh does not scale past three, so this is an SFU —
