@@ -1011,6 +1011,14 @@ right after picking a timer, and the sender's own outgoing messages got no
 `disappearing` payload to the chat row in the same transaction that queues
 it, the way an edit already took effect at enqueue.
 
+### Smoke: «no push for own echo» failed once under host load
+Seen 2026-09-01 while running `server/test/smoke.mjs` on a local stand for the
+call-privacy work, with several xcodebuilds sharing the host. One run out of
+three reported the failure; the two others were green on the same code, and
+the case is untouched by the branch. Looks timing-dependent under load, the
+way the cmid-sweep case below was before its stand vars were found. Not
+reproduced in isolation; left open as a symptom to watch on gate runs.
+
 ### Smoke: «cmid swept behind the sender's ack» fails — stand config, not a defect
 Found 2026-08-31 while running `server/test/smoke.mjs` for the avatar-privacy
 work; the resend of `cm-w1` after the sweep never came back with a fresh seq.
