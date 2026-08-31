@@ -903,6 +903,20 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 
 ## Calls
 
+- ✅ 1:1 audio over WebRTC: signaling as E2EE `call` service messages on the
+  existing send path (no server change), CallManager behind a transport seam
+  (glare, busy, timeout, held ICE, another device's echo — CallManagerTests),
+  the WebRTC binary in its own MsngrCalls package, the call screen and the
+  dial button in a direct chat's header; rings only over a live socket by
+  design in v1 (a `call` frame is service: no unread, no push)
+  (live two-simulator run 2026-08-31)
+- ✅ the call log row in the feed: sent by the caller alone on hang-up
+  (`callLog`, deduplicated), outgoing / incoming / missed with the duration,
+  «📞» previews in the chat list, a tap redials (live run 2026-08-31)
+- ⬜ a VoIP/call push so an incoming call rings with the app closed (blocked
+  on the dev signing certificate for device pushes)
+- ⬜ our own TURN (coturn on the stand) for NAT paths STUN cannot cross — a
+  system change on the shared server, the owner's call
 - ⬜ 1:1 audio on CF Calls, the provider behind our own protocol
 - ⬜ end-to-end encryption over insertable streams
 - ⬜ a video call
