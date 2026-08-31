@@ -1003,3 +1003,12 @@ right after picking a timer, and the sender's own outgoing messages got no
 `expiresAt` on their device. Closed: `SyncEngine.enqueue` applies a
 `disappearing` payload to the chat row in the same transaction that queues
 it, the way an edit already took effect at enqueue.
+
+### Smoke: «cmid swept behind the sender's ack» fails
+Found 2026-08-31 in passing while running `server/test/smoke.mjs` for the
+avatar-privacy work: the check at smoke.mjs:1900 fails on every run — the
+resend of `cm-w1` after the sweep never comes back with a fresh seq
+(`w1fresh` is null). Reproduced identically on a clean HEAD checkout
+(b013ccf) against its own stand on another port, so it is not introduced
+by the avatar-privacy change. Not investigated further; the dedup sweep or
+the test's expectations around it need a separate look.

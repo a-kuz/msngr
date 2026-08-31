@@ -638,14 +638,17 @@ export class UserDO implements DurableObject {
       case "/profile-changed": {
         // the card travels the same road as presence: out through every chat
         // this user is in, and to their own other devices
-        const b = (await req.json()) as { user: PublicUser };
+        // `peerUser` is the card as other users may see it: the worker blanks a
+        // hidden photo and bio there, while the user's own devices get it whole
+        const b = (await req.json()) as { user: PublicUser; peerUser?: PublicUser };
+        const peerUser = b.peerUser ?? b.user;
         this.broadcast({ t: "profile", user: b.user });
         const ids = await this.chatIds();
         const results = await Promise.allSettled(
           ids.map(async (chatId) => {
             const res = await this.convStub(chatId).fetch("https://do/profile", {
               method: "POST",
-              body: JSON.stringify({ userId: b.user.id, user: b.user }),
+              body: JSON.stringify({ userId: b.user.id, user: peerUser }),
             });
             if (!res.ok) throw new Error(`status ${res.status}`);
           })
