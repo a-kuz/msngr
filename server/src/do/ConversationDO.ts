@@ -1,5 +1,5 @@
 import type { Env, ChatState, ChatMember, ChatPolicy, StoredMsg, ServerFrame, PublicUser } from "../types";
-import { json, err, seqKey, SEQ_PAD, nowSec, shouldArmAlarm, readPrivacy, isContactOf } from "../util";
+import { json, err, seqKey, SEQ_PAD, nowSec, shouldArmAlarm, readPrivacy, privacyAllows } from "../util";
 import {
   newCounters, snapshot, diff, logPerf, wrapState, wrapDB, wrapStub, type PerfCounters,
 } from "../perf";
@@ -1229,19 +1229,15 @@ export class ConversationDO implements DurableObject {
         // the presence of a recipient who has not accepted stays hidden from the requester
         if (!members.get(b.userId)?.accepted) return json({ ok: true });
         if (await this.blockedEitherWay(b.userId)) return json({ ok: true });
-        // last seen hidden by the person it belongs to: nobody in the chat gets the frame
+        // whether each member may see this presence is the owner's tier and
+        // their named exceptions; a member who hid their own last seen is
+        // blinded to everyone else's the same as a blocked one
         const ownTier = (await readPrivacy(this.env.DB, b.userId)).lastSeen;
-        if (ownTier === "nobody") return json({ ok: true });
-        // hiding last seen also blinds you to everyone else's, so a member who hid
-        // their own is skipped the same as a blocked one; the contacts tier skips
-        // whoever the owner does not hold in their own address book
         const hidden = await Promise.all(
           [...members.keys()].map(async (u) => {
+            if (u === b.userId) return { u, hidden: false };
             if ((await readPrivacy(this.env.DB, u)).lastSeen === "nobody") return { u, hidden: true };
-            if (ownTier === "contacts" && u !== b.userId) {
-              return { u, hidden: !(await isContactOf(this.env, b.userId, u)) };
-            }
-            return { u, hidden: false };
+            return { u, hidden: !(await privacyAllows(this.env, b.userId, u, "last_seen", ownTier)) };
           })
         );
         const skip = [...await this.blockedPeers(b.userId), ...hidden.filter((h) => h.hidden).map((h) => h.u)];
