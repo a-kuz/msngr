@@ -54,6 +54,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private var roundSoundLayer: AVPlayerLayer?
     private let roundRing = RoundProgressRing()
     private var roundCancellable: AnyCancellable?
+    private var karaokeCancellable: AnyCancellable?
     /// how many people besides the sender this chat's notes reach
     var noteRecipients = 1
     private let noteDots = NoteDotsView()
@@ -64,6 +65,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     var ownUserId = ""
     /// the full chosen set after a tap on a poll option
     var onVotePoll: (([Int]) -> Void)?
+    var onTranscript: (() -> Void)?
     private let shaderView = ShaderMessageView()
     /// A sticker: the same live view with nothing painted behind the shader.
     private let stickerView = ShaderMessageView(transparent: true)
@@ -142,6 +144,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         bubbleView.addSubview(voiceView)
         pollView.isHidden = true
         pollView.onVote = { [weak self] votes in self?.onVotePoll?(votes) }
+        voiceView.onTranscript = { [weak self] in self?.onTranscript?() }
         bubbleView.addSubview(pollView)
         shaderView.isHidden = true
         shaderView.isUserInteractionEnabled = true
@@ -162,6 +165,11 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         // a round video playing in another chat is right the moment this cell is reused
         roundCancellable = RoundVideoPlayer.shared.$state
             .sink { [weak self] state in self?.applyRoundVideo(state) }
+
+        // an unfolded transcript underlines what has been spoken, following the
+        // player the same way the waveform does
+        karaokeCancellable = VoicePlayer.shared.$state
+            .sink { [weak self] state in self?.applyKaraoke(state) }
 
         // the avatar lives outside the bubble: press dips and swipe-to-reply move
         // the bubble alone, the face stays put the way it does in Telegram
@@ -493,6 +501,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             voiceView.frame = vf
             voiceView.configure(msg: msg, outgoing: plan.isOutgoing)
             pollView.isHidden = true
+            // a cell configured mid-playback picks the boundary up at once
+            applyKaraoke(VoicePlayer.shared.state)
         } else {
             voiceView.isHidden = true
             pollView.isHidden = true
@@ -918,6 +928,19 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     /// The sound player moved: only the circle of the message it is on renders
     /// its layer and the progress ring; every other circle goes back to the
     /// muted loop.
+    /// The playback boundary over the unfolded transcript, interpolated inside
+    /// the current word from the player's progress and the take's duration.
+    private func applyKaraoke(_ state: VoicePlayback) {
+        guard let msg, msg.kind == .voice, msg.transcriptShown,
+              !msg.transcriptSpans.isEmpty, !textView.isHidden else { return }
+        guard state.msgId == msg.id else {
+            textView.setKaraoke(length: 0)
+            return
+        }
+        let time = state.progress * (msg.media?.dur ?? 0)
+        textView.setKaraoke(length: TranscriptSpan.spokenLength(msg.transcriptSpans, at: time))
+    }
+
     private func applyRoundVideo(_ state: RoundVideoPlayback) {
         guard let msg, msg.kind == .roundVideo, state.msgId == msg.id,
               let iv = mediaViews.first else {

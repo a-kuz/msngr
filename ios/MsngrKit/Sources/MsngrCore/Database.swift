@@ -539,6 +539,16 @@ public enum AppDatabase {
             // (`message_on_chat_feedOrder`), so this index has no reader left.
             try db.execute(sql: "DROP INDEX message_on_chat_activity")
         }
+        m.registerMigration("v32-voiceTranscript") { db in
+            try db.alter(table: "message") { t in
+                // the on-device transcript of a voice message; local only
+                t.add(column: "transcript", .text)
+                // the transcript's word timings (JSON [TranscriptSpan])
+                t.add(column: "transcriptSpans", .text).notNull().defaults(to: "[]")
+                // whether the transcript is unfolded under the waveform
+                t.add(column: "transcriptShown", .boolean).notNull().defaults(to: false)
+            }
+        }
         return m
     }
 }
@@ -588,6 +598,9 @@ extension Message {
         listenedBy = (row["listenedBy"] as String?).flatMap { try? dec.decode([String].self, from: Data($0.utf8)) } ?? []
         poll = (row["poll"] as String?).flatMap { try? dec.decode(PollInfo.self, from: Data($0.utf8)) }
         pollVotes = (row["pollVotes"] as String?).flatMap { try? dec.decode([String: [Int]].self, from: Data($0.utf8)) } ?? [:]
+        transcript = row["transcript"]
+        transcriptSpans = (row["transcriptSpans"] as String?).flatMap { try? dec.decode([TranscriptSpan].self, from: Data($0.utf8)) } ?? []
+        transcriptShown = row["transcriptShown"]
     }
 
     public func encode(to container: inout PersistenceContainer) throws {
@@ -626,5 +639,8 @@ extension Message {
         container["listenedBy"] = js(listenedBy) ?? "[]"
         container["poll"] = js(poll)
         container["pollVotes"] = js(pollVotes) ?? "{}"
+        container["transcript"] = transcript
+        container["transcriptSpans"] = js(transcriptSpans) ?? "[]"
+        container["transcriptShown"] = transcriptShown
     }
 }

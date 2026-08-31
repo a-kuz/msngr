@@ -432,10 +432,13 @@ final class VoiceMessageView: UIView {
     private let fileIcon = UIImageView(image: UIImage(systemName: "doc.fill"))
     private let fileName = UILabel()
     private let rateButton = UIButton(type: .system)
+    private let transcriptButton = UIButton(type: .system)
+    private let transcriptSpinner = UIActivityIndicatorView(style: .medium)
     private var msg: Message?
     private var playback = VoicePlayback()
     private var playIcon = "play.circle.fill"
     private var cancellables: Set<AnyCancellable> = []
+    var onTranscript: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -449,10 +452,21 @@ final class VoiceMessageView: UIView {
         rateButton.addTarget(self, action: #selector(cycleRate), for: .touchUpInside)
         rateButton.layer.cornerRadius = 8
         rateButton.isHidden = true
+        transcriptButton.setImage(UIImage(systemName: "textformat",
+                                          withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)),
+                                  for: .normal)
+        transcriptButton.accessibilityIdentifier = "voice.transcript"
+        transcriptButton.accessibilityLabel = String(localized: "Transcript")
+        transcriptButton.addTarget(self, action: #selector(tapTranscript), for: .touchUpInside)
+        transcriptButton.layer.cornerRadius = 8
+        transcriptButton.layer.borderWidth = 1
+        transcriptSpinner.hidesWhenStopped = true
         addSubview(playButton)
         addSubview(waveform)
         addSubview(durationLabel)
         addSubview(rateButton)
+        addSubview(transcriptButton)
+        addSubview(transcriptSpinner)
         addSubview(fileIcon)
         addSubview(fileName)
         waveform.onSeek = { [weak self] fraction in
@@ -467,6 +481,16 @@ final class VoiceMessageView: UIView {
         // message playing in another chat is right the moment this one is reused
         VoicePlayer.shared.$state
             .sink { [weak self] state in self?.apply(state) }
+            .store(in: &cancellables)
+
+        // the spinner follows recognition wherever it was started, so a cell
+        // reused mid-work still shows it; the availability probe answers
+        // asynchronously and unhides the button when it lands
+        TranscriptWork.shared.$inFlight
+            .sink { [weak self] _ in self?.applyTranscriptWork() }
+            .store(in: &cancellables)
+        TranscriptWork.shared.$available
+            .sink { [weak self] _ in self?.applyTranscriptWork() }
             .store(in: &cancellables)
     }
 
@@ -501,6 +525,13 @@ final class VoiceMessageView: UIView {
         rateButton.isHidden = true
         fileIcon.isHidden = isVoice
         fileName.isHidden = isVoice
+        transcriptButton.tintColor = tint
+        transcriptButton.layer.borderColor = tint.withAlphaComponent(0.5).cgColor
+        // the unfolded state reads as a pressed button
+        transcriptButton.backgroundColor = msg.transcriptShown ? tint.withAlphaComponent(0.25) : .clear
+        transcriptSpinner.color = tint
+        if isVoice { TranscriptWork.shared.probeIfNeeded() }
+        applyTranscriptWork()
         if isVoice {
             waveform.amplitudes = msg.media?.waveform ?? []
             let raw = msg.media?.dur ?? 0
@@ -560,6 +591,27 @@ final class VoiceMessageView: UIView {
         VoicePlayer.shared.cycleRate()
     }
 
+    @objc private func tapTranscript() {
+        Haptics.light()
+        onTranscript?()
+    }
+
+    /// The button shows only where a tap can do something: a cached transcript
+    /// always folds and unfolds, a fresh take needs recognition available on
+    /// this device. While recognition runs the button gives way to a spinner.
+    private func applyTranscriptWork() {
+        guard let msg, msg.kind == .voice else {
+            transcriptButton.isHidden = true
+            transcriptSpinner.stopAnimating()
+            return
+        }
+        let working = TranscriptWork.shared.inFlight.contains(msg.id)
+        let usable = !(msg.transcript ?? "").isEmpty || TranscriptWork.shared.available == true
+        transcriptButton.isHidden = working || !usable
+        if working { transcriptSpinner.startAnimating() } else { transcriptSpinner.stopAnimating() }
+        setNeedsLayout()
+    }
+
     /// A tap on the wave of the message that is playing moves inside it; on any other
     /// message it starts that one from the point touched.
     private func seek(to fraction: Double) {
@@ -609,7 +661,14 @@ final class VoiceMessageView: UIView {
         let left = button + 8
         let labelH = ceil(durationLabel.font.lineHeight)
         let waveH = h - labelH - 5
-        waveform.frame = CGRect(x: left, y: 2, width: bounds.width - left, height: waveH)
+        // the transcript button (or its spinner) takes the right edge of the
+        // wave's row; with neither shown the wave gets the row whole
+        let tSide: CGFloat = 24
+        let reserve: CGFloat = (transcriptButton.isHidden && !transcriptSpinner.isAnimating) ? 0 : tSide + 6
+        waveform.frame = CGRect(x: left, y: 2, width: bounds.width - left - reserve, height: waveH)
+        transcriptButton.frame = CGRect(x: bounds.width - tSide, y: 2 + (waveH - tSide) / 2,
+                                        width: tSide, height: tSide)
+        transcriptSpinner.center = CGPoint(x: transcriptButton.frame.midX, y: transcriptButton.frame.midY)
         // the voice duration is measured so the speed can sit right next to it; a file
         // puts its size in the same label and has the row to itself
         let durationWidth = msg?.kind == .voice

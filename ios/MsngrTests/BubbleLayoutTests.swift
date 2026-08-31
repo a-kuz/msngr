@@ -21,6 +21,28 @@ final class BubbleLayoutTests: XCTestCase {
                           showTail: true, showName: false, authorName: nil)
     }
 
+    /// An unfolded voice transcript reads as message text under the waveform
+    /// and grows the bubble; folded, the bubble stays single-storey.
+    func testVoiceTranscriptUnfoldsUnderTheWaveform() {
+        var m = Message(id: UUID().uuidString, chatId: "c", fromUserId: "me",
+                        sentAt: 1_700_000_000, kind: .voice, text: nil,
+                        status: .read, isOutgoing: true)
+        m.seq = 1
+        m.transcript = "ну привет, я записал голосовое"
+        let folded = BubbleLayout.plan(for: m, width: width, tightGap: false,
+                                       showTail: true, showName: false, authorName: nil)
+        XCTAssertNil(folded.textFrame, "a folded transcript draws nothing")
+
+        m.transcriptShown = true
+        let unfolded = BubbleLayout.plan(for: m, width: width, tightGap: false,
+                                         showTail: true, showName: false, authorName: nil)
+        let tf = try! XCTUnwrap(unfolded.textFrame)
+        let vf = try! XCTUnwrap(unfolded.voiceFrame)
+        XCTAssertEqual(unfolded.text?.string, m.transcript)
+        XCTAssertGreaterThanOrEqual(tf.minY, vf.maxY, "the text sits under the waveform")
+        XCTAssertGreaterThan(unfolded.cellHeight, folded.cellHeight)
+    }
+
     /// Case 1: short single-line text — the time sits inline on the same line.
     func testShortTextTimeInline() {
         let p = plan("Hello")

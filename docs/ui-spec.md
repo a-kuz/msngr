@@ -245,6 +245,20 @@ up when they return. The plate of the message being played shows a pause icon
 and a speed button stepping ×1 → ×1,5 → ×2; the speed belongs to the player and
 carries on to the next message.
 
+An «Aa» button at the right edge of the wave transcribes the take on the
+device (`VoiceTranscriber`): SpeechAnalyzer for the languages its on-device
+models cover, SFSpeechRecognizer pinned to on-device recognition for the rest
+(Russian among them). The button shows only where a tap can do something — a
+cached transcript always folds and unfolds, a fresh take needs recognition
+available on this device (the simulator ships no speech models, so there the
+button appears only on messages already transcribed). While recognition runs
+the button gives way to a spinner; the result and its word timings are written
+onto the message row (`transcript`, `transcriptSpans`, local only), so the next
+tap is instant, and the unfolded state (`transcriptShown`) survives reopening
+the chat. The transcript reads as ordinary message text under the waveform,
+and while the message plays, the spoken words are underlined, the boundary
+interpolated inside the current word from the player's progress.
+
 ## Shader messages
 
 A shader is user code in the Shadertoy dialect of GLSL, carried as a

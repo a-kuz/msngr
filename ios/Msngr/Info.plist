@@ -50,6 +50,8 @@
 	<string>Запись голосовых сообщений</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Выбор фото и видео для отправки</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Транскрипт голосовых сообщений на устройстве</string>
 	<key>NSUserActivityTypes</key>
 	<array>
 		<string>INSendMessageIntent</string>
