@@ -62,10 +62,13 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private let voiceView = VoiceMessageView()
     private let pollView = PollMessageView()
     private let contactView = ContactMessageView()
+    private let callView = CallMessageView()
     private let locationView = LocationMessageView()
     /// a tap on a contact or location bubble, asking for its sheet
     var onOpenContact: (() -> Void)?
     var onOpenLocation: (() -> Void)?
+    /// a tap on a call row, asking to dial the peer again
+    var onRedial: (() -> Void)?
     /// who this device is, for the poll's own-vote state
     var ownUserId = ""
     /// the full chosen set after a tap on a poll option
@@ -162,6 +165,9 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         locationView.isHidden = true
         locationView.onOpen = { [weak self] in self?.onOpenLocation?() }
         bubbleView.addSubview(locationView)
+        callView.isHidden = true
+        callView.onRedial = { [weak self] in self?.onRedial?() }
+        bubbleView.addSubview(callView)
         shaderView.isHidden = true
         shaderView.isUserInteractionEnabled = true
         shaderView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(shaderTapped)))
@@ -506,10 +512,17 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         // media
         configureMedia(msg: msg, plan: plan)
 
-        // voice / file / poll / contact / location — they share the layout slot
+        // voice / file / poll / contact / location / call — they share the layout slot
         contactView.isHidden = true
         locationView.isHidden = true
-        if let vf = plan.voiceFrame, msg.kind == .poll {
+        callView.isHidden = true
+        if let vf = plan.voiceFrame, msg.kind == .call {
+            voiceView.isHidden = true
+            pollView.isHidden = true
+            callView.isHidden = false
+            callView.frame = vf
+            callView.configure(msg: msg, outgoing: plan.isOutgoing)
+        } else if let vf = plan.voiceFrame, msg.kind == .poll {
             voiceView.isHidden = true
             pollView.isHidden = false
             pollView.frame = vf

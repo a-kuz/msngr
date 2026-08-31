@@ -87,6 +87,55 @@ public struct CallSignal: Codable, Equatable, Sendable {
     }
 }
 
+/// The record a finished call leaves in the feed: who called whom and how it
+/// ended. The caller sends it once the call is over, service-flagged like a
+/// group event — a seq and a feed row on both sides, no unread count and no
+/// push. The callee's side derives direction from the row's sender.
+public struct CallLog: Codable, Equatable, Sendable {
+    public enum Outcome: String, Codable, Sendable {
+        /// media flowed; `duration` says for how long
+        case completed
+        /// nobody picked up: the caller gave up or ran out of ring time
+        case missed
+        case declined
+        case busy
+        case failed
+    }
+
+    public var outcome: Outcome
+    /// completed only: seconds of talk
+    public var duration: Double?
+    public var callId: String
+
+    public init(outcome: Outcome, duration: Double? = nil, callId: String) {
+        self.outcome = outcome
+        self.duration = duration
+        self.callId = callId
+    }
+
+    /// The `ContentPayload` kind a call log travels under.
+    public static let kind = "callLog"
+    /// Marks the text of a `.call` feed row as a call log.
+    public static let prefix = "call:"
+
+    /// The form the message row and the envelope carry.
+    public var encoded: String {
+        guard let data = try? JSONEncoder().encode(self),
+              let json = String(data: data, encoding: .utf8) else { return Self.prefix }
+        return Self.prefix + json
+    }
+
+    public static func decode(_ text: String?) -> CallLog? {
+        guard let text, text.hasPrefix(prefix) else { return nil }
+        return try? JSONDecoder().decode(CallLog.self, from: Data(text.dropFirst(prefix.count).utf8))
+    }
+}
+
+extension Message {
+    /// The call log of a `.call` row, decoded from its text.
+    public var callLog: CallLog? { CallLog.decode(text) }
+}
+
 /// A call signal as it reaches the running call machinery.
 public struct CallSignalEvent: Sendable {
     public let chatId: String

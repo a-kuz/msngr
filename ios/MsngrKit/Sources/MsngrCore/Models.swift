@@ -121,7 +121,7 @@ public enum MessageStatus: Int, Codable, Comparable {
 
 public enum MessageKind: String, Codable {
     case text, photo, video, file, voice, album, contact, system, shader, sticker, roundVideo, poll,
-         location
+         location, call
 }
 
 /// A person's card as the sender shared it: what the contact picker handed

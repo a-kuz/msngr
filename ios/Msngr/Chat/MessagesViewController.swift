@@ -30,6 +30,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     var onShowPollVoters: ((Message) -> Void)?
     var onOpenContact: ((Message) -> Void)?
     var onOpenLocation: ((Message) -> Void)?
+    var onRedial: (() -> Void)?
     var onTranscript: ((Message) -> Void)?
     var onRetranscribe: ((Message) -> Void)?
     /// The message the chat holds pinned, so the context menu of that one offers
@@ -571,6 +572,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         cell.onShowPollVoters = { [weak self] in self?.onShowPollVoters?(msg) }
         cell.onOpenContact = { [weak self] in self?.onOpenContact?(msg) }
         cell.onOpenLocation = { [weak self] in self?.onOpenLocation?(msg) }
+        cell.onRedial = { [weak self] in self?.onRedial?() }
         cell.onTranscript = { [weak self] in self?.onTranscript?(msg) }
         cell.onRetranscribe = { [weak self] in self?.onRetranscribe?(msg) }
         cell.configure(msg: msg, plan: plan, avatar: avatar)
