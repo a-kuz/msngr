@@ -26,6 +26,9 @@ public actor SyncEngine {
 
     /// typing events are never stored, they go straight to UI subscribers
     public nonisolated let typingStream = Broadcast<(chatId: String, userId: String, kind: String?)>()
+    /// call signaling is never stored either: it goes straight to the call
+    /// engine, which judges each signal against the call it is running
+    public nonisolated let callSignalStream = Broadcast<CallSignalEvent>()
     /// connection state for the UI (the "connecting…" subtitle instead of stale
     /// presence); a subscriber gets the current state immediately
     public nonisolated let connectionStream = Broadcast<Bool>(initial: false)
@@ -798,6 +801,9 @@ public actor SyncEngine {
                         ?? .undecryptable(reason: "exception")
                 }
                 switch result {
+                case .content(let payload) where payload.kind == CallSignal.kind:
+                    deliverCallSignal(payload, chatId: item.chatId, from: item.from,
+                                      fromDevice: item.fromDevice, sentAt: item.sentAt)
                 case .content(let payload) where !Self.repairKinds.contains(payload.kind):
                     content.append((item, payload))
                     if payload.kind == "reaction", payload.emoji != nil, item.from != ownUserId {
@@ -1496,6 +1502,14 @@ public actor SyncEngine {
         case .senderKeyDistribution(let keyChatId, let keyId):
             await confirmSenderKeyDistribution(chatId: keyChatId, keyId: keyId, to: from)
         case .content(let content), .identityChanged(_, .some(let content)):
+            if content.kind == CallSignal.kind {
+                deliverCallSignal(content, chatId: chatId, from: from,
+                                  fromDevice: fromDevice, sentAt: sentAt)
+                if case .identityChanged(let uid, _) = result {
+                    await insertSystemMessage(chatId: chatId, text: "identity_changed:\(uid)")
+                }
+                return
+            }
             if await handleRepairContent(content, chatId: chatId, from: from, fromDevice: fromDevice) {
                 if case .identityChanged(let uid, _) = result {
                     await insertSystemMessage(chatId: chatId, text: "identity_changed:\(uid)")
@@ -1513,6 +1527,25 @@ public actor SyncEngine {
             MsngrLog.repair.error(
                 "undecryptable reached storage chat=\(chatId, privacy: .public) seq=\(seq, privacy: .public) reason=\(reason, privacy: .public)")
         }
+    }
+
+    /// Hands a call signal to the call engine, in memory only. A stale offer —
+    /// one whose caller has long stopped ringing, replayed from the journal —
+    /// is dropped here; everything else is judged by the engine against the
+    /// call it belongs to.
+    private func deliverCallSignal(_ content: ContentPayload, chatId: String,
+                                   from: String, fromDevice: String, sentAt: Double) {
+        guard let signal = CallSignal.decode(content.text), signal.isFresh(sentAt: sentAt) else { return }
+        callSignalStream.send(CallSignalEvent(chatId: chatId, fromUserId: from,
+                                              fromDeviceId: fromDevice, sentAt: sentAt, signal: signal))
+    }
+
+    /// Sends one step of a call's signaling into the chat: service content,
+    /// so it takes a seq but raises no unread count, no push and no feed row.
+    public func sendCallSignal(_ signal: CallSignal, chatId: String) async {
+        var content = ContentPayload(kind: CallSignal.kind)
+        content.text = signal.encoded
+        try? await enqueue(content: content, chatId: chatId)
     }
 
     func applyContent(_ content: ContentPayload, chatId: String,
@@ -1572,6 +1605,8 @@ public actor SyncEngine {
         case "disappearing":
             try dbc.execute(sql: "UPDATE chat SET ttlSeconds = ? WHERE id = ?",
                             arguments: [content.ttlSeconds ?? 0, chatId])
+        case CallSignal.kind:
+            break // in-memory only, delivered before the write reaches here
         case GroupEvent.kind:
             try SyncEngine.storeGroupEvent(dbc, content, chatId: chatId, seq: seq,
                                            from: from, sentAt: sentAt, ts: ts, ownUserId: ownUserId)
@@ -1667,6 +1702,8 @@ public actor SyncEngine {
                 }
             case "disappearing":
                 break // the chat's current TTL is in its state; a historic change is not replayed
+            case CallSignal.kind:
+                break // history never rings; a live signal reaches the engine on the socket path
             case GroupEvent.kind:
                 try SyncEngine.storeGroupEvent(dbc, content, chatId: chatId, seq: seq,
                                                from: from, sentAt: sentAt, ts: ts, ownUserId: ownUserId)
@@ -2027,7 +2064,7 @@ public actor SyncEngine {
     /// Content that goes out service-flagged: it takes a seq and reaches
     /// everyone, but raises no unread count and no push.
     public static let serviceKinds: Set<String> =
-        Set(["edit", "reaction", "disappearing", "listened", "pollVote", GroupEvent.kind])
+        Set(["edit", "reaction", "disappearing", "listened", "pollVote", CallSignal.kind, GroupEvent.kind])
         .union(SyncEngine.repairKinds)
 
     /// Service content with no feed row of its own. A group event is the
