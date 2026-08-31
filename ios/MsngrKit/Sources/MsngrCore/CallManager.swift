@@ -75,12 +75,16 @@ public actor CallManager {
     public typealias TransportFactory = @Sendable () throws -> CallMediaTransport
     public typealias SignalSender = @Sendable (CallSignal, String) async -> Void
     public typealias LogSender = @Sendable (CallLog, String) async -> Void
+    /// Whether this user's call-privacy setting lets `userId` ring this
+    /// device. Judged on the callee: the signaling is E2EE, so no server can.
+    public typealias CallGate = @Sendable (_ userId: String) async -> Bool
 
     public nonisolated let stateStream = Broadcast<CallState>(initial: CallState())
 
     private let ownUserId: String
     private let sendSignal: SignalSender
     private let sendLog: LogSender
+    private let mayCall: CallGate
     private let makeTransport: TransportFactory
     private let dialTimeout: TimeInterval
     /// this device dialed the running call; the caller alone publishes its log
@@ -102,18 +106,21 @@ public actor CallManager {
 
     public init(ownUserId: String, sendSignal: @escaping SignalSender,
                 sendLog: @escaping LogSender = { _, _ in },
+                mayCall: @escaping CallGate = { _ in true },
                 makeTransport: @escaping TransportFactory,
                 dialTimeout: TimeInterval = CallSignal.offerLifetime) {
         self.ownUserId = ownUserId
         self.sendSignal = sendSignal
         self.sendLog = sendLog
+        self.mayCall = mayCall
         self.makeTransport = makeTransport
         self.dialTimeout = dialTimeout
     }
 
     /// Wires the manager to a running engine: signals out through it, signals
     /// in from its stream.
-    public init(engine: SyncEngine, makeTransport: @escaping TransportFactory) {
+    public init(engine: SyncEngine, mayCall: @escaping CallGate = { _ in true },
+                makeTransport: @escaping TransportFactory) {
         self.init(ownUserId: engine.ownUserId,
                   sendSignal: { [weak engine] signal, chatId in
                       await engine?.sendCallSignal(signal, chatId: chatId)
@@ -121,6 +128,7 @@ public actor CallManager {
                   sendLog: { [weak engine] log, chatId in
                       await engine?.sendCallLog(log, chatId: chatId)
                   },
+                  mayCall: mayCall,
                   makeTransport: makeTransport)
         let signals = engine.callSignalStream.subscribe()
         Task { [weak self] in
@@ -259,6 +267,23 @@ public actor CallManager {
             return
         }
         // one call at a time: a second offer is answered busy, wherever from
+        guard case .idle = state.phase else {
+            if event.signal.callId != state.callId {
+                await sendSignal(CallSignal(type: .end, callId: event.signal.callId, reason: .busy),
+                                 event.chatId)
+            }
+            return
+        }
+        // the callee's own privacy: an offer from someone the setting shuts
+        // out is answered busy — the same answer as being on another call, so
+        // the caller learns nothing — and this device never rings. Judged
+        // here because the signaling is E2EE and no server sees the offer.
+        guard await mayCall(event.fromUserId) else {
+            await sendSignal(CallSignal(type: .end, callId: event.signal.callId, reason: .busy),
+                             event.chatId)
+            return
+        }
+        // a call may have started while the gate was being judged
         guard case .idle = state.phase else {
             if event.signal.callId != state.callId {
                 await sendSignal(CallSignal(type: .end, callId: event.signal.callId, reason: .busy),

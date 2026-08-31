@@ -31,6 +31,7 @@ struct PrivacyView: View {
     @State private var avatar = AvatarVisibility.everyone
     @State private var phoneDiscovery = LastSeenVisibility.everyone
     @State private var groupInvites = LastSeenVisibility.everyone
+    @State private var callPrivacy = LastSeenVisibility.everyone
     @State private var readReceipts = true
     @State private var typing = true
     @State private var loaded = false
@@ -116,6 +117,24 @@ struct PrivacyView: View {
             }
 
             Section {
+                Picker(selection: $callPrivacy) {
+                    ForEach(LastSeenVisibility.allCases) { option in
+                        Text(option.label).tag(option)
+                    }
+                } label: {
+                    Label("Who can call me", systemImage: "phone")
+                }
+                .accessibilityIdentifier("privacy.callPrivacy")
+                NavigationLink {
+                    PrivacyExceptionsView(setting: "call", title: "Who can call me")
+                } label: {
+                    Text("Exceptions")
+                }
+            } footer: {
+                Text("A call from anyone else is answered busy, without ringing.")
+            }
+
+            Section {
                 Toggle(isOn: $readReceipts) {
                     Label("Read receipts", systemImage: "checkmark.circle")
                 }
@@ -187,6 +206,13 @@ struct PrivacyView: View {
                 if (try? await api.setPrivacy(groupInvites: new.rawValue)) == nil { groupInvites = old }
             }
         }
+        .onChange(of: callPrivacy) { old, new in
+            guard loaded else { return }
+            Task {
+                guard let api = app.api else { return }
+                if (try? await api.setPrivacy(callPrivacy: new.rawValue)) == nil { callPrivacy = old }
+            }
+        }
         .onChange(of: readReceipts) { old, new in
             guard loaded else { return }
             Task {
@@ -209,6 +235,7 @@ struct PrivacyView: View {
         avatar = AvatarVisibility(rawValue: p.avatar) ?? .everyone
         phoneDiscovery = LastSeenVisibility(rawValue: p.phoneDiscovery) ?? .everyone
         groupInvites = LastSeenVisibility(rawValue: p.groupInvites) ?? .everyone
+        callPrivacy = LastSeenVisibility(rawValue: p.callPrivacy) ?? .everyone
         readReceipts = p.readReceipts
         typing = p.typing
         loaded = true
