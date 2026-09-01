@@ -54,52 +54,6 @@ report appeared in DiagnosticReports. Not reproducible on this build; nothing
 was changed for it, because a workaround with no reproduction to answer would
 be blind.
 
-### «Сообщение ещё не загружено» placeholders pile up in the fixture group
-Seen 2026-08-28 in the «Design» fixture chat: twenty identical placeholders
-filling a screen between two content messages. Measured on the device
-database: the 616-seq hole between the two messages holds 323 unreadable seqs
-that are not contiguous — the numbers in between were never recorded as gaps —
-and the feed made one placeholder per contiguous run, about ninety of them.
-Closed by 37841a3: a hole between two messages of the feed is one placeholder
-carrying the number of messages behind it
-(`testHoleBrokenBySkippedSeqsIsStillOnePlaceholder`).
-Underneath it, and closed too: the repair protocol recursed without a ceiling once a
-pairwise session is broken past healing. Watched over 2026-08-28 on the alfa
-fixture against the bravo CLI: 443 unopenable envelopes grew to 908 and then
-to 2575 (`no_session`), in bursts of 200–400 a minute that coincide exactly
-with each `msngrfixture send --as bravo` run — the CLI's first run even timed
-out with «waiting for the messages to leave the outbox», its queue stuffed
-with repair replies. The cycle: alfa's repair requests wait for the sender;
-the CLI comes online and answers every one with a `repair` copy; each copy
-takes a fresh seq, fails to open in the same broken session, and earns its
-own repairRequest with a full budget of 5 attempts — so every answered wave
-seeds the next, bigger one. `resetPairwiseSession` does not stop it: the
-session is rebuilt per request while the answering side keeps encrypting into
-its own fork. The cycle is broken from both ends in 24d0dc6 and 8cff769: the answering
-side gives no repair copy of a repair frame
-(`testSenderDoesNotAnswerRepairForARepairFrame`), and the asking side lets at
-most 20 unanswered repairs stand per sender before new requests wait
-(`testRepairCeilingHoldsNewRequestsBack`). The pile already accumulated in
-the alfa fixture stays as history holes. Watched live over the server stand:
-the fixed CLI's first run answered the standing backlog once (Design lastSeq
-12159 → 12649), and its second run added zero — the wave no longer seeds the
-next one. Why the original
-session forked is still unestablished (one fixture home driven by two
-processes remains the best-fitting shape).
-
-The ceiling deadlocked itself a day later, seen 2026-08-29 on the same
-fixture: 2515 of bravo's pending rows had spent all 5 attempts, the in-flight
-count took them as unanswered, and with 2516 ≥ 20 not one of the 421
-never-asked rows could send its first request — repair to that peer was dead
-until the envelopes expire a week on. Held live for a 240 s window with the
-bravo CLI online: pendingDecrypt stayed at 2937 exactly. Fixed in 5707283:
-a row with spent attempts is not in flight
-(`testSpentRepairsDoNotHoldTheCeilingShut`). Verified live on the same home
-with the fixed build: within a minute of launch twenty fresh requests were
-out (`repairAttempts = 1` on 20 rows next to the 2516 spent ones), and the
-never-asked pool was growing again (421 → 1482) as catch-up resumed pulling
-envelopes.
-
 ### A service storm in one chat stalls the whole sync
 Observed by another agent 2026-08-28 on the alfa fixture home while the
 repair avalanche (above) stood in the queue: bravo↔alfa `syncedSeq` froze at
@@ -278,6 +232,49 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### «Сообщение ещё не загружено» placeholders pile up in the fixture group
+Seen 2026-08-28 in the «Design» fixture chat: twenty identical placeholders
+filling a screen between two content messages. Measured on the device
+database: the 616-seq hole between the two messages holds 323 unreadable seqs
+that are not contiguous — the numbers in between were never recorded as gaps —
+and the feed made one placeholder per contiguous run, about ninety of them.
+Closed by 37841a3: a hole between two messages of the feed is one placeholder
+carrying the number of messages behind it
+(`testHoleBrokenBySkippedSeqsIsStillOnePlaceholder`).
+Underneath it, and closed too: the repair protocol recursed without a ceiling
+once a pairwise session is broken past healing. Watched over 2026-08-28 on the
+alfa fixture against the bravo CLI: 443 unopenable envelopes grew to 908 and
+then to 2575 (`no_session`), in bursts of 200–400 a minute that coincide
+exactly with each `msngrfixture send --as bravo` run — the CLI's first run even
+timed out with «waiting for the messages to leave the outbox», its queue
+stuffed with repair replies. The cycle: alfa's repair requests wait for the
+sender; the CLI comes online and answers every one with a `repair` copy; each
+copy takes a fresh seq, fails to open in the same broken session, and earns its
+own repairRequest with a full budget of 5 attempts — so every answered wave
+seeds the next, bigger one. The cycle is broken from both ends in 24d0dc6 and
+8cff769: the answering side gives no repair copy of a repair frame
+(`testSenderDoesNotAnswerRepairForARepairFrame`), and the asking side lets at
+most 20 unanswered repairs stand per sender before new requests wait
+(`testRepairCeilingHoldsNewRequestsBack`). The pile already accumulated in the
+alfa fixture stays as history holes. Watched live over the server stand: the
+fixed CLI's first run answered the standing backlog once (Design lastSeq
+12159 → 12649), and its second run added zero — the wave no longer seeds the
+next one. Why the original session forked is still unestablished (one fixture
+home driven by two processes remains the best-fitting shape).
+
+The ceiling deadlocked itself a day later, seen 2026-08-29 on the same
+fixture: 2515 of bravo's pending rows had spent all 5 attempts, the in-flight
+count took them as unanswered, and with 2516 ≥ 20 not one of the 421
+never-asked rows could send its first request — repair to that peer was dead
+until the envelopes expire a week on. Held live for a 240 s window with the
+bravo CLI online: pendingDecrypt stayed at 2937 exactly. Fixed in 5707283:
+a row with spent attempts is not in flight
+(`testSpentRepairsDoNotHoldTheCeilingShut`). Verified live on the same home
+with the fixed build: within a minute of launch twenty fresh requests were
+out (`repairAttempts = 1` on 20 rows next to the 2516 spent ones), and the
+never-asked pool was growing again (421 → 1482) as catch-up resumed pulling
+envelopes.
 
 ### An own service frame drags myReadUpTo over the peer's unread messages
 Found 2026-08-28 in passing while verifying the in-chat mention counter: the
