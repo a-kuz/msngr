@@ -148,6 +148,16 @@ the move was still going. The owner's word for the result: crooked. The list
 now moves in `Theme.spring` (0.45 s) instead of `springFast`; in the re-run of
 2026-08-27 the lifted row started below the screen, so the crossing itself was
 not exercised — to be watched on the next lift of an on-screen row.
+Tried again 2026-09-02 on the bravo and charlie homes, arranging the lift by
+having charlie write into a group standing low in bravo's list, with the screen
+recording. It did not come off, and the reason is worth writing down: both
+lists are live and reorder under the driver — unread counts, call rows and the
+peer's own traffic move the rows between the screenshot that gives the
+coordinate and the touch that uses it, so the taps land on whatever slid into
+that place. Coordinate taps are the wrong instrument for this one; it wants a
+driver that addresses rows by identity, which is XCUITest, and that is out of
+the process by the owner's call. Left for a run that has the owner's eye on the
+screen instead.
 
 ### Accepting a request ends with no animation
 Asked for by the owner 2026-08-27 while reviewing the demo: after «Принять»
