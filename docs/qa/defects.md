@@ -17,55 +17,6 @@ follows the same rule as the bubble (fixed in the bots commit); what is left
 open is ordering: `sortedAt` and the feed's own order still lean on `sentAt`,
 so a bad clock can still misplace a message inside its day.
 
-### A chat behind a flooded one stops receiving messages altogether
-Found 2026-09-01 while running the notification-banner scenario on the bravo
-and charlie homes, and it is the mechanism behind the «service storm» entry
-below. Charlie sent bravo a message; charlie's side had it journaled (one
-tick), the server's snapshot and its REST history both held it (seq 12,
-addressed to bravo's device), bravo was foreground with the chat open and the
-socket live — and bravo's copy of that chat stood at `syncedSeq = lastSeq = 11`
-for eleven minutes across four foregrounds, with no row and no envelope in
-`pendingDecrypt`. The flooded group on the same socket moved 13841 → 13873
-throughout. Only a cold start brought the message.
-The cause is the catch-up's budget. `serveCatchup` spends one budget of 128
-records over the chats in the order they come, so the flooded chat took all of
-it and every other chat was left untouched — and an untouched chat gets no
-`syncState` at all. The client then asked the next portion only for the chats
-that had answered (`catchupPending`), and its fallback asks for chats it knows
-to be behind, which this one was not: from its side it was caught up at 11.
-So the chat fell out of the catch-up for good, portion after portion.
-Fixed on both sides: every chat of a portion gets a share of the budget
-(`SYNC_BUDGET / chats in the portion`), and the client asks the next portion
-for the chats it was answered about *and* the chats it never heard back on
-(`SyncEngine.nextPortion`, `CatchupPortionTests`). Coming back to the
-foreground also re-opens the catch-up, which it did not do at all before.
-Held by two smoke checks — «a portion answers about every chat it was asked
-for» and «the quiet chat's history comes in that first portion» — both red with
-the budget spent in order and green with the share.
-
-Underneath it, and the larger half of the same stall: the sweep of unreadable
-envelopes walked every row of the pile with three queries each and logged a
-line per row. The app's own log on the flooded home reads about twelve rows a
-second over 8775 of them — twelve minutes of the engine's actor, during which
-nothing else it serves runs. A pass now reads what it needs in three queries,
-looks at 200 envelopes, and the passes take the pile in turn; the same log over
-a foreground is silent.
-
-Still owed: the live pass. The shared stand carries the server half only after
-the next deploy, and until then the scenario cannot come out green there — on
-the stand as it stands the message's chat still ends a foreground with
-`lastSeq` moved to 14 and no row, no envelope and no gap record under it, which
-is the same hole seen from the other side.
-
-### The smoke's cmid sweep check is red on a stand configured for it
-Seen 2026-09-01: «cmid swept behind the sender's ack» fails on a stand started
-with `--var CMID_MIN_AGE:0 --var CMID_SWEEP_EVERY:0` and a fresh persist dir —
-the recipe the closed entry gives for it. Everything else in the run is green.
-The sweep lives in `ConversationDO` and reads both from the worker's env, so
-the variables are in the right place. Not yet chased further; another agent
-reports the same check green on the same recipe, so the difference between the
-two runs is what to look at first.
-
 ### iPad with a hardware keyboard: a tap around the settings sheet crashes the app
 Found 2026-08-30 on the iPad Pro 11" simulator with ConnectHardwareKeyboard on
 (the Mac «Designed for iPad» case has a hardware keyboard always). Repro: open
@@ -94,94 +45,6 @@ report appeared in DiagnosticReports. Not reproducible on this build; nothing
 was changed for it, because a workaround with no reproduction to answer would
 be blind.
 
-### An own service frame drags myReadUpTo over the peer's unread messages
-Found 2026-08-28 in passing while verifying the in-chat mention counter: the
-«Design» fixture chat sat at `myReadUpTo = lastSeq = 123` with
-`unreadCount = 20`. `advanceChat` let a service frame advance `myReadUpTo` when
-the frame was the reader's own (`isOwn OR myReadUpTo >= seq - 1`), so an own
-sender-key handout or reaction echo arriving after the peer's unread content
-marked all of it read — the unread count stayed, the cursor lied, and
-everything built on the cursor (the mention mark, the mention counter, read
-receipts derived from `myReadUpTo`) saw a fully-read chat.
-Two writers did it: `advanceChat` let any own service frame advance the
-cursor (`isOwn OR myReadUpTo >= seq - 1`), and the sent-ack path stamped
-`myReadUpTo = MAX(myReadUpTo, seq)` for every own ack — including the acks of
-rowless service frames (the fixture chat had no message row at any of the
-swallowed seqs).
-Closed in the same change: only a contiguous read may swallow a service seq in
-`advanceChat` (`testOwnServiceFrameDoesNotSwallowForeignUnread` and its
-fully-read counterpart hold both sides), and the sent ack moves the cursor
-only when the send has a message row — a send the reader actually saw.
-
-### «Сообщение ещё не загружено» placeholders pile up in the fixture group
-Seen 2026-08-28 in the «Design» fixture chat: twenty identical placeholders
-filling a screen between two content messages. Measured on the device
-database: the 616-seq hole between the two messages holds 323 unreadable seqs
-that are not contiguous — the numbers in between were never recorded as gaps —
-and the feed made one placeholder per contiguous run, about ninety of them.
-Closed by 37841a3: a hole between two messages of the feed is one placeholder
-carrying the number of messages behind it
-(`testHoleBrokenBySkippedSeqsIsStillOnePlaceholder`).
-Open underneath it: the repair protocol recurses without a ceiling once a
-pairwise session is broken past healing. Watched over 2026-08-28 on the alfa
-fixture against the bravo CLI: 443 unopenable envelopes grew to 908 and then
-to 2575 (`no_session`), in bursts of 200–400 a minute that coincide exactly
-with each `msngrfixture send --as bravo` run — the CLI's first run even timed
-out with «waiting for the messages to leave the outbox», its queue stuffed
-with repair replies. The cycle: alfa's repair requests wait for the sender;
-the CLI comes online and answers every one with a `repair` copy; each copy
-takes a fresh seq, fails to open in the same broken session, and earns its
-own repairRequest with a full budget of 5 attempts — so every answered wave
-seeds the next, bigger one. `resetPairwiseSession` does not stop it: the
-session is rebuilt per request while the answering side keeps encrypting into
-its own fork. The cycle is broken from both ends in 24d0dc6 and 8cff769: the answering
-side gives no repair copy of a repair frame
-(`testSenderDoesNotAnswerRepairForARepairFrame`), and the asking side lets at
-most 20 unanswered repairs stand per sender before new requests wait
-(`testRepairCeilingHoldsNewRequestsBack`). The pile already accumulated in
-the alfa fixture stays as history holes. Watched live over the server stand:
-the fixed CLI's first run answered the standing backlog once (Design lastSeq
-12159 → 12649), and its second run added zero — the wave no longer seeds the
-next one. Why the original
-session forked is still unestablished (one fixture home driven by two
-processes remains the best-fitting shape).
-
-The ceiling deadlocked itself a day later, seen 2026-08-29 on the same
-fixture: 2515 of bravo's pending rows had spent all 5 attempts, the in-flight
-count took them as unanswered, and with 2516 ≥ 20 not one of the 421
-never-asked rows could send its first request — repair to that peer was dead
-until the envelopes expire a week on. Held live for a 240 s window with the
-bravo CLI online: pendingDecrypt stayed at 2937 exactly. Fixed in 5707283:
-a row with spent attempts is not in flight
-(`testSpentRepairsDoNotHoldTheCeilingShut`). Verified live on the same home
-with the fixed build: within a minute of launch twenty fresh requests were
-out (`repairAttempts = 1` on 20 rows next to the 2516 spent ones), and the
-never-asked pool was growing again (421 → 1482) as catch-up resumed pulling
-envelopes.
-
-### A service storm in one chat stalls the whole sync
-Observed by another agent 2026-08-28 on the alfa fixture home while the
-repair avalanche (above) stood in the queue: bravo↔alfa `syncedSeq` froze at
-2576 with `lastSeq` 3215, the app answered repair requests for the flooded
-group at about one per 6 seconds, and even a brand-new chat from a fresh
-account stayed at 3/0 — the backlog of one chat's service frames starved
-every other chat's catch-up. The avalanche itself is closed (24d0dc6,
-8cff769); left open here: the per-frame cost and the fairness. Read from the
-code (not yet measured): every incoming repairRequest with a session reason
-marks the pairwise session for a rebuild (`resetPairwiseSession`), so each
-answer's `encryptPairwise` misses the session, fetches a fresh prekey bundle
-over the network, runs X3DH under the CryptoGate flock and only then sends —
-one network round-trip per frame over the tunnel is the right order for the
-observed ~6 s. Candidates: collapse the resets (one rebuild per peer per
-window instead of per request), answer a batch under one session, and drain
-chats fairly so one chat's backlog does not starve the rest.
-
-Seen again 2026-08-29 on the same home: bravo↔alfa `syncedSeq` frozen at 3958
-with `lastSeq` 4569 while the app sat foreground for over ten minutes — a
-message sent to alfa during that window never arrived even as an envelope
-(`pendingDecrypt` tops out at seq 3965), so the starvation covers live
-delivery of the same chat, not only other chats' catch-up.
-
 ### A severed pairwise session never heals: both sides ask, neither answer arrives
 Found 2026-08-29 while walking the repair debt on the alfa fixture. The
 alfa↔bravo pair is broken symmetrically: alfa holds 2937 of bravo's envelopes
@@ -199,43 +62,6 @@ A device that repeatedly fails to open prekey envelopes addressed to it holds
 the strongest possible signal that its published bundle is stale — republishing
 identity and prekeys at that point is the missing self-heal. Until then the
 alfa↔bravo fixture pair cannot exchange new readable messages at all.
-
-### A silent identity rotation is not re-checked by TOFU while a device list is cached
-Found 2026-08-27 in passing during the multi-device TOFU run
-(qa/runs/2026-08-27-multidevice-tofu-run.md). `/keys-update` (the identity
-heal endpoint) overwrites a device's `ik:` record but does not bump
-`devicesVersion` and broadcasts nothing. A peer that has already cached the
-device set holds the old signing key; the per-send TOFU check reads that
-cached key, finds it trusted, and never refetches. So a device that rotates
-its identity after a peer cached it is not caught until the cache drops for an
-unrelated reason (a genuine link/revoke, or a reconnect where the version did
-change). Reachability is behind preconditions — a warmed cache and an existing
-session, since a fresh session pulls a prekey bundle and would compare — so
-this was a gap, not a confirmed break. Closed: `/keys-update` now bumps
-`devicesVersion` and broadcasts the change the way revoke and linking do, so
-peers drop the cached set and the per-send TOFU check reads the rotated key
-(smoke `identity heal bumped the device-set version`, `the rotated key is
-what peers now read`).
-
-### A read message's own banner shows over the open chat and stays in the shade
-Found 2026-08-27 during the notification-withdraw run
-(qa/runs/2026-08-27-notification-withdraw-run.md). A message arrived over the
-socket while the app sat in the background with the chat open behind it; the
-app posted its local notification, as designed for the background. On
-returning to the foreground the banner presented over the very chat that
-already showed the message, and after the message was read the notification
-was still in the shade a minute later, alone — the pushed stack around it was
-withdrawn correctly. Both halves closed in code: `shouldPresentSystemPush` now declines a local
-banner too when its chat is open or its message is read (the isLocal bypass
-kept only against the self-dedup — NotificationDecisionTests, the two
-own-local suppression cases), and the local-notification `add` re-runs
-`dropReadNotifications` after it lands, closing the race with the read's
-sweep. A live pass was attempted 2026-08-29 on the alfa fixture and came back
-inconclusive for this defect: the message from bravo never reached the feed
-at all (the severed alfa↔bravo pair, its own entry above), so no notification
-existed to present or withdraw — nothing showed over the open chat and the
-shade stayed empty, but that proves delivery was broken, not that the banner
-logic held. The live pass is still owed, on a chat pair whose sessions work.
 
 ### A held swipe on a chat row stutters
 Reported by the owner 2026-08-27: swiping a row sideways in the chat list
@@ -285,15 +111,6 @@ app's own view of it, and only then look at the window geometry of the banner
 only as tall as the measured content, which would push the visible banner below
 the window's own bounds, where touches do not reach it).
 
-### Impersonation by display name, and a freed username taken instantly
-Raised 2026-08-19 while answering whether a stranger can register someone
-else's username (they cannot: `[a-zA-Z0-9_]{3,32}`, UNIQUE COLLATE NOCASE,
-the race resolved by the index). What remains: the display name is free text —
-three accounts named «Akuz» differ only by the small @handle in search — and a
-renamed account's old username is up for grabs the same second, so whoever
-watches it inherits the searches for @oldname. Worth deciding: highlight the
-@handle in search, a cool-down before a freed name re-enters circulation.
-
 ### A row moving up the chat list flies through the rows above it
 Seen 2026-08-27 in the README demo recording (simulator, alfa fixture). When a
 message from «Charlie Service» lifted its row from the bottom to second place,
@@ -314,17 +131,6 @@ replaced by the chat in a cut. The owner wants a transition here, a dissolve
 both in one `Theme.spring` transaction; the flag flips in the model on the
 tap, ahead of the database row. Waiting for the owner's look.
 
-### A group shows «Сообщение ещё не загружено» that never resolves
-Seen 2026-08-27 on the alfa fixture in the «Design» group: a placeholder row
-under the system lines, still there a minute later with the socket up.
-Explained 2026-08-28 while working the repair avalanche (see the placeholder
-entry above): the seqs under it are envelopes no replay opens — seq 8 and 12
-are `not_addressed` handouts from the re-registered old identities, the rest
-`no_session`/`pk_decrypt_failed` with the repair attempts spent and the
-sending CLI not online to answer. «Never resolves» is that entry's closed
-mechanics, not a separate defect; the feed now shows such a hole as one line
-with the count (37841a3).
-
 ### Interaction smoothness below Telegram
 Reported 2026-08-18. Overall animation quality and frame pacing feel worse
 than Telegram across the app. Umbrella item; closes on the owner's judgement,
@@ -332,6 +138,209 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### A group shows «Сообщение ещё не загружено» that never resolves
+Seen 2026-08-27 on the alfa fixture in the «Design» group: a placeholder row
+under the system lines, still there a minute later with the socket up.
+Explained 2026-08-28 while working the repair avalanche: the seqs under it are
+envelopes no replay opens — seq 8 and 12 are `not_addressed` handouts from the
+re-registered old identities, the rest `no_session`/`pk_decrypt_failed` with
+the repair attempts spent and the sending CLI not online to answer. «Never
+resolves» is that entry's closed mechanics, not a separate defect; the feed
+shows such a hole as one line with the count (37841a3).
+
+### Impersonation by display name, and a freed username taken instantly
+Raised 2026-08-19 while answering whether a stranger can register someone
+else's username (they cannot: `[a-zA-Z0-9_]{3,32}`, UNIQUE COLLATE NOCASE,
+the race resolved by the index). What remained: the display name is free text —
+three accounts named «Akuz» differ only by the small @handle in search — and a
+renamed account's old username was up for grabs the same second, so whoever
+watched it inherited the searches for @oldname. Both are decided and in place.
+The cool-down is the `released_usernames` row a rename writes and
+`USERNAME_QUARANTINE_MS`, checked at registration and at rename alike, with
+three smoke cases over it («a freshly freed handle is quarantined, not free»
+and its two neighbours). The handle in search is no longer the row's smallest
+secondary line: it carries weight and the primary colour, because the display
+name several accounts may share is not what tells them apart (5161deb).
+
+### A silent identity rotation is not re-checked by TOFU while a device list is cached
+Found 2026-08-27 in passing during the multi-device TOFU run
+(qa/runs/2026-08-27-multidevice-tofu-run.md). `/keys-update` (the identity
+heal endpoint) overwrites a device's `ik:` record but does not bump
+`devicesVersion` and broadcasts nothing. A peer that has already cached the
+device set holds the old signing key; the per-send TOFU check reads that
+cached key, finds it trusted, and never refetches. So a device that rotates
+its identity after a peer cached it is not caught until the cache drops for an
+unrelated reason (a genuine link/revoke, or a reconnect where the version did
+change). Reachability is behind preconditions — a warmed cache and an existing
+session, since a fresh session pulls a prekey bundle and would compare — so
+this was a gap, not a confirmed break. Closed: `/keys-update` now bumps
+`devicesVersion` and broadcasts the change the way revoke and linking do, so
+peers drop the cached set and the per-send TOFU check reads the rotated key
+(smoke `identity heal bumped the device-set version`, `the rotated key is
+what peers now read`).
+
+### A service storm in one chat stalls the whole sync
+Observed by another agent 2026-08-28 on the alfa fixture home while the
+repair avalanche stood in the queue: bravo↔alfa `syncedSeq` froze at
+2576 with `lastSeq` 3215, the app answered repair requests for the flooded
+group at about one per 6 seconds, and even a brand-new chat from a fresh
+account stayed at 3/0 — the backlog of one chat's service frames starved
+every other chat's catch-up. Seen again 2026-08-29 on the same home, with
+`syncedSeq` frozen at 3958 against `lastSeq` 4569 while the app sat foreground
+for over ten minutes: a message sent during that window never arrived even as
+an envelope, so the starvation covered live delivery too.
+
+Closed 2026-09-01 by the four causes underneath it, each found by measuring
+rather than by reading. The per-frame cost: a wave of repair requests to one
+peer rebuilt the pairwise session once per request, each rebuild throwing away
+the one the previous request had just built — one rebuild now serves the wave
+(`testAWaveOfRepairsRebuildsTheSessionOnce`, red on the old behaviour). The
+fairness of sending: the outbox drained strictly by time, so a wave of repair
+answers in one chat stood in front of every other chat's messages — the chats
+now take turns (`OutboxFairnessTests`). The fairness of receiving, which was
+the half that lost messages outright and has its own entry below: one budget
+spent over the chats in order, and an untouched chat never asked for again.
+And the largest of them: the sweep of unreadable envelopes walked thousands of
+rows with three queries each on the engine's own actor — about twelve rows a
+second over 8775 of them, twelve minutes during which the engine served nothing
+else. Verified live on the rebuilt bravo and charlie homes with those 8775
+envelopes standing: every chat's cursor reaches `lastSeq`, and a message sent
+to the flooded home arrives over the socket or on the first foreground.
+
+### «Сообщение ещё не загружено» placeholders pile up in the fixture group
+Seen 2026-08-28 in the «Design» fixture chat: twenty identical placeholders
+filling a screen between two content messages. Measured on the device
+database: the 616-seq hole between the two messages holds 323 unreadable seqs
+that are not contiguous — the numbers in between were never recorded as gaps —
+and the feed made one placeholder per contiguous run, about ninety of them.
+Closed by 37841a3: a hole between two messages of the feed is one placeholder
+carrying the number of messages behind it
+(`testHoleBrokenBySkippedSeqsIsStillOnePlaceholder`).
+Underneath it, and closed too: the repair protocol recursed without a ceiling
+once a pairwise session is broken past healing. Watched over 2026-08-28 on the
+alfa fixture against the bravo CLI: 443 unopenable envelopes grew to 908 and
+then to 2575 (`no_session`), in bursts of 200–400 a minute that coincide
+exactly with each `msngrfixture send --as bravo` run — the CLI's first run even
+timed out with «waiting for the messages to leave the outbox», its queue
+stuffed with repair replies. The cycle: alfa's repair requests wait for the
+sender; the CLI comes online and answers every one with a `repair` copy; each
+copy takes a fresh seq, fails to open in the same broken session, and earns its
+own repairRequest with a full budget of 5 attempts — so every answered wave
+seeds the next, bigger one. The cycle is broken from both ends in 24d0dc6 and
+8cff769: the answering side gives no repair copy of a repair frame
+(`testSenderDoesNotAnswerRepairForARepairFrame`), and the asking side lets at
+most 20 unanswered repairs stand per sender before new requests wait
+(`testRepairCeilingHoldsNewRequestsBack`). The pile already accumulated in the
+alfa fixture stays as history holes. Watched live over the server stand: the
+fixed CLI's first run answered the standing backlog once (Design lastSeq
+12159 → 12649), and its second run added zero — the wave no longer seeds the
+next one. Why the original session forked is still unestablished (one fixture
+home driven by two processes remains the best-fitting shape).
+
+The ceiling deadlocked itself a day later, seen 2026-08-29 on the same
+fixture: 2515 of bravo's pending rows had spent all 5 attempts, the in-flight
+count took them as unanswered, and with 2516 ≥ 20 not one of the 421
+never-asked rows could send its first request — repair to that peer was dead
+until the envelopes expire a week on. Held live for a 240 s window with the
+bravo CLI online: pendingDecrypt stayed at 2937 exactly. Fixed in 5707283:
+a row with spent attempts is not in flight
+(`testSpentRepairsDoNotHoldTheCeilingShut`). Verified live on the same home
+with the fixed build: within a minute of launch twenty fresh requests were
+out (`repairAttempts = 1` on 20 rows next to the 2516 spent ones), and the
+never-asked pool was growing again (421 → 1482) as catch-up resumed pulling
+envelopes.
+
+### An own service frame drags myReadUpTo over the peer's unread messages
+Found 2026-08-28 in passing while verifying the in-chat mention counter: the
+«Design» fixture chat sat at `myReadUpTo = lastSeq = 123` with
+`unreadCount = 20`. `advanceChat` let a service frame advance `myReadUpTo` when
+the frame was the reader's own (`isOwn OR myReadUpTo >= seq - 1`), so an own
+sender-key handout or reaction echo arriving after the peer's unread content
+marked all of it read — the unread count stayed, the cursor lied, and
+everything built on the cursor (the mention mark, the mention counter, read
+receipts derived from `myReadUpTo`) saw a fully-read chat.
+Two writers did it: `advanceChat` let any own service frame advance the
+cursor (`isOwn OR myReadUpTo >= seq - 1`), and the sent-ack path stamped
+`myReadUpTo = MAX(myReadUpTo, seq)` for every own ack — including the acks of
+rowless service frames (the fixture chat had no message row at any of the
+swallowed seqs).
+Closed in the same change: only a contiguous read may swallow a service seq in
+`advanceChat` (`testOwnServiceFrameDoesNotSwallowForeignUnread` and its
+fully-read counterpart hold both sides), and the sent ack moves the cursor
+only when the send has a message row — a send the reader actually saw.
+
+### A read message's own banner shows over the open chat and stays in the shade
+Found 2026-08-27 during the notification-withdraw run
+(qa/runs/2026-08-27-notification-withdraw-run.md). A message arrived over the
+socket while the app sat in the background with the chat open behind it; the
+app posted its local notification, as designed for the background. On
+returning to the foreground the banner presented over the very chat that
+already showed the message, and after the message was read the notification
+was still in the shade a minute later, alone — the pushed stack around it was
+withdrawn correctly. Both halves closed in code: `shouldPresentSystemPush` now declines a local
+banner too when its chat is open or its message is read (the isLocal bypass
+kept only against the self-dedup — NotificationDecisionTests, the two
+own-local suppression cases), and the local-notification `add` re-runs
+`dropReadNotifications` after it lands, closing the race with the read's
+sweep. A live pass was attempted 2026-08-29 on the alfa fixture and came back
+inconclusive for this defect: the message from bravo never reached the feed
+at all (the severed alfa↔bravo pair, its own entry above), so no notification
+existed to present or withdraw — nothing showed over the open chat and the
+shade stayed empty, but that proves delivery was broken, not that the banner
+logic held.
+The pass was run 2026-09-01 on the rebuilt bravo and charlie homes, whose
+sessions do work. The chat with charlie was open on bravo, the app went to the
+background, charlie wrote: the message arrived over the socket and the app
+posted its local notification, which stood alone in the shade. On the
+foreground the chat came up with the message in the feed and no banner
+presented over it, and once the message was read the shade was empty. Both
+halves hold. The notification here is the app's own, over the socket — the
+shared stand's pushes reach no simulator, so the APNs path is not what this
+run covers.
+
+### A chat behind a flooded one stops receiving messages altogether
+Found 2026-09-01 while running the notification-banner scenario on the bravo
+and charlie homes, and it is the mechanism behind the «service storm» entry
+below. Charlie sent bravo a message; charlie's side had it journaled (one
+tick), the server's snapshot and its REST history both held it (seq 12,
+addressed to bravo's device), bravo was foreground with the chat open and the
+socket live — and bravo's copy of that chat stood at `syncedSeq = lastSeq = 11`
+for eleven minutes across four foregrounds, with no row and no envelope in
+`pendingDecrypt`. The flooded group on the same socket moved 13841 → 13873
+throughout. Only a cold start brought the message.
+The cause is the catch-up's budget. `serveCatchup` spends one budget of 128
+records over the chats in the order they come, so the flooded chat took all of
+it and every other chat was left untouched — and an untouched chat gets no
+`syncState` at all. The client then asked the next portion only for the chats
+that had answered (`catchupPending`), and its fallback asks for chats it knows
+to be behind, which this one was not: from its side it was caught up at 11.
+So the chat fell out of the catch-up for good, portion after portion.
+Fixed on both sides: every chat of a portion gets a share of the budget
+(`SYNC_BUDGET / chats in the portion`), and the client asks the next portion
+for the chats it was answered about *and* the chats it never heard back on
+(`SyncEngine.nextPortion`, `CatchupPortionTests`). Coming back to the
+foreground also re-opens the catch-up, which it did not do at all before.
+Held by two smoke checks — «a portion answers about every chat it was asked
+for» and «the quiet chat's history comes in that first portion» — both red with
+the budget spent in order and green with the share.
+
+Underneath it, and the larger half of the same stall: the sweep of unreadable
+envelopes walked every row of the pile with three queries each and logged a
+line per row. The app's own log on the flooded home reads about twelve rows a
+second over 8775 of them — twelve minutes of the engine's actor, during which
+nothing else it serves runs. A pass now reads what it needs in three queries,
+looks at 200 envelopes, and the passes take the pile in turn; the same log over
+a foreground is silent.
+
+Verified live on the same two homes once the stand carried the server half
+(2026-09-01). The seq that had been standing lost for eleven minutes arrived on
+its own the moment the stand was updated, with its row and its text. Two fresh
+rounds after that: a message sent while bravo sat in the background arrived over
+the socket while it was still there, and the next one, sent after the process
+had been suspended, arrived on the first foreground — no cold start in either.
+Before the fix the same scenario went eleven minutes and four foregrounds with
+`lastSeq` moved and no row, no envelope and no gap record under it.
 
 ### The bravo and charlie fixture homes are corrupted
 Found 2026-08-31: `.claude/fixtures/bravo/msngr.sqlite` answered `database disk
@@ -1163,12 +1172,24 @@ timing» above. The tokens now carry the run's suffix.
 ### Smoke: «cmid swept behind the sender's ack» fails — stand config, not a defect
 Found 2026-08-31 while running `server/test/smoke.mjs` for the avatar-privacy
 work; the resend of `cm-w1` after the sweep never came back with a fresh seq.
-Resolved the same day: the case exercises the idempotency-record sweep and
-needs the stand started with `--var CMID_MIN_AGE:0 --var CMID_SWEEP_EVERY:0`
-(the sweep otherwise refuses to touch records younger than its production
-minimum, so nothing is swept and the resend answers as a dupe). With those
-vars the case is green on the same code; the reproduction «on a clean HEAD»
-ran a stand without them. Closed as environment, no product change.
+Resolved the same day: the case exercises the idempotency-record sweep, which
+otherwise refuses to touch records younger than its production minimum and runs
+at most once an hour per chat, so nothing is swept and the resend answers as a
+dupe. Closed as environment, no product change.
+The recipe was recorded as `--var CMID_MIN_AGE:0 --var CMID_SWEEP_EVERY:0`, and
+that is the half that is wrong: the check stays red with those on the command
+line. `sweepCmids` reads them from the Durable Object's env, and `--var` does
+not reach it — the same flag does reach `APNS_HOST`, which is why the mistake
+went unnoticed. Put them in `server/.dev.vars` instead:
+
+```
+CMID_MIN_AGE=0
+CMID_SWEEP_EVERY=0
+```
+
+Established 2026-09-01 by running the whole smoke both ways against the same
+code and the same fresh persist dir: red with the flags, green with the file,
+and green throughout the rest of the run.
 
 ### A picture background pushed the feed off the screen — fixed
 Reported by the owner 2026-09-01, minutes after the feed background landed:
