@@ -199,7 +199,12 @@ struct NewChatView: View {
                     .frame(width: 40, height: 40)
                 VStack(alignment: .leading) {
                     Text(name).foregroundStyle(.primary)
-                    Text("@\(username)").font(.footnote).foregroundStyle(.secondary)
+                    // the display name is free text and several accounts may
+                    // carry the same one; the handle is what tells them apart,
+                    // so it is read as an identifier and not as a caption
+                    Text("@\(username)")
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.primary.opacity(0.7))
                 }
                 Spacer()
                 if groupMode {
