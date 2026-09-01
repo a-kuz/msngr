@@ -446,18 +446,40 @@ In a group where only admins may write, the input bar is replaced by «Писа�
 
 ## Calls
 
-A direct chat's header carries a phone glyph next to the magnifier. Tapping it
-dials the peer: the call takes the whole screen — avatar, name, and a status
-line that reads «Вызов…», then «Соединение…», then the running duration once
-media flows. The callee sees the same screen with «Входящий звонок» and two
-buttons, «Отклонить» and «Принять»; a ringing call anywhere in the app rides
-over every screen, under the passcode lock only. During the call the two
-controls are «Без звука» and «Завершить». An ended call names its outcome
-(«Звонок завершён», «Занято», «Нет ответа»…) for a moment and dismisses
-itself. One call at a time: a second incoming offer is answered busy without
-disturbing the screen, and both sides dialing each other at once settles into
-one call with no human involved. The ring works while the app is running; a
-push that wakes a closed app for a call is not built yet.
+A direct chat's header carries a phone glyph and a video-camera glyph next to
+the magnifier. Tapping the phone dials the peer: the call takes the whole
+screen — avatar, name, and a status line that reads «Вызов…», then
+«Соединение…», then the running duration once media flows. The callee sees the
+same screen with «Входящий звонок» and two buttons, «Отклонить» and «Принять»;
+a ringing call anywhere in the app rides over every screen, under the passcode
+lock only. During the call the controls are «Без звука», «Камера» and
+«Завершить». An ended call names its outcome («Звонок завершён», «Занято»,
+«Нет ответа»…) for a moment and dismisses itself. Both sides dialing each
+other at once settles into one call with no human involved. The ring works
+while the app is running; a push that wakes a closed app for a call is not
+built yet. The chevron in the top corner folds the call into a floating tile
+over the chats — the timer runs on it, a tap unfolds the call.
+
+The video-camera glyph dials with the camera already on, and the callee's
+screen says «Входящий видеозвонок»; accepting answers with the camera on in
+kind. On a running call «Камера» does the same by renegotiating in place. The
+peer's stream fills the screen, one's own preview floats in a corner with a
+front/back flip button, and turning the camera off reaches the peer as a state
+change, not a frozen frame.
+
+The person glyph on an active call invites a third participant: the call
+becomes a mesh of exactly three, everyone hears everyone, and the invited
+person's chat gets an «invited you to a call» row. A participant leaving drops
+only their leg.
+
+A second incoming call during a live one shows a banner naming the caller,
+with three round buttons: red refuses them (they hear «Занято» — the same
+answer being on the phone gives with nobody asked), orange ends the live call
+and takes theirs, green parks the live call and takes theirs. A parked call
+sits under the banner as its own row — «На удержании», with a switch button
+that swaps the two calls in place; its peer sees «На удержании» as the status.
+Hanging up (or losing) the live call brings the parked one back; a call that
+ends by itself lets the waiting one ring.
 
 A finished call leaves a row in the feed on both sides: a phone glyph with the
 direction («Исходящий звонок» / «Входящий звонок», or «Пропущенный звонок» in
@@ -465,6 +487,11 @@ red for a call nobody picked up) and a second line with the talk duration or
 how it ended («Нет ответа», «Занято»…). The row raises no unread count and no
 push, but it does move the chat up the list, and its preview there reads
 «📞 Пропущенный звонок». Tapping the row dials the peer again.
+
+The phone glyph on the chat list opens the calls list: every call the device
+knows of, newest first — who it was with (named as the address book names
+them), the direction glyph, the outcome or duration, and when. A tap dials
+the person again.
 
 ## Chat info
 
