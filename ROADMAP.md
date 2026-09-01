@@ -982,11 +982,13 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   worktree-calls 2026-09-01)
 - ⬜ picture-in-picture for a video call, including the call minimized to the
   system PiP window
-- 🟡 a second incoming call during a call: the banner over the live call
-  with decline (the caller hears busy) or end-and-accept, and a call that
-  ends by itself rings the waiter (CallManagerTests waiting tests; live
-  three-simulator run 2026-09-01); hold-and-switch — keeping the first call
-  alive on hold — is not built
+- ✅ a second incoming call during a call: the banner over the live call
+  with decline (the caller hears busy), end-and-accept, or hold-and-accept —
+  the live call parks silent on its open transport (the `hold` signal shows
+  «На удержании» on the peer), a switch row swaps the two, hanging up or
+  losing the live call brings the parked one back, and a call that ends by
+  itself rings the waiter (CallManagerTests waiting and hold tests; live
+  three-simulator runs 2026-09-01)
 - ✅ the call log: outgoing, answered and missed in the chat (the `callLog`
   feed row) and in a list — the phone button on the chat list opens every
   call newest-first, named as the address book names them, with direction,
