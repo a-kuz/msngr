@@ -236,7 +236,7 @@ public actor CallManager {
         await transport.setVideo(enabled: on)
         state.localVideo = on
         if let sdp = try? await transport.makeOffer(), state.callId == callId {
-            await sendSignal(CallSignal(type: .offer, callId: callId, sdp: sdp), chatId)
+            await sendSignal(CallSignal(type: .offer, callId: callId, sdp: sdp, video: on), chatId)
         }
     }
 
@@ -318,6 +318,9 @@ public actor CallManager {
             if let answer = try? await transport.answerOffer(sdp) {
                 await sendSignal(CallSignal(type: .answer, callId: callId, sdp: answer), chatId)
             }
+            // the renegotiation says whether the peer's camera is on: the
+            // track going quiet on its own would only freeze the last frame
+            if let video = event.signal.video { state.remoteVideo = video }
             return
         }
         // glare: both sides dialed the same chat. The smaller call id survives
