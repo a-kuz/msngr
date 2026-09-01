@@ -275,6 +275,47 @@ frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
 
+### The call's picture-in-picture window cannot be moved or resized
+Reported by the owner 2026-09-01. The minimized call was a capsule pinned to
+the top-right corner with no gesture on it at all, and the self-view of a video
+call was pinned the same way. Both now ride on `FloatingTile` (13f8470): a drag
+takes the tile anywhere inside the screen and releases it to the nearer side, a
+pinch takes it between 0.7 and 1.8 of the size it asks for, and the tile is
+kept inside its bounds either way. The drag was the half that did not work at
+first — a `.gesture` on the tile loses to the button inside it, and the tile
+did not move until the drag became a `.highPriorityGesture` with a threshold
+that still leaves a tap to the button. Verified live on an audio call between
+the bravo and charlie homes: the capsule dragged from the top-right corner to
+the bottom-left landed on the left edge at the height it was let go. The pinch
+itself is not reproducible through `idb`, so it is held by
+`FloatingTileTests` over `FloatingTilePlacement` (8beadc2) rather than by a run.
+
+### «Заявки на переписку» stands in the chat list permanently
+Reported by the owner 2026-09-01. An empty section still draws its
+supplementary header, and the requests section was appended to every snapshot,
+so its header stood over nothing for the whole life of the list. Closed by
+324b74d: a section with no rows is left out of the snapshot, and the layout
+reads which section an index holds from the snapshot rather than from the
+case's raw value. `ChatListSectionsTests` holds it; live on the charlie home,
+blocking its one request took the header off the list.
+
+### A long name does not sit well on the chat screen
+Reported by the owner 2026-09-01, «Александр Кузнецов» and «Владислава
+Владиморова» as the examples. The header stood in the centre of the bar, so
+the back chevron on the left was paid for on the right-hand side as well, and
+a name of an ordinary length lost its tail to space that held nothing.
+Closed by caab34f: the header sits beside the chevron and is shortened to the
+width the bar really leaves it — the chevron, the trailing glyphs (the bar
+folds everything past the second into one overflow glyph), the avatar and the
+capsule's own inset. Live on a chat with the second of those names: the whole
+name stands where it used to end in an ellipsis.
+
+### The header of the saved-messages chat is misaligned
+Reported by the owner 2026-09-01. The chat with yourself has no subtitle, and
+the empty second line the header drew anyway sat the name above the avatar's
+middle. Closed by caab34f: the subtitle line is drawn only when there is one.
+Live on the charlie home — the name stands centred against its avatar.
+
 ### The server smoke test fails on push timing, on a different check per run
 Found 2026-08-28 by the gate after the shader-messages merge: `no push for
 own echo` red on one stand, `cmid swept behind the sender's ack` on another,
