@@ -238,7 +238,10 @@ struct ChatScreen: View {
                         .accessibilityIdentifier("chat.selection.count")
                 }
             } else if !searching {
-                ToolbarItem(placement: .principal) { header }
+                // beside the back chevron rather than centred: a centred header
+                // pays for the chevron on the right-hand side too, and a name of
+                // an ordinary length lost its tail to space that held nothing
+                ToolbarItem(placement: .navigationBarLeading) { header }
                 if !model.contentHidden {
                     if model.chat?.kind == .direct, model.peerCanCall, let peerId = model.peer?.id {
                         ToolbarItem(placement: .navigationBarTrailing) {
@@ -652,17 +655,25 @@ struct ChatScreen: View {
                     // and even a short name gets truncated («4455…»). The text holds its
                     // ideal width (fixedSize), while genuinely long strings are shortened
                     // with an ellipsis up front to the width the nav bar has
-                    Text(Self.fitted(model.headerTitle, font: Theme.Text.headerTitle.uiFont))
+                    Text(Self.fitted(model.headerTitle,
+                                     font: Theme.Text.headerTitle.uiFont,
+                                     trailingButtons: headerTrailingButtons))
                         .textRole(Theme.Text.headerTitle)
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
-                    Text(Self.fitted(model.headerSubtitle, font: Theme.Text.headerSubtitle.uiFont))
-                        .textRole(Theme.Text.headerSubtitle)
-                        .foregroundStyle(model.headerSubtitleAccented ? Theme.accent : .secondary)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .animation(.easeInOut(duration: 0.15), value: model.headerSubtitle)
+                    // the chat with yourself has nothing to say under its name, and an
+                    // empty second line would sit the title above the avatar's middle
+                    if !model.headerSubtitle.isEmpty {
+                        Text(Self.fitted(model.headerSubtitle,
+                                         font: Theme.Text.headerSubtitle.uiFont,
+                                         trailingButtons: headerTrailingButtons))
+                            .textRole(Theme.Text.headerSubtitle)
+                            .foregroundStyle(model.headerSubtitleAccented ? Theme.accent : .secondary)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .animation(.easeInOut(duration: 0.15), value: model.headerSubtitle)
+                    }
                 }
             }
             // the feed runs under the bar, so the name needs a ground of its own:
@@ -677,15 +688,27 @@ struct ChatScreen: View {
         .accessibilityIdentifier("chat.header")
     }
 
-    /// Shortens a header string with an ellipsis to the width the principal view has
-    /// (the screen minus the bar buttons, the avatar and the padding).
-    private static func fitted(_ s: String, font: UIFont) -> String {
-        // the bar keeps 16pt outside a 44pt button and the principal view is
-        // centred, so that side costs it twice; 20pt more keeps the title clear
-        // of the button's glass, and the avatar with its gap comes off the rest
-        let side: CGFloat = 16 + 44 + 20
-        let avatar: CGFloat = 34 + 8
-        let maxWidth = UIScreen.main.bounds.width - side * 2 - avatar
+    /// How many buttons stand to the right of the name: the two call glyphs of a
+    /// direct chat and the search glyph, whichever of them the chat shows.
+    private var headerTrailingButtons: Int {
+        guard !model.contentHidden else { return 0 }
+        let calls = model.chat?.kind == .direct && model.peerCanCall && model.peer != nil ? 2 : 0
+        return calls + 1
+    }
+
+    /// Shortens a header string with an ellipsis to the width the header has in
+    /// the bar: the screen minus the chevron, the trailing glyphs, the avatar
+    /// and the capsule's own padding.
+    private static func fitted(_ s: String, font: UIFont, trailingButtons: Int) -> String {
+        // the bar keeps 16pt outside a 44pt button; the chevron leads with a
+        // gap before the header. The trailing glyphs are as many as the chat
+        // shows, and the bar folds everything past the second one into a single
+        // overflow glyph, so no chat pays for more than two
+        let leading: CGFloat = 16 + 44 + 8
+        let trailing: CGFloat = 16 + 56 * CGFloat(min(trailingButtons, 2))
+        // the avatar with its gap, and the capsule's leading and trailing inset
+        let inside: CGFloat = 34 + 8 + 5 + 12
+        let maxWidth = UIScreen.main.bounds.width - leading - trailing - inside
         guard s.size(withAttributes: [.font: font]).width > maxWidth else { return s }
         var t = s
         while !t.isEmpty, (t + "…").size(withAttributes: [.font: font]).width > maxWidth {
