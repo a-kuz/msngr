@@ -134,14 +134,17 @@ final class MessageRepairTests: XCTestCase {
         XCTAssertEqual(outbox[0].content.attempt, 1)
     }
 
-    /// Twenty repairs already wait on the same sender: the next unreadable
+    /// Twenty repairs already wait on the same sender: an older unreadable
     /// frame is kept, but no new request joins the queue until those resolve —
     /// a session broken past healing must not grow the queue with every answer.
+    /// The chat has already seen newer seqs, so the frame under test is debt,
+    /// not the message the reader is waiting for.
     func testRepairCeilingHoldsNewRequestsBack() async throws {
         let db = try AppDatabase.openInMemory()
         try await makeDirectChat(db)
         let engine = try makeEngine(db: db)
         try await db.write { dbc in
+            try dbc.execute(sql: "UPDATE chat SET lastSeq = 500 WHERE id = 'c1'")
             for seq in 100..<(100 + MessageRepair.maxInFlightRepairsPerPeer) {
                 try dbc.execute(sql: """
                     INSERT INTO pendingDecrypt (chatId, seq, fromUserId, fromDevice, sentAt, ts,
@@ -723,6 +726,80 @@ final class MessageRepairTests: XCTestCase {
         XCTAssertFalse(MessageRepair.sessionRebuildDue(lastRebuiltAt: 100, now: 130))
         XCTAssertTrue(MessageRepair.sessionRebuildDue(
             lastRebuiltAt: 100, now: 100 + MessageRepair.sessionRebuildInterval))
+    }
+
+    /// The message that has just arrived is never held back by the debt behind
+    /// it. The ceiling is there to stop a wave of answers from seeding a bigger
+    /// wave; one request per newly arrived message is bounded by the traffic
+    /// itself, and holding it back is what left a pair with an old debt unable
+    /// to exchange anything readable at all.
+    func testTheNewestFrameAsksEvenOverTheCeiling() async throws {
+        let db = try AppDatabase.openInMemory()
+        try await makeDirectChat(db)
+        let engine = try makeEngine(db: db)
+        try await db.write { dbc in
+            for seq in 100..<(100 + MessageRepair.maxInFlightRepairsPerPeer) {
+                try dbc.execute(sql: """
+                    INSERT INTO pendingDecrypt (chatId, seq, fromUserId, fromDevice, sentAt, ts,
+                                                body, reason, attempts, firstSeenAt, lastTriedAt,
+                                                repairAttempts, repairAskedAt)
+                    VALUES ('c1', ?, 'peer', 'd1', 1, 1, x'00', 'no_session', 1, 1, 1, 1, 1)
+                    """, arguments: [seq])
+            }
+        }
+
+        await engine.apply(try brokenFrame(seq: 900))
+
+        let outbox = try await outboxContents(db)
+        XCTAssertEqual(outbox.count, 1, "the message just arrived and nobody asked for it")
+        XCTAssertEqual(outbox.first?.content.repairSeq, 900)
+    }
+
+    /// The peer says he could not open the message because the pairwise session
+    /// is not the one he holds. The copy would leave through that same session
+    /// and fail the same way, which is how a forked session stayed forked for
+    /// good — so the session is rebuilt before the copy is encrypted, once per
+    /// peer per window.
+    func testAnsweringARepairRebuildsTheSessionThePeerCannotOpen() async throws {
+        let db = try AppDatabase.openInMemory()
+        try await makeDirectChat(db)
+        let api = APIClient(baseURL: URL(string: "http://localhost:1")!)
+        let store = try IdentityStore(db: db, masterKeyProvider: StaticMasterKey())
+        let e2ee = E2EEManager(store: store, api: api, ownUserId: "me", ownDeviceId: "dev")
+        let engine = SyncEngine(db: db, api: api, e2ee: e2ee,
+                                wsURL: URL(string: "ws://localhost:1/ws")!,
+                                ownUserId: "me", ownDeviceId: "dev")
+
+        var request = ContentPayload(kind: "repairRequest")
+        request.repairSeq = 5
+        request.reason = "no_session"
+        request.attempt = 1
+        await engine.handleRepairContent(request, chatId: "c1", from: "peer", fromDevice: "d1")
+        XCTAssertTrue(try store.consumeSessionReset(peerUserId: "peer"),
+                      "the copy would have left through the session he cannot open")
+
+        await engine.handleRepairContent(request, chatId: "c1", from: "peer", fromDevice: "d1")
+        XCTAssertFalse(try store.consumeSessionReset(peerUserId: "peer"),
+                       "the rest of the wave rides on the session the first answer built")
+    }
+
+    /// A reason that says nothing about the session leaves it alone.
+    func testAnsweringAnOrdinaryRepairLeavesTheSessionAlone() async throws {
+        let db = try AppDatabase.openInMemory()
+        try await makeDirectChat(db)
+        let api = APIClient(baseURL: URL(string: "http://localhost:1")!)
+        let store = try IdentityStore(db: db, masterKeyProvider: StaticMasterKey())
+        let e2ee = E2EEManager(store: store, api: api, ownUserId: "me", ownDeviceId: "dev")
+        let engine = SyncEngine(db: db, api: api, e2ee: e2ee,
+                                wsURL: URL(string: "ws://localhost:1/ws")!,
+                                ownUserId: "me", ownDeviceId: "dev")
+
+        var request = ContentPayload(kind: "repairRequest")
+        request.repairSeq = 5
+        request.reason = "no_sender_key"
+        request.attempt = 1
+        await engine.handleRepairContent(request, chatId: "c1", from: "peer", fromDevice: "d1")
+        XCTAssertFalse(try store.consumeSessionReset(peerUserId: "peer"))
     }
 
     /// Envelopes from one peer that no replay opens, old enough to be asked

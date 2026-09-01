@@ -63,6 +63,44 @@ the strongest possible signal that its published bundle is stale — republishin
 identity and prekeys at that point is the missing self-heal. Until then the
 alfa↔bravo fixture pair cannot exchange new readable messages at all.
 
+Walked again 2026-09-01 with both homes on their own simulators and both online
+for half an hour. The republish self-heal is in the code and the debt still did
+not move by a single envelope, so the diagnosis above is not what holds the pair
+shut. What does, read off alfa's own database: every one of the 620 repair
+requests it has for bravo sits in the outbox in state `blocked`. That is TOFU —
+bravo's identity key changed when the home was re-registered, sending to him
+stopped and waits for the reader to accept the new key. No repair machinery
+reaches past that by design, and the interface is already asking; the pair heals
+when the change is accepted, not before.
+
+Two things would have kept it shut even without TOFU, and both are fixed
+(7086f8f). The answering side encrypted the copy with the very session the peer
+had just said he could not open, so a forked session stayed forked for good; it
+now rebuilds from a fresh bundle when the request names a session reason, once
+per peer per window. And the per-peer ceiling of twenty counted the debt
+standing behind a new message, so a pair carrying thousands of unopenable
+envelopes could not ask about the message that had just arrived — the newest seq
+of a chat is now let past the ceiling, while everything older is still held.
+
+Found in passing, and fixed (7b35e95): the 620 blocked sends had each written
+their own «identity_changed» system line, so that one chat carries six hundred
+identical rows for one change.
+
+The acceptance was then run, and it is the product's own answer to this state:
+the chat carries a banner saying delivery has stopped until the new key is
+accepted, and its «Принять» is what moves it. On the alfa home the queue went
+from `blocked = 620` to draining within the minute — `inflight` and `ready`
+alternating as the requests left — and the identity the store now trusts is
+byte-for-byte the one the server hands out for bravo's single device.
+
+What is left is the tail, and it is slow by construction rather than broken:
+the newest seq of a chat is let past the per-peer ceiling, but a message from
+twenty minutes ago still queues behind six thousand envelopes of debt, each
+with its own backoff. A pair that fell this far behind drains over hours. The
+question worth settling separately is whether a re-registered fixture peer
+should present as an identity change at all, since the homes are meant to be
+handed around.
+
 ### A held swipe on a chat row stutters
 Reported by the owner 2026-08-27: swiping a row sideways in the chat list
 with the finger kept on the screen, the row's motion is badly jerky. The list
