@@ -1,6 +1,39 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@ invited you to a call" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ пригласил(а) вас в звонок"
+          }
+        }
+      }
+    },
+    "You invited %@ to a call" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вы пригласили %@ в звонок"
+          }
+        }
+      }
+    },
+    "%@ invited %@ to a call" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ пригласил(а) %@ в звонок"
+          }
+        }
+      }
+    },
     "📞 Missed call" : {
       "extractionState" : "manual",
       "localizations" : {

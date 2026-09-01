@@ -220,7 +220,8 @@ final class AppState: ObservableObject {
                 mayCall: { [api] caller in
                     (try? await api?.mayCall(peerId: caller)) ?? false
                 },
-                makeTransport: { try WebRTCTransport() })
+                makeTransport: { try WebRTCTransport() },
+                openChat: { userId in await DirectChat.open(userId: userId) })
             observeCallState(callManager)
             observeSessionRevoked(engine)
             observeProtocolOutdated(engine)
