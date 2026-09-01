@@ -3,32 +3,33 @@ import MsngrCore
 
 /// The ongoing call folded into a floating capsule: the app is usable
 /// underneath, the capsule keeps the call visible and a tap returns to the
-/// full screen. Shown by MsngrApp while the call is minimized.
+/// full screen. It is dragged where the reader wants it and pinched larger or
+/// smaller. Shown by MsngrApp while the call is minimized.
 struct CallPipTile: View {
     @EnvironmentObject private var app: AppState
 
     private var state: CallState { app.callState }
 
     var body: some View {
-        Button {
-            app.callMinimized = false
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "phone.fill")
-                statusText
-                    .monospacedDigit()
+        FloatingTile {
+            Button {
+                app.callMinimized = false
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "phone.fill")
+                    statusText
+                        .monospacedDigit()
+                }
+                .textRole(Theme.Text.callControlLabel)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(Capsule().fill(Color.green))
+                .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
             }
-            .textRole(Theme.Text.callControlLabel)
-            .foregroundStyle(.white)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(Capsule().fill(Color.green))
-            .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("call.pip")
         }
-        .buttonStyle(.plain)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-        .padding(.trailing, 12)
-        .accessibilityIdentifier("call.pip")
     }
 
     private var statusText: some View {
