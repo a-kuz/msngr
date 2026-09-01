@@ -63,6 +63,9 @@ public struct CallState: Equatable, Sendable {
     public var remoteVideo = false
     /// extra participants of a conference, beyond `peerUserId`, join order
     public var extraPeers: [String] = []
+    /// someone else is calling while this call stands; the screen offers to
+    /// refuse them or to end this call and take theirs
+    public var waitingCallerId: String?
     /// when media started flowing, for the duration timer
     public var connectedAt: Double?
 
@@ -142,6 +145,9 @@ public actor CallManager {
     private var earlyCandidates: [String: [CallSignal.IceCandidate]] = [:]
     /// the incoming offer being rung, kept to answer it
     private var pendingOffer: CallSignalEvent?
+    /// a second caller's offer, waiting behind the live call until the user
+    /// refuses it or trades the call for it
+    private var waitingOffer: CallSignalEvent?
     /// locally gathered candidates waiting for their debounce flush
     private var outgoingCandidates: [CallSignal.IceCandidate] = []
     private var candidateFlushTask: Task<Void, Never>?
@@ -398,6 +404,31 @@ public actor CallManager {
         await teardown(showing: .ended(reason))
     }
 
+    /// Refuses the caller waiting behind the live call. They hear busy — the
+    /// same answer a call in progress gives with nobody asked — so refusing
+    /// tells them nothing being on the phone did not.
+    public func declineWaiting() async {
+        guard let waiting = waitingOffer else { return }
+        waitingOffer = nil
+        state.waitingCallerId = nil
+        await sendSignal(CallSignal(type: .end, callId: waiting.signal.callId, reason: .busy),
+                         waiting.chatId)
+    }
+
+    /// Ends the live call and answers the one waiting behind it.
+    public func acceptWaiting() async {
+        guard waitingOffer != nil else { return }
+        if let chatId = state.chatId, let callId = state.callId {
+            await sendSignal(CallSignal(type: .end, callId: callId, reason: .hangup), chatId)
+            for link in extras.values {
+                await sendSignal(CallSignal(type: .end, callId: callId, reason: .hangup), link.chatId)
+            }
+        }
+        // teardown promotes the waiter to ringing on its own
+        await teardown(showing: .ended(.hangup))
+        await accept()
+    }
+
     public func setMuted(_ muted: Bool) async {
         state.muted = muted
         await transport?.setMuted(muted)
@@ -496,6 +527,13 @@ public actor CallManager {
                 earlyCandidates[event.signal.callId, default: []].append(contentsOf: candidates)
             }
         case .end:
+            // the waiting caller gave up (cancel or timeout on their side)
+            if let waiting = waitingOffer, event.signal.callId == waiting.signal.callId,
+               event.fromUserId == waiting.fromUserId {
+                waitingOffer = nil
+                state.waitingCallerId = nil
+                return
+            }
             guard event.signal.callId == state.callId else { return }
             // a conference participant leaving takes their leg, not the call
             if extras[event.fromUserId] != nil {
@@ -519,6 +557,21 @@ public actor CallManager {
             }
             await teardown(showing: .ended(event.signal.reason ?? .hangup))
         }
+    }
+
+    /// Whether the offer can wait behind the live call. Only a standing call
+    /// takes a waiter, one at a time, and the privacy gate still applies —
+    /// re-checked after its await in case the call moved meanwhile.
+    private func holdAsWaiting(_ event: CallSignalEvent) async -> Bool {
+        guard state.phase == .active, waitingOffer == nil, event.signal.sdp != nil,
+              event.fromUserId != state.peerUserId,
+              extras[event.fromUserId] == nil else { return false }
+        guard await mayCall(event.fromUserId) else { return false }
+        guard state.phase == .active, waitingOffer == nil,
+              event.signal.callId != state.callId else { return false }
+        waitingOffer = event
+        state.waitingCallerId = event.fromUserId
+        return true
     }
 
     private func handleOffer(_ event: CallSignalEvent) async {
@@ -572,12 +625,14 @@ public actor CallManager {
             await accept()
             return
         }
-        // one call at a time: a second offer is answered busy, wherever from
+        // one call at a time on the wire — but a second caller during a live
+        // call waits on the screen for the user's word; anywhere earlier in
+        // the call, and for anyone the privacy setting shuts out, busy
         guard case .idle = state.phase else {
-            if event.signal.callId != state.callId {
-                await sendSignal(CallSignal(type: .end, callId: event.signal.callId, reason: .busy),
-                                 event.chatId)
-            }
+            guard event.signal.callId != state.callId else { return }
+            if await holdAsWaiting(event) { return }
+            await sendSignal(CallSignal(type: .end, callId: event.signal.callId, reason: .busy),
+                             event.chatId)
             return
         }
         // the callee's own privacy: an offer from someone the setting shuts
@@ -719,7 +774,19 @@ public actor CallManager {
         next.localVideo = false
         next.remoteVideo = false
         next.extraPeers = []
+        // claimed before teardown, which clears the early buffer whole
+        let waitingEarly = waitingOffer.flatMap { earlyCandidates[$0.signal.callId] } ?? []
         await teardown(showing: next)
+        // whoever was waiting behind the ended call rings in its place
+        if case .ended = phase, let waiting = waitingOffer {
+            waitingOffer = nil
+            pendingOffer = waiting
+            heldRemoteCandidates = waitingEarly
+            isCaller = false
+            state = CallState(phase: .ringing, chatId: waiting.chatId,
+                              peerUserId: waiting.fromUserId, callId: waiting.signal.callId)
+            state.remoteVideo = waiting.signal.video == true
+        }
     }
 
     /// The caller alone writes the call into the feed, once the outcome is

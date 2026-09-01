@@ -298,6 +298,11 @@ final class AppState: ObservableObject {
             for await state in states {
                 self?.callState = state
                 CallSounds.shared.apply(state.phase)
+                // a second caller waiting behind the call needs the screen up
+                // to be seen at all
+                if state.waitingCallerId != nil {
+                    self?.callMinimized = false
+                }
                 switch state.phase {
                 case .idle:
                     self?.callMinimized = false

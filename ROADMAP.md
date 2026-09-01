@@ -988,7 +988,11 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   worktree-calls 2026-09-01)
 - ⬜ picture-in-picture for a video call, including the call minimized to the
   system PiP window
-- ⬜ a second incoming call during a call: decline, or hold and switch
+- 🟡 a second incoming call during a call: the banner over the live call
+  with decline (the caller hears busy) or end-and-accept, and a call that
+  ends by itself rings the waiter (CallManagerTests waiting tests; live
+  three-simulator run 2026-09-01); hold-and-switch — keeping the first call
+  alive on hold — is not built
 - ⬜ the call log: outgoing, answered and missed in the chat and in a list
 - ✅ pulling a third person into a 1:1 call: the add button on the call
   screen, a short-lived mesh of three (each pair on its own transport over
