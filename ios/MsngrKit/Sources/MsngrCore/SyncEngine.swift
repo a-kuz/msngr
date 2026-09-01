@@ -2050,12 +2050,32 @@ public actor SyncEngine {
         return true
     }
 
+    /// A system line in the feed. The same line is not written twice in a row:
+    /// one identity change stops every message the outbox holds for that peer,
+    /// and a line per stopped message is how a chat came to carry six hundred
+    /// identical ones. It is one state, so it is said once.
     private func insertSystemMessage(chatId: String, text: String) async {
+        try? await db.write { dbc in
+            try SyncEngine.insertSystemLine(dbc, chatId: chatId, text: text)
+        }
+    }
+
+    /// Writes the line unless the chat's last system line already says it.
+    /// Returns whether it was written.
+    @discardableResult
+    static func insertSystemLine(_ dbc: GRDB.Database, chatId: String, text: String) throws -> Bool {
+        let standing = try String.fetchOne(dbc, sql: """
+            SELECT text FROM message WHERE chatId = ? AND kind = 'system'
+            ORDER BY rowid DESC LIMIT 1
+            """, arguments: [chatId])
+        guard standing != text else { return false }
+        let now = Date().timeIntervalSince1970
         var msg = Message(id: UUID().uuidString, chatId: chatId, fromUserId: "system",
-                          sentAt: Date().timeIntervalSince1970, kind: .system,
+                          sentAt: now, kind: .system,
                           text: text, status: .sent, isOutgoing: false)
-        msg.serverTs = Date().timeIntervalSince1970
-        try? await db.write { [msg] dbc in try msg.save(dbc) }
+        msg.serverTs = now
+        try msg.save(dbc)
+        return true
     }
 
     private func applySentAck(_ f: WSIncoming) async {
