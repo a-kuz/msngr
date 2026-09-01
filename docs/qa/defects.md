@@ -17,15 +17,6 @@ follows the same rule as the bubble (fixed in the bots commit); what is left
 open is ordering: `sortedAt` and the feed's own order still lean on `sentAt`,
 so a bad clock can still misplace a message inside its day.
 
-### The smoke's cmid sweep check is red on a stand configured for it
-Seen 2026-09-01: «cmid swept behind the sender's ack» fails on a stand started
-with `--var CMID_MIN_AGE:0 --var CMID_SWEEP_EVERY:0` and a fresh persist dir —
-the recipe the closed entry gives for it. Everything else in the run is green.
-The sweep lives in `ConversationDO` and reads both from the worker's env, so
-the variables are in the right place. Not yet chased further; another agent
-reports the same check green on the same recipe, so the difference between the
-two runs is what to look at first.
-
 ### iPad with a hardware keyboard: a tap around the settings sheet crashes the app
 Found 2026-08-30 on the iPad Pro 11" simulator with ConnectHardwareKeyboard on
 (the Mac «Designed for iPad» case has a hardware keyboard always). Repro: open
@@ -1181,12 +1172,24 @@ timing» above. The tokens now carry the run's suffix.
 ### Smoke: «cmid swept behind the sender's ack» fails — stand config, not a defect
 Found 2026-08-31 while running `server/test/smoke.mjs` for the avatar-privacy
 work; the resend of `cm-w1` after the sweep never came back with a fresh seq.
-Resolved the same day: the case exercises the idempotency-record sweep and
-needs the stand started with `--var CMID_MIN_AGE:0 --var CMID_SWEEP_EVERY:0`
-(the sweep otherwise refuses to touch records younger than its production
-minimum, so nothing is swept and the resend answers as a dupe). With those
-vars the case is green on the same code; the reproduction «on a clean HEAD»
-ran a stand without them. Closed as environment, no product change.
+Resolved the same day: the case exercises the idempotency-record sweep, which
+otherwise refuses to touch records younger than its production minimum and runs
+at most once an hour per chat, so nothing is swept and the resend answers as a
+dupe. Closed as environment, no product change.
+The recipe was recorded as `--var CMID_MIN_AGE:0 --var CMID_SWEEP_EVERY:0`, and
+that is the half that is wrong: the check stays red with those on the command
+line. `sweepCmids` reads them from the Durable Object's env, and `--var` does
+not reach it — the same flag does reach `APNS_HOST`, which is why the mistake
+went unnoticed. Put them in `server/.dev.vars` instead:
+
+```
+CMID_MIN_AGE=0
+CMID_SWEEP_EVERY=0
+```
+
+Established 2026-09-01 by running the whole smoke both ways against the same
+code and the same fresh persist dir: red with the flags, green with the file,
+and green throughout the rest of the run.
 
 ### A picture background pushed the feed off the screen — fixed
 Reported by the owner 2026-09-01, minutes after the feed background landed:

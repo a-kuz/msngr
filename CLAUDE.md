@@ -117,7 +117,11 @@ own user, and the fixtures they need are on the stand, not on the device.
   so a running mock has to be stopped before the smoke test. On your own stand
   the ports separate:
   `wrangler dev --port 8803 --var APNS_HOST:http://localhost:9873` (this
-  overrides `.dev.vars`) and `PUSH_PORT=9873 node test/smoke.mjs`.
+  overrides `.dev.vars`) and `PUSH_PORT=9873 node test/smoke.mjs`. The smoke
+  also wants `CMID_MIN_AGE=0` and `CMID_SWEEP_EVERY=0`, and those two go in
+  `.dev.vars`, not on the command line: they are read inside ConversationDO,
+  which `--var` does not reach, and «cmid swept behind the sender's ack» is red
+  without them.
 - `simctl push` does not launch the NSE in any state of the app (the control
   experiment is in `docs/research/nse-simulator-experiment.md`). On the simulator
   you only see what the system does with the raw payload: the badge arrives, the
