@@ -28,6 +28,26 @@ struct ChatListCollection: UIViewRepresentable {
         case requests, archive, chats
     }
 
+    /// The list's sections and their rows. A section with nothing in it is left
+    /// out: the requests section carries a header naming it, and an empty one
+    /// would stand that header over no rows at all.
+    static func snapshot(requestIds: [String],
+                         archived: Bool,
+                         chatIds: [String]) -> NSDiffableDataSourceSnapshot<Sect, Row> {
+        var snapshot = NSDiffableDataSourceSnapshot<Sect, Row>()
+        if !requestIds.isEmpty {
+            snapshot.appendSections([.requests])
+            snapshot.appendItems(requestIds.map { .request($0) }, toSection: .requests)
+        }
+        if archived {
+            snapshot.appendSections([.archive])
+            snapshot.appendItems([.archive], toSection: .archive)
+        }
+        snapshot.appendSections([.chats])
+        snapshot.appendItems(chatIds.map { .chat($0) }, toSection: .chats)
+        return snapshot
+    }
+
     func makeUIView(context: Context) -> UICollectionView {
         let coordinator = context.coordinator
         let collection = UICollectionView(frame: .zero,
@@ -74,9 +94,20 @@ struct ChatListCollection: UIViewRepresentable {
 
         // MARK: layout
 
+        /// Which section stands at this index right now. A section with nothing
+        /// in it is left out of the snapshot, so the index is not the case's
+        /// raw value: the requests header would otherwise stand over an empty
+        /// section, and it is the header that names it.
+        private func section(at index: Int) -> Sect? {
+            guard let dataSource else { return Sect(rawValue: index) }
+            let sections = dataSource.snapshot().sectionIdentifiers
+            guard index < sections.count else { return nil }
+            return sections[index]
+        }
+
         func makeLayout() -> UICollectionViewLayout {
             UICollectionViewCompositionalLayout { [weak self] index, env in
-                guard let self, let section = Sect(rawValue: index) else { return nil }
+                guard let self, let section = self.section(at: index) else { return nil }
                 var cfg = UICollectionLayoutListConfiguration(appearance: .plain)
                 cfg.backgroundColor = .clear
                 cfg.showsSeparators = true
@@ -150,13 +181,9 @@ struct ChatListCollection: UIViewRepresentable {
             let requests = inAll ? parent.model.requests : []
             let archivedCount = inAll ? parent.model.archived.count : 0
 
-            var snapshot = NSDiffableDataSourceSnapshot<Sect, Row>()
-            snapshot.appendSections(Sect.allCases)
-            snapshot.appendItems(requests.map { .request($0.id) }, toSection: .requests)
-            if archivedCount > 0 {
-                snapshot.appendItems([.archive], toSection: .archive)
-            }
-            snapshot.appendItems(parent.items.map { .chat($0.id) }, toSection: .chats)
+            var snapshot = ChatListCollection.snapshot(requestIds: requests.map(\.id),
+                                                      archived: archivedCount > 0,
+                                                      chatIds: parent.items.map(\.id))
 
             // rows whose content moved on since they were last configured
             var changed: [Row] = []
