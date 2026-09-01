@@ -1071,9 +1071,12 @@ export class UserDO implements DurableObject {
       readMarks?: Record<string, number>;
       deliveredMarks?: Record<string, number>;
       state?: unknown;
+      users?: unknown[];
     };
     if (!e.ok) return;
-    if (e.state) this.send(ws, { t: "chat", chatId, event: "sync", state: e.state } as ServerFrame);
+    if (e.state) {
+      this.send(ws, { t: "chat", chatId, event: "sync", state: e.state, users: e.users } as ServerFrame);
+    }
     for (const d of e.deleted ?? []) {
       this.send(ws, { t: "deleted", chatId, seqs: [d.seq], forAll: true, by: d.by });
     }
@@ -1268,9 +1271,9 @@ export class UserDO implements DurableObject {
             const chatId = key.slice(5);
             if (known.has(chatId)) continue;
             const sr = await this.convStub(chatId).fetch("https://do/state");
-            const sj = (await sr.json()) as { ok: boolean; state?: unknown };
+            const sj = (await sr.json()) as { ok: boolean; state?: unknown; users?: unknown[] };
             if (sj.ok && sj.state) {
-              this.send(ws, { t: "chat", chatId, event: "sync", state: sj.state } as ServerFrame);
+              this.send(ws, { t: "chat", chatId, event: "sync", state: sj.state, users: sj.users } as ServerFrame);
               cursors[chatId] = 0; // history replayed below
             }
           }

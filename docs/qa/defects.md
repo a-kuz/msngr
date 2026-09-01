@@ -259,15 +259,6 @@ now moves in `Theme.spring` (0.45 s) instead of `springFast`; in the re-run of
 2026-08-27 the lifted row started below the screen, so the crossing itself was
 not exercised — to be watched on the next lift of an on-screen row.
 
-### A new request appears in the list with no animation
-Seen 2026-08-27 in the same recording. When a stranger's first message
-arrived, the «Заявки на переписку» header and the row appeared in a single
-frame, with the rows below jumping down to make room; the avatar of the new
-row showed «…» for a frame before the initials came. The list model animated
-only a change in the visible chats, not in the requests; the same change now
-runs in the spring transaction as well (the re-run on 2026-08-27 shows the
-header and the row easing in). The «…» avatar frame is still open.
-
 ### Accepting a request ends with no animation
 Asked for by the owner 2026-08-27 while reviewing the demo: after «Принять»
 on the request screen the closed-eye placeholder and the two buttons are
@@ -295,6 +286,23 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### A new request appears in the list with no animation
+Seen 2026-08-27 in the README demo recording. When a stranger's first message
+arrived, the «Заявки на переписку» header and the row appeared in a single
+frame, with the rows below jumping down to make room; the avatar of the new
+row showed «…» for a frame before the initials came. The animation half was
+closed first: the requests change runs in the same spring transaction as the
+visible chats (the re-run on 2026-08-27 shows the header and the row easing
+in). The «…» frame was the chat frame carrying member ids only, with the
+profile fetched over HTTP after the row was already on screen. Closed
+2026-09-01: the chat frame (and the catch-up sync state) carries the
+roster's public names — id, username, display name; bio and avatar stay out,
+being per-viewer private on a frame that fans out to everyone — and the
+client writes them in the transaction that writes the chat, so the row is
+named the moment it exists; the full card still comes over HTTP. Held by the
+smoke check «chat frame carries roster names» and `UserCardTests` (an
+unknown user is named, a fuller row is not clobbered).
 
 ### A corrupted database at startup crashes Debug and strands Release on the splash
 Found 2026-08-31 by the gate's crash collector (three .ips in
