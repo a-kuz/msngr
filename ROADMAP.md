@@ -987,7 +987,10 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   ends by itself rings the waiter (CallManagerTests waiting tests; live
   three-simulator run 2026-09-01); hold-and-switch — keeping the first call
   alive on hold — is not built
-- ⬜ the call log: outgoing, answered and missed in the chat and in a list
+- ✅ the call log: outgoing, answered and missed in the chat (the `callLog`
+  feed row) and in a list — the phone button on the chat list opens every
+  call newest-first, named as the address book names them, with direction,
+  outcome and duration; a tap redials (live run 2026-09-01)
 - ✅ pulling a third person into a 1:1 call: the add button on the call
   screen, a short-lived mesh of three (each pair on its own transport over
   their direct chat, the callId as the ticket — a same-callId offer joins in
