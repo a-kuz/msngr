@@ -141,6 +141,10 @@ interface Meta {
   contentCount: number;
   /// When idempotency records were last swept (seconds since epoch).
   cmidSweptAt?: number;
+  /// A bot is in the roster. A bot has no keys, so from that moment the chat's
+  /// content travels readable — which is why this is stored rather than asked
+  /// for on every send, and why it is stated on the chat's card.
+  hasBot?: boolean;
 }
 
 /// A policy an older chat has no value for is the permissive one.
@@ -171,6 +175,11 @@ function plainText(body: unknown): string | null {
   const env = body as { mode?: string; p?: { text?: unknown } };
   if (env.mode !== "plain" || !env.p) return null;
   return typeof env.p.text === "string" && env.p.text ? env.p.text : null;
+}
+
+/// Whether the body is a readable envelope rather than an encrypted one.
+function isPlain(body: unknown): boolean {
+  return !!body && typeof body === "object" && (body as { mode?: string }).mode === "plain";
 }
 
 /// The content kind of a plaintext body, or null for an encrypted envelope.
@@ -735,6 +744,17 @@ export class ConversationDO implements DurableObject {
     return out;
   }
 
+  /// Whether any of these accounts is a bot. Asked when the roster changes and
+  /// stored on the meta, never on the send path.
+  private async anyBot(ids: string[]): Promise<boolean> {
+    if (!ids.length) return false;
+    const placeholders = ids.map(() => "?").join(",");
+    const row = await this.env.DB.prepare(
+      `SELECT 1 FROM users WHERE bot_owner IS NOT NULL AND id IN (${placeholders}) LIMIT 1`
+    ).bind(...ids).first();
+    return !!row;
+  }
+
   private async chatState(): Promise<ChatState> {
     const meta = (await this.loadMeta())!;
     const members = await this.loadMembers();
@@ -750,6 +770,7 @@ export class ConversationDO implements DurableObject {
       invitePolicy: policy(meta.invitePolicy),
       createdBy: meta.createdBy,
       createdAt: meta.createdAt,
+      plaintext: meta.kind === "channel" || meta.hasBot === true,
       members: [...members.values()],
       pinnedSeqs: meta.pinnedSeqs ?? [],
       lastSeq: meta.lastSeq,
@@ -772,7 +793,8 @@ export class ConversationDO implements DurableObject {
     if (!ids.length) return [];
     const placeholders = ids.map(() => "?").join(",");
     const rows = await this.env.DB.prepare(
-      `SELECT id, username, display_name FROM users WHERE id IN (${placeholders})`
+      `SELECT id, username, display_name, bot_owner, bot_commands
+       FROM users WHERE id IN (${placeholders})`
     ).bind(...ids).all<{ id: string; username: string; display_name: string }>();
     return rows.results.map((u) => ({ ...u, bio: null, avatar_id: null }));
   }
@@ -831,7 +853,9 @@ export class ConversationDO implements DurableObject {
         return json({ ok: true, chatId: existing.chatId, existed: true });
       }
       const now = nowSec();
+      const hasBot = await this.anyBot([b.createdBy, ...b.memberIds]);
       this.meta = {
+        hasBot,
         chatId: b.chatId, kind: b.kind, title: b.title ?? null,
         avatarId: null, description: null,
         sendPolicy: "all", invitePolicy: "all", createdBy: b.createdBy,
@@ -958,6 +982,11 @@ export class ConversationDO implements DurableObject {
         if (meta.kind === "channel" && !b.service && !canPostToChannel(sender.role) &&
             !CHANNEL_READER_KINDS.has(plainKind(b.body) ?? ""))
           return err("not_allowed", 403);
+        // A readable envelope belongs to a chat that is readable by design.
+        // Anywhere else it would sit in the journal as content nobody may
+        // open, and the sender is better told now.
+        if (isPlain(b.body) && !(meta.kind === "channel" || meta.hasBot === true))
+          return err("not_plaintext_chat", 403);
 
         // Blocks in a direct chat cut two ways. Writing to someone the sender himself
         // blocked is refused outright; a message to someone who blocked the sender
@@ -1189,6 +1218,15 @@ export class ConversationDO implements DurableObject {
           await this.state.storage.delete("member:" + uid);
         }
         this.members = members;
+        // a bot joining takes the encryption off what is written from now on,
+        // and a bot leaving puts it back; what was written before either
+        // moment stays as it was written
+        const hasBot = await this.anyBot([...members.keys()]);
+        if (hasBot !== (meta.hasBot === true)) {
+          meta.hasBot = hasBot;
+          this.meta = meta;
+          await this.state.storage.put("meta", meta);
+        }
         if (b.add.length) await this.notifyUserDOsChatList(b.add);
         // someone who was actually added, and did not add themselves, gets a
         // push about it; the group's title is stored here in the clear

@@ -13,6 +13,19 @@ public struct User: Codable, Identifiable, Equatable, FetchableRecord, Persistab
     public var isBlocked: Bool = false
     public var online: Bool = false
     public var lastSeen: Double = 0
+    /// A bot: the account that owns it. A bot has no keys, so a chat it is in
+    /// is not end-to-end encrypted.
+    public var botOwner: String?
+    /// A bot's commands, as the JSON the server keeps: `[{command, description}]`.
+    public var botCommands: String?
+
+    public var isBot: Bool { botOwner != nil }
+
+    /// The commands this bot offers, parsed; empty for a person.
+    public var commands: [BotCommand] {
+        guard let botCommands, let data = botCommands.data(using: .utf8) else { return [] }
+        return (try? JSONDecoder().decode([BotCommand].self, from: data)) ?? []
+    }
 
     public init(id: String, username: String, displayName: String,
                 bio: String? = nil, avatarId: String? = nil) {
@@ -21,6 +34,31 @@ public struct User: Codable, Identifiable, Equatable, FetchableRecord, Persistab
         self.displayName = displayName
         self.bio = bio
         self.avatarId = avatarId
+    }
+}
+
+/// One command a bot offers: the word typed after «/» and what it does.
+public struct BotCommand: Codable, Equatable, Identifiable, Sendable {
+    public let command: String
+    public let description: String
+    public var id: String { command }
+
+    public init(command: String, description: String) {
+        self.command = command
+        self.description = description
+    }
+}
+
+/// A button under a bot's message. Tapping it sends the bot a `callback`
+/// content carrying `data`; the reader sees the text.
+public struct MessageButton: Codable, Equatable, Identifiable, Sendable {
+    public let text: String
+    public let data: String
+    public var id: String { data }
+
+    public init(text: String, data: String) {
+        self.text = text
+        self.data = data
     }
 }
 
@@ -61,6 +99,9 @@ public struct Chat: Codable, Identifiable, Equatable, FetchableRecord, Persistab
     public var title: String?
     public var avatarId: String?
     public var chatDescription: String?
+    /// The chat's content is journaled readable: a channel, or a chat a bot is
+    /// in. Envelopes are sent and opened in the clear here and nowhere else.
+    public var plaintext: Bool = false
     /// group rights, as the server states them: "all" or "admins"
     public var sendPolicy: String = ChatPermissions.openPolicy
     public var invitePolicy: String = ChatPermissions.openPolicy
@@ -334,6 +375,8 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
     public var contact: ContactCard?
     /// location: the shared point.
     public var location: LocationInfo?
+    /// A bot's buttons under the message, a row per array.
+    public var buttons: [[MessageButton]]?
     /// voice: the on-device transcript, recognized on demand. Local only —
     /// it never travels.
     public var transcript: String?
@@ -361,7 +404,7 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
              kind, text, media, album, replyTo, forward, shader, bubbleShader, edited, editHistory,
              editedAt, deletedForAll, status, isOutgoing, reactions, expiresAt,
              failReason, scheduledFor, listenedAt, listenedBy, poll, pollVotes,
-             contact, location,
+             contact, location, buttons,
              transcript, transcriptSpans, transcriptShown
     }
 
@@ -477,6 +520,10 @@ public struct ContentPayload: Codable {
     public var contact: ContactCard?
     /// location: the shared point.
     public var location: LocationInfo?
+    /// A bot's message can carry buttons under it, a row per array.
+    public var buttons: [[MessageButton]]?
+    /// callback: what the pressed button carries back to the bot.
+    public var data: String?
 
     public init(kind: String) { self.kind = kind }
 }

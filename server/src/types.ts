@@ -75,7 +75,17 @@ export interface PublicUser {
   display_name: string;
   bio: string | null;
   avatar_id: string | null;
+  /// A bot: who owns it. A bot has no keys of its own, so a chat it takes part
+  /// in is not end-to-end encrypted, and the interface has to say so.
+  bot_owner?: string | null;
+  /// The bot's commands, as JSON `[{command, description}]`. The input offers
+  /// them after «/».
+  bot_commands?: string | null;
 }
+
+/// The columns every user card is read with.
+export const USER_CARD_COLUMNS =
+  "id, username, display_name, bio, avatar_id, bot_owner, bot_commands";
 
 // --- WS frames: server -> client ---
 export type ServerFrame =
@@ -148,6 +158,9 @@ export interface ChatState {
   invitePolicy: ChatPolicy;
   createdBy: string;
   createdAt: number;
+  /// The chat's content is journaled readable: a channel, or any chat a bot is
+  /// in. The client sends `plain` envelopes here and opens them only here.
+  plaintext: boolean;
   members: ChatMember[];
   /// pinned messages by seq, oldest pin first
   pinnedSeqs: number[];

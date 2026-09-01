@@ -85,6 +85,7 @@ struct InputBar: View {
             bubbleShaderStrip
             linkPreviewStrip
             mentionBar
+            commandBar
             pendingImagesBar
             HStack(alignment: .bottom, spacing: 8) {
                 if isTaking {
@@ -249,6 +250,40 @@ struct InputBar: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
+            }
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+    }
+
+    /// Autocomplete for a bot's command: the list a bot published, offered
+    /// while the field holds nothing but an open «/word».
+    @ViewBuilder
+    private var commandBar: some View {
+        let suggestions = model.commandSuggestions(for: text)
+        if !suggestions.isEmpty {
+            VStack(spacing: 0) {
+                ForEach(suggestions) { command in
+                    Button {
+                        text = "/\(command.command) "
+                        model.textChanged(text)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text("/\(command.command)")
+                                .font(.subheadline.monospaced())
+                                .foregroundStyle(Theme.accent)
+                            Text(command.description)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                            Spacer()
+                        }
+                        .contentShape(Rectangle())
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("chat.command.\(command.command)")
+                }
             }
             .transition(.opacity.combined(with: .move(edge: .bottom)))
         }

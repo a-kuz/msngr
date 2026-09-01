@@ -197,6 +197,8 @@ public struct ChatStateDTO: Decodable {
     public let invitePolicy: String?
     public let createdBy: String
     public let createdAt: Double
+    /// the chat's content is journaled readable: a channel, or a chat a bot is in
+    public var plaintext: Bool?
     public let members: [MemberDTO]
     /// pinned messages by seq, the newest pin last
     public let pinnedSeqs: [Int]?

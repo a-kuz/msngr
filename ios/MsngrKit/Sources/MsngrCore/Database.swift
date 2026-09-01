@@ -572,6 +572,22 @@ public enum AppDatabase {
                 t.column("name", .text).notNull()
             }
         }
+        m.registerMigration("v35-plaintextChats") { db in
+            try db.alter(table: "chat") { t in
+                // the chat's content is journaled readable: a channel, or a
+                // chat a bot is in
+                t.add(column: "plaintext", .boolean).notNull().defaults(to: false)
+            }
+            try db.alter(table: "user") { t in
+                // a bot: who owns it, and the commands its input offers
+                t.add(column: "botOwner", .text)
+                t.add(column: "botCommands", .text)
+            }
+            try db.alter(table: "message") { t in
+                // a bot's buttons under the message (JSON [[MessageButton]])
+                t.add(column: "buttons", .text)
+            }
+        }
         return m
     }
 }
@@ -623,6 +639,7 @@ extension Message {
         pollVotes = (row["pollVotes"] as String?).flatMap { try? dec.decode([String: [Int]].self, from: Data($0.utf8)) } ?? [:]
         contact = (row["contact"] as String?).flatMap { try? dec.decode(ContactCard.self, from: Data($0.utf8)) }
         location = (row["location"] as String?).flatMap { try? dec.decode(LocationInfo.self, from: Data($0.utf8)) }
+        buttons = (row["buttons"] as String?).flatMap { try? dec.decode([[MessageButton]].self, from: Data($0.utf8)) }
         transcript = row["transcript"]
         transcriptSpans = (row["transcriptSpans"] as String?).flatMap { try? dec.decode([TranscriptSpan].self, from: Data($0.utf8)) } ?? []
         transcriptShown = row["transcriptShown"]
@@ -666,6 +683,7 @@ extension Message {
         container["pollVotes"] = js(pollVotes) ?? "{}"
         container["contact"] = js(contact)
         container["location"] = js(location)
+        container["buttons"] = js(buttons)
         container["transcript"] = transcript
         container["transcriptSpans"] = js(transcriptSpans) ?? "[]"
         container["transcriptShown"] = transcriptShown

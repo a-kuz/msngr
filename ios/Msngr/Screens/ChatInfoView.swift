@@ -110,8 +110,10 @@ struct ChatInfoView: View {
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
-                    if isChannel {
-                        Text("Posts in this channel are not encrypted: the server stores them in the clear.")
+                    if model.isPlaintext {
+                        Text(isChannel
+                             ? "Posts in this channel are not encrypted: the server stores them in the clear."
+                             : "This chat is not encrypted: a bot has no keys, so the server stores what is written here in the clear.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)

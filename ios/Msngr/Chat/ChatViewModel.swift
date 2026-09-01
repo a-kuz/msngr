@@ -726,8 +726,13 @@ final class ChatViewModel: ObservableObject {
             // inverted feed means after it. The id is tied to the message rather
             // than to the label: with non-monotonic sentAt the same day can show
             // up in the feed twice
-            let msgDay = Date(timeIntervalSince1970: msg.sentAt)
-            if next == nil || !cal.isDate(Date(timeIntervalSince1970: next!.sentAt), inSameDayAs: msgDay) {
+            // the server's clock where there is one, the sender's only until
+            // the message is acknowledged: the same rule the time in the bubble
+            // follows. A peer whose clock is wrong would otherwise put its
+            // messages under a date of its own
+            let msgDay = Date(timeIntervalSince1970: msg.serverTs ?? msg.sentAt)
+            if next == nil || !cal.isDate(Date(timeIntervalSince1970: next!.serverTs ?? next!.sentAt),
+                                          inSameDayAs: msgDay) {
                 out.append(.dateSeparator(id: "date:\(msg.id)", label: Self.dayLabel(msgDay)))
             }
         }
@@ -802,6 +807,10 @@ final class ChatViewModel: ObservableObject {
     // MARK: - Rights
 
     var kind: ChatKind { chat?.kind ?? .direct }
+
+    /// The chat's content is journaled readable: a channel, or a chat a bot is
+    /// in. Said plainly wherever the encryption would otherwise be assumed.
+    var isPlaintext: Bool { chat?.plaintext ?? false }
 
     /// A subscriber of a channel: they comment under a post and never post.
     var commentsOnly: Bool {
@@ -983,6 +992,27 @@ final class ChatViewModel: ObservableObject {
 
     /// Members matching the "@prefix" the field ends with; empty when the text
     /// ends with no open handle. The panel above the input runs on this.
+    /// The bot in this chat, if there is one.
+    var bot: User? { members.first { $0.isBot } }
+
+    /// A pressed button under a bot's message: what it carries goes back to
+    /// the bot as a service frame, so the press leaves no line in the feed.
+    func pressButton(_ button: MessageButton) {
+        var content = ContentPayload(kind: "callback")
+        content.data = button.data
+        enqueue(content)
+    }
+
+    /// The bot's commands, offered while the field holds nothing but an open
+    /// «/word»: a command is the whole message, so it is not suggested in the
+    /// middle of a sentence.
+    func commandSuggestions(for text: String) -> [BotCommand] {
+        guard let bot, text.hasPrefix("/") else { return [] }
+        let typed = String(text.dropFirst()).lowercased()
+        guard typed.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { return [] }
+        return bot.commands.filter { typed.isEmpty || $0.command.hasPrefix(typed) }
+    }
+
     func mentionSuggestions(for text: String) -> [MessageMarkdown.MentionCandidate] {
         guard let at = text.lastIndex(of: "@") else { return [] }
         // the "@" must start a word, and everything after it must be handle characters

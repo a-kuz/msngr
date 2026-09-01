@@ -325,6 +325,9 @@ public final class APIClient: @unchecked Sendable {
         public let display_name: String
         public let bio: String?
         public let avatar_id: String?
+        /// a bot: the account that owns it, and the commands it offers
+        public let bot_owner: String?
+        public let bot_commands: String?
     }
 
     public struct SearchResponse: Decodable { public let users: [UserDTO] }
@@ -533,6 +536,51 @@ public final class APIClient: @unchecked Sendable {
         struct Body: Encodable { let userId: String; let admin: Bool }
         _ = try await request("api/chats/\(chatId)/admins", method: "POST", jsonBody: Body(userId: userId, admin: admin))
     }
+    // MARK: - Bots
+
+    public struct BotDTO: Decodable, Identifiable {
+        public let id: String
+        public let username: String
+        public let display_name: String
+        public let bot_commands: String?
+        public var commands: [BotCommand] {
+            guard let bot_commands, let data = bot_commands.data(using: .utf8) else { return [] }
+            return (try? JSONDecoder().decode([BotCommand].self, from: data)) ?? []
+        }
+    }
+    public struct BotCreated: Decodable {
+        public let botId: String
+        /// The bot's whole authentication. Shown once, and again only on request.
+        public let token: String
+    }
+
+    public func createBot(username: String, displayName: String,
+                          commands: [BotCommand] = []) async throws -> BotCreated {
+        struct Body: Encodable { let username: String; let displayName: String; let commands: [BotCommand] }
+        return try await post("api/bots",
+                              body: Body(username: username, displayName: displayName,
+                                         commands: commands),
+                              as: BotCreated.self)
+    }
+
+    public func bots() async throws -> [BotDTO] {
+        struct Response: Decodable { let bots: [BotDTO] }
+        return try await get("api/bots", as: Response.self).bots
+    }
+
+    public struct BotUpdated: Decodable { public let token: String? }
+    public func updateBot(_ botId: String, displayName: String? = nil,
+                          commands: [BotCommand]? = nil,
+                          newToken: Bool = false) async throws -> String? {
+        struct Body: Encodable {
+            let displayName: String?; let commands: [BotCommand]?; let newToken: Bool
+        }
+        return try await post("api/bots/\(botId)",
+                              body: Body(displayName: displayName, commands: commands,
+                                         newToken: newToken),
+                              as: BotUpdated.self).token
+    }
+
     /// A channel's roles: the owner hands out the right to post and takes it back.
     public func setChannelRole(_ chatId: String, userId: String, role: ChatRole) async throws {
         struct Body: Encodable { let userId: String; let role: String }

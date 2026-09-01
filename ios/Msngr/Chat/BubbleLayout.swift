@@ -26,6 +26,9 @@ struct BubbleLayoutPlan: Equatable {
     var linkHost: String?
     var linkURL: String?
     var linkImage: MediaInfo?
+    /// a bot's buttons under the message, in the bubble's coordinates, one
+    /// rect per button in reading order
+    var buttonFrames: [(button: MessageButton, frame: CGRect)]
     var forwardFrame: CGRect?
     var forwardText: String?
     var authorNameFrame: CGRect?    // the name shown in groups
@@ -72,6 +75,12 @@ enum BubbleLayout {
 
     /// Height of the time/ticks line.
     static var statusHeight: CGFloat { ceil(timeFont.lineHeight) + 4 }
+    /// A bot's button: tall enough for a comfortable tap, and it grows with the
+    /// reader's text size like everything else in the bubble.
+    static var buttonHeight: CGFloat { ceil(textFont.lineHeight) + 16 }
+    static let buttonGap: CGFloat = 6
+    /// A row of buttons is never narrower than this, whatever the text above it.
+    static let buttonRowMinWidth: CGFloat = 180
     /// Author name row in groups.
     static var nameHeight: CGFloat { ceil(nameFont.lineHeight) + 2 }
     /// "Forwarded from" row.
@@ -340,6 +349,23 @@ enum BubbleLayout {
             y = linkFrame!.maxY
         }
 
+        // a bot's buttons under the message: a row per array, split evenly
+        // across the bubble's width
+        var buttonFrames: [(button: MessageButton, frame: CGRect)] = []
+        if let rows = msg.buttons, !rows.isEmpty, !msg.deletedForAll {
+            let w = min(maxBubbleWidth - 2 * hPadding, max(contentWidth, buttonRowMinWidth))
+            for row in rows where !row.isEmpty {
+                y += buttonGap
+                let each = (w - buttonGap * CGFloat(row.count - 1)) / CGFloat(row.count)
+                for (i, button) in row.enumerated() {
+                    buttonFrames.append((button, CGRect(x: hPadding + CGFloat(i) * (each + buttonGap),
+                                                        y: y, width: each, height: buttonHeight)))
+                }
+                y += buttonHeight
+            }
+            contentWidth = max(contentWidth, w)
+        }
+
         // --- Reactions: the capsules are measured first, the status placement depends on them ---
         struct Chip { let emoji: String; let count: Int; let mine: Bool; let width: CGFloat }
         let chipH = chipHeight
@@ -537,6 +563,7 @@ enum BubbleLayout {
             linkHost: linkFrame != nil ? msg.linkPreview?.host : nil,
             linkURL: linkFrame != nil ? msg.linkPreview?.url : nil,
             linkImage: linkFrame != nil ? msg.linkPreview?.image : nil,
+            buttonFrames: buttonFrames,
             forwardFrame: forwardFrame,
             forwardText: msg.deletedForAll ? nil : msg.forward.map { Self.forwardedFrom($0.fromName) },
             authorNameFrame: authorNameFrame, authorName: authorName,

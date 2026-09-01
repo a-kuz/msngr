@@ -19,6 +19,8 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     /// chat it toggles your own reaction — the screen decides which.
     var onReactionCapsuleTap: ((Message, String) -> Void)?
     var onContextAction: ((Message, MessageContextAction) -> Void)?
+    /// a bot's button was pressed under one of its messages
+    var onButton: ((MessageButton) -> Void)?
     /// an outgoing message in a group offers the read-by list in its menu
     var isGroupChat = false
     /// a subscriber of a channel: the menu offers a comment instead of a reply
@@ -582,6 +584,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         cell.noteRecipients = noteRecipients
         cell.ownUserId = ownUserId
         cell.onVotePoll = { [weak self] votes in self?.onVotePoll?(msg, votes) }
+        cell.onButton = { [weak self] button in self?.onButton?(button) }
         cell.onShowPollVoters = { [weak self] in self?.onShowPollVoters?(msg) }
         cell.onOpenContact = { [weak self] in self?.onOpenContact?(msg) }
         cell.onOpenLocation = { [weak self] in self?.onOpenLocation?(msg) }
