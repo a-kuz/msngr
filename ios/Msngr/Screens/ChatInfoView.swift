@@ -48,6 +48,7 @@ struct ChatInfoView: View {
     @State private var soundLoaded = false
     @State private var showBlockConfirm = false
     @State private var showReport = false
+    @State private var pickingBackground = false
     @State private var showLeaveConfirm = false
     @State private var showClearConfirm = false
     @State private var avatarItem: PhotosPickerItem?
@@ -326,6 +327,15 @@ struct ChatInfoView: View {
         .sheet(isPresented: $showReport) {
             ReportView(chatId: model.chatId, targetUserId: model.peer?.id, message: nil)
         }
+        .sheet(isPresented: $pickingBackground) {
+            BackgroundPickerView(chatId: model.chatId)
+        }
+        .sheet(isPresented: $composingBackground) {
+            ShaderComposerScreen(purpose: .background,
+                                 initial: { if case .shader(let d)? = surfaces.feedBackgrounds[model.chatId] { return d } else { return nil } }()) { doc in
+                surfaces.setBackground(doc, for: model.chatId)
+            }
+        }
         .confirmationDialog("Mute", isPresented: $showMuteOptions, titleVisibility: .visible) {
             ForEach(MuteOption.allCases, id: \.self) { option in
                 Button(option.title) { applyMute(option) }
@@ -433,11 +443,11 @@ struct ChatInfoView: View {
                 })
     }
 
-    /// The chat's shader background: local to this device, set here or from
-    /// a shader message's menu.
+    /// The chat's background: local to this device, picked here, in the
+    /// settings for every chat, or from a shader message's menu.
     private var backgroundSection: some View {
         Section("Background") {
-            if let doc = surfaces.backgrounds[model.chatId] {
+            if case .shader(let doc) = surfaces.feedBackgrounds[model.chatId] {
                 HStack(spacing: 12) {
                     ShaderCanvasView(document: doc, running: true, deviceInputs: true, priority: .focus)
                         .frame(width: 44, height: 72)
@@ -445,23 +455,23 @@ struct ChatInfoView: View {
                     Text(doc.name ?? String(localized: "Shader"))
                     Spacer()
                     Button(String(localized: "Remove"), role: .destructive) {
-                        surfaces.setBackground(nil, for: model.chatId)
+                        surfaces.setFeedBackground(nil, for: model.chatId)
                     }
                     .accessibilityIdentifier("chatInfo.background.remove")
                 }
             }
             Button {
+                pickingBackground = true
+            } label: {
+                Label("Chat background…", systemImage: "photo.on.rectangle")
+            }
+            .accessibilityIdentifier("chatInfo.background.pick")
+            Button {
                 composingBackground = true
             } label: {
-                Label(surfaces.backgrounds[model.chatId] == nil ? "Shader background…" : "Change shader…",
-                      systemImage: "sparkles")
+                Label("Shader background…", systemImage: "sparkles")
             }
             .accessibilityIdentifier("chatInfo.background.set")
-        }
-        .sheet(isPresented: $composingBackground) {
-            ShaderComposerScreen(purpose: .background, initial: surfaces.backgrounds[model.chatId]) { doc in
-                surfaces.setBackground(doc, for: model.chatId)
-            }
         }
     }
 

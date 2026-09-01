@@ -8,7 +8,7 @@ import Foundation
 /// puts the whole set onto the stand's service accounts.
 public enum ShaderGallery {
     public static let stickers: [ShaderDocument] = [pond, fireworks, eye, smoke, clock]
-    public static let backgrounds: [ShaderDocument] = [aurora]
+    public static let backgrounds: [ShaderDocument] = [aurora, dusk, paper]
     public static let bubbles: [ShaderDocument] = [foil, ember]
     public static let avatars: [ShaderDocument] = [nebula, orbit]
     public static var all: [ShaderDocument] { stickers + backgrounds + bubbles + avatars }
@@ -1116,6 +1116,49 @@ public enum ShaderGallery {
             col = mix(col, far, smoothstep(ridge + 0.004, ridge - 0.004, uv.y));
             col = mix(col, near, smoothstep(ridge2 + 0.004, ridge2 - 0.004, uv.y));
             col += glow * 0.08 * smoothstep(ridge, ridge + 0.15, uv.y) * (1.0 - smoothstep(ridge + 0.15, ridge + 0.3, uv.y)) * night;
+            O = vec4(col, 1.0);
+        }
+        """, inputs: []),
+    ])
+
+    /// A quiet gradient of dusk colours, drifting slowly; deep and muted at
+    /// night, warm in the day.
+    public static let dusk = ShaderDocument(name: "Dusk", passes: [
+        ShaderPass(id: ShaderPass.imageId, kind: .image, code: """
+        void mainImage(out vec4 O, in vec2 F) {
+            vec2 uv = F / iResolution.xy;
+            float night = iDark;
+            float drift = sin(iTime * 0.05 + uv.x * 2.0) * 0.06
+                        + sin(iTime * 0.033 + uv.y * 3.0) * 0.04;
+            float t = clamp(uv.y + drift, 0.0, 1.0);
+            vec3 dayTop = vec3(0.98, 0.86, 0.72), dayBottom = vec3(0.78, 0.62, 0.72);
+            vec3 nightTop = vec3(0.10, 0.09, 0.20), nightBottom = vec3(0.23, 0.12, 0.24);
+            vec3 top = mix(dayTop, nightTop, night);
+            vec3 bottom = mix(dayBottom, nightBottom, night);
+            vec3 col = mix(bottom, top, smoothstep(0.0, 1.0, t));
+            // a slow warm glow wandering near the horizon
+            vec2 g = vec2(0.5 + 0.25 * sin(iTime * 0.04), 0.28 + 0.05 * sin(iTime * 0.027));
+            float glow = exp(-dot(uv - g, uv - g) * 6.0);
+            col += mix(vec3(0.20, 0.10, 0.04), vec3(0.16, 0.07, 0.10), night) * glow;
+            O = vec4(col, 1.0);
+        }
+        """, inputs: []),
+    ])
+
+    /// Still paper: a fine grain and a soft vignette, still in time — a
+    /// background for reading, not for watching.
+    public static let paper = ShaderDocument(name: "Paper", passes: [
+        ShaderPass(id: ShaderPass.imageId, kind: .image, code: """
+        float phash(vec2 p) { return fract(sin(dot(p, vec2(269.5, 183.3))) * 43758.5453); }
+        void mainImage(out vec4 O, in vec2 F) {
+            vec2 uv = F / iResolution.xy;
+            float night = iDark;
+            vec3 base = mix(vec3(0.955, 0.94, 0.90), vec3(0.11, 0.11, 0.125), night);
+            float grain = (phash(F * 0.7) - 0.5) * 0.035;
+            float fibre = (phash(floor(vec2(F.x * 0.15, F.y * 2.5))) - 0.5) * 0.012;
+            vec2 d = uv - 0.5;
+            float vignette = 1.0 - dot(d, d) * 0.35;
+            vec3 col = (base + grain + fibre) * vignette;
             O = vec4(col, 1.0);
         }
         """, inputs: []),

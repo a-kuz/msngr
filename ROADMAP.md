@@ -1024,8 +1024,10 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   devices, members and attachments in the chat info — and on the attachment
   tabs, shortened as 9/550/1k by one shared formatter
   (qa/runs/2026-08-31-counts; CountFormatterTests)
-- ⬜ a background for the feed: a set to pick from and a picture of your own, set
-  everywhere or for one chat
+- ✅ a background for the feed: a set to pick from (Aurora, Dusk, Paper — live
+  shader previews) and a picture of your own, set everywhere from the settings
+  or for one chat from its card; the chat's own choice wins over the global
+  one (qa/runs/2026-09-01-feed-background.md)
 - ✅ the PIN: setting it, repeating it, a mismatch resetting the setup, a wrong
   code rejected at the lock, auto-lock after 30 s in the background
   (qa/runs/2026-08-21-pin)
