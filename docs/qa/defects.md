@@ -54,47 +54,6 @@ report appeared in DiagnosticReports. Not reproducible on this build; nothing
 was changed for it, because a workaround with no reproduction to answer would
 be blind.
 
-### A service storm in one chat stalls the whole sync
-Observed by another agent 2026-08-28 on the alfa fixture home while the
-repair avalanche (above) stood in the queue: bravo↔alfa `syncedSeq` froze at
-2576 with `lastSeq` 3215, the app answered repair requests for the flooded
-group at about one per 6 seconds, and even a brand-new chat from a fresh
-account stayed at 3/0 — the backlog of one chat's service frames starved
-every other chat's catch-up. The avalanche itself is closed (24d0dc6,
-8cff769); left open here: the per-frame cost and the fairness. Read from the
-code (not yet measured): every incoming repairRequest with a session reason
-marks the pairwise session for a rebuild (`resetPairwiseSession`), so each
-answer's `encryptPairwise` misses the session, fetches a fresh prekey bundle
-over the network, runs X3DH under the CryptoGate flock and only then sends —
-one network round-trip per frame over the tunnel is the right order for the
-observed ~6 s. Candidates: collapse the resets (one rebuild per peer per
-window instead of per request), answer a batch under one session, and drain
-chats fairly so one chat's backlog does not starve the rest.
-
-Seen again 2026-08-29 on the same home: bravo↔alfa `syncedSeq` frozen at 3958
-with `lastSeq` 4569 while the app sat foreground for over ten minutes — a
-message sent to alfa during that window never arrived even as an envelope
-(`pendingDecrypt` tops out at seq 3965), so the starvation covers live
-delivery of the same chat, not only other chats' catch-up.
-
-Closed 2026-09-01 by the three causes underneath it, each found by measuring
-rather than by reading. The per-frame cost: a wave of repair requests to one
-peer rebuilt the pairwise session once per request, each rebuild throwing away
-the one the previous request had just built — one rebuild now serves the wave
-(`testAWaveOfRepairsRebuildsTheSessionOnce`, red on the old behaviour). The
-fairness of sending: the outbox drained strictly by time, so a wave of repair
-answers in one chat stood in front of every other chat's messages — the chats
-now take turns (`OutboxFairnessTests`). The fairness of receiving, which was
-the half that lost messages outright and has its own entry in the closed list:
-one budget spent over the chats in order, and an untouched chat never asked for
-again. And underneath all three, the largest: the sweep of unreadable envelopes
-walked thousands of rows with three queries each on the engine's own actor —
-about twelve rows a second over 8775 of them, twelve minutes during which the
-engine served nothing else. Verified live on the rebuilt bravo and charlie
-homes with 8775 unreadable envelopes standing: every chat's cursor reaches
-`lastSeq`, and a message sent to the flooded home arrives over the socket or on
-the first foreground.
-
 ### A severed pairwise session never heals: both sides ask, neither answer arrives
 Found 2026-08-29 while walking the repair debt on the alfa fixture. The
 alfa↔bravo pair is broken symmetrically: alfa holds 2937 of bravo's envelopes
@@ -232,6 +191,34 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### A service storm in one chat stalls the whole sync
+Observed by another agent 2026-08-28 on the alfa fixture home while the
+repair avalanche stood in the queue: bravo↔alfa `syncedSeq` froze at
+2576 with `lastSeq` 3215, the app answered repair requests for the flooded
+group at about one per 6 seconds, and even a brand-new chat from a fresh
+account stayed at 3/0 — the backlog of one chat's service frames starved
+every other chat's catch-up. Seen again 2026-08-29 on the same home, with
+`syncedSeq` frozen at 3958 against `lastSeq` 4569 while the app sat foreground
+for over ten minutes: a message sent during that window never arrived even as
+an envelope, so the starvation covered live delivery too.
+
+Closed 2026-09-01 by the four causes underneath it, each found by measuring
+rather than by reading. The per-frame cost: a wave of repair requests to one
+peer rebuilt the pairwise session once per request, each rebuild throwing away
+the one the previous request had just built — one rebuild now serves the wave
+(`testAWaveOfRepairsRebuildsTheSessionOnce`, red on the old behaviour). The
+fairness of sending: the outbox drained strictly by time, so a wave of repair
+answers in one chat stood in front of every other chat's messages — the chats
+now take turns (`OutboxFairnessTests`). The fairness of receiving, which was
+the half that lost messages outright and has its own entry below: one budget
+spent over the chats in order, and an untouched chat never asked for again.
+And the largest of them: the sweep of unreadable envelopes walked thousands of
+rows with three queries each on the engine's own actor — about twelve rows a
+second over 8775 of them, twelve minutes during which the engine served nothing
+else. Verified live on the rebuilt bravo and charlie homes with those 8775
+envelopes standing: every chat's cursor reaches `lastSeq`, and a message sent
+to the flooded home arrives over the socket or on the first foreground.
 
 ### «Сообщение ещё не загружено» placeholders pile up in the fixture group
 Seen 2026-08-28 in the «Design» fixture chat: twenty identical placeholders
