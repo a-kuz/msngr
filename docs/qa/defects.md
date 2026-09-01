@@ -6,17 +6,6 @@ with the commit that closed it.
 
 ## Open
 
-### The date separator reads the sender's clock, the time in the bubble reads the server's
-Found 2026-09-01 during the bots run: a peer stamping `sentAt` in milliseconds
-put a separator reading «1 августа 58638» above a message whose own time said
-21:35. The two lines are drawn from different clocks — `BubbleLayout.timeString`
-prefers `serverTs`, the separator in `ChatViewModel` took `sentAt` as it came.
-Any peer with a wrong clock scatters its messages across dates that way, and a
-message from the future sits at the top of the feed forever. The separator now
-follows the same rule as the bubble (fixed in the bots commit); what is left
-open is ordering: `sortedAt` and the feed's own order still lean on `sentAt`,
-so a bad clock can still misplace a message inside its day.
-
 ### iPad with a hardware keyboard: a tap around the settings sheet crashes the app
 Found 2026-08-30 on the iPad Pro 11" simulator with ConnectHardwareKeyboard on
 (the Mac «Designed for iPad» case has a hardware keyboard always). Repro: open
@@ -176,6 +165,27 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### The date separator reads the sender's clock, the time in the bubble reads the server's
+Found 2026-09-01 during the bots run: a peer stamping `sentAt` in milliseconds
+put a separator reading «1 августа 58638» above a message whose own time said
+21:35. The two lines are drawn from different clocks — `BubbleLayout.timeString`
+prefers `serverTs`, the separator in `ChatViewModel` took `sentAt` as it came.
+Any peer with a wrong clock scatters its messages across dates that way, and a
+message from the future sits at the top of the feed forever. The separator now
+follows the same rule as the bubble (fixed in the bots commit).
+The ordering half was walked 2026-09-02 and mostly did not hold: the feed
+orders by `COALESCE(seq, unsentOrder)` — the journal's own number, which no
+peer's clock touches — the chat list keys on `serverTs ?? sentAt`, the search
+on `COALESCE(serverTs, sentAt)`, and the gallery on the seq before anything
+else. `sentAt` is a tiebreaker under all of them, and it decides only between
+rows of this device's own making.
+One place did order by the peer's clock alone: the calls list
+(`ORDER BY sentAt DESC LIMIT 300`), where a peer stamping the far future stood
+at the top for good — and pushed real calls out of the window the list is cut
+to — while the row beside it showed the server's time. Fixed to
+`COALESCE(serverTs, sentAt)`, the value the row already displays;
+`CallsListOrderTests` holds both directions.
 
 ### A group shows «Сообщение ещё не загружено» that never resolves
 Seen 2026-08-27 on the alfa fixture in the «Design» group: a placeholder row
