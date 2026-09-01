@@ -20,13 +20,15 @@ struct CallScreenView: View {
             LinearGradient(colors: [Color(.systemIndigo).opacity(0.6), Color(.systemBackground)],
                            startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
-            if state.remoteVideo, let transport {
+            // while ringing, remoteVideo only says what kind of call is
+            // asking; the stream itself starts with the media
+            if remoteVideoShown, let transport {
                 RemoteVideoView(transport: transport)
                     .ignoresSafeArea()
             }
             VStack(spacing: 0) {
                 Spacer()
-                if !state.remoteVideo {
+                if !remoteVideoShown {
                     AvatarView(name: peer?.displayName ?? "", avatarId: peer?.avatarId)
                         .frame(width: 104, height: 104)
                     Text(names)
@@ -123,6 +125,12 @@ struct CallScreenView: View {
         .accessibilityIdentifier("call.screen")
     }
 
+    /// While ringing, `remoteVideo` only says what kind of call is asking;
+    /// the stream itself starts with the media.
+    private var remoteVideoShown: Bool {
+        state.remoteVideo && (state.phase == .active || state.phase == .connecting)
+    }
+
     /// An ended call is about to dismiss itself; folding it away would only
     /// strand the outcome in the tile.
     private var minimizable: Bool {
@@ -140,7 +148,7 @@ struct CallScreenView: View {
             case .dialing:
                 Text("Calling…")
             case .ringing:
-                Text("Incoming call")
+                Text(state.remoteVideo ? "Incoming video call" : "Incoming call")
             case .connecting:
                 Text("Connecting…")
             case .active:
