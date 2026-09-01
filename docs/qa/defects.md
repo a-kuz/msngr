@@ -140,17 +140,6 @@ replaced by the chat in a cut. The owner wants a transition here, a dissolve
 both in one `Theme.spring` transaction; the flag flips in the model on the
 tap, ahead of the database row. Waiting for the owner's look.
 
-### A group shows «Сообщение ещё не загружено» that never resolves
-Seen 2026-08-27 on the alfa fixture in the «Design» group: a placeholder row
-under the system lines, still there a minute later with the socket up.
-Explained 2026-08-28 while working the repair avalanche (see the placeholder
-entry above): the seqs under it are envelopes no replay opens — seq 8 and 12
-are `not_addressed` handouts from the re-registered old identities, the rest
-`no_session`/`pk_decrypt_failed` with the repair attempts spent and the
-sending CLI not online to answer. «Never resolves» is that entry's closed
-mechanics, not a separate defect; the feed now shows such a hole as one line
-with the count (37841a3).
-
 ### Interaction smoothness below Telegram
 Reported 2026-08-18. Overall animation quality and frame pacing feel worse
 than Telegram across the app. Umbrella item; closes on the owner's judgement,
@@ -158,6 +147,16 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### A group shows «Сообщение ещё не загружено» that never resolves
+Seen 2026-08-27 on the alfa fixture in the «Design» group: a placeholder row
+under the system lines, still there a minute later with the socket up.
+Explained 2026-08-28 while working the repair avalanche: the seqs under it are
+envelopes no replay opens — seq 8 and 12 are `not_addressed` handouts from the
+re-registered old identities, the rest `no_session`/`pk_decrypt_failed` with
+the repair attempts spent and the sending CLI not online to answer. «Never
+resolves» is that entry's closed mechanics, not a separate defect; the feed
+shows such a hole as one line with the count (37841a3).
 
 ### Impersonation by display name, and a freed username taken instantly
 Raised 2026-08-19 while answering whether a stranger can register someone
