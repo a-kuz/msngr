@@ -3,6 +3,13 @@ import Combine
 import GRDB
 import MsngrCore
 
+/// A feed background: a shader from the gallery or the composer, or a picture
+/// of the user's own stored as a file in the container's backgrounds folder.
+enum FeedBackground: Codable, Equatable {
+    case shader(ShaderDocument)
+    case image(String)
+}
+
 /// The shaders the user put on this device's own surfaces: a chat's
 /// background, the effect played on a send or a reaction, the sticker pack.
 /// All of it is local: nothing here goes to the server or to another device.
@@ -15,8 +22,8 @@ final class ShaderSurfaces: ObservableObject {
         case send, reaction
     }
 
-    /// chatId → the background document
-    @Published private(set) var backgrounds: [String: ShaderDocument] = [:]
+    /// chatId (or the global key) → the feed background
+    @Published private(set) var feedBackgrounds: [String: FeedBackground] = [:]
     /// an effect → the document replacing the bundled one
     @Published private(set) var effects: [Effect: ShaderDocument] = [:]
     /// The bundled effects play unless switched off here.
@@ -65,11 +72,17 @@ final class ShaderSurfaces: ObservableObject {
             try KVRow.fetchAll(dbc, sql: "SELECT key, value FROM kv WHERE key LIKE 'shader.%'")
         }) {
             for row in rows {
-                guard let doc = try? dec.decode(ShaderDocument.self, from: Data(row.value.utf8)) else { continue }
+                let data = Data(row.value.utf8)
                 if row.key.hasPrefix(Self.backgroundPrefix) {
-                    backgrounds[String(row.key.dropFirst(Self.backgroundPrefix.count))] = doc
+                    let key = String(row.key.dropFirst(Self.backgroundPrefix.count))
+                    if let bg = try? dec.decode(FeedBackground.self, from: data) {
+                        feedBackgrounds[key] = bg
+                    } else if let doc = try? dec.decode(ShaderDocument.self, from: data) {
+                        feedBackgrounds[key] = .shader(doc)
+                    }
                 } else if row.key.hasPrefix(Self.effectPrefix),
-                          let e = Effect(rawValue: String(row.key.dropFirst(Self.effectPrefix.count))) {
+                          let e = Effect(rawValue: String(row.key.dropFirst(Self.effectPrefix.count))),
+                          let doc = try? dec.decode(ShaderDocument.self, from: data) {
                     effects[e] = doc
                 }
             }
@@ -104,15 +117,49 @@ final class ShaderSurfaces: ObservableObject {
 
     // MARK: - Backgrounds
 
-    func background(for chatId: String) -> ShaderDocument? {
+    /// the key of the background applied to every chat that has no choice of its own
+    static let globalBackgroundKey = "*"
+    /// the folder of the user's own background pictures, inside the container
+    static var imagesDir: URL {
+        AppState.storage.root.appendingPathComponent("backgrounds")
+    }
+
+    /// The background the feed of this chat draws: the chat's own choice, or
+    /// the one set for every chat.
+    func feedBackground(for chatId: String) -> FeedBackground? {
         load()
-        return backgrounds[chatId]
+        return feedBackgrounds[chatId] ?? feedBackgrounds[Self.globalBackgroundKey]
+    }
+
+    /// Sets the background of one chat, or of every chat when `chatId` is nil.
+    /// An image background that no key references any more loses its file.
+    func setFeedBackground(_ bg: FeedBackground?, for chatId: String?) {
+        load()
+        let key = chatId ?? Self.globalBackgroundKey
+        let old = feedBackgrounds[key]
+        feedBackgrounds[key] = bg
+        writeBackground(key: Self.backgroundPrefix + key, bg)
+        if case .image(let name) = old, bg != old,
+           !feedBackgrounds.values.contains(.image(name)) {
+            try? FileManager.default.removeItem(at: Self.imagesDir.appendingPathComponent(name))
+        }
+    }
+
+    /// Stores a picked picture into the backgrounds folder and returns the
+    /// background referencing it.
+    func storeBackgroundImage(_ data: Data) -> FeedBackground? {
+        let name = UUID().uuidString + ".jpg"
+        do {
+            try FileManager.default.createDirectory(at: Self.imagesDir, withIntermediateDirectories: true)
+            try data.write(to: Self.imagesDir.appendingPathComponent(name))
+            return .image(name)
+        } catch {
+            return nil
+        }
     }
 
     func setBackground(_ doc: ShaderDocument?, for chatId: String) {
-        load()
-        backgrounds[chatId] = doc
-        write(key: Self.backgroundPrefix + chatId, doc)
+        setFeedBackground(doc.map { .shader($0) }, for: chatId)
     }
 
     // MARK: - Effects
@@ -163,6 +210,18 @@ final class ShaderSurfaces: ObservableObject {
     private func write(key: String, _ doc: ShaderDocument?) {
         guard let db else { return }
         let json = doc.flatMap(Self.json)
+        try? db.write { dbc in
+            if let json {
+                try KVRow(key: key, value: json).save(dbc)
+            } else {
+                try dbc.execute(sql: "DELETE FROM kv WHERE key = ?", arguments: [key])
+            }
+        }
+    }
+
+    private func writeBackground(key: String, _ bg: FeedBackground?) {
+        guard let db else { return }
+        let json = bg.flatMap { (try? JSONEncoder().encode($0)).flatMap { String(data: $0, encoding: .utf8) } }
         try? db.write { dbc in
             if let json {
                 try KVRow(key: key, value: json).save(dbc)

@@ -98,15 +98,29 @@ struct ChatScreen: View {
     private var screenStack: some View {
         ZStack(alignment: .bottom) {
             Theme.chatBackground.ignoresSafeArea()
-            // the chat's shader background, this device's own choice; it runs
-            // only while the chat is in front
-            if let background = surfaces.backgrounds[chatId] {
+            // the chat's background — this chat's own choice or the one set for
+            // every chat, this device only; a shader runs only while the chat
+            // is in front
+            switch surfaces.feedBackground(for: chatId) {
+            case .shader(let background):
                 // transparent, so the theme background stays under it while
                 // the program compiles instead of a black flash on first open
                 ShaderCanvasView(document: background, running: backgroundRunning, transparent: true, deviceInputs: true, priority: .background)
                     .ignoresSafeArea()
                     .id(background)
                     .accessibilityIdentifier("chat.shaderBackground")
+            case .image(let name):
+                if let img = UIImage(contentsOfFile: ShaderSurfaces.imagesDir.appendingPathComponent(name).path) {
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
+                        .ignoresSafeArea()
+                        .accessibilityIdentifier("chat.imageBackground")
+                }
+            case nil:
+                EmptyView()
             }
             VStack(spacing: 0) {
                 // pending request: a profile card with the two buttons stands in for the feed

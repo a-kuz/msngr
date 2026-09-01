@@ -8,6 +8,7 @@ struct SettingsView: View {
     @ObservedObject private var theme = ThemeStore.shared
     @Environment(\.dismiss) private var dismiss
     @State private var displayName = ""
+    @State private var pickingBackground = false
     @State private var bio = ""
     @State private var avatarItem: PhotosPickerItem?
     @State private var me: User?
@@ -102,6 +103,12 @@ struct SettingsView: View {
                         }
                     }
                     .padding(.vertical, 4)
+                    Button {
+                        pickingBackground = true
+                    } label: {
+                        Label("Chat background", systemImage: "photo.on.rectangle")
+                    }
+                    .accessibilityIdentifier("settings.background")
                 }
 
                 shadersSection
@@ -258,6 +265,9 @@ struct SettingsView: View {
             .onChange(of: avatarItem) { _, item in
                 guard let item else { return }
                 Task { await uploadAvatar(item) }
+            }
+            .sheet(isPresented: $pickingBackground) {
+                BackgroundPickerView(chatId: nil)
             }
             .sheet(item: $shaderComposer) { purpose in
                 ShaderComposerScreen(purpose: purpose, initial: composerInitial(purpose)) { doc in
