@@ -134,6 +134,8 @@ public actor CallManager {
     private let sendInviteRow: @Sendable (_ chatId: String, _ invitedUserId: String) async -> Void
     /// Writes or updates the conference card in a chat.
     private let sendLiveCard: @Sendable (CallLive, _ chatId: String) async -> Void
+    /// Closes this device's copies of a call's cards once its own call is over.
+    private let endLiveCards: @Sendable (_ callId: String) async -> Void
     /// The chats holding this call's card, written by this device: the
     /// inviter's, refreshed as people come and go and closed when the call ends.
     private var liveCardChats: Set<String> = []
@@ -190,6 +192,7 @@ public actor CallManager {
                 openChat: @escaping ChatOpener = { _ in nil },
                 sendInviteRow: @Sendable @escaping (String, String) async -> Void = { _, _ in },
                 sendLiveCard: @Sendable @escaping (CallLive, String) async -> Void = { _, _ in },
+                endLiveCards: @Sendable @escaping (String) async -> Void = { _ in },
                 dialTimeout: TimeInterval = CallSignal.offerLifetime,
                 iceRestartDelay: TimeInterval = 3.0) {
         self.ownUserId = ownUserId
@@ -200,6 +203,7 @@ public actor CallManager {
         self.openChat = openChat
         self.sendInviteRow = sendInviteRow
         self.sendLiveCard = sendLiveCard
+        self.endLiveCards = endLiveCards
         self.dialTimeout = dialTimeout
         self.iceRestartDelay = iceRestartDelay
     }
@@ -224,6 +228,9 @@ public actor CallManager {
                   },
                   sendLiveCard: { [weak engine] card, chatId in
                       await engine?.sendCallLive(card, chatId: chatId)
+                  },
+                  endLiveCards: { [weak engine] callId in
+                      await engine?.closeCallLiveLocally(callId: callId)
                   })
         let signals = engine.callSignalStream.subscribe()
         Task { [weak self] in
@@ -987,6 +994,9 @@ public actor CallManager {
         if case .ended(let reason) = phase {
             await publishLog(reason: reason)
             await refreshLiveCards(endedAt: Date().timeIntervalSince1970)
+            // a card someone else wrote closes here on its own: their edit
+            // may never come if their app died with the call
+            if state.connectedAt != nil, let callId = state.callId { await endLiveCards(callId) }
         }
         var next = state
         next.phase = phase

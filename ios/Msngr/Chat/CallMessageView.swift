@@ -123,7 +123,8 @@ final class CallMessageView: UIView {
         let s = max(0, Int(end - live.startedAt))
         let clock = String(format: "%d:%02d", s / 60, s % 60)
         let names = live.members.map { $0.name.isEmpty ? String(localized: "Someone") : $0.name }
-        detailLabel.text = names.joined(separator: ", ") + " · " + clock
+        // the clock leads: a long list of names is cut off, the time never is
+        detailLabel.text = clock + " · " + names.joined(separator: ", ")
     }
 
     /// The one-line form for the chat list preview.
@@ -146,6 +147,9 @@ final class CallMessageView: UIView {
         let detailH = ceil(Theme.Text.voiceDuration.uiFont.lineHeight)
         let top = (bounds.height - titleH - detailH - 2) / 2
         titleLabel.frame = CGRect(x: x, y: top, width: w, height: titleH)
-        detailLabel.frame = CGRect(x: x, y: titleLabel.frame.maxY + 2, width: w, height: detailH)
+        // the bubble's time sits over the bottom-right corner: a card's detail
+        // line runs long, so it stops short of that corner
+        detailLabel.frame = CGRect(x: x, y: titleLabel.frame.maxY + 2,
+                                   width: w - (live == nil ? 0 : 56), height: detailH)
     }
 }

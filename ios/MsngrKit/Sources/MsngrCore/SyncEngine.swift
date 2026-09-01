@@ -1724,6 +1724,24 @@ public actor SyncEngine {
         try? await enqueue(content: content, chatId: chatId, clientMsgId: "clog:\(log.callId)")
     }
 
+    /// Closes this device's copies of a call's cards without a frame: a
+    /// participant whose call ended knows the card is over even when its
+    /// writer never got to say so (their app died mid-call).
+    public func closeCallLiveLocally(callId: String) async {
+        let now = Date().timeIntervalSince1970
+        try? await db.write { dbc in
+            let rows = try Row.fetchAll(
+                dbc, sql: "SELECT id, text FROM message WHERE kind = 'call' AND text LIKE ? AND text LIKE ?",
+                arguments: [CallLive.prefix + "%", "%\"callId\":\"\(callId)\"%"])
+            for row in rows {
+                guard var card = CallLive.decode(row["text"] as String?), card.isLive else { continue }
+                card.endedAt = now
+                try dbc.execute(sql: "UPDATE message SET text = ? WHERE id = ?",
+                                arguments: [card.encoded, row["id"] as String])
+            }
+        }
+    }
+
     /// Writes the conference card into a chat, or brings the one already
     /// there up to date: the first call lands the row, every later one edits
     /// it in place, so a chat holds one card per call. Member names are filled
@@ -1814,7 +1832,7 @@ public actor SyncEngine {
                             arguments: [content.ttlSeconds ?? 0, chatId])
         case CallSignal.kind:
             break // in-memory only, delivered before the write reaches here
-        case CallLog.kind:
+        case CallLog.kind, CallLive.kind:
             try SyncEngine.storeCallLog(dbc, content, chatId: chatId, seq: seq,
                                         from: from, sentAt: sentAt, ts: ts, ownUserId: ownUserId)
             try dbc.execute(sql: "UPDATE chat SET lastActivityAt = ? WHERE id = ?",
@@ -1867,6 +1885,7 @@ public actor SyncEngine {
     /// A call log: service on the wire, a call row in the feed. Unlike a group
     /// event it does move the chat up the list — a missed call is exactly the
     /// thing the list has to show.
+    /// A call log or a conference card: a `.call` row carrying the text as sent.
     static func storeCallLog(_ dbc: GRDB.Database, _ content: ContentPayload, chatId: String,
                              seq: Int, from: String, sentAt: Double, ts: Double,
                              ownUserId: String) throws {
@@ -1935,7 +1954,7 @@ public actor SyncEngine {
                 break // the chat's current TTL is in its state; a historic change is not replayed
             case CallSignal.kind:
                 break // history never rings; a live signal reaches the engine on the socket path
-            case CallLog.kind:
+            case CallLog.kind, CallLive.kind:
                 // history is older than whatever the chat is doing now, so the
                 // row goes in without moving the chat up the list
                 try SyncEngine.storeCallLog(dbc, content, chatId: chatId, seq: seq,

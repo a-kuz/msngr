@@ -548,7 +548,8 @@ final class CallManagerTests: XCTestCase {
         }
     }
 
-    private func makeCardManager() -> (CallManager, SignalLog, TransportFactoryLog, CardSink) {
+    private func makeCardManager(closed: SignalLogStrings = SignalLogStrings())
+        -> (CallManager, SignalLog, TransportFactoryLog, CardSink) {
         let log = SignalLog()
         let factory = TransportFactoryLog()
         let cards = CardSink()
@@ -558,8 +559,29 @@ final class CallManagerTests: XCTestCase {
             makeTransport: { factory.make() },
             openChat: { userId in "direct:me-\(userId)" },
             sendLiveCard: { cards.record($0, chatId: $1) },
+            endLiveCards: { closed.record($0) },
             iceRestartDelay: 60)
         return (manager, log, factory, cards)
+    }
+
+    /// A participant's own call ending closes its copies of the call's cards
+    /// locally, whether or not the writer's edit ever arrives; a call that
+    /// never connected has no card to close.
+    func testACallEndingClosesItsCardsLocally() async {
+        let closed = SignalLogStrings()
+        let (manager, log, factory, _) = makeCardManager(closed: closed)
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "s")))
+        await manager.accept()
+        factory.all[0].emit(.connected)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.handle(event(CallSignal(type: .end, callId: "c1", reason: .hangup)))
+        XCTAssertEqual(closed.all, ["c1"])
+        XCTAssertEqual(log.types, [.answer])
+
+        let (ringing, _, _, _) = makeCardManager(closed: closed)
+        await ringing.handle(event(CallSignal(type: .offer, callId: "c2", sdp: "s")))
+        await ringing.decline()
+        XCTAssertEqual(closed.all, ["c1"], "a declined ring closes nothing")
     }
 
     /// The inviter writes the live card into the chat the call started in and
