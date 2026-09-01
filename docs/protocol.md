@@ -435,13 +435,16 @@ asked for it.
   id of the member it concerns. The names travel with the event so a line about
   someone who has already left still reads;
 - `call` carries one step of a call's WebRTC signaling in `text` as JSON
-  (`CallSignal`): `{type: "offer"|"answer"|"ice"|"end", callId, sdp?,
-  candidates?, reason?, video?, members?}`. `video` on a renegotiation offer
-  says whether the sender's camera is on. `members` on an offer makes it a
-  conference invite: it names everyone already in the call, the invited side
+  (`CallSignal`): `{type: "offer"|"answer"|"ice"|"end"|"hold", callId, sdp?,
+  candidates?, reason?, video?, members?, held?}`. `video` on a renegotiation
+  offer says whether the sender's camera is on. `members` on an offer makes it
+  a conference invite: it names everyone already in the call, the invited side
   answers it and dials each of the others over their direct chats, and any
   participant answers a same-callId offer from someone new in place — the
-  callId is the ticket, so the mesh closes without ringing anyone twice. It is a service frame with no feed row; delivery on
+  callId is the ticket, so the mesh closes without ringing anyone twice.
+  `hold` says the sender parked the call (`held: true`) or took it back
+  (`held: false`): the connection stands, their audio is silenced both ways,
+  and the receiver shows the silence as theirs. It is a service frame with no feed row; delivery on
   the receiver is in-memory only, straight to the call engine. An offer older
   than 60 seconds is dropped instead of ringing, so a journal replay after a
   reconnect cannot start a ghost call. Candidate batches (`type: "ice"`) do
