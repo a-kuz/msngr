@@ -505,6 +505,19 @@ public actor SyncEngine {
             if let chatId = f.chatId, let from = f.from {
                 typingStream.send((chatId, from, f.kind))
             }
+        case "callRelay":
+            // an ephemeral envelope: decrypted and handed to the call engine,
+            // never stored — there is no seq and no row to store it under
+            if let chatId = f.chatId, let from = f.from, let fromDevice = f.fromDevice,
+               let body = f.body,
+               case .content(let payload)? = try? e2ee.decrypt(
+                   envelopeJSON: body, chatId: chatId,
+                   fromUserId: from, fromDeviceId: fromDevice),
+               payload.kind == CallSignal.kind {
+                deliverCallSignal(payload, chatId: chatId, from: from,
+                                  fromDevice: fromDevice,
+                                  sentAt: f.sentAt ?? Date().timeIntervalSince1970)
+            }
         case "presence":
             if let userId = f.userId, let online = f.online {
                 try? await db.write { dbc in
@@ -1552,10 +1565,29 @@ public actor SyncEngine {
 
     /// Sends one step of a call's signaling into the chat: service content,
     /// so it takes a seq but raises no unread count, no push and no feed row.
+    /// Candidate batches do not enter the journal at all: they matter for
+    /// seconds and would only leave rows nobody reads again, so they ride the
+    /// ephemeral relay — encrypted the same way, delivered to live sockets.
     public func sendCallSignal(_ signal: CallSignal, chatId: String) async {
         var content = ContentPayload(kind: CallSignal.kind)
         content.text = signal.encoded
-        try? await enqueue(content: content, chatId: chatId)
+        if signal.type == .ice {
+            await sendCallRelay(content, chatId: chatId)
+        } else {
+            try? await enqueue(content: content, chatId: chatId)
+        }
+    }
+
+    private func sendCallRelay(_ content: ContentPayload, chatId: String) async {
+        let peer = try? await db.read { [ownUserId] dbc in
+            try String.fetchOne(dbc, sql: "SELECT userId FROM member WHERE chatId = ? AND userId != ?",
+                                arguments: [chatId, ownUserId])
+        }
+        guard let peer = peer ?? nil,
+              let env = try? await e2ee.encryptDirect(content: content, chatId: chatId,
+                                                      toUserId: peer) else { return }
+        try? await ws.send(.callRelay(chatId: chatId,
+                                      sentAt: Date().timeIntervalSince1970, body: env))
     }
 
     /// Publishes the finished call into the feed: service content that leaves

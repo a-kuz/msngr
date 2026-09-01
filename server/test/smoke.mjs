@@ -274,6 +274,25 @@ cb.send({ t: "typing", chatId: chat.chatId, kind: "text" });
 const typing = await ca.waitFor((f) => f.t === "typing" && f.from === bob.userId);
 check("typing", !!typing);
 
+// 7b. The ephemeral call relay: the envelope reaches the peer's live socket
+// with its addressing, and leaves nothing in the journal
+cb.send({ t: "callRelay", chatId: chat.chatId, sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const relayed = await ca.waitFor((f) => f.t === "callRelay" && f.chatId === chat.chatId);
+check("call relay reaches the peer", !!relayed
+  && relayed.from === bob.userId && !!relayed.fromDevice && !!relayed.body);
+{
+  const before = (await api(`/api/chats/${chat.chatId}/history?fromSeq=0`,
+    { token: alice.token })).msgs.length;
+  const relayMark = ca.mark();
+  cb.send({ t: "callRelay", chatId: chat.chatId, sentAt: Date.now(),
+    body: { v: 1, mode: "pw", msgs: {} } });
+  await ca.waitAfter(relayMark, (f) => f.t === "callRelay" && f.chatId === chat.chatId);
+  const after = (await api(`/api/chats/${chat.chatId}/history?fromSeq=0`,
+    { token: alice.token })).msgs.length;
+  check("call relay is not journaled", before === after, `${before} -> ${after}`);
+}
+
 // 7a. A changed card reaches the people who see it, over the socket
 const renameMark = ca.mark();
 const renamed = await api("/api/profile", { token: bob.token, body: { displayName: "Bob Renamed" } });

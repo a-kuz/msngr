@@ -191,6 +191,7 @@ history.
 {t:"recv",  chatId, seqs:[...]}                            // → delivered receipts to the author
 {t:"read",  chatId, upToSeq}
 {t:"typing",chatId, kind}                                  // kind: a string or null (stop)
+{t:"callRelay", chatId, sentAt, body}                      // ephemeral E2E envelope: live sockets only
 {t:"delete",chatId, msgIds:[...], forAll}
 {t:"ping"}
 {t:"bg"}    // the app went to background: presence goes offline at once
@@ -215,7 +216,8 @@ badge in that push carries the unchanged unread total.
 {t:"hello",   serverTime, protocol, minProtocol}
 {t:"sent",    chatId, clientMsgId, msgId, seq, ts}
 {t:"deferred",chatId, clientMsgId, dueAt}   // the server holds the envelope until dueAt
-{t:"msg",     chatId, seq, msgId, from, fromDevice, clientMsgId, sentAt, ts, body, service?}
+{t:"msg",     chatId, seq, msgId, from, fromDevice, clientMsgId, sentAt, ts, body, service?, notify?}
+{t:"callRelay", chatId, from, fromDevice, sentAt, body}   // see the client frame
               // clientMsgId lets the author's own devices close their outbox
               // row from the echo when the `sent` ack found no live socket
 {t:"receipt", chatId, kind:"delivered"|"read", upToSeq, by}
@@ -437,7 +439,10 @@ asked for it.
   candidates?, reason?}`. It is a service frame with no feed row; delivery on
   the receiver is in-memory only, straight to the call engine. An offer older
   than 60 seconds is dropped instead of ringing, so a journal replay after a
-  reconnect cannot start a ghost call. Media itself never touches the server:
+  reconnect cannot start a ghost call. Candidate batches (`type: "ice"`) do
+  not enter the journal at all: they travel the `callRelay` frame — the same
+  E2E envelope, relayed to live sockets and forgotten. A batch that outruns
+  its journaled offer is held by callId on the receiver until the offer lands. Media itself never touches the server:
   the peers connect directly over DTLS-SRTP, and the SDP inside the E2EE
   envelope is what authenticates the endpoints;
 - `callLog` is the record a finished call leaves in the feed, in `text` as

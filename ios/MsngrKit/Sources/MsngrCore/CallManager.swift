@@ -101,6 +101,10 @@ public actor CallManager {
     private var dialTimeoutTask: Task<Void, Never>?
     /// remote candidates that arrived while the offer was still ringing
     private var heldRemoteCandidates: [CallSignal.IceCandidate] = []
+    /// candidates that outran their offer: they ride the ephemeral relay and
+    /// the offer rides the journal, so the order between them is not given.
+    /// Keyed by callId, claimed when the offer lands, capped small.
+    private var earlyCandidates: [String: [CallSignal.IceCandidate]] = [:]
     /// the incoming offer being rung, kept to answer it
     private var pendingOffer: CallSignalEvent?
     /// locally gathered candidates waiting for their debounce flush
@@ -258,8 +262,15 @@ public actor CallManager {
                 return
             }
         case .ice:
-            guard event.signal.callId == state.callId,
-                  let candidates = event.signal.candidates, !candidates.isEmpty else { return }
+            guard let candidates = event.signal.candidates, !candidates.isEmpty else { return }
+            guard event.signal.callId == state.callId else {
+                // ahead of its offer: keep it until the offer lands
+                if earlyCandidates.count >= 2, earlyCandidates[event.signal.callId] == nil {
+                    earlyCandidates = [:]
+                }
+                earlyCandidates[event.signal.callId, default: []].append(contentsOf: candidates)
+                return
+            }
             if let transport {
                 await transport.add(candidates: candidates)
             } else {
@@ -290,8 +301,11 @@ public actor CallManager {
            let myCallId = state.callId, let chatId = state.chatId {
             if myCallId < event.signal.callId { return }
             await sendSignal(CallSignal(type: .end, callId: myCallId, reason: .cancel), chatId)
+            // claimed before teardown, which clears the early buffer whole
+            let early = earlyCandidates.removeValue(forKey: event.signal.callId) ?? []
             await teardown(showing: CallState())
             pendingOffer = event
+            heldRemoteCandidates = early
             isCaller = false
             state = CallState(phase: .ringing, chatId: event.chatId,
                               peerUserId: event.fromUserId, callId: event.signal.callId)
@@ -324,7 +338,8 @@ public actor CallManager {
             return
         }
         pendingOffer = event
-        heldRemoteCandidates = []
+        heldRemoteCandidates = earlyCandidates.removeValue(forKey: event.signal.callId) ?? []
+        earlyCandidates = [:]
         isCaller = false
         state = CallState(phase: .ringing, chatId: event.chatId,
                           peerUserId: event.fromUserId, callId: event.signal.callId)
@@ -471,6 +486,7 @@ public actor CallManager {
         transportTask = nil
         outgoingCandidates = []
         heldRemoteCandidates = []
+        earlyCandidates = [:]
         pendingOffer = nil
         if let transport {
             self.transport = nil

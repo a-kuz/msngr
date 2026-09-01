@@ -1233,6 +1233,14 @@ export class UserDO implements DurableObject {
         });
         return;
 
+      case "callRelay":
+        await this.convStub(frame.chatId).fetch("https://do/call-relay", {
+          method: "POST",
+          body: JSON.stringify({ userId, deviceId: att.deviceId,
+                                 sentAt: frame.sentAt, body: frame.body }),
+        });
+        return;
+
       case "delete":
         await this.convStub(frame.chatId).fetch("https://do/delete", {
           method: "POST",
