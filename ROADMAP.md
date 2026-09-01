@@ -30,7 +30,9 @@ A ✅ goes in only together with a link to the evidence.
     (qa/runs/2026-08-17-profile)
   - ✅ the username can be changed; the old one is released in the same statement
     (smoke `username changed`, `the old handle is free`, qa/runs/2026-08-17-profile)
-  - ⬜ a card change on a device of the same account (one device per account was run)
+  - ✅ a card change on a device of the same account: a second device joined by
+    code, the rename on the first showed up on the second with no action there
+    (qa/runs/2026-09-01-second-device.md)
 - Sign-in and devices
   - ✅ logout: the device token is invalidated, local data is wiped
     (smoke `logout invalidates token`, qa/runs/2026-08-15-sessions)
