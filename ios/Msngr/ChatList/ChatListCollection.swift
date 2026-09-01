@@ -17,6 +17,8 @@ struct ChatListCollection: UIViewRepresentable {
     var onOpenArchive: () -> Void
     var onDelete: (ChatListItem) -> Void
     var onNewFolder: () -> Void
+    /// A tap on a ringed avatar: the author's stories instead of the chat.
+    var onOpenStories: (StoriesModel.Author) -> Void
 
     enum Row: Hashable {
         case request(String)
@@ -139,7 +141,8 @@ struct ChatListCollection: UIViewRepresentable {
                 case .request(let id), .chat(let id):
                     guard let item = self.item(for: row) else { return }
                     cell.contentConfiguration = UIHostingConfiguration {
-                        ChatRowView(item: item, ownUserId: self.parent.ownUserId)
+                        ChatRowView(item: item, ownUserId: self.parent.ownUserId,
+                                    onOpenStories: self.parent.onOpenStories)
                     }
                     .margins(.vertical, 6)
                     .margins(.horizontal, 12)

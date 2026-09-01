@@ -36,6 +36,10 @@ struct ChatListView: View {
     @ObservedObject private var theme = ThemeStore.shared
     @State private var showNewChat = false
     @State private var showSettings = false
+    @State private var showStoryComposer = false
+    /// The author whose stories are being watched, if any.
+    @State private var watchingStories: StoriesModel.Author?
+    @ObservedObject private var stories = StoriesModel.shared
     @State private var path = NavigationPath()
     /// chat whose deletion is waiting for confirmation
     @State private var deleteCandidate: ChatListItem?
@@ -65,6 +69,8 @@ struct ChatListView: View {
             Group {
                 if model.searchText.isEmpty {
                     VStack(spacing: 0) {
+                        StoriesTray(onCompose: { showStoryComposer = true },
+                                    onOpen: { watchingStories = $0 })
                         ChatFolderBar(folders: model.folders, unread: model.folderUnread,
                                       selection: tabSelection,
                                       onManage: { showFolders = true },
@@ -122,6 +128,12 @@ struct ChatListView: View {
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
+            }
+            .fullScreenCover(isPresented: $showStoryComposer) {
+                StoryComposerView { _ in }
+            }
+            .fullScreenCover(item: $watchingStories) { author in
+                StoryViewerView(author: author) { watchingStories = nil }
             }
             .sheet(isPresented: $showFolders) {
                 ChatFoldersView(model: model)
@@ -319,7 +331,8 @@ struct ChatListView: View {
                                   onOpen: { path.append($0) },
                                   onOpenArchive: { path.append(ArchiveRoute()) },
                                   onDelete: { deleteCandidate = $0 },
-                                  onNewFolder: { showFolders = true })
+                                  onNewFolder: { showFolders = true },
+                                  onOpenStories: { watchingStories = $0 })
         .overlay {
             if model.loaded, let folder, items.isEmpty {
                 folderEmptyState(folder)

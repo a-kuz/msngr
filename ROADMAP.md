@@ -940,23 +940,45 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 
 ## Stories
 
-- ⬜ a story is composed from the library: several photos and videos at once, in
-  the order they were picked
-- ⬜ shooting a video for a story from the camera, without leaving the composer
-- ⬜ text over a story: a style, a colour, a colour for the plate behind it
-- ⬜ the editor from the section above works on a story frame too, so there is one
-  set of tools and not two
-- ⬜ publishing: who sees it, how long it lives, taking it down
-- ⬜ the ring on the avatar in the chat list and the viewer with taps and holds
-- ⬜ who watched it, and answering a story into the chat
-- ⬜ no E2EE: a story is plaintext on the server, the way a channel is. Who may
-  see it is an access rule, not a key, and the composer has to say that plainly
-  before the story goes out.
-- ⬜ a public link, if the creator asks for one: the story opens in a browser
-  with no app and no account, so it can be shared outside msngr
-- ⬜ the page behind that link: the media, the text over it, and nothing that
-  identifies the audience — who watched belongs to the creator alone
-- ⬜ revoking the link, and what a revoked link shows to someone who kept it
+- ✅ a story is composed from the library: several photos and videos at once, in
+  the order they were picked. The composer is the full-screen kind: the frame
+  fills the screen, the tools lie over it, the filmstrip runs along the bottom
+  and a plus on it adds more (qa/runs/2026-09-01-stories-run)
+- 🟡 shooting a video for a story from the camera, without leaving the composer:
+  the camera tool opens the system recorder and the clip joins the filmstrip;
+  the button is drawn only where a capture device exists, so it has not been
+  seen working — no simulator has a camera
+- ✅ text over a story: typed straight onto the frame, dragged to where it should
+  stand, a colour from the strip and a plate behind it cycled dark → light →
+  none; the place travels as a fraction of the frame and the viewer and the
+  page put it back there (qa/runs/2026-09-01-stories-run)
+- ✅ the editor from the section above works on a story frame too, so there is one
+  set of tools and not two (the pencil tool in the composer opens
+  `MarkupEditorScreen` over the frame)
+- ✅ publishing: who sees it, how long it lives, taking it down (smoke `a story
+  is published` … `only the author takes a story down`;
+  qa/runs/2026-09-01-stories-run)
+- ✅ the stories tray over the chat list («Ваша история» first, then everyone
+  with something live, unwatched ahead), the ring on the avatar, and the viewer
+  with taps, holds and a clock that waits for a dialog or a reply
+  (qa/runs/2026-09-01-stories-run)
+- ✅ who watched it, and answering a story into the chat; the author's own look
+  is not a view (smoke `the author sees who watched`;
+  qa/runs/2026-09-01-stories-run)
+- ✅ no E2EE: a story is plaintext on the server, the way a channel is. Who may
+  see it is an access rule, not a key, and the composer says so under the
+  chips before the story goes out (smoke `a stranger does not see a
+  contacts-only story`, `a story for everyone reaches a stranger`)
+- ✅ a public link, if the creator asks for one: the story opens in a browser
+  with no app and no account, so it can be shared outside msngr (smoke `the
+  public page opens with no account`)
+- ✅ the page behind that link: the media, the text over it where the author put
+  it, and nothing that identifies the audience — who watched belongs to the
+  creator alone (smoke `the page names no audience`, `nobody else sees who
+  watched`, `the page puts the text where the author dragged it`)
+- ✅ revoking the link, and what a revoked link shows to someone who kept it
+  (smoke `a kept link says the story is gone`, `its frames stop being served`,
+  `a new link is a new code`)
 
 ## Bots
 
