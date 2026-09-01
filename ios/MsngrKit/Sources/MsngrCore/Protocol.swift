@@ -43,6 +43,9 @@ public enum WSOutgoing {
     /// before the deadline replaces the envelope and the deadline.
     case defer_(chatId: String, clientMsgId: String, sentAt: Double, body: Envelope, dueAt: Double)
     case deferCancel(chatId: String, clientMsgId: String)
+    /// An ephemeral E2E envelope for a call's ICE candidates: relayed to the
+    /// peer's live sockets, never journaled.
+    case callRelay(chatId: String, sentAt: Double, body: Envelope)
     case recv(chatId: String, seqs: [Int])
     case read(chatId: String, upToSeq: Int)
     case typing(chatId: String, kind: String?)
@@ -67,6 +70,9 @@ public enum WSOutgoing {
                    "sentAt": sentAt, "body": try body.jsonObject(), "dueAt": dueAt]
         case .deferCancel(let chatId, let clientMsgId):
             obj = ["t": "deferCancel", "chatId": chatId, "clientMsgId": clientMsgId]
+        case .callRelay(let chatId, let sentAt, let body):
+            obj = ["t": "callRelay", "chatId": chatId, "sentAt": sentAt,
+                   "body": try body.jsonObject()]
         case .recv(let chatId, let seqs):
             obj = ["t": "recv", "chatId": chatId, "seqs": seqs]
         case .read(let chatId, let upToSeq):

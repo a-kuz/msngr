@@ -112,10 +112,11 @@ function deliveryUser(key: string): string {
   return key.slice(FANOUT_PREFIX.length, key.lastIndexOf("/"));
 }
 
-/// Retrying typing makes no sense: it is superseded by the next typing frame
-/// and stops mattering within seconds. Everything else is worth another pass.
+/// Retrying typing or a call relay makes no sense: each is superseded by the
+/// next frame of its kind and stops mattering within seconds. Everything else
+/// is worth another pass.
 function fanoutRetryable(frame: ServerFrame): boolean {
-  return frame.t !== "typing";
+  return frame.t !== "typing" && frame.t !== "callRelay";
 }
 
 interface Meta {
@@ -1027,6 +1028,23 @@ export class ConversationDO implements DurableObject {
         await this.fanout(
           { t: "typing", chatId: meta.chatId, from: b.userId, kind: b.kind },
           { except: b.userId, skip: [...await this.blockedPeers(b.userId), ...typingOff] }
+        );
+        return json({ ok: true });
+      }
+
+      case "/call-relay": {
+        // an ephemeral envelope for a call's ICE candidates: fanned out to
+        // live sockets and forgotten — no seq, no journal row, no push
+        const b = (await req.json()) as {
+          userId: string; deviceId: string; sentAt: number; body: unknown;
+        };
+        const members = await this.loadMembers();
+        if (!members.has(b.userId)) return err("not_member", 403);
+        if (await this.blockedEitherWay(b.userId)) return json({ ok: true });
+        await this.fanout(
+          { t: "callRelay", chatId: meta.chatId, from: b.userId,
+            fromDevice: b.deviceId, sentAt: b.sentAt, body: b.body },
+          { except: b.userId, skip: await this.blockedPeers(b.userId) }
         );
         return json({ ok: true });
       }

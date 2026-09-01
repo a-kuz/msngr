@@ -425,6 +425,17 @@ final class CallManagerTests: XCTestCase {
         XCTAssertFalse(transport.closed)
     }
 
+    /// Candidates ride the relay and can outrun the journaled offer: they are
+    /// held by callId and applied once the offer lands and the call is taken.
+    func testCandidatesAheadOfTheirOfferAreHeld() async {
+        let (manager, _, transport) = makeManager()
+        let cand = CallSignal.IceCandidate(sdpMid: "0", sdpMLineIndex: 0, candidate: "cand-early")
+        await manager.handle(event(CallSignal(type: .ice, callId: "c1", candidates: [cand])))
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "their-offer")))
+        await manager.accept()
+        XCTAssertEqual(transport.added.map(\.candidate), ["cand-early"])
+    }
+
     /// The caller applies the answer to its restart offer without leaving the
     /// active phase.
     func testRestartAnswerAcceptedWhileActive() async {

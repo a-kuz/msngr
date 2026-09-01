@@ -75,9 +75,3 @@ the delay sends a fresh offer with new ICE credentials over the same
 signaling, and the callee answers it on the live transport. What remains is
 the honest check — a device walking out of Wi-Fi range into LTE.
 
-### Ephemeral relay frame for ICE candidates
-Candidate batches ride the chat journal as service frames: a few rows per
-call that nobody ever reads again. A relay-only frame (like `typing`,
-encrypted but not journaled) keeps the journal clean. Touches
-`server/src/types.ts` and the DO relay path — coordinate with the
-orchestrator, other branches edit those files.
