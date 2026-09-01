@@ -587,6 +587,23 @@ public final class APIClient: @unchecked Sendable {
                               jsonBody: Body(direct: direct, group: group))
     }
 
+    /// Every chat and person with a sound of their own, for the settings list.
+    public struct SoundExceptionsDTO: Decodable, Sendable, Equatable {
+        public struct ChatException: Decodable, Sendable, Equatable {
+            public let chatId: String
+            public let sound: String
+        }
+        public struct PersonException: Decodable, Sendable, Equatable {
+            public let userId: String
+            public let sound: String
+        }
+        public let chats: [ChatException]
+        public let people: [PersonException]
+    }
+    public func soundExceptions() async throws -> SoundExceptionsDTO {
+        try await get("api/notify-sounds/exceptions", as: SoundExceptionsDTO.self)
+    }
+
     public struct InviteResponse: Decodable {
         public let code: String
         public let link: String

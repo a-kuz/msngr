@@ -987,8 +987,11 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ✅ clearing the media cache with its size shown: the label follows the clear
   in place (qa/runs/2026-08-21-media-viewer, the run also caught and fixed the
   stale label)
-- ⬜ notification settings: previews on the banner, the default sound, and the
-  per-chat and per-person exceptions listed under Notifications → Sounds
+- ✅ notification settings: one screen under Settings → «Уведомления» with the
+  banner preview toggle, the default sounds for direct chats and groups, and
+  the per-chat and per-person sound exceptions listed with removal
+  (`/api/notify-sounds/exceptions` over the receiver's object; the exceptions
+  checks in smoke; qa/runs/2026-09-01-notifications-settings.md)
 - ✅ a privacy screen gathering what E2EE, trust, privacy lists: last seen,
   receipts and typing, the profile's visibility, who finds me and who adds
   me, who can call me, link previews and the default disappearing timer —
