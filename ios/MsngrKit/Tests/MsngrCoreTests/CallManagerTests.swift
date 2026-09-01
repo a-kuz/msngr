@@ -63,6 +63,19 @@ final class SignalLog: @unchecked Sendable {
     var types: [CallSignal.SignalType] { all.map(\.0.type) }
 }
 
+/// Collects plain strings from a callback, in order.
+final class SignalLogStrings: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [String] = []
+    func record(_ s: String) {
+        lock.lock(); items.append(s); lock.unlock()
+    }
+    var all: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return items
+    }
+}
+
 /// Collects the call logs a manager publishes.
 final class LogSink: @unchecked Sendable {
     private let lock = NSLock()
@@ -482,6 +495,152 @@ final class CallManagerTests: XCTestCase {
         await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "their-offer")))
         await manager.accept()
         XCTAssertEqual(transport.added.map(\.candidate), ["cand-early"])
+    }
+
+    // MARK: - Conference (a short-lived mesh of three)
+
+    /// Collects every transport the factory hands out, so a test can address
+    /// each leg of a conference.
+    final class TransportFactoryLog: @unchecked Sendable {
+        private let lock = NSLock()
+        private var items: [FakeTransport] = []
+        func make() -> FakeTransport {
+            let t = FakeTransport()
+            lock.lock(); items.append(t); lock.unlock()
+            return t
+        }
+        var all: [FakeTransport] {
+            lock.lock(); defer { lock.unlock() }
+            return items
+        }
+    }
+
+    /// A conference manager with its own chat opener and invite-row sink.
+    private func makeConferenceManager()
+        -> (CallManager, SignalLog, TransportFactoryLog, invites: SignalLogStrings) {
+        let log = SignalLog()
+        let factory = TransportFactoryLog()
+        let invites = SignalLogStrings()
+        let manager = CallManager(
+            ownUserId: "me",
+            sendSignal: { log.record($0, chatId: $1) },
+            makeTransport: { factory.make() },
+            openChat: { userId in "direct:me-\(userId)" },
+            sendInviteRow: { chatId, userId in invites.record("\(chatId)|\(userId)") },
+            iceRestartDelay: 60)
+        return (manager, log, factory, invites)
+    }
+
+    /// The inviter: a second leg opens toward the invited person, the offer
+    /// names everyone already in, and the invited-by row lands in their chat.
+    func testInviteOpensALegAndLeavesTheRow() async {
+        let (manager, log, factory, invites) = makeConferenceManager()
+        await manager.startCall(chatId: "chat1", peerUserId: "peer")
+        await manager.handle(event(CallSignal(type: .answer, callId: log.all[0].0.callId,
+                                              sdp: "a")))
+        factory.all[0].emit(.connected)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        await manager.invite(userId: "carol")
+        let state = await manager.current
+        XCTAssertEqual(state.extraPeers, ["carol"])
+        let inviteOffer = log.all.last!
+        XCTAssertEqual(inviteOffer.0.type, .offer)
+        XCTAssertEqual(inviteOffer.1, "direct:me-carol")
+        XCTAssertEqual(inviteOffer.0.callId, log.all[0].0.callId)
+        XCTAssertEqual(Set(inviteOffer.0.members ?? []), ["me", "peer"])
+        XCTAssertEqual(invites.all, ["direct:me-carol|carol"])
+    }
+
+    /// The invited side: accepting an offer that names the members dials the
+    /// ones it has no leg to yet, over their direct chats.
+    func testJoinerDialsTheOtherMembers() async {
+        let (manager, log, _, _) = makeConferenceManager()
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "s",
+                                              members: ["alice", "bob"]),
+                                   chatId: "direct:me-alice", from: "alice"))
+        await manager.accept()
+        let state = await manager.current
+        XCTAssertEqual(state.extraPeers, ["bob"])
+        XCTAssertEqual(log.types, [.answer, .offer])
+        XCTAssertEqual(log.all[1].1, "direct:me-bob")
+        XCTAssertEqual(log.all[1].0.callId, "c1")
+    }
+
+    /// The third leg reaching an existing participant: a same-callId offer
+    /// from someone new joins in place — the callId is the ticket — with no
+    /// ringing and no busy.
+    func testSameCallIdOfferFromNewUserJoins() async {
+        let (manager, log, factory, _) = makeConferenceManager()
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "s")))
+        await manager.accept()
+        factory.all[0].emit(.connected)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "carol-sdp"),
+                                   chatId: "direct:me-carol", from: "carol"))
+        let state = await manager.current
+        XCTAssertEqual(state.phase, .active)
+        XCTAssertEqual(state.extraPeers, ["carol"])
+        XCTAssertEqual(factory.all.count, 2)
+        XCTAssertEqual(factory.all[1].remoteOffer, "carol-sdp")
+        XCTAssertEqual(log.types, [.answer, .answer])
+        XCTAssertEqual(log.all[1].1, "direct:me-carol")
+    }
+
+    /// A participant leaving takes their leg; the call stands.
+    func testExtraLeavingKeepsTheCall() async {
+        let (manager, log, factory, _) = makeConferenceManager()
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "s")))
+        await manager.accept()
+        factory.all[0].emit(.connected)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "cs"),
+                                   chatId: "direct:me-carol", from: "carol"))
+        await manager.handle(event(CallSignal(type: .end, callId: "c1", reason: .hangup),
+                                   chatId: "direct:me-carol", from: "carol"))
+        let state = await manager.current
+        XCTAssertEqual(state.phase, .active)
+        XCTAssertEqual(state.extraPeers, [])
+        XCTAssertTrue(factory.all[1].closed)
+        _ = log
+    }
+
+    /// The primary peer leaving a conference promotes the oldest extra leg:
+    /// the call keeps standing on it.
+    func testPrimaryLeavingPromotesTheExtra() async {
+        let (manager, _, factory, _) = makeConferenceManager()
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "s"),
+                                   from: "alice"))
+        await manager.accept()
+        factory.all[0].emit(.connected)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "cs"),
+                                   chatId: "direct:me-carol", from: "carol"))
+        await manager.handle(event(CallSignal(type: .end, callId: "c1", reason: .hangup),
+                                   chatId: "chat1", from: "alice"))
+        let state = await manager.current
+        XCTAssertEqual(state.phase, .active)
+        XCTAssertEqual(state.peerUserId, "carol")
+        XCTAssertEqual(state.chatId, "direct:me-carol")
+        XCTAssertEqual(state.extraPeers, [])
+        XCTAssertTrue(factory.all[0].closed)
+        XCTAssertFalse(factory.all[1].closed)
+    }
+
+    /// Hanging up a conference tells every leg over its own chat.
+    func testHangUpEndsEveryLeg() async {
+        let (manager, log, factory, _) = makeConferenceManager()
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "s")))
+        await manager.accept()
+        factory.all[0].emit(.connected)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "cs"),
+                                   chatId: "direct:me-carol", from: "carol"))
+        await manager.hangUp()
+        let ends = log.all.filter { $0.0.type == .end }
+        XCTAssertEqual(Set(ends.map(\.1)), ["chat1", "direct:me-carol"])
+        XCTAssertTrue(factory.all.allSatisfy(\.closed))
     }
 
     /// The caller applies the answer to its restart offer without leaving the

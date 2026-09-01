@@ -983,11 +983,17 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   system PiP window
 - ⬜ a second incoming call during a call: decline, or hold and switch
 - ⬜ the call log: outgoing, answered and missed in the chat and in a list
-- ⬜ pulling a third person into a 1:1 call, and onward — any participant can
-  invite the next one, growing the call ad hoc
-- ⬜ the live call bubble lands in the pairwise chat of the inviter and the
-  invited (created on the spot when they had none), and stays live in every
-  chat it was placed into: join from there, the timer and the participants on it
+- ✅ pulling a third person into a 1:1 call: the add button on the call
+  screen, a short-lived mesh of three (each pair on its own transport over
+  their direct chat, the callId as the ticket — a same-callId offer joins in
+  place), the primary peer leaving promotes the remaining leg, everyone hears
+  everyone (live three-simulator run 2026-09-01; growing past three is the
+  SFU's job — CALLS-ROADMAP.md)
+- ✅ the invited-by row in the pairwise chat of the inviter and the invited
+  (created on the spot when they had none): «Вы пригласили X в звонок», a
+  system line written by the inviter once (live run 2026-09-01)
+- ⬜ the live call bubble that stays live in the chats it was placed into:
+  join from there, the timer and the participants on it
 
 ## Settings
 
