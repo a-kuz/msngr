@@ -59,7 +59,8 @@ final class StoriesModel: ObservableObject {
     /// waiting for the list to be read again.
     func markSeen(_ storyId: String) async {
         guard let api = AppState.shared.api,
-              let index = stories.firstIndex(where: { $0.id == storyId }), !stories[index].seen else {
+              let index = stories.firstIndex(where: { $0.id == storyId }), !stories[index].seen,
+              stories[index].authorId != AppState.shared.session?.userId else {
             return
         }
         try? await api.markStorySeen(storyId)

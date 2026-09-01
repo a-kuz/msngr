@@ -69,6 +69,8 @@ struct ChatListView: View {
             Group {
                 if model.searchText.isEmpty {
                     VStack(spacing: 0) {
+                        StoriesTray(onCompose: { showStoryComposer = true },
+                                    onOpen: { watchingStories = $0 })
                         ChatFolderBar(folders: model.folders, unread: model.folderUnread,
                                       selection: tabSelection,
                                       onManage: { showFolders = true },
@@ -104,12 +106,6 @@ struct ChatListView: View {
                         .accessibilityIdentifier("chatlist.calls")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { showStoryComposer = true } label: {
-                        Image(systemName: "plus.circle.dashed")
-                    }
-                    .accessibilityIdentifier("chatlist.newStory")
-                }
-                ToolbarItem(placement: .topBarTrailing) {
                     Button { showNewChat = true } label: { Image(systemName: "square.and.pencil") }
                         .accessibilityIdentifier("chatlist.new")
                         .keyboardShortcut("n", modifiers: .command)
@@ -133,13 +129,12 @@ struct ChatListView: View {
             .sheet(isPresented: $showSettings) {
                 SettingsView()
             }
-            .sheet(isPresented: $showStoryComposer) {
+            .fullScreenCover(isPresented: $showStoryComposer) {
                 StoryComposerView { _ in }
             }
             .fullScreenCover(item: $watchingStories) { author in
                 StoryViewerView(author: author) { watchingStories = nil }
             }
-            .task(id: app.ready) { await stories.load() }
             .sheet(isPresented: $showFolders) {
                 ChatFoldersView(model: model)
             }

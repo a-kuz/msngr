@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 import MsngrCore
 
 /// Watching one author's stories. A tap on the right half moves on, a tap on
@@ -16,11 +17,13 @@ struct StoryViewerView: View {
     @State private var index = 0
     @State private var progress: Double = 0
     @State private var held = false
+    @State private var showActions = false
+    /// The reply is being typed: the frame waits for it.
+    @FocusState private var replyFocused: Bool
     @State private var frameURL: URL?
     @State private var reply = ""
     @State private var showViewers = false
     @State private var link: String?
-    @State private var linkCopied = false
 
     /// How long one frame stands before the next one comes up.
     private static let frameSeconds: Double = 5
@@ -40,27 +43,50 @@ struct StoryViewerView: View {
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            if let frameURL, let image = UIImage(contentsOfFile: frameURL.path) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .ignoresSafeArea()
-                    .accessibilityIdentifier("story.frame")
-            } else {
-                ProgressView().tint(.white)
-            }
-            if let text = slide?.frame.text, !text.isEmpty {
-                VStack {
-                    Spacer()
-                    Text(text)
-                        .font(.title3)
-                        .foregroundStyle(Color(hex: slide?.frame.textColor ?? "#ffffff"))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
-                        .padding(.bottom, 120)
+            GeometryReader { geo in
+                ZStack {
+                    if let frameURL, slide?.frame.type == "video" {
+                        StoryVideoPlayer(url: frameURL, paused: paused)
+                            .frame(width: geo.size.width, height: geo.size.height)
+                            .accessibilityIdentifier("story.frame")
+                    } else if let frameURL, let image = UIImage(contentsOfFile: frameURL.path) {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: geo.size.width, height: geo.size.height)
+                            .clipped()
+                            .blur(radius: 40)
+                            .opacity(0.7)
+                            .accessibilityHidden(true)
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: geo.size.width, height: geo.size.height)
+                            .accessibilityIdentifier("story.frame")
+                    } else {
+                        ProgressView().tint(.white)
+                            .frame(width: geo.size.width, height: geo.size.height)
+                    }
+                    // the text sits where the author dragged it, in the same
+                    // fraction of the frame whatever the screen
+                    if let frame = slide?.frame, let text = frame.text, !text.isEmpty {
+                        Text(text)
+                            .font(.title2.weight(.semibold))
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(Color(hex: frame.textColor ?? "#ffffff"))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(StoryComposerView.Plate(rawValue: frame.plateColor ?? "")?.color
+                                            ?? .black.opacity(0.35),
+                                        in: RoundedRectangle(cornerRadius: 12))
+                            .frame(maxWidth: 320)
+                            .position(x: (frame.tx ?? 0.5) * geo.size.width,
+                                      y: (frame.ty ?? 0.5) * geo.size.height)
+                            .accessibilityIdentifier("story.text")
+                    }
                 }
             }
+            .ignoresSafeArea()
             taps
             VStack(spacing: 0) {
                 bars
@@ -121,42 +147,12 @@ struct StoryViewerView: View {
                 }
             }
             Spacer()
-            if isMine, let story {
-                Menu {
-                    Button {
-                        showViewers = true
-                    } label: {
-                        Label("Who watched", systemImage: "eye")
-                    }
-                    if let live = link ?? story.link {
-                        Button {
-                            UIPasteboard.general.string = live
-                            linkCopied = true
-                        } label: {
-                            Label(linkCopied ? "Copied!" : "Copy link", systemImage: "link")
-                        }
-                        Button(role: .destructive) {
-                            Task { link = try? await app.api.setStoryLink(story.id, open: false) }
-                        } label: {
-                            Label("Revoke the link", systemImage: "link.badge.plus")
-                        }
-                    } else {
-                        Button {
-                            Task { link = try? await app.api.setStoryLink(story.id, open: true) }
-                        } label: {
-                            Label("Make a link", systemImage: "link")
-                        }
-                    }
-                    Button(role: .destructive) {
-                        Task {
-                            await model.takeDown(story.id)
-                            onFinished()
-                        }
-                    } label: {
-                        Label("Take it down", systemImage: "trash")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis").foregroundStyle(.white)
+            if isMine {
+                Button { showActions = true } label: {
+                    Image(systemName: "ellipsis")
+                        .foregroundStyle(.white)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
                 }
                 .accessibilityIdentifier("story.menu")
             }
@@ -170,7 +166,36 @@ struct StoryViewerView: View {
         .sheet(isPresented: $showViewers) {
             if let story { StoryViewersSheet(storyId: story.id) }
         }
+        // the author's own actions; the clock stands while they are open
+        .confirmationDialog("", isPresented: $showActions) {
+            if let story {
+                Button(String(localized: "Who watched")) { showViewers = true }
+                if let live = link ?? story.link {
+                    Button(String(localized: "Copy link")) {
+                        UIPasteboard.general.string = live
+                        Haptics.success()
+                    }
+                    Button(String(localized: "Revoke the link"), role: .destructive) {
+                        Task { link = try? await app.api.setStoryLink(story.id, open: false) }
+                    }
+                } else {
+                    Button(String(localized: "Make a link")) {
+                        Task { link = try? await app.api.setStoryLink(story.id, open: true) }
+                    }
+                }
+                Button(String(localized: "Take it down"), role: .destructive) {
+                    Task {
+                        await model.takeDown(story.id)
+                        onFinished()
+                    }
+                }
+            }
+        }
     }
+
+    /// The clock stands while a finger is down or something of the author's
+    /// is open over the frame.
+    private var paused: Bool { held || showActions || showViewers || replyFocused }
 
     @ViewBuilder
     private var footer: some View {
@@ -182,6 +207,7 @@ struct StoryViewerView: View {
                     .padding(.vertical, 10)
                     .background(.white.opacity(0.15), in: Capsule())
                     .foregroundStyle(.white)
+                    .focused($replyFocused)
                     .accessibilityIdentifier("story.reply")
                 Button {
                     Task { await sendReply() }
@@ -198,9 +224,16 @@ struct StoryViewerView: View {
         }
     }
 
+    /// A picture stands for a fixed few seconds; a video stands for as long
+    /// as it plays.
+    private var slideSeconds: Double {
+        if slide?.frame.type == "video", let dur = slide?.frame.dur, dur > 0 { return dur }
+        return Self.frameSeconds
+    }
+
     private func advanceClock() {
-        guard !held, story != nil, frameURL != nil else { return }
-        progress += 0.05 / Self.frameSeconds
+        guard !paused, story != nil, frameURL != nil else { return }
+        progress += 0.05 / slideSeconds
         if progress >= 1 { step(1) }
     }
 
@@ -220,7 +253,8 @@ struct StoryViewerView: View {
         frameURL = nil
         guard let slide, let media = app.media else { return }
         // a story's bytes were never encrypted: the frame comes back as it lies
-        frameURL = try? await media.fetchPlain(mediaId: slide.frame.mediaId, mime: "image/jpeg")
+        frameURL = try? await media.fetchPlain(mediaId: slide.frame.mediaId,
+                                               mime: slide.frame.type == "video" ? "video/mp4" : "image/jpeg")
         await model.markSeen(slide.story.id)
     }
 
@@ -272,6 +306,39 @@ struct StoryViewersSheet: View {
                 viewers = (try? await app.api.storyViewers(storyId)) ?? []
                 loaded = true
             }
+        }
+    }
+}
+
+/// A story's video, playing once from its first moment with no controls over
+/// it; the finger held on the screen holds the picture too.
+struct StoryVideoPlayer: UIViewRepresentable {
+    let url: URL
+    let paused: Bool
+
+    func makeUIView(context: Context) -> PlayerView {
+        let view = PlayerView()
+        view.play(url)
+        return view
+    }
+
+    func updateUIView(_ view: PlayerView, context: Context) {
+        if view.url != url { view.play(url) }
+        if paused { view.player.pause() } else if view.player.rate == 0 { view.player.play() }
+    }
+
+    final class PlayerView: UIView {
+        let player = AVPlayer()
+        private(set) var url: URL?
+        override class var layerClass: AnyClass { AVPlayerLayer.self }
+
+        func play(_ url: URL) {
+            self.url = url
+            let layer = layer as! AVPlayerLayer
+            layer.player = player
+            layer.videoGravity = .resizeAspect
+            player.replaceCurrentItem(with: AVPlayerItem(url: url))
+            player.play()
         }
     }
 }

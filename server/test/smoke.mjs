@@ -2439,7 +2439,8 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
   };
   const photo = await upload(alice.token, new Uint8Array([1, 2, 3, 4]));
   const posted = await api("/api/stories", { token: alice.token, body: {
-    frames: [{ mediaId: photo, type: "photo", text: "первый кадр", textColor: "#fff" }],
+    frames: [{ mediaId: photo, type: "photo", text: "первый кадр", textColor: "#fff",
+               tx: 0.5, ty: 0.8 }],
     audience: "contacts", hours: 24, link: true,
   } });
   check("a story is published", !!posted.storyId, JSON.stringify(posted));
@@ -2471,6 +2472,8 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
   const beforeSeen = bobSees.stories.find((s) => s.id === posted.storyId);
   check("a story arrives unwatched", beforeSeen?.seen === false, JSON.stringify(beforeSeen?.seen));
   await api(`/api/stories/${posted.storyId}/seen`, { token: bob.token, body: {} });
+  // the author looking at their own story is not a viewer
+  await api(`/api/stories/${posted.storyId}/seen`, { token: alice.token, body: {} });
   const afterSeen = await api("/api/stories", { token: bob.token });
   check("watching it is remembered",
     afterSeen.stories.find((s) => s.id === posted.storyId)?.seen === true);
@@ -2488,6 +2491,8 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
   check("the public page opens with no account", page.status === 200, String(page.status));
   check("the page carries the text over the frame", html.includes("первый кадр"),
     html.slice(0, 200));
+  check("the page puts the text where the author dragged it", html.includes("left:50%;top:80%"),
+    html.slice(html.indexOf("<figcaption"), html.indexOf("<figcaption") + 160));
   check("the page names no audience",
     !html.includes(bob.userId) && !html.includes(alice.userId), "an id leaked into the page");
   const frame = await fetch(`${BASE}/s/${code}/m/0`);
