@@ -17,7 +17,7 @@ final class PollMessageView: UIView {
     private let footerLabel = UILabel()
     private var rows: [PollOptionRow] = []
     private var msg: Message?
-    private var ownUserId = ""
+    private var voterKey = ""
     /// The message the current subviews were built for: results for the same
     /// poll animate, a reused cell rebuilds silently.
     private var shownId = ""
@@ -76,12 +76,14 @@ final class PollMessageView: UIView {
 
     // MARK: - Configure
 
-    func configure(msg: Message, outgoing: Bool, ownUserId: String) {
+    /// `voterKey` is what this account's own vote is stored under: the user
+    /// id, or the per-poll pseudonym of an anonymous poll.
+    func configure(msg: Message, outgoing: Bool, voterKey: String) {
         guard let poll = msg.poll else { return }
         let sameMessage = shownId == msg.id
         shownId = msg.id
         self.msg = msg
-        self.ownUserId = ownUserId
+        self.voterKey = voterKey
 
         let textColor = outgoing ? UIColor(Theme.outgoingText) : .label
         let metaColor = outgoing ? UIColor(Theme.outgoingMeta) : .secondaryLabel
@@ -103,7 +105,7 @@ final class PollMessageView: UIView {
             rows.forEach(addSubview)
         }
 
-        let myVotes = Set(msg.pollVotes[ownUserId] ?? [])
+        let myVotes = Set(msg.pollVotes[voterKey] ?? [])
         // the author sees the count from the start; everyone else earns the
         // numbers by voting
         let showResults = !msg.pollVotes.isEmpty && (outgoing || !myVotes.isEmpty)
@@ -137,7 +139,7 @@ final class PollMessageView: UIView {
 
     private func tapped(_ index: Int) {
         guard let msg, let poll = msg.poll else { return }
-        var picks = Set(msg.pollVotes[ownUserId] ?? [])
+        var picks = Set(msg.pollVotes[voterKey] ?? [])
         if poll.multiple {
             if picks.contains(index) { picks.remove(index) } else { picks.insert(index) }
         } else {
@@ -305,7 +307,7 @@ struct PollComposerSheet: View {
                     Toggle(String(localized: "Anonymous voting"), isOn: $anonymous)
                 } footer: {
                     if anonymous {
-                        Text(String(localized: "Votes still travel end-to-end encrypted between the members; the app just never shows who chose what."))
+                        Text(String(localized: "Votes travel end-to-end encrypted and carry a pseudonym instead of a name, so nobody's app can tell who chose what."))
                     }
                 }
             }
@@ -317,7 +319,8 @@ struct PollComposerSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(String(localized: "Create")) {
-                        onCreate(PollInfo(question: question.trimmingCharacters(in: .whitespacesAndNewlines),
+                        onCreate(PollInfo(id: UUID().uuidString,
+                                          question: question.trimmingCharacters(in: .whitespacesAndNewlines),
                                           options: trimmedOptions,
                                           multiple: multiple, anonymous: anonymous))
                         dismiss()

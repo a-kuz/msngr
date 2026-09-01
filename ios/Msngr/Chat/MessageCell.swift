@@ -78,6 +78,9 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     var onRedial: (() -> Void)?
     /// who this device is, for the poll's own-vote state
     var ownUserId = ""
+    /// the key this account's vote sits under in a poll (its anonymous
+    /// pseudonym, or the user id); without it the user id is used
+    var pollVoterKey: ((Message) -> String)?
     /// the full chosen set after a tap on a poll option
     var onVotePoll: (([Int]) -> Void)?
     /// the footer tap of a non-anonymous poll, asking for the voters sheet
@@ -533,7 +536,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             voiceView.isHidden = true
             pollView.isHidden = false
             pollView.frame = vf
-            pollView.configure(msg: msg, outgoing: plan.isOutgoing, ownUserId: ownUserId)
+            pollView.configure(msg: msg, outgoing: plan.isOutgoing,
+                               voterKey: pollVoterKey?(msg) ?? ownUserId)
         } else if let vf = plan.voiceFrame, msg.kind == .contact {
             voiceView.isHidden = true
             pollView.isHidden = true

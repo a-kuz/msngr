@@ -208,18 +208,24 @@ public struct LocationInfo: Codable, Equatable {
 }
 
 /// A poll as its author composed it. Votes travel separately, as `pollVote`
-/// service events, and are aggregated on every device; anonymity is a display
-/// promise — the events themselves always name their sender, the way any
-/// end-to-end encrypted frame does.
+/// service events, and are aggregated on every device. In an anonymous poll a
+/// vote is stored under the voter's per-poll pseudonym (`PollPseudonym`)
+/// rather than their user id, so no member's copy of the poll knows who chose
+/// what; the envelope around the frame still names its sender for routing.
 public struct PollInfo: Codable, Equatable {
+    /// Random, chosen when the poll is composed: the input of the anonymous
+    /// pseudonym, which is why one person is one key inside a poll and
+    /// unrelated keys across polls.
+    public var id: String?
     public var question: String
     public var options: [String]
     /// several answers may be picked at once
     public var multiple: Bool
-    /// the voters' names are not shown (the count still is)
+    /// the votes carry pseudonyms and no name is ever shown (the count still is)
     public var anonymous: Bool
 
-    public init(question: String, options: [String], multiple: Bool, anonymous: Bool) {
+    public init(id: String? = nil, question: String, options: [String], multiple: Bool, anonymous: Bool) {
+        self.id = id
         self.question = question
         self.options = options
         self.multiple = multiple
@@ -516,6 +522,9 @@ public struct ContentPayload: Codable {
     public var poll: PollInfo?
     /// pollVote: the chosen option indices; empty retracts the vote.
     public var votes: [Int]?
+    /// pollVote in an anonymous poll: the voter's per-poll pseudonym, the key
+    /// the vote is stored under instead of the sender.
+    public var voter: String?
     /// contact: the shared card.
     public var contact: ContactCard?
     /// location: the shared point.

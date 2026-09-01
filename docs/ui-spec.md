@@ -370,8 +370,10 @@ takes the vote back (a multiple-answer poll toggles options one by one), and
 every tap sends the whole current choice as an encrypted `pollVote` service
 frame — the shares are counted on the device, the server never sees them.
 The results animate: the share bars grow on a spring, the pick mark pops,
-the percents cross-fade. An anonymous poll hides who voted everywhere and
-says so in the composer.
+the percents cross-fade. In an anonymous poll the vote carries a per-poll
+pseudonym (an HMAC of the account's identity key over the poll id) instead
+of the voter, so no member's copy of the poll knows who chose what; the
+composer says so under the switch.
 
 Photos picked in the system picker land in the input bar as waiting
 thumbnails (the same strip pasted images use), open to a caption and to

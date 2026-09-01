@@ -1202,3 +1202,22 @@ takes the size it is given. Fixed the same day: the picture is drawn as
 `Color.clear.overlay(Image…)` and clipped, so it fills the screen and takes
 no part in the layout. Verified live on the reporter's own chat of hundreds
 of photos (qa/runs/2026-09-01-background-fix.png).
+
+### The story camera tool crashed the app on the simulator — fixed
+The gate collected `crashes/Msngr-2026-09-01-225235.ips`: an exception out
+of `-[UIImagePickerController setMediaTypes:]` under
+`StoryCamera.makeUIViewController`. The simulator answers yes to
+`isSourceTypeAvailable(.camera)` and then refuses the movie media type on a
+device it does not have. Fixed the same evening in 5ee069d: the camera tool
+is drawn only where `AVCaptureDevice.default(for: .video)` exists and the
+camera's media types include a movie; on the simulator the tool is absent.
+
+### An assertion in StoriesModel.load during the stories work — open
+`crashes/Msngr-2026-09-01-220743.ips` (and its `.000` twin, the same second):
+`_assertionFailure` inside `StoriesModel.load()`, called from the chat
+list's task, at 22:07 during the stories build. The report carries no
+message, and the committed `load()` (a guard, a flag and one `try?` request)
+has nothing that traps; the crashing binary was an intermediate build from
+the working copy, nine minutes before the commit at 22:16. Not reproduced
+since: the tray has been reloading every minute on two simulators through
+the whole live run. Cause unconfirmed; kept here so a repeat has a home.

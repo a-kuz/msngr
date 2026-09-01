@@ -30,6 +30,9 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     var noteRecipients = 1
     /// a tap on a poll option: the message and the full chosen set
     var onVotePoll: ((Message, [Int]) -> Void)?
+    /// the key this account's vote sits under in a poll: its anonymous
+    /// pseudonym, or the user id
+    var pollVoterKey: ((Message) -> String)?
     /// the footer tap of a non-anonymous poll, asking for the voters sheet
     var onShowPollVoters: ((Message) -> Void)?
     var onOpenContact: ((Message) -> Void)?
@@ -583,6 +586,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         cell.commentsOnly = commentsOnly
         cell.noteRecipients = noteRecipients
         cell.ownUserId = ownUserId
+        cell.pollVoterKey = pollVoterKey
         cell.onVotePoll = { [weak self] votes in self?.onVotePoll?(msg, votes) }
         cell.onButton = { [weak self] button in self?.onButton?(button) }
         cell.onShowPollVoters = { [weak self] in self?.onShowPollVoters?(msg) }

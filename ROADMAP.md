@@ -325,19 +325,20 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ anonymity: the flag hides the voters everywhere, only the shares and
     the count show. The count is counted on every device from the encrypted
     `pollVote` events, not by the server — the server is E2EE-blind, so a
-    server-side count would mean plaintext votes; anonymity is a display
-    promise, the events always name their sender (the really-anonymous line
-    below lifts that). A non-anonymous poll shows its voters: the footer of
-    a poll with earned results opens a sheet grouped by option, names and
-    avatars (PollVotersTests, live on the alfa fixture 2026-08-31)
-  - ⬜ really anonymous polls: the vote of an anonymous poll carries a
-    per-poll pseudonym — an HMAC of the account key over the poll id —
-    instead of the voter's name, so even a modified client of a member
-    cannot tell who chose what; the pseudonym stays stable across the
-    account's devices, which keeps replace-and-retract and one-person-one-vote
-    working. The server envelope still names the sender for routing: hiding
-    the voter from the server too would take blind signatures and a mix, and
-    in a three-member group the anonymity set is small whatever the crypto
+    server-side count would mean plaintext votes. A non-anonymous poll shows
+    its voters: the footer of a poll with earned results opens a sheet
+    grouped by option, names and avatars (PollVotersTests, live on the alfa
+    fixture 2026-08-31)
+  - ✅ really anonymous polls: the vote of an anonymous poll carries a
+    per-poll pseudonym — an HMAC of the account's identity key over the poll
+    id (`PollPseudonym`) — and the poll row keys it by that, so even a
+    modified client of a member cannot tell who chose what; the pseudonym is
+    the same on every device of the account, which keeps replace-and-retract
+    and one-person-one-vote working, and a named poll ignores a pseudonym
+    (PollTests; qa/runs/2026-09-01-anonymous-poll.md). The server envelope
+    still names the sender for routing: hiding the voter from the server too
+    would take blind signatures and a mix, and in a three-member group the
+    anonymity set is small whatever the crypto
 - System messages
   - ✅ «Код безопасности собеседника изменился» inserted into the feed on a
     real key change (qa/runs/2026-08-27-key-change-run.md)

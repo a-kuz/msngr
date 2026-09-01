@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import GRDB
 import MsngrCore
+import MsngrCrypto
 
 /// Feed item: a message with its grouping flags, or a date separator.
 /// tightGap is a narrow gap above, set when the message continues a series by the
@@ -1058,12 +1059,12 @@ final class ChatViewModel: ObservableObject {
     /// on a poll still waiting for its ack is safe.
     func votePoll(_ message: Message, votes: [Int]) {
         guard message.kind == .poll, let db = app.db else { return }
-        let own = ownUserId
+        let key = pollVoterKey(message)
         Task {
             try? await db.write { dbc in
                 guard let row = try Message.fetchOne(dbc, key: message.id) else { return }
                 var all = row.pollVotes
-                if votes.isEmpty { all.removeValue(forKey: own) } else { all[own] = votes.sorted() }
+                if votes.isEmpty { all.removeValue(forKey: key) } else { all[key] = votes.sorted() }
                 let json = String(data: try JSONEncoder().encode(all), encoding: .utf8)!
                 try dbc.execute(sql: "UPDATE message SET pollVotes = ? WHERE id = ?",
                                 arguments: [json, message.id])
@@ -1071,9 +1072,18 @@ final class ChatViewModel: ObservableObject {
             var c = ContentPayload(kind: "pollVote")
             c.targetLocalId = message.id
             c.votes = votes
+            if key != ownUserId { c.voter = key }
             try? await app.engine?.enqueue(content: c, chatId: message.chatId)
         }
     }
+
+    /// The key this account's vote sits under in a poll: the per-poll
+    /// pseudonym of an anonymous poll, the user id otherwise.
+    func pollVoterKey(_ message: Message) -> String {
+        if ownIdentity == nil { ownIdentity = try? app.store?.identity() }
+        return PollPseudonym.voterKey(poll: message.poll, ownUserId: ownUserId, identity: ownIdentity)
+    }
+    private var ownIdentity: IdentityKeyPair?
 
     /// A tap on the transcript button. A cached transcript folds and unfolds;
     /// a message without one is recognized on the device first, and the result
