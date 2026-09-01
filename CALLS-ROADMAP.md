@@ -2,9 +2,14 @@
 
 What the calls block still owes, one item per line of work. Shipped so far,
 for orientation: 1:1 audio over WebRTC (E2EE signaling as `call` service
-frames, glare, busy, dial timeout), the call row in the feed (`callLog`), and
+frames, glare, busy, dial timeout), the call row in the feed (`callLog`),
 "who can call me" (tier + named exceptions, enforced on the callee, `canCall`
-on the user card).
+on the user card), the peer named as in the owner's address book, the in-app
+fold into a floating tile, our own TURN (coturn on the stand), the ringback
+and the ringtone, ICE restart under a live call, ICE candidates off the
+journal (the ephemeral `callRelay` frame), the missed-call push
+(`service` + `notify`), and 1:1 video with the self-view, the flip and the
+signalled camera-off.
 
 Each item below stands on its own unless its "needs" line says otherwise.
 

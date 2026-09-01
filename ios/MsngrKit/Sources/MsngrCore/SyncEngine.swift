@@ -1590,6 +1590,21 @@ public actor SyncEngine {
                                       sentAt: Date().timeIntervalSince1970, body: env))
     }
 
+    /// Leaves the invited-by row in the direct chat between inviter and
+    /// invitee: a system line written by the inviter, named for both sides.
+    public func sendCallInviteRow(chatId: String, invitedUserId: String) async {
+        let names = try? await db.read { [ownUserId] dbc -> (own: String, invited: String) in
+            let own = try String.fetchOne(dbc, sql: "SELECT displayName FROM user WHERE id = ?",
+                                          arguments: [ownUserId]) ?? ""
+            let invited = try String.fetchOne(dbc, sql: "SELECT displayName FROM user WHERE id = ?",
+                                              arguments: [invitedUserId]) ?? ""
+            return (own, invited)
+        }
+        await announce(GroupEvent(verb: .callInvite, actor: names?.own ?? "",
+                                  member: names?.invited ?? "", memberId: invitedUserId),
+                       chatId: chatId)
+    }
+
     /// Publishes the finished call into the feed: service content that leaves
     /// a call row on both sides. The caller alone sends it, so the record
     /// appears exactly once; the id is deterministic so a retry collapses
