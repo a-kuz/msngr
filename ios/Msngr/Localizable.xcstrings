@@ -3189,6 +3189,17 @@
         }
       }
     },
+    "Add to call" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавить в звонок"
+          }
+        }
+      }
+    },
     "Camera" : {
       "extractionState" : "manual",
       "localizations" : {

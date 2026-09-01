@@ -9,7 +9,8 @@ fold into a floating tile, our own TURN (coturn on the stand), the ringback
 and the ringtone, ICE restart under a live call, ICE candidates off the
 journal (the ephemeral `callRelay` frame), the missed-call push
 (`service` + `notify`), and 1:1 video with the self-view, the flip and the
-signalled camera-off.
+signalled camera-off, and the three-way call: the invite from the call
+screen, a short-lived mesh of exactly three with the invited-by row.
 
 Each item below stands on its own unless its "needs" line says otherwise.
 
@@ -60,20 +61,6 @@ A different animal: P2P mesh does not scale past three, so this is an SFU —
 self-hosted LiveKit or mediasoup on adad — plus room signaling, a member
 grid in the UI, and per-member mute state. Big enough to be its own block;
 nothing in the current 1:1 code has to change ahead of it.
-
-### Inviting a third person into a call
-From a running 1:1 call, "add person": picks a contact, they get an
-incoming-call invite, the call becomes a three-way conference. Needs the SFU
-(or a short-lived mesh for exactly three); the invite itself is one more
-signaling frame (`invite`, carrying the room) into the third person's direct
-chat. UI: the add button on CallScreen and a joining state.
-
-### Invited-by bubble in the chat
-When someone is invited into a call, the direct chat between inviter and
-invitee gets a row that says so — «X пригласил Y в звонок», the way group
-events leave a line. Rides the same pattern as `callLog` (service on the
-wire, a row in the feed); worth doing together with the invite frame so the
-row is written by the inviter exactly once.
 
 ## Polish
 
