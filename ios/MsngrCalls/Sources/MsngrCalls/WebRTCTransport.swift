@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import MsngrCore
 import WebRTC
@@ -25,6 +26,15 @@ public final class WebRTCTransport: NSObject, CallMediaTransport, @unchecked Sen
     private let audioTrack: RTCAudioTrack
     private let eventStream: AsyncStream<CallTransportEvent>
     private let continuation: AsyncStream<CallTransportEvent>.Continuation
+
+    // Video is created lazily: an audio call never touches the camera.
+    private var videoSource: RTCVideoSource?
+    private var videoTrack: RTCVideoTrack?
+    private var capturer: RTCVideoCapturer?
+    private var remoteVideoTrack: RTCVideoTrack?
+    private var localRenderer: RTCVideoRenderer?
+    private var remoteRenderer: RTCVideoRenderer?
+    private var cameraPosition: AVCaptureDevice.Position = .front
 
     /// Servers for NAT traversal: plain STUN for address discovery, and our
     /// own coturn on the stand's server relaying the paths STUN cannot open
@@ -123,7 +133,82 @@ public final class WebRTCTransport: NSObject, CallMediaTransport, @unchecked Sen
         audioTrack.isEnabled = !muted
     }
 
+    public func setVideo(enabled: Bool) async {
+        if enabled {
+            if videoTrack == nil {
+                let source = Self.factory.videoSource()
+                let track = Self.factory.videoTrack(with: source, trackId: "video0")
+                videoSource = source
+                videoTrack = track
+                pc.add(track, streamIds: ["stream0"])
+                if let renderer = localRenderer { track.add(renderer) }
+            }
+            videoTrack?.isEnabled = true
+            startCapture()
+        } else {
+            videoTrack?.isEnabled = false
+            stopCapture()
+        }
+    }
+
+    /// Flips between the front and back camera; a running capture restarts
+    /// on the other one. The synthetic stand-in has nothing to flip.
+    public func switchCamera() {
+        cameraPosition = cameraPosition == .front ? .back : .front
+        guard capturer is RTCCameraVideoCapturer else { return }
+        stopCapture()
+        startCapture()
+    }
+
+    /// The device camera when there is one; the simulator has none, so a
+    /// synthetic pattern stands in and the pipeline stays exercisable there.
+    private func startCapture() {
+        guard let videoSource else { return }
+        #if targetEnvironment(simulator)
+        // the simulator lists a capture device but it never delivers a frame
+        let device: AVCaptureDevice? = nil
+        #else
+        let device = RTCCameraVideoCapturer.captureDevices().first(where: { $0.position == cameraPosition })
+            ?? RTCCameraVideoCapturer.captureDevices().first
+        #endif
+        if let device {
+            let camera = RTCCameraVideoCapturer(delegate: videoSource)
+            capturer = camera
+            let formats = RTCCameraVideoCapturer.supportedFormats(for: device)
+            // the smallest format at or above 480p keeps the encoder cheap
+            let format = formats.min(by: {
+                abs(CMVideoFormatDescriptionGetDimensions($0.formatDescription).height - 640)
+                    < abs(CMVideoFormatDescriptionGetDimensions($1.formatDescription).height - 640)
+            }) ?? formats[0]
+            let fps = format.videoSupportedFrameRateRanges.map(\.maxFrameRate).min() ?? 24
+            camera.startCapture(with: device, format: format, fps: Int(min(fps, 24)))
+        } else {
+            let synthetic = SyntheticVideoCapturer(delegate: videoSource)
+            capturer = synthetic
+            synthetic.start()
+        }
+    }
+
+    private func stopCapture() {
+        (capturer as? RTCCameraVideoCapturer)?.stopCapture()
+        (capturer as? SyntheticVideoCapturer)?.stop()
+        capturer = nil
+    }
+
+    // MARK: - Renderers (the UI's view onto the tracks)
+
+    public func attachLocal(_ renderer: RTCVideoRenderer) {
+        localRenderer = renderer
+        videoTrack?.add(renderer)
+    }
+
+    public func attachRemote(_ renderer: RTCVideoRenderer) {
+        remoteRenderer = renderer
+        remoteVideoTrack?.add(renderer)
+    }
+
     public func close() async {
+        stopCapture()
         pc.close()
         continuation.finish()
     }
@@ -163,4 +248,13 @@ extension WebRTCTransport: RTCPeerConnectionDelegate {
                                didRemove candidates: [RTCIceCandidate]) {}
     public func peerConnection(_ peerConnection: RTCPeerConnection,
                                didOpen dataChannel: RTCDataChannel) {}
+
+    public func peerConnection(_ peerConnection: RTCPeerConnection,
+                               didAdd rtpReceiver: RTCRtpReceiver,
+                               streams mediaStreams: [RTCMediaStream]) {
+        guard let track = rtpReceiver.track as? RTCVideoTrack else { return }
+        remoteVideoTrack = track
+        if let renderer = remoteRenderer { track.add(renderer) }
+        continuation.yield(.remoteVideo(true))
+    }
 }

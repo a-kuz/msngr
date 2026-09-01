@@ -3209,6 +3209,17 @@
         }
       }
     },
+    "Camera" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Камера"
+          }
+        }
+      }
+    },
     "Mute" : {
       "extractionState" : "manual",
       "localizations" : {

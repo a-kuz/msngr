@@ -38,6 +38,9 @@ public struct CallSignal: Codable, Equatable, Sendable {
     /// ice: candidates as (sdpMid, sdpMLineIndex, candidate) triples
     public var candidates: [IceCandidate]?
     public var reason: EndReason?
+    /// offer: whether the sender's camera is on — carried on renegotiation
+    /// so the peer learns the camera went off (the track alone only freezes)
+    public var video: Bool?
 
     public struct IceCandidate: Codable, Equatable, Sendable {
         public var sdpMid: String?
@@ -52,12 +55,14 @@ public struct CallSignal: Codable, Equatable, Sendable {
     }
 
     public init(type: SignalType, callId: String, sdp: String? = nil,
-                candidates: [IceCandidate]? = nil, reason: EndReason? = nil) {
+                candidates: [IceCandidate]? = nil, reason: EndReason? = nil,
+                video: Bool? = nil) {
         self.type = type
         self.callId = callId
         self.sdp = sdp
         self.candidates = candidates
         self.reason = reason
+        self.video = video
     }
 
     /// The `ContentPayload` kind a call signal travels under.
