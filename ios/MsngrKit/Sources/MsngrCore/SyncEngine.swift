@@ -1142,12 +1142,15 @@ public actor SyncEngine {
                                 arguments: [chatId, seq]) ?? 1
     }
 
-    private func pendingEnvelopes(chatId: String?,
-                                  limit: Int? = nil, offset: Int = 0) async -> [PendingEnvelope] {
+    private func pendingEnvelopes(chatId: String?, limit: Int? = nil, offset: Int = 0,
+                                  newestFirst: Bool = false) async -> [PendingEnvelope] {
         let window = limit.map { " LIMIT \($0) OFFSET \(offset)" } ?? ""
+        // a key that has just arrived opens what was written last, so a bounded
+        // pass starts at the newest; a sweep of the whole pile takes it in order
+        let order = newestFirst ? "DESC" : "ASC"
         let sql = chatId == nil
-            ? "SELECT * FROM pendingDecrypt ORDER BY chatId, seq\(window)"
-            : "SELECT * FROM pendingDecrypt WHERE chatId = ? ORDER BY seq\(window)"
+            ? "SELECT * FROM pendingDecrypt ORDER BY chatId, seq \(order)\(window)"
+            : "SELECT * FROM pendingDecrypt WHERE chatId = ? ORDER BY seq \(order)\(window)"
         let arguments: StatementArguments = chatId.map { [$0] } ?? []
         return (try? await db.read { dbc in
             try Row.fetchAll(dbc, sql: sql, arguments: arguments).map {
@@ -1161,14 +1164,27 @@ public actor SyncEngine {
         }) ?? []
     }
 
-    /// Replays a chat's deferred envelopes at once: the key that has just
-    /// arrived opens everything that was waiting for it, so there is nothing to
-    /// wait for here. One of those envelopes may itself be a key distribution
-    /// that unlocks more, so the pass repeats while it keeps making progress.
+    /// Envelopes one arriving key replays on the spot. This runs inside the
+    /// drain of incoming frames and under the crypto gate, and a replay that
+    /// fails walks the ratchet forward key by key before it says so — with
+    /// thousands of envelopes deferred, replaying all of them held the queue
+    /// for minutes, and the frames behind them (a peer's presence, their
+    /// typing, the next message) waited the whole time. What this pass does not
+    /// reach is left to the sweep, which has its own budget and takes the pile
+    /// in turn.
+    static let inlineReplayBudget = 20
+
+    /// Replays a chat's deferred envelopes: the key that has just arrived opens
+    /// what was waiting for it. One of those envelopes may itself be a key
+    /// distribution that unlocks more, so the pass repeats while it keeps
+    /// making progress, and each pass is bounded.
     private func retryPending(chatId: String) async {
         for _ in 0..<4 {
             var progress = false
-            for pending in await pendingEnvelopes(chatId: chatId) {
+            let batch = await pendingEnvelopes(chatId: chatId,
+                                               limit: Self.inlineReplayBudget,
+                                               newestFirst: true)
+            for pending in batch {
                 if await replay(pending) { progress = true }
             }
             if !progress { return }

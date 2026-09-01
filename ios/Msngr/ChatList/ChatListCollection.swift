@@ -30,6 +30,10 @@ struct ChatListCollection: UIViewRepresentable {
         case requests, archive, chats
     }
 
+    /// How long a row takes to reach its new place. The eye follows a move of
+    /// this length; a third of it reads as the row jumping over its neighbours.
+    static let moveDuration: TimeInterval = 0.45
+
     /// The list's sections and their rows. A section with nothing in it is left
     /// out: the requests section carries a header naming it, and an empty one
     /// would stand that header over no rows at all.
@@ -216,12 +220,21 @@ struct ChatListCollection: UIViewRepresentable {
             let sameOrder = dataSource.snapshot().itemIdentifiers == snapshot.itemIdentifiers
             if animated, !sameOrder {
                 // the move goes alone: a row reconfigured in the same batch is
-                // animated on its own curve and lands after its neighbours
-                dataSource.apply(snapshot, animatingDifferences: true) { [weak dataSource] in
-                    guard let dataSource, !toReconfigure.isEmpty else { return }
-                    var after = dataSource.snapshot()
-                    after.reconfigureItems(toReconfigure.filter { after.indexOfItem($0) != nil })
-                    dataSource.apply(after, animatingDifferences: false)
+                // animated on its own curve and lands after its neighbours.
+                // The timing is set here rather than by the SwiftUI transaction
+                // the update arrived in: that transaction does not reach a
+                // collection view's batch update, which ran on UIKit's own
+                // default — a lift measured at about a sixth of a second, fast
+                // enough that the row crossing the ones above it reads as a jump
+                UIView.animate(withDuration: ChatListCollection.moveDuration, delay: 0,
+                               usingSpringWithDamping: 0.86, initialSpringVelocity: 0,
+                               options: [.allowUserInteraction]) {
+                    dataSource.apply(snapshot, animatingDifferences: true) { [weak dataSource] in
+                        guard let dataSource, !toReconfigure.isEmpty else { return }
+                        var after = dataSource.snapshot()
+                        after.reconfigureItems(toReconfigure.filter { after.indexOfItem($0) != nil })
+                        dataSource.apply(after, animatingDifferences: false)
+                    }
                 }
             } else if sameOrder {
                 guard !toReconfigure.isEmpty else { return }
