@@ -112,6 +112,23 @@ POST /api/chats/:id/roles         {userId, role:"editor"|"reader"} — a channel
 GET  /api/chats/:id/search        ?q=&limit= → {hits:[{seq, from, ts, text}]} — a channel
                                   only: it is the one kind whose text the server can read.
                                   Every other kind answers `not_channel`
+POST /api/stories                 {frames:[{mediaId, type:"photo"|"video", w?, h?, dur?,
+                                  text?, textColor?, plateColor?, tx?, ty?}], audience:
+                                  "contacts"|"everyone", hours?≤168, link?} → {storyId, link}
+                                  a story is plaintext: the frames are ordinary media
+                                  uploads and who may see it is a rule, not a key. `tx`/`ty`
+                                  are the text's centre as a fraction of the frame
+GET  /api/stories                 what the caller may watch now, own stories included:
+                                  [{id, authorId, displayName, avatarId, createdAt,
+                                  expiresAt, frames, audience, link, seen}]
+POST /api/stories/:id/seen        remembers the watch; the author's own is not counted
+GET  /api/stories/:id/viewers     the author's alone → {viewers:[{viewer_id, seen_at, …}]}
+POST /api/stories/:id             {takeDown:true} or {link:bool} → {link?}; a revoked
+                                  link is never handed out again, asking again mints a new code
+GET  /s/:code                     the public page: media, text over it, no names; a
+                                  revoked or expired code says the story is gone
+GET  /s/:code/m/:index            one frame's bytes through the link, nothing else of the
+                                  bucket is reachable this way
 POST /api/chats/:id/pin-message   {msgId|null}
 POST /api/chats/:id/flags         {pinned?, muted?, mutedUntil?, archived?} — local to
                                   the user; mutedUntil is in seconds, null = indefinitely

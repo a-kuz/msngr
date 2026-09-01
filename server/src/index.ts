@@ -57,8 +57,9 @@ function storyPage(title: string, body: string): Response {
   main { max-width: 480px; margin: 0 auto; padding: 16px; }
   figure { margin: 0 0 16px; position: relative; }
   img, video { width: 100%; display: block; border-radius: 14px; background: #000; }
-  figcaption { position: absolute; left: 12px; right: 12px; bottom: 16px;
-               padding: 8px 12px; border-radius: 10px; font-size: 18px; text-align: center; }
+  figcaption { position: absolute; transform: translate(-50%, -50%); max-width: 80%;
+               padding: 8px 12px; border-radius: 10px; font-size: 18px; text-align: center;
+               font-weight: 600; box-sizing: border-box; }
   .note { color: #8e8e93; font-size: 14px; text-align: center; padding: 24px 0; }
 </style></head><body><main>${body}</main></body></html>`,
     { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } }
@@ -78,7 +79,12 @@ app.get("/s/:code", async (c) => {
   }
   const frames = JSON.parse(story.frames) as Array<{
     mediaId: string; type: string; text?: string; textColor?: string; plateColor?: string;
+    tx?: number; ty?: number;
   }>;
+  // the text stands where the author dragged it: the same fraction of the
+  // frame here as in the app
+  const pct = (v: unknown, fallback: number) =>
+    (typeof v === "number" && v >= 0 && v <= 1 ? v : fallback) * 100;
   const body = frames.map((f, i) => {
     const src = `/s/${c.req.param("code")}/m/${i}`;
     const media = f.type === "video"
@@ -86,7 +92,8 @@ app.get("/s/:code", async (c) => {
       : `<img src="${src}" alt="">`;
     const caption = f.text
       ? `<figcaption style="color:${escapeHtml(f.textColor ?? "#fff")};` +
-        `background:${escapeHtml(f.plateColor ?? "rgba(0,0,0,.35)")}">${escapeHtml(f.text)}</figcaption>`
+        `background:${escapeHtml(f.plateColor ?? "rgba(0,0,0,.35)")};` +
+        `left:${pct(f.tx, 0.5)}%;top:${pct(f.ty, 0.5)}%">${escapeHtml(f.text)}</figcaption>`
       : "";
     return `<figure>${media}${caption}</figure>`;
   }).join("");
@@ -1608,6 +1615,14 @@ async function directPeers(env: Env, userId: string): Promise<string[]> {
   return peers;
 }
 
+/// The address a story link is minted under. Behind the tunnel the worker sees
+/// plain http, while the browser that opens the link came in over https.
+function publicOrigin(c: { req: { url: string; header: (name: string) => string | undefined } }): string {
+  const url = new URL(c.req.url);
+  const proto = c.req.header("x-forwarded-proto");
+  return `${proto ?? url.protocol.replace(":", "")}://${url.host}`;
+}
+
 app.post("/api/stories", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{
@@ -1625,7 +1640,7 @@ app.post("/api/stories", async (c) => {
     `INSERT INTO stories (id, author_id, created_at, expires_at, frames, audience, link_code)
      VALUES (?,?,?,?,?,?,?)`
   ).bind(id, userId, now, now + hours * 3600_000, JSON.stringify(frames), audience, code).run();
-  return json({ ok: true, storyId: id, link: code ? `${new URL(c.req.url).origin}/s/${code}` : null });
+  return json({ ok: true, storyId: id, link: code ? `${publicOrigin(c)}/s/${code}` : null });
 });
 
 /// Everything this user may watch right now, newest author first, with their
@@ -1657,7 +1672,7 @@ app.get("/api/stories", async (c) => {
       id: r.id, authorId: r.author_id, username: r.username, displayName: r.display_name,
       avatarId: r.avatar_id, createdAt: r.created_at, expiresAt: r.expires_at,
       frames: JSON.parse(r.frames), audience: r.audience,
-      link: r.link_code && !r.link_revoked ? `${new URL(c.req.url).origin}/s/${r.link_code}` : null,
+      link: r.link_code && !r.link_revoked ? `${publicOrigin(c)}/s/${r.link_code}` : null,
       seen: watched.has(r.id),
     }));
   return json({ ok: true, stories });
@@ -1665,6 +1680,11 @@ app.get("/api/stories", async (c) => {
 
 app.post("/api/stories/:id/seen", async (c) => {
   const { userId } = c.get("auth");
+  // the author looking at their own story is not a viewer
+  const own = await c.env.DB.prepare(
+    "SELECT 1 FROM stories WHERE id = ? AND author_id = ?"
+  ).bind(c.req.param("id"), userId).first();
+  if (own) return json({ ok: true });
   await c.env.DB.prepare(
     `INSERT INTO story_views (story_id, viewer_id, seen_at) VALUES (?,?,?)
      ON CONFLICT(story_id, viewer_id) DO NOTHING`
@@ -1711,7 +1731,7 @@ app.post("/api/stories/:id", async (c) => {
     await c.env.DB.prepare(
       "UPDATE stories SET link_code = ?, link_revoked = 0 WHERE id = ?"
     ).bind(code, id).run();
-    return json({ ok: true, link: `${new URL(c.req.url).origin}/s/${code}` });
+    return json({ ok: true, link: `${publicOrigin(c)}/s/${code}` });
   }
   if (b.link === false) {
     await c.env.DB.prepare("UPDATE stories SET link_revoked = 1 WHERE id = ?").bind(id).run();
