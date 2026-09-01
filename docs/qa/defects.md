@@ -72,23 +72,6 @@ the strongest possible signal that its published bundle is stale — republishin
 identity and prekeys at that point is the missing self-heal. Until then the
 alfa↔bravo fixture pair cannot exchange new readable messages at all.
 
-### A silent identity rotation is not re-checked by TOFU while a device list is cached
-Found 2026-08-27 in passing during the multi-device TOFU run
-(qa/runs/2026-08-27-multidevice-tofu-run.md). `/keys-update` (the identity
-heal endpoint) overwrites a device's `ik:` record but does not bump
-`devicesVersion` and broadcasts nothing. A peer that has already cached the
-device set holds the old signing key; the per-send TOFU check reads that
-cached key, finds it trusted, and never refetches. So a device that rotates
-its identity after a peer cached it is not caught until the cache drops for an
-unrelated reason (a genuine link/revoke, or a reconnect where the version did
-change). Reachability is behind preconditions — a warmed cache and an existing
-session, since a fresh session pulls a prekey bundle and would compare — so
-this was a gap, not a confirmed break. Closed: `/keys-update` now bumps
-`devicesVersion` and broadcasts the change the way revoke and linking do, so
-peers drop the cached set and the per-send TOFU check reads the rotated key
-(smoke `identity heal bumped the device-set version`, `the rotated key is
-what peers now read`).
-
 ### A held swipe on a chat row stutters
 Reported by the owner 2026-08-27: swiping a row sideways in the chat list
 with the finger kept on the screen, the row's motion is badly jerky. The list
@@ -191,6 +174,23 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### A silent identity rotation is not re-checked by TOFU while a device list is cached
+Found 2026-08-27 in passing during the multi-device TOFU run
+(qa/runs/2026-08-27-multidevice-tofu-run.md). `/keys-update` (the identity
+heal endpoint) overwrites a device's `ik:` record but does not bump
+`devicesVersion` and broadcasts nothing. A peer that has already cached the
+device set holds the old signing key; the per-send TOFU check reads that
+cached key, finds it trusted, and never refetches. So a device that rotates
+its identity after a peer cached it is not caught until the cache drops for an
+unrelated reason (a genuine link/revoke, or a reconnect where the version did
+change). Reachability is behind preconditions — a warmed cache and an existing
+session, since a fresh session pulls a prekey bundle and would compare — so
+this was a gap, not a confirmed break. Closed: `/keys-update` now bumps
+`devicesVersion` and broadcasts the change the way revoke and linking do, so
+peers drop the cached set and the per-send TOFU check reads the rotated key
+(smoke `identity heal bumped the device-set version`, `the rotated key is
+what peers now read`).
 
 ### A service storm in one chat stalls the whole sync
 Observed by another agent 2026-08-28 on the alfa fixture home while the
