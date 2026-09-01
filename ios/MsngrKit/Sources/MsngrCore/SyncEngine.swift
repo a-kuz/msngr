@@ -88,7 +88,7 @@ public actor SyncEngine {
         // for their target's ack ('waiting') are retried in the same place: by now
         // the target may have gone out, or failed for good
         try? await db.write { dbc in
-            try dbc.execute(sql: "UPDATE outbox SET state = 'ready' WHERE state IN ('inflight', 'waiting')")
+            try SyncEngine.requeueUnacked(dbc)
         }
         // a scheduled send whose time passed while the app was gone (or
         // never started) is picked up by the drain's own query the moment it
@@ -331,6 +331,13 @@ public actor SyncEngine {
             // every cached device list is suspect until the sync's
             // deviceVersions answer confirms which ones are still current
             e2ee.markDeviceCacheSuspect()
+            // an ack owed on the socket that has just gone will never arrive on
+            // this one, and the row would sit in flight until the next cold
+            // start — a message stuck with nothing saying so. It goes back into
+            // the queue; the server deduplicates the repeat by clientMsgId
+            try? await db.write { dbc in
+                try SyncEngine.requeueUnacked(dbc)
+            }
             await sendSyncCursors()
             outboxWakeup.continuation.yield()
             actionWakeup.continuation.yield()
@@ -1391,6 +1398,18 @@ public actor SyncEngine {
         }
         MsngrLog.repair.error(
             "gave up chat=\(pending.chatId, privacy: .public) seq=\(pending.seq, privacy: .public) reason=\(pending.reason ?? "unknown", privacy: .public) attempts=\(pending.attempts, privacy: .public)")
+    }
+
+    /// Puts back into the queue what was sent and never acknowledged, and what
+    /// was held for a target's ack. A send is deduplicated by the server on its
+    /// clientMsgId, so a repeat costs nothing; a row left in flight costs a
+    /// message that never arrives and says nothing about it. Returns how many
+    /// rows went back.
+    @discardableResult
+    static func requeueUnacked(_ dbc: GRDB.Database) throws -> Int {
+        try dbc.execute(
+            sql: "UPDATE outbox SET state = 'ready' WHERE state IN ('inflight', 'waiting')")
+        return dbc.changesCount
     }
 
     /// When a peer's given-up repairs were last given another round.
