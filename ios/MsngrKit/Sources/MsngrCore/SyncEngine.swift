@@ -1229,6 +1229,14 @@ public actor SyncEngine {
         var requestChats: Set<String> = []
         /// Seqs a delete is already buffered for, `chatId:seq`.
         var deletePending: Set<String> = []
+        /// The newest seq each chat knows of. The envelope standing at it is
+        /// what the reader is waiting for right now, and it is let past the
+        /// per-peer ceiling: the ceiling is there to stop a wave of answers
+        /// seeding a bigger wave, and one request per newly arrived message is
+        /// bounded by the traffic itself. Without this a peer carrying an old
+        /// debt could not ask about the message that had just landed, and the
+        /// two of them stopped being able to exchange anything readable.
+        var lastSeqs: [String: Int] = [:]
     }
 
     private func sweepState() async -> SweepState {
@@ -1247,6 +1255,9 @@ public actor SyncEngine {
                 dbc, sql: "SELECT chatId, targetSeq FROM pendingApply WHERE kind = 'deleted'") {
                 state.deletePending.insert(
                     Message.feedId(chatId: row["chatId"], seq: row["targetSeq"]))
+            }
+            for row in try Row.fetchAll(dbc, sql: "SELECT id, lastSeq FROM chat") {
+                state.lastSeqs[row["id"]] = row["lastSeq"]
             }
             return state
         }) ?? SweepState()
@@ -1402,7 +1413,13 @@ public actor SyncEngine {
         // whose attempts are spent is not in flight — nothing will ever answer
         // it, so it must not hold the ceiling shut for the rest of the queue
         if pending.repairAttempts == 0 {
-            guard state.inFlight[pending.from, default: 0]
+            // the newest seq of the chat is what the reader is waiting for now,
+            // and it is never held back by a debt built up behind it. Not equal
+            // but «not behind»: a frame that has only just arrived asks from
+            // the same pass that stored it, before its seq has been written to
+            // the chat
+            let newest = pending.seq >= state.lastSeqs[pending.chatId, default: 0]
+            guard newest || state.inFlight[pending.from, default: 0]
                     < MessageRepair.maxInFlightRepairsPerPeer else { return }
             state.inFlight[pending.from, default: 0] += 1
         }
@@ -1481,6 +1498,20 @@ public actor SyncEngine {
         // and the next message to the chat hands it out again
         if request.reason == "no_sender_key" {
             try? e2ee.forgetSenderKeyDistribution(chatId: chatId, userId: from)
+        }
+        // he could not open the message because the pairwise session is not the
+        // one he holds. The copy would leave through that same session and fail
+        // the same way — which is how a forked session stayed forked for good,
+        // every answer unreadable and every unreadable answer asked for again.
+        // The session is rebuilt from a fresh bundle first, once per peer per
+        // window so a wave of requests pays for one X3DH
+        if let reason = request.reason, MessageRepair.sessionReasons.contains(reason) {
+            let now = Date().timeIntervalSince1970
+            if MessageRepair.sessionRebuildDue(lastRebuiltAt: pairwiseRebuiltAt[from] ?? 0,
+                                               now: now) {
+                try? e2ee.resetPairwiseSession(with: from)
+                pairwiseRebuiltAt[from] = now
+            }
         }
         let row = (try? await db.read { dbc in
             try Message.fetchOne(
