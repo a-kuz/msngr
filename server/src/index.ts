@@ -952,16 +952,26 @@ app.post("/api/dev/fault", async (c) => {
 // Dev hook for a stand whose accounts predate the handle and directory
 // objects: every `users` row claims its handle and lands in the search index.
 // Idempotent; a handle already held by someone else is reported, not taken.
+// Paged by user id — {after, limit} → {next} — because every handle is an
+// object of its own, and a local stand opening thousands of them in one
+// request runs out of memory around the first thousand.
 app.post("/api/dev/reindex", async (c) => {
+  const b = await c.req.json<{ after?: string; limit?: number }>().catch(() => ({} as { after?: string; limit?: number }));
+  const limit = Math.min(Math.max(b.limit ?? 200, 1), 500);
   const rows = await c.env.DB.prepare(
-    "SELECT id, username, display_name, avatar_id, bot_owner, bot_commands FROM users"
-  ).all<DirectoryCard>();
+    `SELECT id, username, display_name, avatar_id, bot_owner, bot_commands FROM users
+     WHERE id > ? ORDER BY id LIMIT ?`
+  ).bind(b.after ?? "", limit).all<DirectoryCard>();
   const clashes: string[] = [];
   for (const card of rows.results) {
     if (!(await claimHandle(c.env, card.username, card.id))) clashes.push(card.username);
     await directoryPut(c.env, card);
   }
-  return json({ ok: true, indexed: rows.results.length, clashes });
+  const last = rows.results.at(-1);
+  return json({
+    ok: true, indexed: rows.results.length, clashes,
+    next: rows.results.length === limit && last ? last.id : null,
+  });
 });
 
 app.post("/api/chats/:id/members", async (c) => {

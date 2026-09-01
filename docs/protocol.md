@@ -177,10 +177,10 @@ POST /api/block                   {userId, blocked}
 GET  /api/blocked                 → {blocked:[userId]}
 POST /api/dev/fault               {failEvents} — dev hook: the caller's own session
                                   object rejects that many frame deliveries
-POST /api/dev/reindex             dev hook for a stand whose accounts predate the
-                                  handle and directory objects: every users row
-                                  claims its handle and lands in the search index
-                                  → {indexed, clashes}
+POST /api/dev/reindex             {after?, limit?} dev hook for a stand whose accounts
+                                  predate the handle and directory objects: a page of
+                                  users rows by id claims its handles and lands in the
+                                  search index → {indexed, clashes, next}
 ```
 
 Rights: only an admin can remove members and change group settings; an admin can
