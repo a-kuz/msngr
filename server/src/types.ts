@@ -97,8 +97,10 @@ export type ServerFrame =
   /// including a user missing from the answer, is stale
   | { t: "deviceVersions"; versions: Record<string, number> }
   /// state is absent only for event "removed": the addressee is no longer a
-  /// member, so the roster is not handed to them
-  | { t: "chat"; chatId: string; event: string; state?: ChatState }
+  /// member, so the roster is not handed to them. users carries the public
+  /// names of the roster (no bio or avatar: those are per-viewer private and
+  /// the frame fans out to everyone), so a new chat shows named rows at once
+  | { t: "chat"; chatId: string; event: string; state?: ChatState; users?: PublicUser[] }
   | { t: "deleted"; chatId: string; seqs: number[]; forAll: boolean; by: string }
   /// catch-up progress of one chat: cursor to resume from, more — whether the
   /// chat still has history beyond this portion

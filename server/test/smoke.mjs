@@ -398,6 +398,13 @@ check("non-admin cannot remove", !carolAdd.ok);
 
 const chatEvt = await cb2.waitFor((f) => f.t === "chat" && f.chatId === grp.chatId);
 check("bob got group chat event", !!chatEvt && chatEvt.state.members.length >= 2);
+// the frame names its roster, so a client shows named rows without a fetch;
+// bio and avatar stay out — they are per-viewer private and this frame fans out
+const aliceCard = (chatEvt.users ?? []).find((u) => u.id === alice.userId);
+check("chat frame carries roster names",
+  !!aliceCard && aliceCard.username === "alice_" + suffix
+  && !!aliceCard.display_name && aliceCard.bio === null && aliceCard.avatar_id === null,
+  JSON.stringify(chatEvt.users));
 
 // group message w/ sender-key envelope
 ca.send({ t: "send", chatId: grp.chatId, clientMsgId: "cm-g1", sentAt: Date.now(),
