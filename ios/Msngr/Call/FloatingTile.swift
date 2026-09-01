@@ -36,8 +36,11 @@ struct FloatingTile<Content: View>: View {
                 .onGeometryChange(for: CGSize.self) { $0.size } action: { contentSize = $0 }
                 .scaleEffect(live)
                 .position(placed)
-                .gesture(
-                    DragGesture()
+                // ahead of the content's own gestures: the tile carries a button,
+                // and a button claims every touch inside it. The threshold keeps
+                // the tap for the button and takes only a real drag
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 8)
                         .updating($drag) { value, state, _ in state = value.translation }
                         .onEnded { value in
                             let moved = CGPoint(x: base.x + value.translation.width,
@@ -47,7 +50,7 @@ struct FloatingTile<Content: View>: View {
                             }
                         }
                 )
-                .simultaneousGesture(
+                .highPriorityGesture(
                     MagnifyGesture()
                         .updating($pinch) { value, state, _ in
                             state = resizable ? value.magnification : 1
@@ -67,12 +70,37 @@ struct FloatingTile<Content: View>: View {
     }
 
     private static func clamped(_ scale: CGFloat) -> CGFloat {
+        FloatingTilePlacement.clamped(scale)
+    }
+
+    private func home(in bounds: CGRect, size: CGSize) -> CGPoint {
+        FloatingTilePlacement.home(start: start, margin: margin, in: bounds, size: size)
+    }
+
+    private func clamp(_ point: CGPoint, in bounds: CGRect, size: CGSize) -> CGPoint {
+        FloatingTilePlacement.clamp(point, margin: margin, in: bounds, size: size)
+    }
+
+    private func snap(_ point: CGPoint, in bounds: CGRect, size: CGSize) -> CGPoint {
+        FloatingTilePlacement.snap(point, margin: margin, in: bounds, size: size)
+    }
+}
+
+/// Where a floating tile stands: the arithmetic of its corner, its bounds and
+/// the side it is released to, apart from the view that draws it.
+enum FloatingTilePlacement {
+    /// How far a pinch may take the tile from the size it asks for.
+    static let minScale: CGFloat = 0.7
+    static let maxScale: CGFloat = 1.8
+
+    static func clamped(_ scale: CGFloat) -> CGFloat {
         min(maxScale, max(minScale, scale))
     }
 
     /// Where the tile stands before it is dragged: its starting corner, inset
-    /// by the margin and by the safe area of the side it stands on.
-    private func home(in bounds: CGRect, size: CGSize) -> CGPoint {
+    /// by the margin.
+    static func home(start: UnitPoint, margin: CGFloat,
+                     in bounds: CGRect, size: CGSize) -> CGPoint {
         let x = bounds.minX + margin + size.width / 2
             + (bounds.width - size.width - margin * 2) * start.x
         let y = bounds.minY + margin + size.height / 2
@@ -80,7 +108,8 @@ struct FloatingTile<Content: View>: View {
         return CGPoint(x: x, y: y)
     }
 
-    private func clamp(_ point: CGPoint, in bounds: CGRect, size: CGSize) -> CGPoint {
+    static func clamp(_ point: CGPoint, margin: CGFloat,
+                      in bounds: CGRect, size: CGSize) -> CGPoint {
         let x = min(max(point.x, bounds.minX + margin + size.width / 2),
                     bounds.maxX - margin - size.width / 2)
         let y = min(max(point.y, bounds.minY + margin + size.height / 2),
@@ -90,11 +119,11 @@ struct FloatingTile<Content: View>: View {
 
     /// A released tile goes to the side it is nearer to and keeps the height it
     /// was left at, the way every floating call window behaves.
-    private func snap(_ point: CGPoint, in bounds: CGRect, size: CGSize) -> CGPoint {
-        let inside = clamp(point, in: bounds, size: size)
+    static func snap(_ point: CGPoint, margin: CGFloat,
+                     in bounds: CGRect, size: CGSize) -> CGPoint {
+        let inside = clamp(point, margin: margin, in: bounds, size: size)
         let left = bounds.minX + margin + size.width / 2
         let right = bounds.maxX - margin - size.width / 2
-        let x = inside.x < bounds.midX ? left : right
-        return CGPoint(x: x, y: inside.y)
+        return CGPoint(x: inside.x < bounds.midX ? left : right, y: inside.y)
     }
 }
