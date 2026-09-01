@@ -147,6 +147,13 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
                                                name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(typeScaleChanged),
                                                name: .typeScaleChanged, object: nil)
+        // bubble backgrounds are images baked per appearance in the cell's
+        // configure, while the text repaints dynamically: a light/dark switch
+        // re-bakes the visible cells too
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (vc: MessagesViewController, _) in
+            guard vc.isViewLoaded else { return }
+            vc.collectionView.reloadData()
+        }
 
         // the docked circle a round video keeps playing in once its bubble is
         // scrolled away; hidden while the bubble itself is on screen

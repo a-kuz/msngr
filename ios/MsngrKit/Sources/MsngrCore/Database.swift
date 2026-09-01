@@ -10,6 +10,9 @@ public enum AppDatabaseError: Error {
     /// downgrade path (see docs/PROCESS.md): the way out is a newer build, or
     /// starting over on clean storage.
     case schemaFromNewerVersion(applied: [String])
+    /// SQLite reports the file itself as broken (corrupt image, not a database):
+    /// nothing in it can be trusted or repaired, so the way out is a clean start.
+    case corrupted(underlying: Error)
 }
 
 public enum AppDatabase {
@@ -42,12 +45,17 @@ public enum AppDatabase {
                 }
             }
         }
-        let dbQueue = try DatabaseQueue(path: url.path, configuration: config)
-        let m = migrator
-        let ahead = try dbQueue.read { db in try m.unknownMigrations(db) }
-        guard ahead.isEmpty else { throw AppDatabaseError.schemaFromNewerVersion(applied: ahead) }
-        try m.migrate(dbQueue)
-        return dbQueue
+        do {
+            let dbQueue = try DatabaseQueue(path: url.path, configuration: config)
+            let m = migrator
+            let ahead = try dbQueue.read { db in try m.unknownMigrations(db) }
+            guard ahead.isEmpty else { throw AppDatabaseError.schemaFromNewerVersion(applied: ahead) }
+            try m.migrate(dbQueue)
+            return dbQueue
+        } catch let error as DatabaseError
+            where error.resultCode == .SQLITE_CORRUPT || error.resultCode == .SQLITE_NOTADB {
+            throw AppDatabaseError.corrupted(underlying: error)
+        }
     }
 
     public static func openInMemory() throws -> DatabaseQueue {

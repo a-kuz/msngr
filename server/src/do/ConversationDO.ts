@@ -725,7 +725,21 @@ export class ConversationDO implements DurableObject {
 
   private async broadcastChat(event: string, only?: string[]) {
     const state = await this.chatState();
-    await this.fanout({ t: "chat", chatId: state.chatId, event, state }, only ? { only } : undefined);
+    await this.fanout(
+      { t: "chat", chatId: state.chatId, event, state, users: await this.memberCards(state) },
+      only ? { only } : undefined);
+  }
+
+  /// The public names of the roster: id, username and display name only. Bio
+  /// and avatar are per-viewer private, and this frame goes to every member.
+  private async memberCards(state: { members: Array<{ userId: string }> }) {
+    const ids = state.members.map((m) => m.userId);
+    if (!ids.length) return [];
+    const placeholders = ids.map(() => "?").join(",");
+    const rows = await this.env.DB.prepare(
+      `SELECT id, username, display_name FROM users WHERE id IN (${placeholders})`
+    ).bind(...ids).all<{ id: string; username: string; display_name: string }>();
+    return rows.results.map((u) => ({ ...u, bio: null, avatar_id: null }));
   }
 
   private async notifyUserDOsChatList(userIds: string[], removed = false) {
@@ -817,8 +831,10 @@ export class ConversationDO implements DurableObject {
     if (!meta) return err("chat_not_found", 404);
 
     switch (path) {
-      case "/state":
-        return json({ ok: true, state: await this.chatState() });
+      case "/state": {
+        const state = await this.chatState();
+        return json({ ok: true, state, users: await this.memberCards(state) });
+      }
 
       case "/fanout-state":
         return json({ ok: true, ...(await this.fanoutState()) });
@@ -869,7 +885,9 @@ export class ConversationDO implements DurableObject {
         }
         const readMarks = await this.markMap("read");
         const deliveredMarks = await this.markMap("dlvr");
-        return json({ ok: true, deleted, readMarks, deliveredMarks, state: await this.chatState() });
+        const state = await this.chatState();
+        return json({ ok: true, deleted, readMarks, deliveredMarks, state,
+                      users: await this.memberCards(state) });
       }
 
       case "/unread-count": {

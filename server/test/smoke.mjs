@@ -138,6 +138,16 @@ check("username uniqueness", !dupe.ok && dupe.error === "username_taken");
 const found = await api(`/api/users?q=bob_${suffix}`, { token: alice.token });
 check("user search", found.ok && found.users.length === 1);
 
+// Case folding beyond ASCII: a Cyrillic display name is found by a query in
+// the other case.
+const cyrUser = await api("/api/register", { body: {
+  username: "cyr_" + suffix, displayName: `Икфмц ${suffix}`, ...fakeKeys("cy") } });
+const foundCyr = await api(
+  `/api/users?q=${encodeURIComponent(`икфмц ${suffix}`)}`, { token: alice.token });
+check("user search folds Cyrillic case",
+  cyrUser.ok && foundCyr.ok && foundCyr.users.length === 1
+  && foundCyr.users[0].id === cyrUser.userId, JSON.stringify(foundCyr));
+
 const bundle = await api(`/api/users/${bob.userId}/prekeys`, { token: alice.token });
 check("prekey bundle", bundle.ok && bundle.bundles[0].oneTimePrekey?.key === "otp1_b");
 const bundle2 = await api(`/api/users/${bob.userId}/prekeys`, { token: alice.token });
@@ -301,6 +311,16 @@ const nameFrame = await ca.waitAfter(renameMark, (f) => f.t === "profile" && f.u
 check("rename reaches the peer", !!nameFrame && nameFrame.user.display_name === "Bob Renamed",
   JSON.stringify(nameFrame));
 
+// A renamed display name keeps the Unicode fold: the new Cyrillic name is
+// found case-insensitively and the old one is not found at all.
+const cyrRename = await api("/api/profile", { token: bob.token,
+  body: { displayName: `Цфмки ${suffix}` } });
+const foundRenamed = await api(
+  `/api/users?q=${encodeURIComponent(`цфмки ${suffix}`)}`, { token: alice.token });
+check("renamed Cyrillic name found case-insensitively",
+  cyrRename.ok && foundRenamed.ok && foundRenamed.users.length === 1
+  && foundRenamed.users[0].id === bob.userId, JSON.stringify(foundRenamed));
+
 check("empty name refused on profile",
   (await api("/api/profile", { token: bob.token, body: { displayName: "  " } })).error === "bad_name");
 check("empty name refused at registration",
@@ -397,6 +417,13 @@ check("non-admin cannot remove", !carolAdd.ok);
 
 const chatEvt = await cb2.waitFor((f) => f.t === "chat" && f.chatId === grp.chatId);
 check("bob got group chat event", !!chatEvt && chatEvt.state.members.length >= 2);
+// the frame names its roster, so a client shows named rows without a fetch;
+// bio and avatar stay out — they are per-viewer private and this frame fans out
+const aliceCard = (chatEvt.users ?? []).find((u) => u.id === alice.userId);
+check("chat frame carries roster names",
+  !!aliceCard && aliceCard.username === "alice_" + suffix
+  && !!aliceCard.display_name && aliceCard.bio === null && aliceCard.avatar_id === null,
+  JSON.stringify(chatEvt.users));
 
 // group message w/ sender-key envelope
 ca.send({ t: "send", chatId: grp.chatId, clientMsgId: "cm-g1", sentAt: Date.now(),
@@ -1403,9 +1430,9 @@ const pushFor = (token, ack) => (p) =>
 const eve = await api("/api/register", { body: {
   username: "eve_" + suffix, displayName: "Eve", ...fakeKeys("e") } });
 await api("/api/push-token", { token: eve.token,
-  body: { apnsToken: "eve-sim-udid", env: "development" } });
+  body: { apnsToken: `eve-sim-${suffix}`, env: "development" } });
 await api("/api/push-token", { token: alice.token,
-  body: { apnsToken: "alice-sim-udid", env: "development" } });
+  body: { apnsToken: `alice-sim-${suffix}`, env: "development" } });
 
 const echat = await api("/api/chats", { token: alice.token,
   body: { kind: "direct", memberIds: [eve.userId] } });
@@ -1419,7 +1446,7 @@ await ca2.connect();
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p1", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const p1 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p1");
-const push1 = await waitPush(pushFor("eve-sim-udid", p1));
+const push1 = await waitPush(pushFor(`eve-sim-${suffix}`, p1));
 check("push delivered offline", !!push1, JSON.stringify(pushes));
 if (push1) {
   check("push chatId", push1.body.chatId === echat.chatId);
@@ -1450,7 +1477,7 @@ ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p2", sentAt: Date.n
 const p2 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p2");
 check("eve got ws msg", !!(await ce.waitFor((f) =>
   f.t === "msg" && f.chatId === echat.chatId && f.seq === p2.seq)));
-const push2 = await waitPush(pushFor("eve-sim-udid", p2));
+const push2 = await waitPush(pushFor(`eve-sim-${suffix}`, p2));
 check("push delivered despite live ws", !!push2);
 check("push badge stays 0 before accept", push2 && push2.body.aps.badge === 0,
   `badge=${push2?.body.aps.badge}`);
@@ -1463,7 +1490,7 @@ await ca2.waitFor((f) => f.t === "receipt" && f.kind === "read" && f.by === eve.
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p3", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const p3 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p3");
-const push3 = await waitPush(pushFor("eve-sim-udid", p3));
+const push3 = await waitPush(pushFor(`eve-sim-${suffix}`, p3));
 check("push badge after read", push3 && push3.body.aps.badge === 1,
   `badge=${push3?.body.aps.badge}`);
 // badgeStamp is how the client tells a fresh counter from an older one that
@@ -1477,7 +1504,7 @@ check("badge stamps grow", push1 && push2 && push3
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p4", sentAt: Date.now(),
   service: true, body: { v: 1, mode: "skd", c: "c2tk" } });
 const p4 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p4");
-check("no push for service", !(await waitPush(pushFor("eve-sim-udid", p4), 1200)));
+check("no push for service", !(await waitPush(pushFor(`eve-sim-${suffix}`, p4), 1200)));
 
 // (c0) a service frame flagged notify (a missed-call record) does push, and
 // still does not grow the badge
@@ -1503,7 +1530,7 @@ await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-svc-1");
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-svc-2", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const psvc = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-svc-2");
-const pushSvc = await waitPush(pushFor("eve-sim-udid", psvc));
+const pushSvc = await waitPush(pushFor(`eve-sim-${suffix}`, psvc));
 check("service frame does not grow the badge", pushSvc?.body.aps.badge === 1,
   `badge=${pushSvc?.body.aps.badge}`);
 
@@ -1520,7 +1547,7 @@ check("service frame does not grow the badge", pushSvc?.body.aps.badge === 1,
   const piet = await api("/api/register", { body: {
     username: "piet_" + suffix, displayName: "Piet", ...fakeKeys("z") } });
   await api("/api/push-token", { token: olga.token,
-    body: { apnsToken: "olga-sim-udid", env: "development" } });
+    body: { apnsToken: `olga-sim-${suffix}`, env: "development" } });
   const gchat = await api("/api/chats", { token: nils.token,
     body: { kind: "group", title: "Counting", memberIds: [olga.userId, piet.userId] } });
   check("unread group created", gchat.ok, JSON.stringify(gchat));
@@ -1533,16 +1560,16 @@ check("service frame does not grow the badge", pushSvc?.body.aps.badge === 1,
   };
 
   const u1 = await gsend("cm-u1");
-  const badge1 = (await waitPush(pushFor("olga-sim-udid", u1)))?.body.aps.badge;
+  const badge1 = (await waitPush(pushFor(`olga-sim-${suffix}`, u1)))?.body.aps.badge;
   check("group badge counts the first message", badge1 === 1, `badge=${badge1}`);
 
   // nothing is read here: this is where the number used to grow on its own
   const s1 = await gsend("cm-u2", true);
   check("no push for the group's service frame",
-    !(await waitPush(pushFor("olga-sim-udid", s1), 1500)));
+    !(await waitPush(pushFor(`olga-sim-${suffix}`, s1), 1500)));
 
   const u3 = await gsend("cm-u3");
-  const badge2 = (await waitPush(pushFor("olga-sim-udid", u3)))?.body.aps.badge;
+  const badge2 = (await waitPush(pushFor(`olga-sim-${suffix}`, u3)))?.body.aps.badge;
   check("a service frame does not grow an unread badge", badge2 === 2, `badge=${badge2}`);
 
   // being added to a group raises its own push, with the group's title in the
@@ -1550,12 +1577,12 @@ check("service frame does not grow the badge", pushSvc?.body.aps.badge === 1,
   const quinn = await api("/api/register", { body: {
     username: "quinn_" + suffix, displayName: "Quinn", ...fakeKeys("q") } });
   await api("/api/push-token", { token: quinn.token,
-    body: { apnsToken: "quinn-sim-udid", env: "development" } });
+    body: { apnsToken: `quinn-sim-${suffix}`, env: "development" } });
   const added = await api(`/api/chats/${gchat.chatId}/members`, { token: nils.token,
     body: { add: [quinn.userId], remove: [] } });
   check("group add ok", added.ok, JSON.stringify(added));
   const addPush = await waitPush((p) =>
-    p.url === "/3/device/quinn-sim-udid" && p.body.chatId === gchat.chatId);
+    p.url === `/3/device/quinn-sim-${suffix}` && p.body.chatId === gchat.chatId);
   check("push on being added to a group", !!addPush, JSON.stringify(pushes.slice(-3)));
   if (addPush) {
     check("group-add push names the group",
@@ -1570,7 +1597,7 @@ check("service frame does not grow the badge", pushSvc?.body.aps.badge === 1,
   const readd = await api(`/api/chats/${gchat.chatId}/members`, { token: nils.token,
     body: { add: [olga.userId], remove: [] } });
   check("re-add is a no-op with no push", readd.ok
-    && !(await waitPush((p) => p.url === "/3/device/olga-sim-udid"
+    && !(await waitPush((p) => p.url === `/3/device/olga-sim-${suffix}`
       && p.body.aps?.alert?.body?.startsWith("Вас добавили"), 1200)));
 
   // The push's sound: the chat's own choice wins, then the user's default for
@@ -1578,32 +1605,32 @@ check("service frame does not grow the badge", pushSvc?.body.aps.badge === 1,
   // object, so a sender changes nothing about them.
   await api("/api/notify-sounds", { token: olga.token, body: { group: "chime2.caf" } });
   const s2 = await gsend("cm-snd1");
-  const sndPush1 = await waitPush(pushFor("olga-sim-udid", s2));
+  const sndPush1 = await waitPush(pushFor(`olga-sim-${suffix}`, s2));
   check("group default sound rides the push",
     sndPush1?.body.aps.sound === "chime2.caf", JSON.stringify(sndPush1?.body.aps));
   await api(`/api/chats/${gchat.chatId}/flags`, { token: olga.token,
     body: { sound: "chime1.caf" } });
   const s3 = await gsend("cm-snd2");
-  const sndPush2 = await waitPush(pushFor("olga-sim-udid", s3));
+  const sndPush2 = await waitPush(pushFor(`olga-sim-${suffix}`, s3));
   check("the chat's own sound beats the default",
     sndPush2?.body.aps.sound === "chime1.caf", JSON.stringify(sndPush2?.body.aps));
   await api(`/api/chats/${gchat.chatId}/flags`, { token: olga.token, body: { sound: null } });
   await api("/api/notify-sounds", { token: olga.token, body: { group: null } });
   const s4 = await gsend("cm-snd3");
-  const sndPush3 = await waitPush(pushFor("olga-sim-udid", s4));
+  const sndPush3 = await waitPush(pushFor(`olga-sim-${suffix}`, s4));
   check("clearing both returns the push to default",
     sndPush3?.body.aps.sound === "default", JSON.stringify(sndPush3?.body.aps));
   // the sender's personal sound follows them into any chat, under the chat's own
   await api(`/api/notify-sounds/person/${nils.userId}`, { token: olga.token,
     body: { sound: "chime3.caf" } });
   const s5 = await gsend("cm-snd4");
-  const sndPush4 = await waitPush(pushFor("olga-sim-udid", s5));
+  const sndPush4 = await waitPush(pushFor(`olga-sim-${suffix}`, s5));
   check("a person's sound rides their message",
     sndPush4?.body.aps.sound === "chime3.caf", JSON.stringify(sndPush4?.body.aps));
   await api(`/api/chats/${gchat.chatId}/flags`, { token: olga.token,
     body: { sound: "chime2.caf" } });
   const s6 = await gsend("cm-snd5");
-  const sndPush5 = await waitPush(pushFor("olga-sim-udid", s6));
+  const sndPush5 = await waitPush(pushFor(`olga-sim-${suffix}`, s6));
   check("the chat's explicit sound still wins over the person's",
     sndPush5?.body.aps.sound === "chime2.caf", JSON.stringify(sndPush5?.body.aps));
   // with the chat and the person both set, the exceptions list names them both
@@ -1636,7 +1663,7 @@ ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p8", sentAt: Date.n
     "someone/else": { type: "dr", c: "Zm9yLXNvbWVvbmUtZWxzZQ==" },
   } } });
 const p8 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p8");
-const push8 = await waitPush(pushFor("eve-sim-udid", p8));
+const push8 = await waitPush(pushFor(`eve-sim-${suffix}`, p8));
 check("push carries the envelope", !!push8?.body.env, JSON.stringify(push8?.body));
 if (push8?.body.env) {
   const env = JSON.parse(push8.body.env);
@@ -1652,7 +1679,7 @@ if (push8?.body.env) {
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p9", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: { [eveAddr]: { type: "dr", c: "A".repeat(5000) } } } });
 const p9 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p9");
-const push9 = await waitPush(pushFor("eve-sim-udid", p9));
+const push9 = await waitPush(pushFor(`eve-sim-${suffix}`, p9));
 check("oversized envelope is dropped from the push",
   !!push9 && push9.body.env === undefined);
 
@@ -1661,7 +1688,7 @@ await api(`/api/chats/${echat.chatId}/flags`, { token: eve.token, body: { muted:
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p5", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const p5 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p5");
-check("no push for muted chat", !(await waitPush(pushFor("eve-sim-udid", p5), 1200)));
+check("no push for muted chat", !(await waitPush(pushFor(`eve-sim-${suffix}`, p5), 1200)));
 
 // (e) mute with an expiry: no push while it has not expired
 const nowS = Math.floor(Date.now() / 1000);
@@ -1670,7 +1697,7 @@ await api(`/api/chats/${echat.chatId}/flags`, { token: eve.token,
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p6", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const p6 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p6");
-check("no push while mute not expired", !(await waitPush(pushFor("eve-sim-udid", p6), 1200)));
+check("no push while mute not expired", !(await waitPush(pushFor(`eve-sim-${suffix}`, p6), 1200)));
 
 // (f) once it has expired the push goes out and the flag clears itself
 await api(`/api/chats/${echat.chatId}/flags`, { token: eve.token,
@@ -1678,7 +1705,7 @@ await api(`/api/chats/${echat.chatId}/flags`, { token: eve.token,
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p7", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const p7 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p7");
-check("push after mute expired", !!(await waitPush(pushFor("eve-sim-udid", p7))));
+check("push after mute expired", !!(await waitPush(pushFor(`eve-sim-${suffix}`, p7))));
 const eveChats = await api("/api/chats", { token: eve.token });
 const eveEntry = eveChats.chats.find((e) => e.state.chatId === echat.chatId);
 check("expired mute cleared in flags",
@@ -1686,7 +1713,8 @@ check("expired mute cleared in flags",
   JSON.stringify(eveEntry?.flags));
 
 // (g) own echo: alice has a token registered, yet her own sends create no push
-check("no push for own echo", !pushes.some((p) => p.url === "/3/device/alice-sim-udid"));
+check("no push for own echo", !pushes.some((p) => p.url === `/3/device/alice-sim-${suffix}`),
+  JSON.stringify(pushes.filter((p) => p.url === `/3/device/alice-sim-${suffix}`).map((p) => p.body)));
 
 // (d) The server counts the badge, and the author does not count what they sent as
 // unread, exactly as the cursor on the device does. Otherwise the number would grow on
@@ -1695,7 +1723,7 @@ ce.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-e1", sentAt: Date.no
   body: { v: 1, mode: "pw", msgs: {} } });
 const e1 = await ce.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-e1");
 check("author's badge counts the peer's message",
-  (await waitPush(pushFor("alice-sim-udid", e1)))?.body.aps.badge === 1);
+  (await waitPush(pushFor(`alice-sim-${suffix}`, e1)))?.body.aps.badge === 1);
 for (const id of ["cm-p11", "cm-p12", "cm-p13"]) {
   ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: id, sentAt: Date.now(),
     body: { v: 1, mode: "pw", msgs: {} } });
@@ -1704,7 +1732,7 @@ for (const id of ["cm-p11", "cm-p12", "cm-p13"]) {
 ce.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-e2", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const e2 = await ce.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-e2");
-const badgeAfter = (await waitPush(pushFor("alice-sim-udid", e2)))?.body.aps.badge;
+const badgeAfter = (await waitPush(pushFor(`alice-sim-${suffix}`, e2)))?.body.aps.badge;
 check("own messages do not grow the author's badge", badgeAfter === 1,
   `badge=${badgeAfter}`);
 
@@ -1721,7 +1749,7 @@ const selfSent = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "c
 check("send to yourself gets a seq", !!selfSent);
 await new Promise((r) => setTimeout(r, 600));
 check("saved messages raise no push",
-  !pushes.slice(pushMarkSelf).some((p) => p.url === "/3/device/alice-sim-udid"));
+  !pushes.slice(pushMarkSelf).some((p) => p.url === `/3/device/alice-sim-${suffix}`));
 const selfEntry = (await api("/api/chats", { token: alice.token }))
   .chats.find((x) => x.state.chatId === selfChat.chatId);
 check("self chat lists its one member",
@@ -1732,11 +1760,11 @@ check("self chat lists its one member",
 // after the hold. The push queue runs independently of the ack path, so the
 // two arrivals have no strict order — only the absence of the hold-sized lag
 // is the product's promise.
-hold = { token: "eve-sim-udid", ms: 1500 };
+hold = { token: `eve-sim-${suffix}`, ms: 1500 };
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-h1", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const h1 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-h1");
-const hp1 = await waitPush(pushFor("eve-sim-udid", h1));
+const hp1 = await waitPush(pushFor(`eve-sim-${suffix}`, h1));
 check("ack does not wait for apns", !!h1 && !!hp1 && h1.at - hp1.at < 1000,
   `ack ${h1?.at} push ${hp1?.at}`);
 
@@ -1747,7 +1775,7 @@ ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-h2", sentAt: Date.n
 const h2 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-h2", 3000);
 check("ack while apns still hanging", !!h2 && h2.at - holdT0 < 600,
   `${h2 ? h2.at - holdT0 : "no ack"}ms`);
-const hp2 = await waitPush(pushFor("eve-sim-udid", h2), 8000);
+const hp2 = await waitPush(pushFor(`eve-sim-${suffix}`, h2), 8000);
 check("push follows its ack", !!hp2 && h2.at < hp2.at, `ack ${h2?.at} push ${hp2?.at}`);
 hold = { token: null, ms: 0 };
 
