@@ -34,11 +34,37 @@ it and every other chat was left untouched — and an untouched chat gets no
 that had answered (`catchupPending`), and its fallback asks for chats it knows
 to be behind, which this one was not: from its side it was caught up at 11.
 So the chat fell out of the catch-up for good, portion after portion.
-Closed on both sides: every chat of a portion gets a share of the budget
+Fixed on both sides: every chat of a portion gets a share of the budget
 (`SYNC_BUDGET / chats in the portion`), and the client asks the next portion
 for the chats it was answered about *and* the chats it never heard back on
 (`SyncEngine.nextPortion`, `CatchupPortionTests`). Coming back to the
 foreground also re-opens the catch-up, which it did not do at all before.
+Held by two smoke checks — «a portion answers about every chat it was asked
+for» and «the quiet chat's history comes in that first portion» — both red with
+the budget spent in order and green with the share.
+
+Underneath it, and the larger half of the same stall: the sweep of unreadable
+envelopes walked every row of the pile with three queries each and logged a
+line per row. The app's own log on the flooded home reads about twelve rows a
+second over 8775 of them — twelve minutes of the engine's actor, during which
+nothing else it serves runs. A pass now reads what it needs in three queries,
+looks at 200 envelopes, and the passes take the pile in turn; the same log over
+a foreground is silent.
+
+Still owed: the live pass. The shared stand carries the server half only after
+the next deploy, and until then the scenario cannot come out green there — on
+the stand as it stands the message's chat still ends a foreground with
+`lastSeq` moved to 14 and no row, no envelope and no gap record under it, which
+is the same hole seen from the other side.
+
+### The smoke's cmid sweep check is red on a stand configured for it
+Seen 2026-09-01: «cmid swept behind the sender's ack» fails on a stand started
+with `--var CMID_MIN_AGE:0 --var CMID_SWEEP_EVERY:0` and a fresh persist dir —
+the recipe the closed entry gives for it. Everything else in the run is green.
+The sweep lives in `ConversationDO` and reads both from the worker's env, so
+the variables are in the right place. Not yet chased further; another agent
+reports the same check green on the same recipe, so the difference between the
+two runs is what to look at first.
 
 ### iPad with a hardware keyboard: a tap around the settings sheet crashes the app
 Found 2026-08-30 on the iPad Pro 11" simulator with ConnectHardwareKeyboard on
@@ -57,6 +83,16 @@ parent environment is already gone, most likely mid-transition of the SwiftUI
 sheet. Needs a workaround (the crash is user-visible on exactly the desktop
 target); none found yet — no public switch turns the focus map off for a
 window, and the assertion fires inside UIKit's own snapshot pass.
+
+Re-run 2026-09-01 on a fresh iPad Pro 11" simulator with the hardware keyboard
+connected (checked through the Simulator's own I/O menu, «Connect Hardware
+Keyboard» carries the mark): the documented gesture — open Settings, scroll the
+sheet, tap the «Приватность» row and the sheet's edges — over fifteen rounds,
+and six more rounds of keyboard focus traversal (tab and arrows) through the
+sheet's presentation and dismissal. The app did not abort once and no new
+report appeared in DiagnosticReports. Not reproducible on this build; nothing
+was changed for it, because a workaround with no reproduction to answer would
+be blind.
 
 ### An own service frame drags myReadUpTo over the peer's unread messages
 Found 2026-08-28 in passing while verifying the in-chat mention counter: the
