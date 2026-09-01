@@ -22,10 +22,10 @@ enum MediaCacheCeiling: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .small: "100 MB"
-        case .medium: "500 MB"
-        case .gigabyte: "1 GB"
-        case .large: "5 GB"
+        case .small: String(localized: "100 MB")
+        case .medium: String(localized: "500 MB")
+        case .gigabyte: String(localized: "1 GB")
+        case .large: String(localized: "5 GB")
         case .unlimited: String(localized: "No limit")
         }
     }

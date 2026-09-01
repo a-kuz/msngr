@@ -23,10 +23,11 @@ struct CallsListView: View {
     var body: some View {
         Group {
             if items.isEmpty {
-                Text("No calls yet")
-                    .textRole(Theme.Text.rowPreview)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                ContentUnavailableView {
+                    Label("No calls yet", systemImage: "phone")
+                } description: {
+                    Text("Calls you make and receive will be listed here.")
+                }
             } else {
                 List(items) { item in
                     row(item)

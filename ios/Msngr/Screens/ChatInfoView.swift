@@ -160,11 +160,18 @@ struct ChatInfoView: View {
                             applyMute(nil)
                         }
                     })) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Label("Mute", systemImage: "bell.slash")
-                        if let muteUntilLabel {
-                            Text(muteUntilLabel).font(.footnote).foregroundStyle(.secondary)
+                    // the expiry sits under the title inside the label: a Label
+                    // wrapped in a stack loses the row's icon column and stacks
+                    // its own icon above the text
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Mute")
+                            if let muteUntilLabel {
+                                Text(muteUntilLabel).font(.footnote).foregroundStyle(.secondary)
+                            }
                         }
+                    } icon: {
+                        Image(systemName: "bell.slash")
                     }
                 }
                 .accessibilityIdentifier("chatInfo.mute")
