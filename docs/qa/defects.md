@@ -1352,24 +1352,14 @@ the working copy, nine minutes before the commit at 22:16. Not reproduced
 since: the tray has been reloading every minute on two simulators through
 the whole live run. Cause unconfirmed; kept here so a repeat has a home.
 
-### The incoming-frame drain is blocked by the replay of pending envelopes — open
-Found 2026-09-02 during the presence run (`runs/2026-09-02-presence-subscriptions.md`).
-On the alfa and bravo homes, whose pair holds thousands of envelopes that
-cannot be opened, no frame of any kind reaches the database after the first
-batch: presence and typing frames sent to the socket (proved by a raw socket
-next to the app) never show, and the peer's header stays stale for as long as
-the app lives. `/usr/bin/sample` of bravo's process, 285 of 285 samples:
-`SyncEngine.drainIncoming → applyIncomingBatch → retryPending(chatId:) →
-replay → IncomingDecryptor.decrypt → DoubleRatchetSession.skipRecvKeys`
-(`runs/2026-09-02-presence/bravo-stuck-drain-stack.txt`). The drain applies
-frames in arrival order, and the batch of one chat's messages ends by
-replaying every pending envelope of that chat; each failed replay walks up to
-`maxSkip` (5000) receive keys through the KDF and an O(n) `skippedOrder`
-removal, so a chat with a few thousand pending rows keeps the drain busy for
-minutes and every other frame waits behind it. The app's own ping timer
-starves too: bravo dropped to offline in the foreground. A restart repeats it
-on the first catch-up batch. The snapshot on connect is applied (it arrives
-before the first message batch). The fix belongs with the repair policy: the
-replay should not run inline in the drain, or should be capped per batch.
-The wall of «Код безопасности собеседника изменился» rows in alfa's chat
-with bravo is the visible side of the same pair.
+### The incoming-frame drain is blocked by the replay of pending envelopes — fixed
+Found 2026-09-02 during the presence run (`runs/2026-09-02-presence-subscriptions.md`):
+on the alfa and bravo homes no frame of any kind reached the database after
+the first batch — presence and typing frames sent to the socket never showed,
+and bravo's own ping timer starved so it dropped to offline in the foreground.
+`/usr/bin/sample`, 285 of 285: `drainIncoming → applyIncomingBatch →
+retryPending → replay → DoubleRatchetSession.skipRecvKeys`
+(`runs/2026-09-02-presence/bravo-stuck-drain-stack.txt`). The cause and the
+fix (cd326a0, a replay pass bounded to twenty envelopes, newest first) are in
+the severed-pair entry above; the wall of «Код безопасности собеседника
+изменился» rows in alfa's chat with bravo is the visible side of that pair.
