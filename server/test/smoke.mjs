@@ -528,6 +528,18 @@ const tryChat = await api("/api/chats", { token: carol.token,
   body: { kind: "direct", memberIds: [bob.userId] } });
 check("blocked direct rejected", bl.ok && !tryChat.ok && tryChat.error === "blocked");
 
+// 13x. Reporting: an attached excerpt is accepted, garbage reasons are not
+const rep = await api("/api/report", { token: carol.token, body: {
+  chatId: chat.chatId, targetUserId: bob.userId, reason: "spam",
+  comment: "unsolicited ads",
+  attached: [{ seq: 1, senderId: bob.userId, text: "buy now" }] } });
+check("report accepted", rep.ok === true, JSON.stringify(rep));
+const repBad = await api("/api/report", { token: carol.token, body: {
+  chatId: chat.chatId, reason: "just_bad_vibes" } });
+check("report with unknown reason rejected", repBad.ok === false && repBad.error === "bad_reason");
+const repEmpty = await api("/api/report", { token: carol.token, body: { reason: "spam" } });
+check("report with no target rejected", repEmpty.ok === false && repEmpty.error === "no_target");
+
 // 13a. Blocking inside an existing chat: the send succeeds, the delivery does not happen
 const frank = await api("/api/register", { body: {
   username: "frank_" + suffix, displayName: "Frank", ...fakeKeys("f") } });
@@ -1511,7 +1523,7 @@ check("no push for service", !(await waitPush(pushFor(`eve-sim-${suffix}`, p4), 
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p4n", sentAt: Date.now(),
   service: true, notify: true, body: { v: 1, mode: "pw", msgs: {} } });
 const p4n = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p4n");
-const push4n = await waitPush(pushFor("eve-sim-udid", p4n));
+const push4n = await waitPush(pushFor(`eve-sim-${suffix}`, p4n));
 check("notify service frame pushes", !!push4n);
 check("notify service frame keeps the badge", push4n?.body.aps.badge === 1,
   `badge=${push4n?.body.aps.badge}`);

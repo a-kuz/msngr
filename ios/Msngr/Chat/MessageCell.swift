@@ -1711,6 +1711,12 @@ extension MessageCell {
                 self?.onContextAction?(.editHistory)
             })
         }
+        if !msg.isOutgoing {
+            items.append(.init(title: String(localized: "Report"), icon: "flag",
+                               id: "chat.menu.report") { [weak self] in
+                self?.onContextAction?(.report)
+            })
+        }
         items.append(.init(title: String(localized: "Delete"), icon: "trash", destructive: true) { [weak self] in
             self?.onContextAction?(.delete)
         })

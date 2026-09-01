@@ -47,6 +47,7 @@ struct ChatInfoView: View {
     @State private var personSound = NotifySound.standard
     @State private var soundLoaded = false
     @State private var showBlockConfirm = false
+    @State private var showReport = false
     @State private var showLeaveConfirm = false
     @State private var showClearConfirm = false
     @State private var avatarItem: PhotosPickerItem?
@@ -231,6 +232,21 @@ struct ChatInfoView: View {
                               systemImage: peer.isBlocked ? "hand.raised.slash" : "hand.raised")
                     }
                     .accessibilityIdentifier("chatInfo.block")
+                    Button(role: .destructive) {
+                        showReport = true
+                    } label: {
+                        Label("Report", systemImage: "flag")
+                    }
+                    .accessibilityIdentifier("chatInfo.report")
+                }
+            } else if isGroup, !isSaved {
+                Section {
+                    Button(role: .destructive) {
+                        showReport = true
+                    } label: {
+                        Label("Report", systemImage: "flag")
+                    }
+                    .accessibilityIdentifier("chatInfo.report")
                 }
             }
 
@@ -306,6 +322,9 @@ struct ChatInfoView: View {
             AddMembersView(chatId: model.chatId, existing: Set(model.members.map(\.id))) { user in
                 model.announce(.added, member: user.displayName, memberId: user.id)
             }
+        }
+        .sheet(isPresented: $showReport) {
+            ReportView(chatId: model.chatId, targetUserId: model.peer?.id, message: nil)
         }
         .confirmationDialog("Mute", isPresented: $showMuteOptions, titleVisibility: .visible) {
             ForEach(MuteOption.allCases, id: \.self) { option in
