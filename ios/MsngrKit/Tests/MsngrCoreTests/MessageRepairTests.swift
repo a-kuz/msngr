@@ -682,4 +682,63 @@ final class MessageRepairTests: XCTestCase {
                                                repairAttempts: MessageRepair.maxAttempts,
                                                repairAskedAt: 0, now: now))
     }
+
+    // MARK: - One rebuild per wave
+
+    /// A wave of repair requests to one sender pays for one session rebuild.
+    /// Each rebuild costs a prekey bundle over the network and an X3DH under
+    /// the crypto gate, and rebuilding again throws away the session the
+    /// previous request has just built — which is what made one flooded chat
+    /// answer at about one frame per six seconds and starve every other chat.
+    func testAWaveOfRepairsRebuildsTheSessionOnce() async throws {
+        let db = try AppDatabase.openInMemory()
+        try await makeDirectChat(db)
+        let api = APIClient(baseURL: URL(string: "http://localhost:1")!)
+        let store = try IdentityStore(db: db, masterKeyProvider: StaticMasterKey())
+        let e2ee = E2EEManager(store: store, api: api, ownUserId: "me", ownDeviceId: "dev")
+        let engine = SyncEngine(db: db, api: api, e2ee: e2ee,
+                                wsURL: URL(string: "ws://localhost:1/ws")!,
+                                ownUserId: "me", ownDeviceId: "dev")
+
+        try await pendingFromPeer(db, seqs: 1...3)
+        await engine.sweepUnreadable()
+        XCTAssertTrue(try store.consumeSessionReset(peerUserId: "peer"),
+                      "the first request of the wave rebuilds the session")
+
+        // the send has rebuilt the session; the rest of the wave rides on it
+        try await pendingFromPeer(db, seqs: 10...12)
+        await engine.sweepUnreadable()
+        XCTAssertFalse(try store.consumeSessionReset(peerUserId: "peer"),
+                       "the wave asked for a second rebuild of the same session")
+
+        let asked = try await db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT COUNT(*) FROM pendingDecrypt WHERE repairAttempts > 0")!
+        }
+        XCTAssertEqual(asked, 6, "every frame of the wave still asks for its copy")
+    }
+
+    /// The window itself: a rebuild is due again once it has run out, so a
+    /// session that really is unusable is not left broken for good.
+    func testTheRebuildWindowOpensAgain() {
+        XCTAssertFalse(MessageRepair.sessionRebuildDue(lastRebuiltAt: 100, now: 130))
+        XCTAssertTrue(MessageRepair.sessionRebuildDue(
+            lastRebuiltAt: 100, now: 100 + MessageRepair.sessionRebuildInterval))
+    }
+
+    /// Envelopes from one peer that no replay opens, old enough to be asked
+    /// about and young enough not to have expired, with the replay gate shut so
+    /// the sweep goes straight to the request.
+    private func pendingFromPeer(_ db: DatabaseQueue, seqs: ClosedRange<Int>) async throws {
+        let now = Date().timeIntervalSince1970
+        try await db.write { dbc in
+            for seq in seqs {
+                try dbc.execute(sql: """
+                    INSERT INTO pendingDecrypt (chatId, seq, fromUserId, fromDevice, sentAt, ts,
+                                                body, reason, attempts, firstSeenAt, lastTriedAt,
+                                                repairAttempts, repairAskedAt)
+                    VALUES ('c1', ?, 'peer', 'd1', 1, 1, x'00', 'no_session', 1, ?, ?, 0, 0)
+                    """, arguments: [seq, now - MessageRepair.repairGrace - 1, now])
+            }
+        }
+    }
 }
