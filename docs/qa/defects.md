@@ -96,8 +96,17 @@ spent and 20 in flight against the ceiling; bravo's outbox is not blocked and
 it trusts alfa, but its dozen answers sat `inflight` — sent, waiting for an ack
 that did not come — for five minutes without moving, and alfa's readable count
 in the chat did not change. So the revival above has not yet had its trigger:
-nothing of bravo's has opened on alfa since the acceptance. The next thread to
-pull is that stall between `inflight` and the ack, not the repair policy.
+nothing of bravo's has opened on alfa since the acceptance.
+
+That stall was its own defect and is fixed (b65a2c3): the ack of a send is owed
+on the socket it left through, and rows sitting in flight were put back into
+the queue only when the engine started — so a message sent moments before a
+reconnect waited for the next cold start with nothing on the screen saying so.
+The reconnect requeues them now, and on the same pair bravo's outbox went from
+a dozen rows standing five minutes to «failed: 4» within the minute, those four
+having honestly spent their attempts. Alfa's readable count did not move with
+it, so what is left here is this pair's own crypto state — the sessions behind
+those thousands of envelopes — and not the queue or the repair policy.
 
 Left over: whether a re-registered fixture peer should present as an identity
 change at all, since the homes are meant to be handed around.
