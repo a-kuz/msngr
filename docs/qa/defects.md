@@ -192,8 +192,25 @@ peer's own traffic move the rows between the screenshot that gives the
 coordinate and the touch that uses it, so the taps land on whatever slid into
 that place. Coordinate taps are the wrong instrument for this one; it wants a
 driver that addresses rows by identity, which is XCUITest, and that is out of
-the process by the owner's call. Left for a run that has the owner's eye on the
-screen instead.
+the process by the owner's call.
+
+Caught the same night on a stand of throwaway accounts, where nothing but the
+run itself writes: four rows on screen, the bottom one lifted by one message
+from the command line, the screen recorded at 30 fps. The crossing is in
+`docs/qa/runs/2026-09-02-chatlist-row-lift.png` — the moving row's avatar
+stands over the band the passed row occupies, the passed row is out of sight
+for two frames, and the whole move takes five frames, about a sixth of a
+second.
+That sixth of a second is the fault, and it was not what the code asked for.
+«The list now moves in `Theme.spring` (0.45 s)» describes a SwiftUI transaction
+that never reaches a collection view's batch update: `dataSource.apply` ran on
+UIKit's own default timing whatever the transaction said. The apply is now
+wrapped in the animation it is meant to have (`ChatListCollection.moveDuration`,
+a 0.45 s spring). Measured the same way on the same stand afterwards: nine
+frames of movement instead of five, the per-frame change tapering off as a
+spring settles rather than ending flat, and every intermediate position of the
+row legible — `docs/qa/runs/2026-09-02-chatlist-row-lift-after.png`. Whether
+the crossing still reads as crooked at that speed is the owner's to say.
 
 ### Interaction smoothness below Telegram
 Reported 2026-08-18. Overall animation quality and frame pacing feel worse
