@@ -1071,6 +1071,17 @@
         }
       }
     },
+    "On hold" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На удержании"
+          }
+        }
+      }
+    },
     "No calls yet" : {
       "extractionState" : "manual",
       "localizations" : {

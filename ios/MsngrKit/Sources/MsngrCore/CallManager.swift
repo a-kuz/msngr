@@ -29,6 +29,8 @@ public protocol CallMediaTransport: AnyObject, Sendable {
     func answerOffer(_ sdp: String) async throws -> String
     func add(candidates: [CallSignal.IceCandidate]) async
     func setMuted(_ muted: Bool) async
+    /// silences the call both ways without closing it, for call hold
+    func setHeld(_ held: Bool) async
     /// turns the local camera on or off; adding the track the first time
     /// changes the SDP, so the manager follows up with a renegotiation offer
     func setVideo(enabled: Bool) async
@@ -66,6 +68,11 @@ public struct CallState: Equatable, Sendable {
     /// someone else is calling while this call stands; the screen offers to
     /// refuse them or to end this call and take theirs
     public var waitingCallerId: String?
+    /// another call is parked behind this one, silent on an open transport;
+    /// the screen offers to switch back
+    public var heldPeerId: String?
+    /// the peer put this call on hold; the silence is theirs, not a defect
+    public var remoteHold = false
     /// when media started flowing, for the duration timer
     public var connectedAt: Double?
 
@@ -148,6 +155,21 @@ public actor CallManager {
     /// a second caller's offer, waiting behind the live call until the user
     /// refuses it or trades the call for it
     private var waitingOffer: CallSignalEvent?
+    /// The call put aside for another one: its transport stays open and
+    /// silent until the user switches back or one of the calls ends.
+    private struct HeldCall {
+        let chatId: String
+        let peerUserId: String
+        let callId: String
+        let transport: CallMediaTransport
+        var task: Task<Void, Never>?
+        let connectedAt: Double?
+        let isCaller: Bool
+        let localVideo: Bool
+        let remoteVideo: Bool
+        var remoteHold: Bool
+    }
+    private var heldCall: HeldCall?
     /// locally gathered candidates waiting for their debounce flush
     private var outgoingCandidates: [CallSignal.IceCandidate] = []
     private var candidateFlushTask: Task<Void, Never>?
@@ -429,6 +451,121 @@ public actor CallManager {
         await accept()
     }
 
+    /// Puts the live call aside and answers the one waiting behind it: the
+    /// held call's transport stays open and silent until the user switches
+    /// back or one of the calls ends. With the hold slot already taken, or
+    /// on a conference, the trade is the only move left.
+    public func holdAndAcceptWaiting() async {
+        guard let waiting = waitingOffer, heldCall == nil, extras.isEmpty,
+              state.phase == .active, let transport,
+              let chatId = state.chatId, let callId = state.callId,
+              let peerUserId = state.peerUserId else {
+            await acceptWaiting()
+            return
+        }
+        waitingOffer = nil
+        state.waitingCallerId = nil
+        await parkCurrent(transport: transport, chatId: chatId, callId: callId,
+                          peerUserId: peerUserId)
+        pendingOffer = waiting
+        heldRemoteCandidates = earlyCandidates.removeValue(forKey: waiting.signal.callId) ?? []
+        isCaller = false
+        let heldPeer = state.heldPeerId
+        state = CallState(phase: .ringing, chatId: waiting.chatId,
+                          peerUserId: waiting.fromUserId, callId: waiting.signal.callId)
+        state.remoteVideo = waiting.signal.video == true
+        state.heldPeerId = heldPeer
+        await accept()
+    }
+
+    /// Swaps the live call and the held one: the live one goes silent on its
+    /// open transport, the held one speaks again.
+    public func switchToHeld() async {
+        guard let held = heldCall, state.phase == .active, extras.isEmpty,
+              let transport, let chatId = state.chatId, let callId = state.callId,
+              let peerUserId = state.peerUserId else { return }
+        heldCall = nil
+        await parkCurrent(transport: transport, chatId: chatId, callId: callId,
+                          peerUserId: peerUserId)
+        await unpark(held)
+    }
+
+    /// The live call goes onto the hold slot: silent both ways, transport
+    /// open, the peer told.
+    private func parkCurrent(transport: CallMediaTransport, chatId: String,
+                             callId: String, peerUserId: String) async {
+        transportTask?.cancel()
+        transportTask = nil
+        candidateFlushTask?.cancel()
+        candidateFlushTask = nil
+        outgoingCandidates = []
+        iceRestartTask?.cancel()
+        iceRestartTask = nil
+        await transport.setHeld(true)
+        await sendSignal(CallSignal(type: .hold, callId: callId, held: true), chatId)
+        var held = HeldCall(chatId: chatId, peerUserId: peerUserId, callId: callId,
+                            transport: transport, task: nil,
+                            connectedAt: state.connectedAt, isCaller: isCaller,
+                            localVideo: state.localVideo, remoteVideo: state.remoteVideo,
+                            remoteHold: state.remoteHold)
+        held.task = watchHeld(transport, callId: callId)
+        heldCall = held
+        self.transport = nil
+        state.heldPeerId = peerUserId
+    }
+
+    /// The held call becomes the call again.
+    private func unpark(_ held: HeldCall) async {
+        held.task?.cancel()
+        await held.transport.setHeld(false)
+        await held.transport.setMuted(state.muted)
+        transport = held.transport
+        consume(held.transport)
+        isCaller = held.isCaller
+        state.chatId = held.chatId
+        state.peerUserId = held.peerUserId
+        state.callId = held.callId
+        state.connectedAt = held.connectedAt
+        state.localVideo = held.localVideo
+        state.remoteVideo = held.remoteVideo
+        state.remoteHold = held.remoteHold
+        state.phase = .active
+        await sendSignal(CallSignal(type: .hold, callId: held.callId, held: false), held.chatId)
+    }
+
+    /// While a call is parked, only its death matters; everything else waits
+    /// for the switch back.
+    private func watchHeld(_ transport: CallMediaTransport, callId: String) -> Task<Void, Never> {
+        let events = transport.events()
+        return Task { [weak self] in
+            for await event in events {
+                if case .failed = event {
+                    await self?.heldFailed(callId: callId)
+                    return
+                }
+            }
+        }
+    }
+
+    private func heldFailed(callId: String) async {
+        guard let held = heldCall, held.callId == callId else { return }
+        await dropHeld(held)
+    }
+
+    /// Forgets the held call: the transport closes, and the caller's side
+    /// still owes the feed its log — the call was live before it was parked,
+    /// so it completed.
+    private func dropHeld(_ held: HeldCall) async {
+        heldCall = nil
+        state.heldPeerId = nil
+        held.task?.cancel()
+        await held.transport.close()
+        guard held.isCaller else { return }
+        let duration = held.connectedAt.map { max(0, Date().timeIntervalSince1970 - $0) }
+        await sendLog(CallLog(outcome: .completed, duration: duration, callId: held.callId),
+                      held.chatId)
+    }
+
     public func setMuted(_ muted: Bool) async {
         state.muted = muted
         await transport?.setMuted(muted)
@@ -526,12 +663,29 @@ public actor CallManager {
                 // a conference leg whose offer has not landed here yet
                 earlyCandidates[event.signal.callId, default: []].append(contentsOf: candidates)
             }
+        case .hold:
+            // the peer of the live call, or of the parked one, went on hold
+            // or came back; either way it is their silence, shown as such
+            if event.signal.callId == state.callId, event.fromUserId == state.peerUserId {
+                state.remoteHold = event.signal.held == true
+            } else if var held = heldCall, event.signal.callId == held.callId,
+                      event.fromUserId == held.peerUserId {
+                held.remoteHold = event.signal.held == true
+                heldCall = held
+            }
         case .end:
             // the waiting caller gave up (cancel or timeout on their side)
             if let waiting = waitingOffer, event.signal.callId == waiting.signal.callId,
                event.fromUserId == waiting.fromUserId {
                 waitingOffer = nil
                 state.waitingCallerId = nil
+                return
+            }
+            // the peer of the parked call hung up: the hold slot empties, the
+            // live call stands
+            if let held = heldCall, event.signal.callId == held.callId,
+               event.fromUserId == held.peerUserId {
+                await dropHeld(held)
                 return
             }
             guard event.signal.callId == state.callId else { return }
@@ -786,6 +940,15 @@ public actor CallManager {
             state = CallState(phase: .ringing, chatId: waiting.chatId,
                               peerUserId: waiting.fromUserId, callId: waiting.signal.callId)
             state.remoteVideo = waiting.signal.video == true
+            state.heldPeerId = heldCall?.peerUserId
+            return
+        }
+        // no waiter: the parked call, if any, speaks again
+        if case .ended = phase, let held = heldCall {
+            heldCall = nil
+            state = CallState(phase: .active, chatId: held.chatId,
+                              peerUserId: held.peerUserId, callId: held.callId)
+            await unpark(held)
         }
     }
 

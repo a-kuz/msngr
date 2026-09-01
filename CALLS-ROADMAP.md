@@ -12,11 +12,12 @@ journal (the ephemeral `callRelay` frame), the missed-call push
 signalled camera-off and the video-call entry point in the chat header
 (`video` on the first offer, so the callee rings as a video call), the
 three-way call: the invite from the call screen, a short-lived mesh of
-exactly three with the invited-by row — and call waiting: a second caller
-during a live call shows a banner with refuse (they hear busy) or
-end-and-accept, and the live call ending on its own rings the waiter — and
-the calls list: the phone button on the chat list opens every call
-newest-first, a tap redials.
+exactly three with the invited-by row — call waiting and hold: a second
+caller during a live call shows a banner with refuse (they hear busy),
+end-and-accept or hold-and-accept, the held call parks silent on its open
+transport with a switch back, and the live call ending rings the waiter or
+brings the parked call back — and the calls list: the phone button on the
+chat list opens every call newest-first, a tap redials.
 
 Each item below stands on its own unless its "needs" line says otherwise.
 
