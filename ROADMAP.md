@@ -1,6 +1,6 @@
 # Msngr — feature map
 
-Updated: 2026-08-17. The state of the `main` branch.
+Updated: 2026-09-01. The state of the `main` branch.
 
 Statuses: ✅ — in the code and confirmed by a live run, a screenshot or the
 server smoke test; 🟡 — partly done, or the code is there but it has not been
@@ -46,7 +46,11 @@ A ✅ goes in only together with a link to the evidence.
     (qa/runs/2026-08-16-second-device-run.md)
   - ⬜ moving the history to a new device (today it starts at the chat's current end)
   - ⬜ a QR code instead of typing the code (the simulator has no camera)
-  - ⬜ recovering an account when no device is left
+  - ✅ recovering an account when no device is left: restoring from the
+    sealed backup during registration — the identity outlives its devices in
+    `UserDO`, the claim proves possession of the identity key (the Backup
+    section below; smoke `restore: start with zero devices`, live run
+    2026-08-30)
   - ✅ server: a list of active devices, logout and revoking a specific device
     (smoke `sessions lists current device`, `logout ok`, `revoked token rejected on api`,
     `revoked token rejected on ws upgrade`, `revoke device by id`)
@@ -63,7 +67,10 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ contact access on an explicit tap, the address book name taking
     precedence (qa/runs/2026-08-27-phone-discovery-run: «Boris Bravov» shown
     over the profile's «Bravo Service»)
-  - ⬜ inviting people who are not registered
+  - ✅ inviting people who are not registered: the numbers discovery could
+    not match get their own section in the new chat sheet, each row opening
+    the share sheet with an invite text carrying the sender's handle
+    (qa/runs/2026-09-01-invite-unregistered.md)
 
 ## The chat list
 
@@ -463,13 +470,13 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ the ack right after the seq is assigned, before the fanout and the push (smoke `ack precedes push`, `ack while apns still hanging`)
   - ✅ «не отправлено» when the server refuses the send, and «Отправить заново»
     repeating the message from the payload it was written with (receipts-run)
-  - 🟡 the «не отправлено» status once the attempts are spent: the accounting
-    is under units now (`spendSendAttempt` — the ceiling, the failed pair,
-    «send again» after it, SendFailureTests), while the live path stays
-    unwatched: ~50 stand restarts never spent an attempt — a stopped stand
-    waits at `guard connected` and retries forever by design; reaching it
-    needs a send caught mid-flight by a dying socket
-    (qa/runs/2026-08-28-undelivered-status-run)
+  - ✅ the «не отправлено» status once the attempts are spent: the accounting
+    under units (`spendSendAttempt` — the ceiling, the failed pair,
+    SendFailureTests), and the live path watched end to end — a stand whose
+    media uploads answer 500 while the socket stays alive spends the eleven
+    attempts, the bubble takes the failure mark, and «Отправить заново» with
+    the uploads healed delivers the same payload
+    (qa/runs/2026-09-01-send-failed.md)
 - Fanout
   - ✅ an alarm queue in ConversationDO: the cursor in storage, batches, retry until exhausted (smoke `fanout is queued, not inline`, `queue replays the whole burst`, `queue drains to empty cursor`)
   - ✅ a failing recipient does not break delivery to the rest, retry with backoff, typing is not retried (smoke `delivery survives a broken recipient`, `failed recipient gets retry`, `typing not retried`)
@@ -595,9 +602,10 @@ A ✅ goes in only together with a link to the evidence.
 ## The media viewer
 
 - ✅ fullscreen above the header, opened from the bubble (media-run)
-- 🟡 pinch zoom and a double tap 1 ↔ 2.5 (the double tap live in
-  qa/runs/2026-08-27-viewer; the pinch waits for a run with two fingers, the
-  simulator driver has one)
+- ✅ pinch zoom and a double tap 1 ↔ 2.5 (the double tap live in
+  qa/runs/2026-08-27-viewer; the pinch run with two real fingers through
+  Simulator.app's ⌥-touches — zoom out, back in and the snap to fit,
+  qa/runs/2026-09-01-pinch.md)
 - ✅ closing by a swipe down with dimming (qa/runs/2026-08-21-media-viewer)
 - ✅ paging through the album, both directions (qa/runs/2026-08-21-media-viewer)
 - ✅ sharing a file from the viewer: the share sheet opens on the cached file
@@ -728,9 +736,14 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     day / 1 week / 1 month) local to the device; a chat this device creates —
     direct or group — gets one disappearing message with the chosen TTL right
     after creation, existing chats keep theirs
-  - ⬜ every one of these is enforced by the server, not only hidden in the
-    interface: a hidden last seen is not in the state it sends, a receipt that is
-    off never leaves the device
+  - ✅ every one of these is enforced by the server, not only hidden in the
+    interface: a hidden last seen is not in the state the server sends
+    (`presenceVisible`), a receipt or typing that is off is dropped by the
+    ConversationDO fanout for both directions, the avatar bytes and the card
+    are withheld, discovery and group adds are refused at the API, and the
+    named exceptions ride the same single check (`privacyAllows`; the
+    privacy, discovery, group-invites, exceptions and receipts blocks in
+    smoke)
   - ⬜ reporting a chat or a message: what leaves the device is only what the
     reporter chose to attach, and blocking is offered in the same step
   - ✅ a request's content is hidden until it is accepted: the feed, the chat list,
@@ -931,17 +944,24 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   «📞» previews in the chat list, a tap redials (live run 2026-08-31)
 - ⬜ a VoIP/call push so an incoming call rings with the app closed (blocked
   on the dev signing certificate for device pushes)
-- ⬜ our own TURN (coturn on the stand) for NAT paths STUN cannot cross — a
-  system change on the shared server, the owner's call
+- ✅ our own TURN (coturn on the stand) for NAT paths STUN cannot cross:
+  coturn on adad (:3478, relay 49160–49400, systemd) and `turn:` in the
+  client's ICE servers (the merge of worktree-calls, 2026-09-01; details in
+  CALLS-ROADMAP.md)
 - ⬜ 1:1 audio on CF Calls, the provider behind our own protocol
 - ⬜ end-to-end encryption over insertable streams
 - ⬜ a video call
 - ⬜ a group call
 - ⬜ CallKit and PushKit
-- ⬜ ringback while dialing, and the callee's ringtone
-- ⬜ a push for an incoming call, and a missed-call notification with a way back
-- ⬜ the in-app call bar: the call keeps going behind the interface, a timer on
-  the bar, a tap returns to the call screen
+- ✅ ringback while dialing, and the callee's ringtone (CallSounds, the merge
+  of worktree-calls 2026-09-01)
+- 🟡 a push for an incoming call, and a missed-call notification with a way
+  back (the missed-call push is shipped — the caller's `callLog` rides
+  `service` + `notify`, covered in smoke; the incoming-call ring with the app
+  closed is the VoIP push, blocked on the device signing certificate)
+- ✅ the in-app call bar: the call folds into a floating tile over the chats,
+  the timer on it, a tap returns to the call screen (the merge of
+  worktree-calls 2026-09-01)
 - ⬜ picture-in-picture for a video call, including the call minimized to the
   system PiP window
 - ⬜ a second incoming call during a call: decline, or hold and switch
@@ -977,11 +997,16 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ✅ clearing the media cache with its size shown: the label follows the clear
   in place (qa/runs/2026-08-21-media-viewer, the run also caught and fixed the
   stale label)
-- ⬜ notification settings: previews on the banner, the default sound, and the
-  per-chat and per-person exceptions listed under Notifications → Sounds
-- ⬜ a privacy screen gathering what E2EE, trust, privacy lists: last seen,
-  receipts and typing, the profile's visibility, who finds me and who adds me,
-  the default disappearing timer
+- ✅ notification settings: one screen under Settings → «Уведомления» with the
+  banner preview toggle, the default sounds for direct chats and groups, and
+  the per-chat and per-person sound exceptions listed with removal
+  (`/api/notify-sounds/exceptions` over the receiver's object; the exceptions
+  checks in smoke; qa/runs/2026-09-01-notifications-settings.md)
+- ✅ a privacy screen gathering what E2EE, trust, privacy lists: last seen,
+  receipts and typing, the profile's visibility, who finds me and who adds
+  me, who can call me, link previews and the default disappearing timer —
+  each tier with its named exceptions
+  (qa/runs/2026-09-01-privacy-screen.md)
 - ✅ language choice: the bundle ships English and Russian, iOS offers the
   per-app language on the app's page in Settings, and the app's settings show
   a «Язык» row with the current language that opens Settings
@@ -1108,13 +1133,16 @@ build takes it from the environment (`make device TEAM=…`, local.mk).
   circle, like the feed) — qa/runs/2026-08-30-ipad-review-run.md. The feed
   spans the full width with bubbles at the left edge; a bubble-column cap is
   the owner's design call.
-- 🟡 a menu bar on the Mac (UIMenuBuilder): the app delegate inserts Chats
+- ✅ a menu bar on the Mac (UIMenuBuilder): the app delegate inserts Chats
   (next/previous chat, edit last message) and Format (bold/italic/link),
   each item naming a composer selector so the responder chain enables it
   exactly where its key works; the keystrokes stay in keyCommands
-  (KeyboardMenuTests pins the selectors both ways). Not seen on a real Mac
-  yet — that run is the item below
-- ⬜ a signed run on a real Mac as «Designed for iPad»
+  (KeyboardMenuTests pins the selectors both ways; seen live on the
+  development Mac — qa/runs/2026-09-01-mac-run.md)
+- ✅ a signed run on a real Mac as «Designed for iPad»: the iphoneos build
+  wrapped the way the App Store installs iOS apps runs as a Mac window —
+  the feed, voice playback and the composer all live
+  (qa/runs/2026-09-01-mac-run.md, watched by the owner)
 
 ## Performance and animations
 
@@ -1179,19 +1207,22 @@ Decided in `docs/research/2026-08-19-per-user-do.md`; the queue orders the steps
 
 ## Up next
 
-From the open backlog (`docs/audits/2026-08-12-code-audit.md`, 37 items) and the
-topics still not closed:
+From the open backlog (`docs/audits/2026-08-12-code-audit.md`) and the topics
+still not closed:
 
-1. The badge from one source with a monotonic order, a queue in the dev APNs
-   mock (in progress).
-2. Reaction animations: particles on appearance, a rolling counter (waiting for a
-   model that can debug animation frame by frame).
-3. The media gallery, chat folders.
-4. The NSE on hardware: the extension comes up, fits into the limits, sees the
-   group container; the same run checks that what was read in the banner is in
-   the chat in airplane mode, and measures the call ceiling during an avalanche —
-   on the simulator `simctl push` does not launch the extension at all.
-5. English across the whole repository: documentation, comments, commit history;
-   an interface string catalog with English as the base language.
+1. The device run that closes the NSE family of 🟡 lines: the extension comes
+   up on hardware, fits into the limits, sees the group container; the same
+   run checks the banner-to-chat write in airplane mode, quick reply and mute
+   from the push, the coalescing window, and measures the call ceiling during
+   an avalanche — `simctl push` does not launch the extension on the simulator
+   at all. Data Protection on a locked screen rides along.
+2. Calls v2 by `CALLS-ROADMAP.md`: the SFU path, E2EE over insertable streams,
+   video; the VoIP push stays blocked on the device signing certificate.
+3. The per-user DO rework's tail: `HandleDO`, subscriptions between objects,
+   the last D1 tables moving into the user's object.
+4. Channels, stories, bots — the three plaintext surfaces not yet started.
+5. Translating the Russian that remains in older documentation by separate
+   passes; new content is English already, the interface strings live in the
+   catalog.
 6. Working through the remaining audit items in order: crashes and data loss →
    offline reliability → E2EE edge cases → UI.

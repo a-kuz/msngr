@@ -468,6 +468,18 @@ export class UserDO implements DurableObject {
         return json({ ok: true, sounds });
       }
 
+      case "/sound-exceptions": {
+        const chats: { chatId: string; sound: string }[] = [];
+        for (const [k, v] of await this.state.storage.list<ChatFlags>({ prefix: "chat:" })) {
+          if (v.sound) chats.push({ chatId: k.slice("chat:".length), sound: v.sound });
+        }
+        const people: { userId: string; sound: string }[] = [];
+        for (const [k, v] of await this.state.storage.list<string>({ prefix: "usnd:" })) {
+          people.push({ userId: k.slice("usnd:".length), sound: v });
+        }
+        return json({ ok: true, chats, people });
+      }
+
       case "/push-token": {
         const b = (await req.json()) as {
           deviceId: string; apnsToken: string; env: string; userId?: string;
