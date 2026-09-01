@@ -181,6 +181,9 @@ POST /api/dev/reindex             {after?, limit?} dev hook for a stand whose ac
                                   predate the handle and directory objects: a page of
                                   users rows by id claims its handles and lands in the
                                   search index → {indexed, clashes, next}
+POST /api/dev/relink              dev hook for a stand whose chats predate presence
+                                  subscriptions: the caller's object is told every chat
+                                  it is in with its roster → {relinked}
 ```
 
 Rights: only an admin can remove members and change group settings; an admin can
@@ -326,6 +329,24 @@ twice (a retried fanout pass), so the client dedupes by `msgId`.
 12 s. An open but silent socket does not count as online — iOS holds the
 connection for minutes after the app is backgrounded. A status change is
 broadcast by the DO's alarm; `bg`/`fg` switch it at once.
+
+Presence travels by subscription between user objects, not through the chats.
+Every chat (of at most `PRESENCE_GROUP_MAX` = 100 members) makes its members
+watch one another: when a roster changes, `ConversationDO` tells each member's
+object who its peers in that chat are, and the object records both directions —
+`sub:<S>` (S watches me, through which chats) and `watch:<T>` (I watch T). The
+source decides what a subscriber may see, in a handful of D1 statements for
+the whole subscriber list: a direct request it has not yet accepted withholds
+its presence from the sender, blocks in either direction hide it, then the
+last-seen tier with its named exceptions, and a subscriber who hid their own
+last seen sees nobody's. Whoever passes is pushed the presence — a snapshot
+when the relation starts or the request is accepted, a delta on every flip — and
+keeps it as `peer:<T>`; a change that can take a presence away (a tighter tier,
+a block) tells the subscriber to drop the copy. `GET /api/users/:id` answers
+presence from the viewer's own copy, and a socket that has just connected is
+handed every copy its object holds as `presence` frames, so the client's
+picture of who is online is full before anyone flips. Deleting an account tells
+everyone related to drop the relation.
 
 ## Catch-up after a reconnect
 

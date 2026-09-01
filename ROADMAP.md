@@ -1315,8 +1315,13 @@ Decided in `docs/research/2026-08-19-per-user-do.md`; the queue orders the steps
   and people search reads `DirectoryDO`, a card per account over four SQLite
   shards merged on read; `released_usernames` is dropped (smoke: the claim in
   any case, the quarantine, a bot's clash with a person's handle)
-- ⬜ subscriptions between objects: a snapshot on subscribe, deltas after, the
-  source deciding what a subscriber may see
+- ✅ subscriptions between objects: presence goes by subscription between user
+  objects instead of through every chat; the roster builds the relations, the
+  source decides per subscriber (acceptance, blocks, tier, exceptions) in a
+  fixed number of statements, pushes a snapshot when the relation starts and a
+  delta on every flip, and the subscriber's copy answers the profile and a fresh
+  socket (smoke: the whole presence chain plus the snapshot on connect;
+  `runs/2026-09-02-presence-subscriptions.md`)
 - ⬜ what is left in D1 follows into the user's object; the leftover tables are
   dropped with the schema version bumped
 

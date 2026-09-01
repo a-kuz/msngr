@@ -1,5 +1,6 @@
 import type { Env, ChatState, ChatKind, ChatMember, ChatPolicy, StoredMsg, ServerFrame, PublicUser } from "../types";
-import { json, err, seqKey, SEQ_PAD, nowSec, shouldArmAlarm, readPrivacy, privacyAllows } from "../util";
+import { json, err, seqKey, SEQ_PAD, nowSec, shouldArmAlarm, readPrivacy } from "../util";
+import { PRESENCE_GROUP_MAX } from "../presence";
 import {
   newCounters, snapshot, diff, logPerf, wrapState, wrapDB, wrapStub, type PerfCounters,
 } from "../perf";
@@ -799,21 +800,44 @@ export class ConversationDO implements DurableObject {
     return rows.results.map((u) => ({ ...u, bio: null, avatar_id: null }));
   }
 
+  /// Tells the user objects about a roster change: the users in `userIds`
+  /// joined (or left, with `removed`) and get the chat with its other members
+  /// as their peers; the members who stay are told who came or went. The peers
+  /// are what presence subscriptions are built from, so a chat above
+  /// PRESENCE_GROUP_MAX names none.
   private async notifyUserDOsChatList(userIds: string[], removed = false) {
     const meta = (await this.loadMeta())!;
+    const members = await this.loadMembers();
+    const staying = [...members.keys()].filter((u) => !userIds.includes(u));
+    const related = staying.length + userIds.length <= PRESENCE_GROUP_MAX;
     const path = removed ? "chat-removed" : "chat-added";
+    const calls: Array<{ u: string; path: string; body: unknown }> = userIds.map((u) => ({
+      u, path,
+      body: {
+        chatId: meta.chatId,
+        accepted: members.get(u)?.accepted,
+        peers: related ? [...members.keys()].filter((x) => x !== u) : [],
+      },
+    }));
+    if (related) {
+      for (const u of staying) {
+        calls.push({
+          u, path: "peers-changed",
+          body: { chatId: meta.chatId, [removed ? "removed" : "added"]: userIds },
+        });
+      }
+    }
     const results = await Promise.allSettled(
-      userIds.map(async (u) => {
-        const res = await this.userStub(u).fetch(`https://do/${path}`, {
-          method: "POST",
-          body: JSON.stringify({ chatId: meta.chatId }),
+      calls.map(async (c) => {
+        const res = await this.userStub(c.u).fetch(`https://do/${c.path}`, {
+          method: "POST", body: JSON.stringify(c.body),
         });
         if (!res.ok) throw new Error(`status ${res.status}`);
       })
     );
     results.forEach((r, i) => {
       if (r.status === "rejected") {
-        console.warn(`${path} for ${userIds[i]} in ${meta.chatId} failed: ${r.reason}`);
+        console.warn(`${calls[i].path} for ${calls[i].u} in ${meta.chatId} failed: ${r.reason}`);
       }
     });
   }
@@ -1073,6 +1097,10 @@ export class ConversationDO implements DurableObject {
           m.accepted = true;
           await this.state.storage.put("member:" + b.userId, m);
           await this.broadcastChat("members");
+          // the acceptor's presence may reach the sender from now on
+          await this.userStub(b.userId).fetch("https://do/chat-accepted", {
+            method: "POST", body: JSON.stringify({ chatId: meta.chatId }),
+          });
         }
         return json({ ok: true });
       }
@@ -1395,32 +1423,6 @@ export class ConversationDO implements DurableObject {
         await this.fanout(
           { t: "devices", userId: b.userId, version: b.version },
           { except: b.userId, skip: await this.blockedPeers(b.userId) }
-        );
-        return json({ ok: true });
-      }
-
-      case "/presence": {
-        // from UserDO: a user's online status changed, so tell the members
-        const b = (await req.json()) as { userId: string; online: boolean; lastSeen: number };
-        const members = await this.loadMembers();
-        // the presence of a recipient who has not accepted stays hidden from the requester
-        if (!members.get(b.userId)?.accepted) return json({ ok: true });
-        if (await this.blockedEitherWay(b.userId)) return json({ ok: true });
-        // whether each member may see this presence is the owner's tier and
-        // their named exceptions; a member who hid their own last seen is
-        // blinded to everyone else's the same as a blocked one
-        const ownTier = (await readPrivacy(this.env.DB, b.userId)).lastSeen;
-        const hidden = await Promise.all(
-          [...members.keys()].map(async (u) => {
-            if (u === b.userId) return { u, hidden: false };
-            if ((await readPrivacy(this.env.DB, u)).lastSeen === "nobody") return { u, hidden: true };
-            return { u, hidden: !(await privacyAllows(this.env, b.userId, u, "last_seen", ownTier)) };
-          })
-        );
-        const skip = [...await this.blockedPeers(b.userId), ...hidden.filter((h) => h.hidden).map((h) => h.u)];
-        await this.fanout(
-          { t: "presence", userId: b.userId, online: b.online, lastSeen: b.lastSeen },
-          { except: b.userId, skip }
         );
         return json({ ok: true });
       }
