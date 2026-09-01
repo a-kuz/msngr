@@ -12,6 +12,7 @@ import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "./version";
 import { newCounters, wrapDB } from "./perf";
 import { claimHandle, releaseHandle, resolveHandle } from "./do/HandleDO";
 import { directoryPut, directoryRemove, directorySearch, type DirectoryCard } from "./do/DirectoryDO";
+import { PRESENCE_GROUP_MAX } from "./presence";
 
 export { UserDO } from "./do/UserDO";
 export { ConversationDO } from "./do/ConversationDO";
@@ -606,9 +607,10 @@ app.get("/api/users", async (c) => {
   return json({ ok: true, users });
 });
 
-// A user profile. Presence comes with it only for someone this user is already visible
-// to: they share a direct chat and the target has accepted it. Until then the person who
-// sent the request sees no presence, same as over WS.
+// A user profile. Presence comes with it only as the target lets this viewer
+// see it: the viewer's own object holds a copy of what the target's object has
+// pushed to it (a shared chat the target has accepted, the target's last-seen
+// tier), and a viewer who hid their own last seen sees nobody's.
 app.get("/api/users/:id", async (c) => {
   const { userId } = c.get("auth");
   const targetId = c.req.param("id");
@@ -624,9 +626,13 @@ app.get("/api/users/:id", async (c) => {
     }
   }
   let presence: { online: boolean; lastSeen: number } | null = null;
-  if (await presenceVisible(c.env, userId, targetId)) {
+  if (userId === targetId) {
     const p = await userStub(c.env, targetId).fetch("https://do/presence-info");
     presence = (await p.json()) as { online: boolean; lastSeen: number };
+  } else if ((await readPrivacy(c.env.DB, userId)).lastSeen !== "nobody") {
+    const p = await userStub(c.env, userId).fetch(
+      `https://do/peer-presence-read?peer=${encodeURIComponent(targetId)}`);
+    presence = ((await p.json()) as { presence: { online: boolean; lastSeen: number } | null }).presence;
   }
   // whether the target's call tier lets this viewer ring them: the dial
   // button is not worth showing on a call that would only come back busy
@@ -647,25 +653,6 @@ app.get("/api/privacy/may-call/:peerId", async (c) => {
   const tier = (await readPrivacy(c.env.DB, userId)).callPrivacy;
   return json({ ok: true, allow: await privacyAllows(c.env, userId, peerId, "call", tier) });
 });
-
-/// Whether the viewer may see the target's presence: they share a direct chat the
-/// target has accepted, the target has not hidden their last seen, and the viewer
-/// has not hidden their own — hiding last seen takes the peer's away too, same as
-/// hiding it removes what the viewer sees of everyone else's.
-async function presenceVisible(env: Env, viewerId: string, targetId: string): Promise<boolean> {
-  if (viewerId === targetId) return true;
-  const r = await convStub(env, directChatName(viewerId, targetId)).fetch("https://do/state");
-  const j = (await r.json()) as { ok: boolean; state?: ChatState };
-  if (!j.ok || !j.state) return false;
-  if (!j.state.members.some((m) => m.userId === targetId && m.accepted)) return false;
-  const targetPrivacy = await readPrivacy(env.DB, targetId);
-  if (!(await privacyAllows(env, targetId, viewerId, "last_seen", targetPrivacy.lastSeen))) {
-    return false;
-  }
-  const viewerPrivacy = await readPrivacy(env.DB, viewerId);
-  if (viewerPrivacy.lastSeen === "nobody") return false;
-  return true;
-}
 
 // Devices and identity keys for a list of users (?ids=uid1,uid2). Consumes nothing,
 // unlike /prekeys, which hands out a one-time prekey.
@@ -972,6 +959,32 @@ app.post("/api/dev/reindex", async (c) => {
     ok: true, indexed: rows.results.length, clashes,
     next: rows.results.length === limit && last ? last.id : null,
   });
+});
+
+// Dev hook for a stand whose chats predate presence subscriptions: the
+// caller's object is told every chat it is in with the current roster, which
+// builds its relations and pushes its presence to the peers. Each account
+// relinks for itself; the peers' own relations come from their own call.
+app.post("/api/dev/relink", async (c) => {
+  const { userId } = c.get("auth");
+  const r = await userStub(c.env, userId).fetch("https://do/chats");
+  const { chats } = (await r.json()) as { chats: Record<string, unknown> };
+  let relinked = 0;
+  for (const chatId of Object.keys(chats)) {
+    const sr = await convStub(c.env, chatId).fetch("https://do/state");
+    const sj = (await sr.json()) as { ok: boolean; state?: ChatState };
+    const me = sj.state?.members.find((m) => m.userId === userId);
+    if (!sj.ok || !sj.state || !me) continue;
+    const peers = sj.state.members.map((m) => m.userId).filter((id) => id !== userId);
+    await userStub(c.env, userId).fetch("https://do/chat-added", {
+      method: "POST",
+      body: JSON.stringify({
+        chatId, accepted: me.accepted, peers: peers.length < PRESENCE_GROUP_MAX ? peers : [],
+      }),
+    });
+    relinked++;
+  }
+  return json({ ok: true, relinked });
 });
 
 app.post("/api/chats/:id/members", async (c) => {
@@ -1453,6 +1466,10 @@ app.post("/api/block", async (c) => {
   // drop the cached block state in the pair's direct chat, which may not exist yet
   await convStub(c.env, directChatName(userId, b.userId))
     .fetch("https://do/block-changed", { method: "POST" });
+  // the presences stop flowing between the two, or start again
+  await userStub(c.env, userId).fetch("https://do/block-changed", {
+    method: "POST", body: JSON.stringify({ peer: b.userId, blocked: b.blocked }),
+  });
   return json({ ok: true });
 });
 
@@ -1539,13 +1556,19 @@ app.post("/api/privacy/exceptions", async (c) => {
   // profile frame; the broadcast is one card for all, so it only helps when
   // the change makes the card MORE hidden — an allowed peer refetches
   if (b.setting === "avatar") await broadcastProfile(c.env, userId);
+  // a last-seen override changes what this peer may hold: the user's object
+  // pushes the presence or takes the copy back
+  if (b.setting === "last_seen") {
+    await userStub(c.env, userId).fetch("https://do/presence-policy-changed", { method: "POST", body: "{}" });
+  }
   return json({ ok: true });
 });
 
 // The setting itself is what's enforced, not just hidden client-side: a hidden
-// last seen never rides the presence frame (presenceVisible, ConversationDO
-// /presence), and receipts/typing turned off never leave ConversationDO's
-// /recv, /read and /typing handlers.
+// last seen never leaves the user's own object (its presence pushes go only to
+// the subscribers the tier allows, and a tightened tier takes the copies back),
+// and receipts/typing turned off never leave ConversationDO's /recv, /read and
+// /typing handlers.
 app.post("/api/privacy", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{
@@ -1583,6 +1606,9 @@ app.post("/api/privacy", async (c) => {
   // peers hold the card from the last profile frame, so a photo hidden or shown
   // again travels to them at once instead of waiting for a refetch
   if (next.avatar !== current.avatar) await broadcastProfile(c.env, userId);
+  if (next.lastSeen !== current.lastSeen) {
+    await userStub(c.env, userId).fetch("https://do/presence-policy-changed", { method: "POST", body: "{}" });
+  }
   return json({ ok: true, privacy: next });
 });
 

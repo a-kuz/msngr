@@ -5,6 +5,30 @@ import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "../version";
 import {
   newCounters, snapshot, diff, logPerf, wrapState, wrapDB, wrapStub, type PerfCounters,
 } from "../perf";
+import { presenceViewers } from "../presence";
+
+/// Presence travels by subscription between user objects. Every chat a user is
+/// in makes them and each other member watch one another: `sub:<S>` holds the
+/// chats through which S watches this user, `watch:<T>` the chats through which
+/// this user watches T, and `peer:<T>` this user's copy of T's presence, as T
+/// lets them see it. The source decides what a subscriber may see — whether it
+/// has accepted the chat (`acc:<chatId>` marks a direct request still open),
+/// blocks, its last-seen tier and exceptions — and pushes a snapshot when the
+/// relation starts and a delta on every change; the subscriber holds the copy
+/// and answers its client from it, so a peer's presence costs the client's
+/// request no call to anyone else's object.
+const SUB_PREFIX = "sub:";
+const WATCH_PREFIX = "watch:";
+const PEER_PREFIX = "peer:";
+const ACC_PREFIX = "acc:";
+/// Chats through which one user watches another, keyed by chat id.
+type Reasons = Record<string, true>;
+interface PeerPresence {
+  online: boolean;
+  lastSeen: number;
+}
+/// Presence pushes in flight at once from one object.
+const PRESENCE_FAN = 20;
 
 /// Presence TTL: the client pings every ~12s, so silence longer than this reads as offline.
 const PRESENCE_TTL_MS = 35_000;
@@ -261,26 +285,138 @@ export class UserDO implements DurableObject {
     return [...listed.keys()].map((k) => k.slice(5));
   }
 
+  /// A presence flip: the new state goes to every subscriber allowed to see it.
   private async broadcastPresence(online: boolean) {
-    const userId = await this.getUserId();
-    if (!userId) return;
     const lastSeen = nowSec();
     await this.state.storage.put("lastSeen", lastSeen);
-    const ids = await this.chatIds();
-    const results = await Promise.allSettled(
-      ids.map(async (chatId) => {
-        const res = await this.convStub(chatId).fetch("https://do/presence", {
-          method: "POST",
-          body: JSON.stringify({ userId, online, lastSeen }),
-        });
-        if (!res.ok) throw new Error(`status ${res.status}`);
-      })
-    );
-    results.forEach((r, i) => {
-      if (r.status === "rejected") {
-        console.warn(`presence of ${userId} in ${ids[i]} failed: ${r.reason}`);
+    await this.pushPresence(await this.subscribers(), { online, lastSeen });
+  }
+
+  private async subscribers(): Promise<string[]> {
+    const listed = await this.state.storage.list<Reasons>({ prefix: SUB_PREFIX });
+    return [...listed.keys()].map((k) => k.slice(SUB_PREFIX.length));
+  }
+
+  private async ownPresence(): Promise<PeerPresence> {
+    return {
+      online: this.presenceFresh(),
+      lastSeen: (await this.state.storage.get<number>("lastSeen")) ?? 0,
+    };
+  }
+
+  /// The subscribers among `ids` this user's presence may reach: the chats
+  /// they share include one this user has accepted, and the privacy rules
+  /// let them see it.
+  private async visibleSubscribers(ids: string[]): Promise<Set<string>> {
+    const userId = await this.getUserId();
+    if (!userId || !ids.length) return new Set();
+    const open = await this.state.storage.list<true>({ prefix: ACC_PREFIX });
+    const openChats = new Set([...open.keys()].map((k) => k.slice(ACC_PREFIX.length)));
+    const candidates: string[] = [];
+    for (const id of ids) {
+      const reasons = await this.state.storage.get<Reasons>(SUB_PREFIX + id);
+      if (reasons && Object.keys(reasons).some((chatId) => !openChats.has(chatId))) candidates.push(id);
+    }
+    return presenceViewers(this.env, userId, candidates, (hashes) => this.inBook(hashes));
+  }
+
+  /// Which of the phone hashes are in this user's address book.
+  private async inBook(hashes: string[]): Promise<Set<string>> {
+    const held = new Set<string>();
+    for (let i = 0; i < hashes.length; i += STORAGE_BATCH) {
+      const part = hashes.slice(i, i + STORAGE_BATCH);
+      const got = await this.state.storage.get(part.map((h) => `ct:${h}`));
+      for (const h of part) if (got.has(`ct:${h}`)) held.add(h);
+    }
+    return held;
+  }
+
+  /// Pushes this user's presence to the subscribers in `ids` who may see it.
+  /// With `dropHidden` the rest are told to forget the copy they hold — for a
+  /// change that can take a presence away, such as a tighter tier.
+  private async pushPresence(
+    ids: string[], presence?: PeerPresence, dropHidden = false,
+  ) {
+    const userId = await this.getUserId();
+    if (!userId || !ids.length) return;
+    const p = presence ?? await this.ownPresence();
+    const visible = await this.visibleSubscribers(ids);
+    const calls: Array<() => Promise<void>> = [];
+    for (const id of ids) {
+      if (visible.has(id)) {
+        calls.push(() => this.tell(id, "/peer-presence", { userId, ...p }));
+      } else if (dropHidden) {
+        calls.push(() => this.tell(id, "/peer-drop", { userId }));
       }
-    });
+    }
+    for (let i = 0; i < calls.length; i += PRESENCE_FAN) {
+      await Promise.all(calls.slice(i, i + PRESENCE_FAN).map((c) => c()));
+    }
+  }
+
+  /// One call to another user's object; a failure is logged and not retried —
+  /// a lost presence is superseded by the next flip.
+  private async tell(userId: string, path: string, body: unknown) {
+    try {
+      const res = await this.userStub(userId).fetch(`https://do${path}`, {
+        method: "POST", body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+    } catch (e) {
+      console.warn(`${path} to ${userId} failed: ${e}`);
+    }
+  }
+
+  /// Adds `chatId` to the relation with each of `peers`, both ways.
+  private async relate(chatId: string, peers: string[]) {
+    for (let i = 0; i < peers.length; i += STORAGE_BATCH / 2) {
+      const part = peers.slice(i, i + STORAGE_BATCH / 2);
+      const keys = part.flatMap((p) => [WATCH_PREFIX + p, SUB_PREFIX + p]);
+      const got = await this.state.storage.get<Reasons>(keys);
+      const put: Record<string, Reasons> = {};
+      for (const k of keys) put[k] = { ...(got.get(k) ?? {}), [chatId]: true };
+      await this.state.storage.put(put);
+    }
+  }
+
+  /// Takes `chatId` out of the relation with each of `peers`; a relation left
+  /// with no chat goes, and with it the copy of that peer's presence.
+  private async unrelate(chatId: string, peers: string[]) {
+    for (let i = 0; i < peers.length; i += STORAGE_BATCH / 2) {
+      const part = peers.slice(i, i + STORAGE_BATCH / 2);
+      const keys = part.flatMap((p) => [WATCH_PREFIX + p, SUB_PREFIX + p]);
+      const got = await this.state.storage.get<Reasons>(keys);
+      const put: Record<string, Reasons> = {};
+      const del: string[] = [];
+      for (const p of part) {
+        for (const k of [WATCH_PREFIX + p, SUB_PREFIX + p]) {
+          const reasons = { ...(got.get(k) ?? {}) };
+          delete reasons[chatId];
+          if (Object.keys(reasons).length) put[k] = reasons;
+          else {
+            del.push(k);
+            if (k.startsWith(WATCH_PREFIX)) del.push(PEER_PREFIX + p);
+          }
+        }
+      }
+      if (Object.keys(put).length) await this.state.storage.put(put);
+      if (del.length) await this.state.storage.delete(del);
+    }
+  }
+
+  /// The subscribers who watch this user through `chatId`.
+  private async subscribersVia(chatId: string): Promise<string[]> {
+    const listed = await this.state.storage.list<Reasons>({ prefix: SUB_PREFIX });
+    return [...listed].filter(([, r]) => r[chatId]).map(([k]) => k.slice(SUB_PREFIX.length));
+  }
+
+  /// Every presence copy this user holds, as frames for a socket that just
+  /// connected: the client's picture of who is online starts full.
+  private async sendPeerPresence(ws: WebSocket) {
+    const listed = await this.state.storage.list<PeerPresence>({ prefix: PEER_PREFIX });
+    for (const [k, p] of listed) {
+      this.send(ws, { t: "presence", userId: k.slice(PEER_PREFIX.length), online: p.online, lastSeen: p.lastSeen });
+    }
   }
 
   async fetch(req: Request): Promise<Response> {
@@ -308,6 +444,7 @@ export class UserDO implements DurableObject {
         protocol: PROTOCOL_VERSION, minProtocol: MIN_CLIENT_PROTOCOL,
       });
 
+      await this.sendPeerPresence(server);
       await this.armPresenceCheck();
       if (this.sockets().length === 1) {
         await this.broadcastPresence(true);
@@ -368,22 +505,113 @@ export class UserDO implements DurableObject {
       }
 
       case "/chat-added": {
-        const b = (await req.json()) as { chatId: string };
+        // from ConversationDO: this user is in the chat. `peers` are the other
+        // members, who watch this user from now on and are watched back;
+        // `accepted: false` is a direct request still to be accepted, which
+        // withholds this user's presence from the one who sent it
+        const b = (await req.json()) as { chatId: string; accepted?: boolean; peers?: string[] };
         const existing = await this.state.storage.get<ChatFlags>("chat:" + b.chatId);
         if (!existing) {
           await this.state.storage.put("chat:" + b.chatId, {
             pinned: false, muted: false, archived: false, joinedAt: nowSec(),
           } satisfies ChatFlags);
         }
+        if (b.accepted === false) await this.state.storage.put(ACC_PREFIX + b.chatId, true);
+        const self = await this.getUserId();
+        const peers = (b.peers ?? []).filter((p) => p !== self);
+        if (peers.length) {
+          await this.relate(b.chatId, peers);
+          await this.pushPresence(peers);
+        }
         return json({ ok: true });
       }
 
       case "/chat-removed": {
-        const b = (await req.json()) as { chatId: string };
-        await this.state.storage.delete("chat:" + b.chatId);
+        const b = (await req.json()) as { chatId: string; peers?: string[] };
+        await this.state.storage.delete(["chat:" + b.chatId, ACC_PREFIX + b.chatId]);
         // the badge sums the listed chats, and a count left in the cache would
         // be counted again the day the chat comes back
         await this.invalidateUnread(b.chatId);
+        if (b.peers?.length) await this.unrelate(b.chatId, b.peers);
+        return json({ ok: true });
+      }
+
+      case "/peers-changed": {
+        // from ConversationDO: the roster of a chat this user stays in moved
+        const b = (await req.json()) as { chatId: string; added?: string[]; removed?: string[] };
+        if (b.removed?.length) await this.unrelate(b.chatId, b.removed);
+        if (b.added?.length) {
+          await this.relate(b.chatId, b.added);
+          await this.pushPresence(b.added);
+        }
+        return json({ ok: true });
+      }
+
+      case "/chat-accepted": {
+        // this user accepted a direct request: the sender may see them now
+        const b = (await req.json()) as { chatId: string };
+        await this.state.storage.delete(ACC_PREFIX + b.chatId);
+        await this.pushPresence(await this.subscribersVia(b.chatId));
+        return json({ ok: true });
+      }
+
+      case "/peer-presence": {
+        // from a source this user watches: its presence, as it lets this user
+        // see it. Kept even before this object's own roster call has landed —
+        // a chat's members are told at once, and the source's snapshot can
+        // arrive first
+        const b = (await req.json()) as { userId: string; online: boolean; lastSeen: number };
+        await this.state.storage.put(PEER_PREFIX + b.userId, { online: b.online, lastSeen: b.lastSeen } satisfies PeerPresence);
+        this.broadcast({ t: "presence", userId: b.userId, online: b.online, lastSeen: b.lastSeen });
+        return json({ ok: true });
+      }
+
+      case "/peer-drop": {
+        // a source took its presence away from this user: the copy goes
+        const b = (await req.json()) as { userId: string };
+        await this.state.storage.delete(PEER_PREFIX + b.userId);
+        return json({ ok: true });
+      }
+
+      case "/peer-presence-read": {
+        const peer = url.searchParams.get("peer") ?? "";
+        const p = await this.state.storage.get<PeerPresence>(PEER_PREFIX + peer);
+        return json({ ok: true, presence: p ?? null });
+      }
+
+      case "/presence-policy-changed": {
+        // the last-seen tier or one of its exceptions changed: every
+        // subscriber is pushed the presence or told to forget it
+        await this.pushPresence(await this.subscribers(), undefined, true);
+        return json({ ok: true });
+      }
+
+      case "/block-changed": {
+        // a block hides both presences from each other; lifting it brings
+        // them back, each side pushing its own
+        const b = (await req.json()) as { peer: string; blocked: boolean };
+        const userId = await this.getUserId();
+        if (!userId) return json({ ok: true });
+        if (b.blocked) {
+          await this.state.storage.delete(PEER_PREFIX + b.peer);
+          await this.tell(b.peer, "/peer-drop", { userId });
+        } else {
+          await this.pushPresence([b.peer]);
+          await this.tell(b.peer, "/peer-refresh", { subscriber: userId });
+        }
+        return json({ ok: true });
+      }
+
+      case "/peer-refresh": {
+        const b = (await req.json()) as { subscriber: string };
+        await this.pushPresence([b.subscriber]);
+        return json({ ok: true });
+      }
+
+      case "/peer-gone": {
+        // an account this user was related to is deleted
+        const b = (await req.json()) as { userId: string };
+        await this.state.storage.delete([SUB_PREFIX + b.userId, WATCH_PREFIX + b.userId, PEER_PREFIX + b.userId]);
         return json({ ok: true });
       }
 
@@ -473,6 +701,19 @@ export class UserDO implements DurableObject {
         // object whole — keys, chat flags, sounds, the address book, tokens
         for (const ws of this.sockets()) {
           try { ws.close(1000, "account_deleted"); } catch { /* already gone */ }
+        }
+        // whoever watched this user, or was watched by them, drops the relation
+        const userId = await this.getUserId();
+        if (userId) {
+          const watched = await this.state.storage.list<Reasons>({ prefix: WATCH_PREFIX });
+          const related = new Set([
+            ...(await this.subscribers()),
+            ...[...watched.keys()].map((k) => k.slice(WATCH_PREFIX.length)),
+          ]);
+          const calls = [...related].map((id) => () => this.tell(id, "/peer-gone", { userId }));
+          for (let i = 0; i < calls.length; i += PRESENCE_FAN) {
+            await Promise.all(calls.slice(i, i + PRESENCE_FAN).map((c) => c()));
+          }
         }
         await this.state.storage.deleteAlarm();
         await this.state.storage.deleteAll();

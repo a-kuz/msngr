@@ -275,6 +275,18 @@ const profAfter = await api(`/api/users/${bob.userId}`, { token: alice.token });
 check("presence after accept", profAfter.ok && !!profAfter.presence,
   JSON.stringify(profAfter.presence));
 
+// a socket that just connected is handed the presence copies its object holds,
+// so the picture of who is online is full before anyone flips
+{
+  const ca2 = new Client("alice2", alice.token);
+  await ca2.connect();
+  const snap = await ca2.waitFor((f) => f.t === "presence" && f.userId === bob.userId, 2000);
+  check("a fresh socket gets the peer's presence from the object's copy",
+    !!snap && snap.online === true, JSON.stringify(snap));
+  ca2.ws.close();
+  await new Promise((r) => setTimeout(r, 200));
+}
+
 // Receipts after accept
 cb.send({ t: "recv", chatId: chat.chatId, seqs: [1] });
 const delivered = await ca.waitFor((f) => f.t === "receipt" && f.kind === "delivered");
