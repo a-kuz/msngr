@@ -195,15 +195,6 @@ driver that addresses rows by identity, which is XCUITest, and that is out of
 the process by the owner's call. Left for a run that has the owner's eye on the
 screen instead.
 
-### Accepting a request ends with no animation
-Asked for by the owner 2026-08-27 while reviewing the demo: after «Принять»
-on the request screen the closed-eye placeholder and the two buttons are
-replaced by the chat in a cut. The owner wants a transition here, a dissolve
-(«dust») or something of that kind. Done the same day: the card leaves through
-`AnyTransition.dissolve` (blur, a slight swell, fade) and the feed fades in,
-both in one `Theme.spring` transaction; the flag flips in the model on the
-tap, ahead of the database row. Waiting for the owner's look.
-
 ### Interaction smoothness below Telegram
 Reported 2026-08-18. Overall animation quality and frame pacing feel worse
 than Telegram across the app. Umbrella item; closes on the owner's judgement,
@@ -211,6 +202,22 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### Accepting a request ends with no animation
+Asked for by the owner 2026-08-27 while reviewing the demo: after «Принять»
+on the request screen the closed-eye placeholder and the two buttons are
+replaced by the chat in a cut. The owner wants a transition here, a dissolve
+(«dust») or something of that kind. Done the same day: the card leaves through
+`AnyTransition.dissolve` (blur, a slight swell, fade) and the feed fades in,
+both in one `Theme.spring` transaction; the flag flips in the model on the
+tap, ahead of the database row.
+Watched frame by frame 2026-09-02 and it is there: on a stand of throwaway
+accounts, with the screen recorded at 30 fps, «Принять» is followed by eight
+frames in which the card blurs, swells a little and fades while the chat comes
+in under it — about a third of a second, the keyboard rising with it. The
+sequence is in `docs/qa/runs/2026-09-02-accept-request-dissolve.png`. The
+defect as reported — the card replaced in a cut — is gone; whether this is the
+look the owner wanted is theirs to say, and the entry reopens on their word.
 
 ### The date separator reads the sender's clock, the time in the bubble reads the server's
 Found 2026-09-01 during the bots run: a peer stamping `sentAt` in milliseconds
