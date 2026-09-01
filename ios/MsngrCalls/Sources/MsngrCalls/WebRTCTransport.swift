@@ -34,6 +34,7 @@ public final class WebRTCTransport: NSObject, CallMediaTransport, @unchecked Sen
     private var remoteVideoTrack: RTCVideoTrack?
     private var localRenderer: RTCVideoRenderer?
     private var remoteRenderer: RTCVideoRenderer?
+    private var cameraPosition: AVCaptureDevice.Position = .front
 
     /// Servers for NAT traversal: plain STUN for address discovery, and our
     /// own coturn on the stand's server relaying the paths STUN cannot open
@@ -150,6 +151,15 @@ public final class WebRTCTransport: NSObject, CallMediaTransport, @unchecked Sen
         }
     }
 
+    /// Flips between the front and back camera; a running capture restarts
+    /// on the other one. The synthetic stand-in has nothing to flip.
+    public func switchCamera() {
+        cameraPosition = cameraPosition == .front ? .back : .front
+        guard capturer is RTCCameraVideoCapturer else { return }
+        stopCapture()
+        startCapture()
+    }
+
     /// The device camera when there is one; the simulator has none, so a
     /// synthetic pattern stands in and the pipeline stays exercisable there.
     private func startCapture() {
@@ -158,7 +168,7 @@ public final class WebRTCTransport: NSObject, CallMediaTransport, @unchecked Sen
         // the simulator lists a capture device but it never delivers a frame
         let device: AVCaptureDevice? = nil
         #else
-        let device = RTCCameraVideoCapturer.captureDevices().first(where: { $0.position == .front })
+        let device = RTCCameraVideoCapturer.captureDevices().first(where: { $0.position == cameraPosition })
             ?? RTCCameraVideoCapturer.captureDevices().first
         #endif
         if let device {

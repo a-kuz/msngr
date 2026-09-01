@@ -37,11 +37,12 @@ covered by the smoke test.
 ### 1:1 video: what remains
 The core is shipped: the camera toggle in the call renegotiates the same
 call, the peer's stream renders full-screen, the self-view floats in the
-corner, and the simulator exercises the whole pipeline through a synthetic
-capturer. What remains: the front/back camera flip, telling the peer the
-camera went *off* (today their view just freezes), a video-call entry point
-before the call starts (`video: true` on the offer so the ringing screen
-says so), and the device check with a real camera.
+corner with a front/back flip, the renegotiation offer carries whether the
+camera is on (off reaches the peer as a state change, not a frozen frame),
+and the simulator exercises the whole pipeline through a synthetic
+capturer. What remains: a video-call entry point before the call starts
+(`video: true` on the first offer so the ringing screen says so), and the
+device check with a real camera.
 
 ### System picture-in-picture
 The in-app fold (the floating tile over the chats) is shipped; what remains

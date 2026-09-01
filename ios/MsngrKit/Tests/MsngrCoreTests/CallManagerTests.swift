@@ -456,6 +456,23 @@ final class CallManagerTests: XCTestCase {
         XCTAssertFalse(state.remoteVideo)
     }
 
+    /// The renegotiation offer carries whether the sender's camera is on;
+    /// off reaches the peer as a state change, not a frozen last frame.
+    func testRenegotiationOfferCarriesCameraState() async {
+        let (manager, log, transport) = makeManager()
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "their-offer")))
+        await manager.accept()
+        transport.emit(.connected)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "re1", video: true)))
+        var state = await manager.current
+        XCTAssertTrue(state.remoteVideo)
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "re2", video: false)))
+        state = await manager.current
+        XCTAssertFalse(state.remoteVideo)
+        XCTAssertEqual(log.types, [.answer, .answer, .answer])
+    }
+
     /// Candidates ride the relay and can outrun the journaled offer: they are
     /// held by callId and applied once the offer lands and the call is taken.
     func testCandidatesAheadOfTheirOfferAreHeld() async {
