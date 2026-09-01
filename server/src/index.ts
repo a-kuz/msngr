@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { Env, AuthCtx, ChatState, ChatKind, PublicUser } from "./types";
+import { USER_CARD_COLUMNS } from "./types";
 import { authenticate } from "./auth";
 import {
   ulid, newToken, sha256hex, json, err, directChatName, b64url, provisionCode,
@@ -339,7 +340,7 @@ app.use("/api/*", async (c, next) => {
 app.get("/api/me", async (c) => {
   const { userId, deviceId } = c.get("auth");
   const u = await c.env.DB.prepare(
-    "SELECT id, username, display_name, bio, avatar_id FROM users WHERE id = ?"
+    `SELECT ${USER_CARD_COLUMNS} FROM users WHERE id = ?`
   ).bind(userId).first();
   return json({ ok: true, user: u, deviceId });
 });
@@ -485,7 +486,7 @@ app.get("/api/users", async (c) => {
   // Usernames are ASCII by the registration rule, so LOWER is enough there.
   const like = `%${q.toLowerCase()}%`;
   const rows = await c.env.DB.prepare(
-    `SELECT u.id, u.username, u.display_name, u.avatar_id
+    `SELECT u.id, u.username, u.display_name, u.avatar_id, u.bot_owner, u.bot_commands
      FROM users u
      WHERE LOWER(u.username) LIKE ? OR u.display_name_lc LIKE ?
      ORDER BY CASE WHEN LOWER(u.username) = ? THEN 0 ELSE 1 END, u.username
@@ -506,7 +507,7 @@ app.get("/api/users/:id", async (c) => {
   const { userId } = c.get("auth");
   const targetId = c.req.param("id");
   const u = await c.env.DB.prepare(
-    "SELECT id, username, display_name, bio, avatar_id FROM users WHERE id = ?"
+    `SELECT ${USER_CARD_COLUMNS} FROM users WHERE id = ?`
   ).bind(targetId).first<PublicUser>();
   if (!u) return err("not_found", 404);
   if (userId !== targetId) {
@@ -711,7 +712,7 @@ app.post("/api/username", async (c) => {
 /// anyone — so the frame carries the whole row instead of asking for a refetch.
 async function broadcastProfile(env: Env, userId: string) {
   const user = await env.DB.prepare(
-    "SELECT id, username, display_name, bio, avatar_id FROM users WHERE id = ?"
+    `SELECT ${USER_CARD_COLUMNS} FROM users WHERE id = ?`
   ).bind(userId).first<PublicUser>();
   if (!user) return;
   // peers get the card as they may see it: a hidden photo and bio travel only
@@ -803,7 +804,7 @@ app.get("/api/chats", async (c) => {
   if (memberIds.length) {
     const placeholders = memberIds.map(() => "?").join(",");
     const rows = await c.env.DB.prepare(
-      `SELECT id, username, display_name, bio, avatar_id FROM users WHERE id IN (${placeholders})`
+      `SELECT ${USER_CARD_COLUMNS} FROM users WHERE id IN (${placeholders})`
     ).bind(...memberIds).all<PublicUser>();
     const hidden = await hiddenAvatarOwners(c.env, userId, memberIds);
     for (const u of rows.results) {
@@ -938,6 +939,101 @@ app.post("/api/chats/:id/admins", async (c) => {
     method: "POST", body: JSON.stringify({ ...b, actor: userId }),
   });
   return new Response(r.body, r);
+});
+
+// --- bots ---
+//
+// A bot is an account with a token and no keys. It cannot encrypt, so every
+// chat it is in travels in the clear, and the interface says so before the
+// first word is typed. Its token is the whole of its authentication: it walks
+// in through the same door as a device.
+
+interface BotCommand { command: string; description: string }
+
+/// A command is what the input offers after «/»: a bare word, so the list can
+/// be matched against what is typed.
+function cleanCommands(value: unknown): BotCommand[] | null {
+  if (!Array.isArray(value)) return null;
+  const out: BotCommand[] = [];
+  for (const item of value.slice(0, 32)) {
+    const cmd = (item as BotCommand)?.command;
+    if (typeof cmd !== "string" || !/^[a-z0-9_]{1,32}$/.test(cmd)) return null;
+    const desc = (item as BotCommand)?.description;
+    out.push({ command: cmd, description: typeof desc === "string" ? desc.slice(0, 128) : "" });
+  }
+  return out;
+}
+
+app.post("/api/bots", async (c) => {
+  const { userId } = c.get("auth");
+  const b = await c.req.json<{ username: string; displayName: string; commands?: unknown }>();
+  if (!isValidUsername(b.username)) return err("bad_username");
+  if (!isValidDisplayName(b.displayName)) return err("bad_name");
+  const commands = b.commands === undefined ? [] : cleanCommands(b.commands);
+  if (commands === null) return err("bad_commands");
+  const now = Date.now();
+  const quarantine = await quarantineRow(c.env, b.username);
+  if (quarantine && now - quarantine.released_at < USERNAME_QUARANTINE_MS) {
+    return err("username_taken", 409);
+  }
+  const botId = ulid(now);
+  const deviceId = ulid(now);
+  const token = newToken();
+  try {
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `INSERT INTO users (id, username, display_name, display_name_lc, created_at,
+                            bot_owner, bot_commands) VALUES (?,?,?,?,?,?,?)`
+      ).bind(botId, b.username, b.displayName.trim(), b.displayName.trim().toLowerCase(),
+             now, userId, JSON.stringify(commands)),
+      c.env.DB.prepare(
+        "INSERT INTO devices (id, user_id, name, token_hash, created_at) VALUES (?,?,?,?,?)"
+      ).bind(deviceId, botId, "bot", await sha256hex(token), now),
+    ]);
+  } catch (e) {
+    if (String(e).includes("UNIQUE")) return err("username_taken", 409);
+    throw e;
+  }
+  return json({ ok: true, botId, token });
+});
+
+app.get("/api/bots", async (c) => {
+  const { userId } = c.get("auth");
+  const rows = await c.env.DB.prepare(
+    "SELECT id, username, display_name, bot_commands FROM users WHERE bot_owner = ? ORDER BY created_at"
+  ).bind(userId).all();
+  return json({ ok: true, bots: rows.results });
+});
+
+/// The owner edits the bot's name and its command list, and asks for a fresh
+/// token when the old one has been seen by the wrong eyes.
+app.post("/api/bots/:id", async (c) => {
+  const { userId } = c.get("auth");
+  const botId = c.req.param("id");
+  const b = await c.req.json<{ displayName?: string; commands?: unknown; newToken?: boolean }>();
+  const bot = await c.env.DB.prepare(
+    "SELECT id, bot_owner FROM users WHERE id = ?"
+  ).bind(botId).first<{ bot_owner: string | null }>();
+  if (!bot || bot.bot_owner !== userId) return err("not_owner", 403);
+  if (b.displayName !== undefined) {
+    if (!isValidDisplayName(b.displayName)) return err("bad_name");
+    await c.env.DB.prepare(
+      "UPDATE users SET display_name = ?, display_name_lc = ? WHERE id = ?"
+    ).bind(b.displayName.trim(), b.displayName.trim().toLowerCase(), botId).run();
+  }
+  if (b.commands !== undefined) {
+    const commands = cleanCommands(b.commands);
+    if (commands === null) return err("bad_commands");
+    await c.env.DB.prepare("UPDATE users SET bot_commands = ? WHERE id = ?")
+      .bind(JSON.stringify(commands), botId).run();
+  }
+  let token: string | undefined;
+  if (b.newToken) {
+    token = newToken();
+    await c.env.DB.prepare("UPDATE devices SET token_hash = ? WHERE user_id = ?")
+      .bind(await sha256hex(token), botId).run();
+  }
+  return json({ ok: true, token });
 });
 
 app.post("/api/chats/:id/roles", async (c) => {

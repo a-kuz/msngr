@@ -99,6 +99,12 @@ POST /api/chats/:id/settings      {title?, avatarId?, description?,
                                   sendPolicy?, invitePolicy?} — a policy is "all" or
                                   "admins" and is a group's alone
 POST /api/chats/:id/admins        {userId, admin:bool}
+POST /api/bots                    {username, displayName, commands?} → {botId, token}
+                                  a bot is an account with a token and no keys; it walks
+                                  in through the same door as a device
+GET  /api/bots                    the caller's own bots
+POST /api/bots/:id                {displayName?, commands?, newToken?} → {token?}
+                                  the owner's alone; newToken retires the old one at once
 POST /api/chats/:id/roles         {userId, role:"editor"|"reader"} — a channel's roles,
                                   the owner's alone. A reader may send only `comment` and
                                   `reaction`; the object reads the kind out of the plain
@@ -370,11 +376,14 @@ encrypted at all. Three modes:
 {v:1, mode:"plain", p: ContentPayload}
 ```
 
-`plain` belongs to a channel and to nothing else. The content travels readable,
-which is what lets the object search the journal and hand a whole history to a
-subscriber who arrives later. A client opens a `plain` envelope only for a chat
-whose kind is `channel`; anywhere else it is refused as `plaintext_refused`, so
-a readable envelope cannot be slipped into an encrypted conversation.
+`plain` belongs to a chat whose state says `plaintext: true` — a channel, or any
+chat a bot is in. The content travels readable: that is what lets the object
+search a channel's journal and hand a whole history to a subscriber who arrives
+later, and what lets a bot, which holds no keys, read what is written to it. A
+client opens a `plain` envelope only for such a chat; anywhere else it is
+refused as `plaintext_refused`, and the object refuses to journal one with
+`not_plaintext_chat`, so a readable envelope cannot be slipped into an encrypted
+conversation from either side.
 
 `PairwiseBox`:
 

@@ -960,13 +960,32 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 
 ## Bots
 
-- ⬜ a bot account: a separate kind, created and owned by a person, with a token
-- ⬜ the API a bot talks over: receiving updates, sending, editing, deleting
-- ⬜ commands with a list and autocomplete in the input
-- ⬜ inline buttons under a message and a reply keyboard
-- ⬜ a bot in a group: what it sees and what rights it needs
-- ⬜ no E2EE with a bot, and the interface has to say so plainly, the way the
-  channel does
+- ✅ a bot account: made and owned by a person from Settings → «Мои боты», with
+  a token that is its whole authentication, shown once and reissued on demand
+  (smoke `a bot is created` … `the old token stops working`;
+  qa/runs/2026-09-01-bots-run)
+- ✅ the API a bot talks over: the same door as a device — `/ws` with the bot's
+  token, `send` / `edit` / `delete` frames, plaintext content. A worked example
+  is `server/tools/demo-bot.mjs`, which is what answered in the live run
+- ✅ commands with a list and autocomplete in the input: the owner publishes
+  them, the card carries them, and «/» offers them in the chat with that bot
+  (qa/runs/2026-09-01-bots-run)
+- ✅ inline buttons under a message: a bot's content carries rows of buttons,
+  the feed draws them inside the bubble, and a press goes back as a `callback`
+  service frame that leaves no line (smoke `the bot's message carries its
+  buttons`, `a pressed button reaches the bot`; qa/runs/2026-09-01-bots-run).
+  A reply keyboard — buttons in place of the keyboard rather than under the
+  message — is not built
+- ✅ a bot in a group: adding one takes the encryption off what is written from
+  then on, and removing the last one puts it back; what was written before
+  either moment stays as it was written, so the bot never sees it (smoke `a bot
+  in the group takes the encryption off`, `the bot leaving puts it back`). The
+  card says so through the same note the chat with a bot shows
+- ✅ no E2EE with a bot, said where it is read: the chat with a bot opens on
+  «Без шифрования», its card explains why, and «Мои боты» says it before the
+  first bot is made. A readable envelope is refused by the object in any chat
+  that is not one of these (smoke `a readable envelope is refused in an
+  encrypted chat`)
 
 ## Calls
 

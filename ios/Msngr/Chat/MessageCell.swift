@@ -67,6 +67,10 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private let contactView = ContactMessageView()
     private let callView = CallMessageView()
     private let locationView = LocationMessageView()
+    /// A bot's buttons under the message, made on demand and reused.
+    private var buttonViews: [UIButton] = []
+    /// Set by the feed: a pressed button sends the bot what it carries.
+    var onButton: ((MessageButton) -> Void)?
     /// a tap on a contact or location bubble, asking for its sheet
     var onOpenContact: (() -> Void)?
     var onOpenLocation: (() -> Void)?
@@ -554,6 +558,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             pollView.isHidden = true
         }
 
+        configureButtons(plan: plan)
+
         // shader and sticker
         if let sf = plan.shaderFrame, let document = msg.shader, msg.kind == .shader {
             shaderView.isHidden = false
@@ -688,6 +694,41 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     private static func mediaSignature(_ media: MediaInfo) -> String {
         [media.blurhash ?? "", media.mediaId, media.localPath ?? "",
          media.thumbMediaId ?? "", media.thumbLocalPath ?? ""].joined(separator: "|")
+    }
+
+    /// A bot's buttons under the message. The plan has already placed them, so
+    /// the cell only has to have as many views as there are rects.
+    private func configureButtons(plan: BubbleLayoutPlan) {
+        while buttonViews.count < plan.buttonFrames.count {
+            let b = UIButton(type: .system)
+            b.titleLabel?.font = Theme.Text.bubble.uiFont
+            b.titleLabel?.adjustsFontSizeToFitWidth = true
+            b.titleLabel?.minimumScaleFactor = 0.8
+            b.layer.cornerRadius = 12
+            b.layer.cornerCurve = .continuous
+            b.addTarget(self, action: #selector(handleButton(_:)), for: .touchUpInside)
+            bubbleView.addSubview(b)
+            buttonViews.append(b)
+        }
+        for (i, view) in buttonViews.enumerated() {
+            guard i < plan.buttonFrames.count else {
+                view.isHidden = true
+                continue
+            }
+            let item = plan.buttonFrames[i]
+            view.isHidden = false
+            view.frame = item.frame
+            view.tag = i
+            view.setTitle(item.button.text, for: .normal)
+            let accent = plan.isOutgoing ? UIColor(Theme.outgoingMeta) : UIColor(Theme.accent)
+            view.tintColor = accent
+            view.backgroundColor = accent.withAlphaComponent(0.14)
+        }
+    }
+
+    @objc private func handleButton(_ sender: UIButton) {
+        guard let plan, sender.tag < plan.buttonFrames.count else { return }
+        onButton?(plan.buttonFrames[sender.tag].button)
     }
 
     private func configureMedia(msg: Message, plan: BubbleLayoutPlan) {

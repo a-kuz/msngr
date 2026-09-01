@@ -1230,7 +1230,7 @@ public actor SyncEngine {
         }
         let result = (try? e2ee.decrypt(envelopeJSON: body, chatId: pending.chatId,
                                         fromUserId: pending.from, fromDeviceId: pending.fromDevice,
-                                        plaintext: await isChannel(pending.chatId)))
+                                        plaintext: await isPlaintextChat(pending.chatId)))
             ?? .undecryptable(reason: "exception")
         if case .undecryptable(let reason) = result {
             try? await db.write { dbc in
@@ -1718,6 +1718,7 @@ public actor SyncEngine {
             msg.poll = content.poll
             msg.contact = content.contact
             msg.location = content.location
+            msg.buttons = content.buttons
             let ttl = try Int.fetchOne(dbc, sql: "SELECT ttlSeconds FROM chat WHERE id = ?", arguments: [chatId]) ?? 0
             if ttl > 0 { msg.expiresAt = Date().timeIntervalSince1970 + Double(ttl) }
             try msg.save(dbc)
@@ -1837,6 +1838,7 @@ public actor SyncEngine {
                 msg.poll = content.poll
                 msg.contact = content.contact
                 msg.location = content.location
+                msg.buttons = content.buttons
                 // a historic copy of a disappearing message is stamped the same way
                 // as one that arrived live: otherwise paging up would bring back
                 // what has already expired, and it would stay forever
@@ -1866,7 +1868,7 @@ public actor SyncEngine {
         let upper = min(to, from + HistoryWindow.serverPageSize - 1)
         guard let dtos = try? await api.history(chatId: chatId, fromSeq: from - 1,
                                                 toSeq: upper, limit: upper - from + 1) else { return false }
-        let isPlaintextChat = await isChannel(chatId)
+        let plaintextChat = await isPlaintextChat(chatId)
         var reasons: [Int: String] = [:]   // seq -> why it produced no feed row
         for m in dtos where m.seq >= from && m.seq <= upper {
             guard m.deleted != true, let body = m.body else {
@@ -1883,7 +1885,7 @@ public actor SyncEngine {
             }
             let result = (try? e2ee.decrypt(envelopeJSON: body, chatId: chatId,
                                             fromUserId: m.from, fromDeviceId: m.fromDevice,
-                                            plaintext: isPlaintextChat))
+                                            plaintext: plaintextChat))
                 ?? .undecryptable(reason: "exception")
             switch result {
             case .senderKeyDistribution(let keyChatId, let keyId):
@@ -2203,7 +2205,7 @@ public actor SyncEngine {
     /// Content that goes out service-flagged: it takes a seq and reaches
     /// everyone, but raises no unread count and no push.
     public static let serviceKinds: Set<String> =
-        Set(["edit", "reaction", "disappearing", "listened", "pollVote",
+        Set(["edit", "reaction", "disappearing", "listened", "pollVote", "callback",
              CallSignal.kind, CallLog.kind, GroupEvent.kind])
         .union(SyncEngine.repairKinds)
 
@@ -2264,6 +2266,7 @@ public actor SyncEngine {
         msg.poll = content.poll
         msg.contact = content.contact
         msg.location = content.location
+        msg.buttons = content.buttons
         msg.scheduledFor = scheduledFor
         let payload = try JSONEncoder().encode(content)
         try await db.write { [msg] dbc in
@@ -2553,19 +2556,19 @@ public actor SyncEngine {
     /// arrived yet (`gone == false`, we wait for it), or the message never went out.
     struct TargetNotAcked: Error { let gone: Bool }
 
-    /// Which of these chats journal their content readable. A channel is the
-    /// only kind that does, and a readable envelope is opened for no other.
+    /// Which of these chats journal their content readable — a channel, or a
+    /// chat a bot is in. A readable envelope is opened for no other.
     private func plaintextChats(_ ids: Set<String>) async -> Set<String> {
         guard !ids.isEmpty else { return [] }
         return (try? await db.read { dbc in
             try String.fetchSet(dbc, sql: """
-                SELECT id FROM chat WHERE kind = ?
+                SELECT id FROM chat WHERE plaintext = 1
                   AND id IN (\(databaseQuestionMarks(count: ids.count)))
-                """, arguments: StatementArguments([ChatKind.channel.rawValue] + [String](ids)))
+                """, arguments: StatementArguments([String](ids)))
         }) ?? []
     }
 
-    private func isChannel(_ chatId: String) async -> Bool {
+    private func isPlaintextChat(_ chatId: String) async -> Bool {
         await plaintextChats([chatId]).contains(chatId)
     }
 
@@ -2575,11 +2578,11 @@ public actor SyncEngine {
         // a network error here is an ordinary outbox retry
         content = try await uploadPendingMedia(content, item: item)
         content = try await resolveTarget(content, chatId: item.chatId)
-        let info = try await db.read { dbc -> (kind: String, members: [String])? in
+        let info = try await db.read { dbc -> (kind: String, plaintext: Bool, members: [String])? in
             guard let chat = try Chat.fetchOne(dbc, key: item.chatId) else { return nil }
             let members = try String.fetchAll(dbc, sql: "SELECT userId FROM member WHERE chatId = ?",
                                               arguments: [item.chatId])
-            return (chat.kind.rawValue, members)
+            return (chat.kind.rawValue, chat.plaintext, members)
         }
         guard let info else {
             try? await db.write { dbc in
@@ -2607,10 +2610,11 @@ public actor SyncEngine {
                                         notify: notify))
             }
         }
-        if info.kind == ChatKind.channel.rawValue {
-            // a channel is not end-to-end encrypted: the post travels readable,
-            // which is what lets the server search it and hand it to a
-            // subscriber who arrives later
+        if info.plaintext {
+            // a channel, or a chat a bot is in: neither is end-to-end
+            // encrypted. The content travels readable — which is what lets the
+            // server search a channel and what lets a bot, which holds no keys,
+            // read what is written to it
             try await dispatch(Envelope.plain(content))
         } else if let addressee = content.to {
             // an addressed frame (a repair request, a copy, a chain ack)
@@ -3042,23 +3046,26 @@ public actor SyncEngine {
         for u in users {
             try dbc.execute(
                 sql: """
-                INSERT INTO user (id, username, displayName, bio, avatarId)
-                VALUES (?,?,?,?,?)
+                INSERT INTO user (id, username, displayName, bio, avatarId, botOwner, botCommands)
+                VALUES (?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO NOTHING
                 """,
-                arguments: [u.id, u.username, u.display_name, u.bio, u.avatar_id])
+                arguments: [u.id, u.username, u.display_name, u.bio, u.avatar_id,
+                            u.bot_owner, u.bot_commands])
         }
     }
 
     static func upsertUser(_ dbc: GRDB.Database, _ u: APIClient.UserDTO) throws {
         try dbc.execute(
             sql: """
-            INSERT INTO user (id, username, displayName, bio, avatarId)
-            VALUES (?,?,?,?,?)
+            INSERT INTO user (id, username, displayName, bio, avatarId, botOwner, botCommands)
+            VALUES (?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET username = excluded.username,
-              displayName = excluded.displayName, bio = excluded.bio, avatarId = excluded.avatarId
+              displayName = excluded.displayName, bio = excluded.bio, avatarId = excluded.avatarId,
+              botOwner = excluded.botOwner, botCommands = excluded.botCommands
             """,
-            arguments: [u.id, u.username, u.display_name, u.bio, u.avatar_id])
+            arguments: [u.id, u.username, u.display_name, u.bio, u.avatar_id,
+                        u.bot_owner, u.bot_commands])
     }
 
     /// A chat's local flags, as the server snapshot carries them.
@@ -3091,11 +3098,13 @@ public actor SyncEngine {
                               createdBy, createdAt,
                               pinnedSeqs, lastSeq, syncedSeq, syncCursor, myReadUpTo, peerReadUpTo,
                               peerDeliveredUpTo, lastActivityAt, isRequest, iAccepted, pinned, muted,
-                              archived, unreadCount)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                              archived, unreadCount, plaintext)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
               title = excluded.title, avatarId = excluded.avatarId,
               chatDescription = excluded.chatDescription,
+              -- a bot joining or leaving turns this on and off
+              plaintext = excluded.plaintext,
               sendPolicy = excluded.sendPolicy, invitePolicy = excluded.invitePolicy,
               -- a pin this device made and the server has not confirmed yet is
               -- kept: a snapshot built before the request landed carries the
@@ -3127,7 +3136,8 @@ public actor SyncEngine {
                         max(myRead, resume), 0, 0,
                         s.createdAt, isRequest, iAccepted,
                         flags?.pinned ?? false, flags?.muted ?? false, flags?.archived ?? false,
-                        max(0, s.lastSeq - max(myRead, resume))])
+                        max(0, s.lastSeq - max(myRead, resume)),
+                        s.plaintext ?? (s.kind == ChatKind.channel.rawValue)])
         if let flags {
             try dbc.execute(
                 sql: "UPDATE chat SET pinned = ?, muted = ?, mutedUntil = ?, archived = ? WHERE id = ?",

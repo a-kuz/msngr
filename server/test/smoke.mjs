@@ -2313,6 +2313,102 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
   cch.ws.close(); cbr.ws.close();
 }
 
+// --- bots: an account with a token and no keys, and the chat it makes readable
+{
+  const plain = (kind, extra = {}) => ({ v: 1, mode: "plain", p: { kind, ...extra } });
+  const bot = await api("/api/bots", { token: alice.token, body: {
+    username: `helper_${suffix}`, displayName: "Helper",
+    commands: [{ command: "start", description: "start over" },
+               { command: "help", description: "what I can do" }],
+  } });
+  check("a bot is created", !!bot.botId && !!bot.token, JSON.stringify(bot));
+  const badCmd = await apiRaw("/api/bots", { token: alice.token, body: {
+    username: `bad_${suffix}`, displayName: "Bad", commands: [{ command: "Not A Command" }],
+  } });
+  check("a command that is not a word is refused", badCmd.status === 400, String(badCmd.status));
+  const mine = await api("/api/bots", { token: alice.token });
+  check("the owner lists their bots", mine.bots?.some((b) => b.id === bot.botId),
+    JSON.stringify(mine.bots?.length));
+  const notMine = await api("/api/bots", { token: bob.token });
+  check("someone else's bots are not listed", !notMine.bots?.length, JSON.stringify(notMine));
+  const notOwner = await apiRaw(`/api/bots/${bot.botId}`, { token: bob.token,
+    body: { displayName: "Stolen" } });
+  check("only the owner edits a bot", notOwner.status === 403, String(notOwner.status));
+
+  // the bot's card says what it is, and carries its commands
+  const card = await api(`/api/users/${bot.botId}`, { token: bob.token });
+  check("the card names the bot's owner", card.user?.bot_owner === alice.userId,
+    JSON.stringify(card.user));
+  check("the card carries the commands",
+    JSON.parse(card.user?.bot_commands ?? "[]").length === 2, card.user?.bot_commands);
+
+  // a chat with a bot is readable by design
+  const botChat = await api("/api/chats", { token: bob.token,
+    body: { kind: "direct", memberIds: [bot.botId] } });
+  const snapshot = await api("/api/chats", { token: bob.token });
+  const entry = snapshot.chats.find((e) => e.state.chatId === botChat.chatId);
+  check("a chat with a bot is marked plaintext", entry?.state?.plaintext === true,
+    JSON.stringify(entry?.state?.plaintext));
+  const plainEntry = snapshot.chats.find((e) => e.state.chatId === chat.chatId);
+  check("an ordinary chat is not", plainEntry?.state?.plaintext === false,
+    JSON.stringify(plainEntry?.state?.plaintext));
+
+  const cbot = new Client("bot", bot.token);
+  await cbot.connect();
+  await cbot.waitFor((f) => f.t === "hello");
+  const cuser = new Client("bot-user", bob.token);
+  await cuser.connect();
+  await cuser.waitFor((f) => f.t === "hello");
+  cuser.send({ t: "send", chatId: botChat.chatId, clientMsgId: "bot-1", sentAt: Date.now(),
+    body: plain("text", { text: "/start" }) });
+  const heard = await cbot.waitFor((f) => f.t === "msg" && f.chatId === botChat.chatId);
+  check("the bot reads what is written to it", heard?.body?.p?.text === "/start",
+    JSON.stringify(heard?.body));
+
+  // the bot answers with buttons, and the button press comes back as a callback
+  cbot.send({ t: "send", chatId: botChat.chatId, clientMsgId: "bot-2", sentAt: Date.now(),
+    body: plain("text", { text: "pick one",
+                          buttons: [[{ text: "Yes", data: "y" }, { text: "No", data: "n" }]] }) });
+  const withButtons = await cuser.waitFor((f) => f.t === "msg" && f.from === bot.botId);
+  check("the bot's message carries its buttons",
+    withButtons?.body?.p?.buttons?.[0]?.[1]?.data === "n", JSON.stringify(withButtons?.body?.p));
+  cuser.send({ t: "send", chatId: botChat.chatId, clientMsgId: "bot-3", sentAt: Date.now(),
+    body: plain("callback", { data: "y" }), service: true });
+  const pressed = await cbot.waitFor((f) => f.t === "msg" && f.body?.p?.kind === "callback");
+  check("a pressed button reaches the bot", pressed?.body?.p?.data === "y",
+    JSON.stringify(pressed?.body?.p));
+
+  // a readable envelope has no business in an encrypted chat
+  cuser.send({ t: "send", chatId: chat.chatId, clientMsgId: "bot-4", sentAt: Date.now(),
+    body: plain("text", { text: "in the clear where it must not be" }) });
+  const refused = await cuser.waitFor((f) => f.t === "error" && f.clientMsgId === "bot-4");
+  check("a readable envelope is refused in an encrypted chat",
+    refused?.error === "not_plaintext_chat", JSON.stringify(refused));
+
+  // a bot in a group takes the encryption off what is written from then on
+  const grp = await api("/api/chats", { token: alice.token,
+    body: { kind: "group", memberIds: [bob.userId], title: `Bot group ${suffix}` } });
+  const before = await api("/api/chats", { token: alice.token });
+  check("a group without a bot is encrypted",
+    before.chats.find((e) => e.state.chatId === grp.chatId)?.state?.plaintext === false);
+  await api(`/api/chats/${grp.chatId}/members`, { token: alice.token,
+    body: { add: [bot.botId], remove: [] } });
+  const after = await api("/api/chats", { token: alice.token });
+  check("a bot in the group takes the encryption off",
+    after.chats.find((e) => e.state.chatId === grp.chatId)?.state?.plaintext === true);
+  await api(`/api/chats/${grp.chatId}/members`, { token: alice.token,
+    body: { add: [], remove: [bot.botId] } });
+  const gone = await api("/api/chats", { token: alice.token });
+  check("the bot leaving puts it back",
+    gone.chats.find((e) => e.state.chatId === grp.chatId)?.state?.plaintext === false);
+
+  const fresh = await api(`/api/bots/${bot.botId}`, { token: alice.token, body: { newToken: true } });
+  check("the owner asks for a fresh token", !!fresh.token && fresh.token !== bot.token);
+  const deadToken = await apiRaw("/api/me", { token: bot.token });
+  check("the old token stops working", deadToken.status === 401, String(deadToken.status));
+  cbot.ws.close(); cuser.ws.close();
+}
+
 cmal.ws.close(); ctre.ws.close();
 ca.ws.close(); cb2.ws.close(); cb3.ws.close(); cb4.ws.close(); ca2.ws.close(); ce.ws.close();
 cf.ws.close(); cg.ws.close();

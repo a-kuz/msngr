@@ -240,7 +240,9 @@ struct ChatScreen: View {
             } else if !searching {
                 ToolbarItem(placement: .principal) { header }
                 if !model.contentHidden {
-                    if model.chat?.kind == .direct, model.peerCanCall, let peerId = model.peer?.id {
+                    // a bot has no device to ring, so it is not offered a call
+                    if model.chat?.kind == .direct, model.peerCanCall, model.bot == nil,
+                       let peerId = model.peer?.id {
                         ToolbarItem(placement: .navigationBarTrailing) {
                             Button {
                                 Task { await AppState.shared.callManager?.startCall(chatId: chatId, peerUserId: peerId) }
@@ -605,7 +607,8 @@ struct ChatScreen: View {
     private var emptyChatHint: some View {
         VStack(spacing: 8) {
             Image(systemName: model.isSavedChat ? AvatarStyle.savedGlyph
-                  : model.kind == .channel ? "megaphone" : "bubble.left.and.bubble.right")
+                  : model.kind == .channel ? "megaphone"
+                  : model.bot != nil ? "cpu" : "bubble.left.and.bubble.right")
                 .font(Theme.glyph(34, max: 48))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
@@ -617,12 +620,13 @@ struct ChatScreen: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            // a channel is the one place where the promise is the other way
-            // round, and the empty screen is where it is easiest to read
-            Label(model.kind == .channel
+            // a channel and a chat with a bot are the places where the promise
+            // is the other way round, and the empty screen is where it is
+            // easiest to read
+            Label(model.isPlaintext
                   ? String(localized: "Not encrypted")
                   : String(localized: "End-to-end encrypted"),
-                  systemImage: model.kind == .channel ? "lock.open" : "lock.fill")
+                  systemImage: model.isPlaintext ? "lock.open" : "lock.fill")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
@@ -1589,6 +1593,7 @@ struct MessagesView: UIViewControllerRepresentable {
         vc.commentsOnly = model.commentsOnly
         vc.noteRecipients = max(model.members.count - 1, 1)
         vc.onVotePoll = { [weak model] msg, votes in model?.votePoll(msg, votes: votes) }
+        vc.onButton = { [weak model] button in model?.pressButton(button) }
         vc.onTranscript = { [weak model] msg in model?.toggleTranscript(msg) }
         vc.onRetranscribe = { [weak model] msg in model?.retranscribe(msg) }
         vc.onContextAction = { [weak model] msg, action in

@@ -199,6 +199,12 @@ struct SettingsView: View {
                         Label("Backup", systemImage: "icloud.and.arrow.up")
                     }
                     .accessibilityIdentifier("settings.backup")
+                    NavigationLink {
+                        BotsView()
+                    } label: {
+                        Label("My bots", systemImage: "cpu")
+                    }
+                    .accessibilityIdentifier("settings.bots")
                 }
 
                 Section {

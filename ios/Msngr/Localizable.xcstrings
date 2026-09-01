@@ -121,6 +121,171 @@
         }
       }
     },
+    "A bot answers over its token, the way an app would." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Бот отвечает по своему токену, как приложение."
+          }
+        }
+      }
+    },
+    "A bot has no keys, so a chat with it is not encrypted: the server reads what is written there." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У бота нет ключей, поэтому чат с ним не шифруется: сервер читает всё, что там написано."
+          }
+        }
+      }
+    },
+    "Commands" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Команды"
+          }
+        }
+      }
+    },
+    "Copy token" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скопировать токен"
+          }
+        }
+      }
+    },
+    "My bots" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Мои боты"
+          }
+        }
+      }
+    },
+    "New bot" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новый бот"
+          }
+        }
+      }
+    },
+    "New token" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новый токен"
+          }
+        }
+      }
+    },
+    "No bots yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ботов пока нет"
+          }
+        }
+      }
+    },
+    "Not created" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не создан"
+          }
+        }
+      }
+    },
+    "One per line: the word, a dash, what it does." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По одной в строке: слово, тире, что делает."
+          }
+        }
+      }
+    },
+    "Save commands" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранить команды"
+          }
+        }
+      }
+    },
+    "The old token stops working the moment a new one is issued." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Старый токен перестаёт работать в момент выпуска нового."
+          }
+        }
+      }
+    },
+    "The token is the bot's whole authentication and is shown once. Ask for a new one if it leaks." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Токен — это вся аутентификация бота, и показан он один раз. Если утёк, выпустите новый."
+          }
+        }
+      }
+    },
+    "This chat is not encrypted: a bot has no keys, so the server stores what is written here in the clear." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот чат не шифруется: у бота нет ключей, и сервер хранит написанное здесь открытым текстом."
+          }
+        }
+      }
+    },
+    "start — begins the conversation" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "start — начинает разговор"
+          }
+        }
+      }
+    },
     "What this channel is about" : {
       "extractionState" : "manual",
       "localizations" : {
