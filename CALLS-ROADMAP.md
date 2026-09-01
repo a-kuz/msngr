@@ -8,9 +8,11 @@ on the user card), the peer named as in the owner's address book, the in-app
 fold into a floating tile, our own TURN (coturn on the stand), the ringback
 and the ringtone, ICE restart under a live call, ICE candidates off the
 journal (the ephemeral `callRelay` frame), the missed-call push
-(`service` + `notify`), and 1:1 video with the self-view, the flip and the
-signalled camera-off, and the three-way call: the invite from the call
-screen, a short-lived mesh of exactly three with the invited-by row.
+(`service` + `notify`), and 1:1 video with the self-view, the flip, the
+signalled camera-off and the video-call entry point in the chat header
+(`video` on the first offer, so the callee rings as a video call), and the
+three-way call: the invite from the call screen, a short-lived mesh of
+exactly three with the invited-by row.
 
 Each item below stands on its own unless its "needs" line says otherwise.
 
@@ -41,14 +43,14 @@ covered by the smoke test.
 ## Features not built yet
 
 ### 1:1 video: what remains
-The core is shipped: the camera toggle in the call renegotiates the same
-call, the peer's stream renders full-screen, the self-view floats in the
-corner with a front/back flip, the renegotiation offer carries whether the
-camera is on (off reaches the peer as a state change, not a frozen frame),
-and the simulator exercises the whole pipeline through a synthetic
-capturer. What remains: a video-call entry point before the call starts
-(`video: true` on the first offer so the ringing screen says so), and the
-device check with a real camera.
+The feature is shipped: the video-call button in the chat header starts the
+call with the camera on and the callee's ringing screen says it is a video
+call, the camera toggle in the call renegotiates the same call, the peer's
+stream renders full-screen, the self-view floats in the corner with a
+front/back flip, the renegotiation offer carries whether the camera is on
+(off reaches the peer as a state change, not a frozen frame), and the
+simulator exercises the whole pipeline through a synthetic capturer. What
+remains is the device check with a real camera.
 
 ### System picture-in-picture
 The in-app fold (the floating tile over the chats) is shipped; what remains
