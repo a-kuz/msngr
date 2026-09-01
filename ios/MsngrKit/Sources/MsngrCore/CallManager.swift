@@ -200,8 +200,10 @@ public actor CallManager {
     // MARK: - User actions
 
     /// Dials the chat's peer. One call at a time: dialing over a live call is
-    /// refused silently, the UI never offers it.
-    public func startCall(chatId: String, peerUserId: String) async {
+    /// refused silently, the UI never offers it. A video call starts with the
+    /// camera already in the offer, and the offer says so for the ringing
+    /// screen.
+    public func startCall(chatId: String, peerUserId: String, video: Bool = false) async {
         guard case .idle = state.phase else { return }
         let callId = UUID().uuidString
         isCaller = true
@@ -210,10 +212,15 @@ public actor CallManager {
             let transport = try makeTransport()
             self.transport = transport
             consume(transport)
+            if video {
+                await transport.setVideo(enabled: true)
+                state.localVideo = true
+            }
             let sdp = try await transport.makeOffer()
             // dialing may have been torn down while the offer was being built
             guard state.callId == callId, state.phase == .dialing else { return }
-            await sendSignal(CallSignal(type: .offer, callId: callId, sdp: sdp), chatId)
+            await sendSignal(CallSignal(type: .offer, callId: callId, sdp: sdp,
+                                        video: video ? true : nil), chatId)
             armDialTimeout(callId: callId)
         } catch {
             await finish(reason: .failed, notifyPeer: false)
@@ -229,6 +236,12 @@ public actor CallManager {
             let transport = try makeTransport()
             self.transport = transport
             consume(transport)
+            // a video call is answered with the camera on, so the answer
+            // already carries the track back
+            if offer.signal.video == true {
+                await transport.setVideo(enabled: true)
+                state.localVideo = true
+            }
             let answer = try await transport.answerOffer(sdp)
             guard state.callId == offer.signal.callId else { return }
             if !heldRemoteCandidates.isEmpty {
@@ -590,6 +603,8 @@ public actor CallManager {
         isCaller = false
         state = CallState(phase: .ringing, chatId: event.chatId,
                           peerUserId: event.fromUserId, callId: event.signal.callId)
+        // the ringing screen says what kind of call is asking
+        state.remoteVideo = event.signal.video == true
     }
 
     // MARK: - Transport events

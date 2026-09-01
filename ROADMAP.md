@@ -954,12 +954,13 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   CALLS-ROADMAP.md)
 - ⬜ 1:1 audio on CF Calls, the provider behind our own protocol
 - ⬜ end-to-end encryption over insertable streams
-- ✅ a 1:1 video call: the camera toggle renegotiates the running call, the
-  peer's stream full-screen, the self-view tile with a front/back flip, the
-  camera's off state carried on the renegotiation offer; the simulator runs
-  the whole pipeline through a synthetic capturer (live two-simulator run
-  2026-09-01; a video-typed entry point and the real-camera device check
-  remain — CALLS-ROADMAP.md)
+- ✅ a 1:1 video call: the video button in the chat header dials with the
+  camera on and the callee rings as a video call (`video` on the first
+  offer), the camera toggle renegotiates the running call, the peer's stream
+  full-screen, the self-view tile with a front/back flip, the camera's off
+  state carried on the renegotiation offer; the simulator runs the whole
+  pipeline through a synthetic capturer (live two-simulator runs 2026-09-01;
+  the real-camera device check remains — CALLS-ROADMAP.md)
 - ✅ ICE restart when the path dies under a live call: the caller sends a
   fresh-credentials offer for the same call after a held disconnect, the
   callee answers in place (CallManagerTests; the Wi-Fi→LTE device check
