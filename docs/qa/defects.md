@@ -34,6 +34,21 @@ report appeared in DiagnosticReports. Not reproducible on this build; nothing
 was changed for it, because a workaround with no reproduction to answer would
 be blind.
 
+Two hypotheses were then tested and both are out. The crash reports say the
+focus map trips over a container guide whose parent environment is gone, while
+`UIFocusSystem` re-evaluates its locked environments after a CACommit — the
+whole stack is UIKit's, with nothing of ours on it. Until 2026-09-01 the chat
+list always carried a supplementary header over a section with no rows, which
+is the kind of thing a focus map has to take as a container, and that header is
+gone since 324b74d — so the obvious guess was that the fix had cured the crash
+as a side effect. It had not: the revision before it (f5301a6), built and run
+on a fresh iPad Pro 11" with the hardware keyboard connected and the empty
+header plainly on screen, went through the same fifteen rounds without
+aborting once. So the crash is reproducible neither before nor after that
+change, and what differs from 2026-08-30 is not the chat list. The next thing
+to vary is the device and the runtime: the original three crashes came from
+another iPad simulator, and the home installed on it was alfa's, not demo's.
+
 ### A severed pairwise session never heals: both sides ask, neither answer arrives
 Found 2026-08-29 while walking the repair debt on the alfa fixture. The
 alfa↔bravo pair is broken symmetrically: alfa holds 2937 of bravo's envelopes
@@ -96,8 +111,29 @@ spent and 20 in flight against the ceiling; bravo's outbox is not blocked and
 it trusts alfa, but its dozen answers sat `inflight` — sent, waiting for an ack
 that did not come — for five minutes without moving, and alfa's readable count
 in the chat did not change. So the revival above has not yet had its trigger:
-nothing of bravo's has opened on alfa since the acceptance. The next thread to
-pull is that stall between `inflight` and the ack, not the repair policy.
+nothing of bravo's has opened on alfa since the acceptance.
+
+That stall was its own defect and is fixed (b65a2c3): the ack of a send is owed
+on the socket it left through, and rows sitting in flight were put back into
+the queue only when the engine started — so a message sent moments before a
+reconnect waited for the next cold start with nothing on the screen saying so.
+The reconnect requeues them now, and on the same pair bravo's outbox went from
+a dozen rows standing five minutes to «failed: 4» within the minute, those four
+having honestly spent their attempts. Alfa's readable count did not move with
+it, and the reason was found the same night by another agent on the presence
+run: the incoming queue itself was standing still. An arriving key replayed
+every deferred envelope of its chat on the spot, inside the drain and under the
+crypto gate, and a replay that fails walks the ratchet forward key by key
+before it says so — a sample of the stuck home has all 285 of 285 frames in
+`drainIncoming` → `retryPending` → `replay` → `skipRecvKeys`. So nothing behind
+that pass arrived at all: not the peer's presence, not their typing, not the
+repair answers this entry was waiting on, and the device's own ping starved
+until it went offline standing in the foreground.
+Fixed in cd326a0: a pass replays at most twenty envelopes and the newest first,
+which is what a key that has just arrived opens; the rest is the sweep's, which
+has its own budget and rotation. Verified on the same bravo home with 9637
+unopenable envelopes standing: `/usr/bin/sample` over the running app has no
+frames in that path at all, and every chat's cursor sits at `lastSeq`.
 
 Left over: whether a re-registered fixture peer should present as an identity
 change at all, since the homes are meant to be handed around.
@@ -168,17 +204,25 @@ peer's own traffic move the rows between the screenshot that gives the
 coordinate and the touch that uses it, so the taps land on whatever slid into
 that place. Coordinate taps are the wrong instrument for this one; it wants a
 driver that addresses rows by identity, which is XCUITest, and that is out of
-the process by the owner's call. Left for a run that has the owner's eye on the
-screen instead.
+the process by the owner's call.
 
-### Accepting a request ends with no animation
-Asked for by the owner 2026-08-27 while reviewing the demo: after «Принять»
-on the request screen the closed-eye placeholder and the two buttons are
-replaced by the chat in a cut. The owner wants a transition here, a dissolve
-(«dust») or something of that kind. Done the same day: the card leaves through
-`AnyTransition.dissolve` (blur, a slight swell, fade) and the feed fades in,
-both in one `Theme.spring` transaction; the flag flips in the model on the
-tap, ahead of the database row. Waiting for the owner's look.
+Caught the same night on a stand of throwaway accounts, where nothing but the
+run itself writes: four rows on screen, the bottom one lifted by one message
+from the command line, the screen recorded at 30 fps. The crossing is in
+`docs/qa/runs/2026-09-02-chatlist-row-lift.png` — the moving row's avatar
+stands over the band the passed row occupies, the passed row is out of sight
+for two frames, and the whole move takes five frames, about a sixth of a
+second.
+That sixth of a second is the fault, and it was not what the code asked for.
+«The list now moves in `Theme.spring` (0.45 s)» describes a SwiftUI transaction
+that never reaches a collection view's batch update: `dataSource.apply` ran on
+UIKit's own default timing whatever the transaction said. The apply is now
+wrapped in the animation it is meant to have (`ChatListCollection.moveDuration`,
+a 0.45 s spring). Measured the same way on the same stand afterwards: nine
+frames of movement instead of five, the per-frame change tapering off as a
+spring settles rather than ending flat, and every intermediate position of the
+row legible — `docs/qa/runs/2026-09-02-chatlist-row-lift-after.png`. Whether
+the crossing still reads as crooked at that speed is the owner's to say.
 
 ### Interaction smoothness below Telegram
 Reported 2026-08-18. Overall animation quality and frame pacing feel worse
@@ -187,6 +231,22 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### Accepting a request ends with no animation
+Asked for by the owner 2026-08-27 while reviewing the demo: after «Принять»
+on the request screen the closed-eye placeholder and the two buttons are
+replaced by the chat in a cut. The owner wants a transition here, a dissolve
+(«dust») or something of that kind. Done the same day: the card leaves through
+`AnyTransition.dissolve` (blur, a slight swell, fade) and the feed fades in,
+both in one `Theme.spring` transaction; the flag flips in the model on the
+tap, ahead of the database row.
+Watched frame by frame 2026-09-02 and it is there: on a stand of throwaway
+accounts, with the screen recorded at 30 fps, «Принять» is followed by eight
+frames in which the card blurs, swells a little and fades while the chat comes
+in under it — about a third of a second, the keyboard rising with it. The
+sequence is in `docs/qa/runs/2026-09-02-accept-request-dissolve.png`. The
+defect as reported — the card replaced in a cut — is gone; whether this is the
+look the owner wanted is theirs to say, and the entry reopens on their word.
 
 ### The date separator reads the sender's clock, the time in the bubble reads the server's
 Found 2026-09-01 during the bots run: a peer stamping `sentAt` in milliseconds
