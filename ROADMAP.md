@@ -954,7 +954,24 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   CALLS-ROADMAP.md)
 - ⬜ 1:1 audio on CF Calls, the provider behind our own protocol
 - ⬜ end-to-end encryption over insertable streams
-- ⬜ a video call
+- ✅ a 1:1 video call: the camera toggle renegotiates the running call, the
+  peer's stream full-screen, the self-view tile with a front/back flip, the
+  camera's off state carried on the renegotiation offer; the simulator runs
+  the whole pipeline through a synthetic capturer (live two-simulator run
+  2026-09-01; a video-typed entry point and the real-camera device check
+  remain — CALLS-ROADMAP.md)
+- ✅ ICE restart when the path dies under a live call: the caller sends a
+  fresh-credentials offer for the same call after a held disconnect, the
+  callee answers in place (CallManagerTests; the Wi-Fi→LTE device check
+  remains)
+- ✅ ICE candidates off the journal: an ephemeral `callRelay` frame (E2E
+  envelope, live sockets only, never journaled) carries them; a batch that
+  outruns its offer is held by callId (smoke + a live call on relayed
+  candidates alone, 2026-09-01)
+- ✅ the peer of a call named as in the owner's address book: discovery
+  stores the book names (`contactBookName`), and the chat list, the chat
+  header, the call screen and notification banners show them over the
+  profile name (live run 2026-09-01)
 - ⬜ a group call
 - ⬜ CallKit and PushKit
 - ✅ ringback while dialing, and the callee's ringtone (CallSounds, the merge
