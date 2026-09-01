@@ -576,8 +576,14 @@ public actor SyncEngine {
                 let previousMembers: [String] = (try? await db.read { dbc in
                     try String.fetchAll(dbc, sql: "SELECT userId FROM member WHERE chatId = ?", arguments: [state.chatId])
                 }) ?? []
+                // read before the frame's cards land: these are the users whose
+                // full card (bio, avatar) still has to be fetched
+                let newUsers = await missingUserIds(state.members.map(\.userId))
                 do {
                     try await db.write { [ownUserId] dbc in
+                        // the frame's cards carry names only, so a row already
+                        // holding a bio or an avatar is left as it is
+                        try SyncEngine.insertMissingUsers(dbc, f.users ?? [])
                         try SyncEngine.upsertChatState(dbc, state, ownUserId: ownUserId, flags: nil)
                     }
                 } catch {
@@ -603,10 +609,9 @@ public actor SyncEngine {
                         try? e2ee.rotateSenderKey(chatId: state.chatId)
                     }
                 }
-                // a chat frame carries member ids only, so profiles of new
-                // users are fetched; without it the UI shows a placeholder
-                // name until the next launch
-                await fetchMissingUsers(state.members.map(\.userId))
+                // the frame named the new users; their full cards (bio,
+                // avatar) still come over HTTP
+                await fetchUsers(newUsers)
             }
         case "syncState":
             await applySyncState(f)
@@ -652,13 +657,21 @@ public actor SyncEngine {
 
     /// Fetches the profiles of users the user table does not hold yet.
     private func fetchMissingUsers(_ ids: [String]) async {
-        let missing: [String] = (try? await db.read { dbc in
+        await fetchUsers(missingUserIds(ids))
+    }
+
+    /// The subset of ids the user table does not hold.
+    private func missingUserIds(_ ids: [String]) async -> [String] {
+        (try? await db.read { dbc in
             try ids.filter { id in
                 try !Bool.fetchOne(dbc, sql: "SELECT EXISTS(SELECT 1 FROM user WHERE id = ?)",
                                    arguments: [id])!
             }
         }) ?? []
-        for id in missing where !userFetchesInFlight.contains(id) {
+    }
+
+    private func fetchUsers(_ ids: [String]) async {
+        for id in ids where !userFetchesInFlight.contains(id) {
             userFetchesInFlight.insert(id)
             // the network stays off the frame-applying path: a message never
             // waits for a profile
@@ -2993,6 +3006,20 @@ public actor SyncEngine {
     }
 
     // MARK: - Shared upserts
+
+    /// The chat frame's roster cards name users the device has never seen; a
+    /// known row keeps its fuller card (bio, avatar) untouched.
+    static func insertMissingUsers(_ dbc: GRDB.Database, _ users: [APIClient.UserDTO]) throws {
+        for u in users {
+            try dbc.execute(
+                sql: """
+                INSERT INTO user (id, username, displayName, bio, avatarId)
+                VALUES (?,?,?,?,?)
+                ON CONFLICT(id) DO NOTHING
+                """,
+                arguments: [u.id, u.username, u.display_name, u.bio, u.avatar_id])
+        }
+    }
 
     static func upsertUser(_ dbc: GRDB.Database, _ u: APIClient.UserDTO) throws {
         try dbc.execute(

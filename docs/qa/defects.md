@@ -6,13 +6,6 @@ with the commit that closed it.
 
 ## Open
 
-### User search does not fold Cyrillic case
-Found 2026-08-31 in passing during the privacy-exceptions live run: SQLite's
-LOWER folds ASCII only, so `GET /api/users?q=Икфм` does not find a user whose
-display name is «икфмц» — any non-ASCII query is effectively case-sensitive.
-Fold the case in JS (the worker) on both the query and a stored lowercase
-column, or match with a collation that folds Unicode.
-
 ### The bravo and charlie fixture homes are corrupted
 Found 2026-08-31 while reproducing the chat-list preview defect:
 `.claude/fixtures/bravo/msngr.sqlite` answers `database disk image is
@@ -24,18 +17,6 @@ delta7b, demo, echo7b, iris, nova, roundpeer are ok), which points at a copy
 taken without a WAL checkpoint on some earlier pull. Two-sided runs on the
 trio are blocked past alfa. Reseeding the trio (`scripts/fixture.py seed
 --reset`) discards the shared history, so the call is the owner's.
-
-### A corrupted database at startup crashes Debug and strands Release on the splash
-Found 2026-08-31 by the gate's crash collector (three .ips in
-docs/qa/crashes/, 15:27:50–15:28:13): an agent's simulator launched the app
-over the corrupted bravo fixture, `AppDatabase.open` threw an SQLite error,
-and `AppState.bootstrap`'s catch-all answered with `assertionFailure` — a
-crash on every launch in Debug. In Release the assertion is a no-op: `db`
-stays nil, `ready` never turns true, and the app sits on the splash forever
-with no way out. Under the no-compatibility policy the product's own move
-here is a clean start: detect the unopenable file, offer (or take) the wipe
-back to registration the way `startOver` already does for a schema from a
-newer build.
 
 ### iPad with a hardware keyboard: a tap around the settings sheet crashes the app
 Found 2026-08-30 on the iPad Pro 11" simulator with ConnectHardwareKeyboard on
@@ -54,18 +35,6 @@ parent environment is already gone, most likely mid-transition of the SwiftUI
 sheet. Needs a workaround (the crash is user-visible on exactly the desktop
 target); none found yet — no public switch turns the focus map off for a
 window, and the assertion fires inside UIKit's own snapshot pass.
-
-### The server smoke test fails on push timing, on a different check per run
-Found 2026-08-28 by the gate after the shader-messages merge
-(`.claude/gates/main-shader.log`): `no push for own echo` was red on the
-gate's throwaway stand. On a second throwaway stand (`wrangler dev --port
-8811`, a fresh persist dir with the migrations applied) that check passed and
-`cmid swept behind the sender's ack` failed instead, with the same code:
-neither merge touched `server/`. Both checks wait for a push or an alarm with
-a fixed timeout, so a loaded host is the first suspect, but two different
-checks red on two stands is not yet shown to be the host. To investigate:
-run the smoke test alone on an idle host, and if it stays red, read the
-push and alarm timings the DO logs against the timeouts the test uses.
 
 ### An own service frame drags myReadUpTo over the peer's unread messages
 Found 2026-08-28 in passing while verifying the in-chat mention counter: the
@@ -278,15 +247,6 @@ now moves in `Theme.spring` (0.45 s) instead of `springFast`; in the re-run of
 2026-08-27 the lifted row started below the screen, so the crossing itself was
 not exercised — to be watched on the next lift of an on-screen row.
 
-### A new request appears in the list with no animation
-Seen 2026-08-27 in the same recording. When a stranger's first message
-arrived, the «Заявки на переписку» header and the row appeared in a single
-frame, with the rows below jumping down to make room; the avatar of the new
-row showed «…» for a frame before the initials came. The list model animated
-only a change in the visible chats, not in the requests; the same change now
-runs in the spring transaction as well (the re-run on 2026-08-27 shows the
-header and the row easing in). The «…» avatar frame is still open.
-
 ### Accepting a request ends with no animation
 Asked for by the owner 2026-08-27 while reviewing the demo: after «Принять»
 on the request screen the closed-eye placeholder and the two buttons are
@@ -314,6 +274,68 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### The server smoke test fails on push timing, on a different check per run
+Found 2026-08-28 by the gate after the shader-messages merge: `no push for
+own echo` red on one stand, `cmid swept behind the sender's ack` on another,
+with server code untouched. The cmid half was stand config (its own closed
+entry below: the stand needs `CMID_MIN_AGE:0 CMID_SWEEP_EVERY:0`). The push
+half was pinned 2026-09-01 by printing the offending push: its `from` and
+`chatId` were ulids of a *previous* smoke run — every run registered the
+same literal APNs tokens (`alice-sim-udid`), and the push queue, which by
+design never gives up an owed push, retried an old run's undelivered push
+into the new run's mock, where the whole-log check counted it. The product
+is right on both sides; on a reused persist dir the failure reproduced 5/5
+and three runs after the fix are green on the same dirty stand, plus one on
+a fresh one. Closed in the test: the tokens carry the run's suffix, so runs
+no longer see each other's pushes. Covers the 2026-09-01 «no push for own
+echo failed once under host load» sighting as well — that stand's persist
+was reused too.
+
+### A new request appears in the list with no animation
+Seen 2026-08-27 in the README demo recording. When a stranger's first message
+arrived, the «Заявки на переписку» header and the row appeared in a single
+frame, with the rows below jumping down to make room; the avatar of the new
+row showed «…» for a frame before the initials came. The animation half was
+closed first: the requests change runs in the same spring transaction as the
+visible chats (the re-run on 2026-08-27 shows the header and the row easing
+in). The «…» frame was the chat frame carrying member ids only, with the
+profile fetched over HTTP after the row was already on screen. Closed
+2026-09-01: the chat frame (and the catch-up sync state) carries the
+roster's public names — id, username, display name; bio and avatar stay out,
+being per-viewer private on a frame that fans out to everyone — and the
+client writes them in the transaction that writes the chat, so the row is
+named the moment it exists; the full card still comes over HTTP. Held by the
+smoke check «chat frame carries roster names» and `UserCardTests` (an
+unknown user is named, a fuller row is not clobbered).
+
+### A corrupted database at startup crashes Debug and strands Release on the splash
+Found 2026-08-31 by the gate's crash collector (three .ips in
+docs/qa/crashes/, 15:27:50–15:28:13): an agent's simulator launched the app
+over the corrupted bravo fixture, `AppDatabase.open` threw an SQLite error,
+and `AppState.bootstrap`'s catch-all answered with `assertionFailure` — a
+crash on every launch in Debug, and in Release `db` stayed nil with the app
+on the splash forever. Closed 2026-09-01: `AppDatabase.open` reports a file
+SQLite calls corrupt (`SQLITE_CORRUPT`/`SQLITE_NOTADB`) as
+`AppDatabaseError.corrupted`, and `bootstrap` answers it with a clean start
+back to registration, the same move as for storage owned by another account —
+an unreadable file holds nothing to resume or save. `DatabaseOpenTests`
+holds the mapping (garbage file, truncated database, healthy file); live on
+a simulator over the corrupted bravo home the app comes up on the
+registration screen with the container wiped, no crash and no splash.
+
+### User search does not fold Cyrillic case
+Found 2026-08-31 in passing during the privacy-exceptions live run: SQLite's
+LOWER folds ASCII only, so `GET /api/users?q=Икфм` did not find a user whose
+display name is «икфмц» — any non-ASCII query was effectively case-sensitive.
+Closed 2026-09-01: the query is folded in JS and matched against a stored
+JS-folded `display_name_lc` column (migration 0015), written at registration
+and on every profile rename; usernames stay on LOWER, being ASCII by rule.
+Smoke holds both write paths («user search folds Cyrillic case», «renamed
+Cyrillic name found case-insensitively»), both red on the old query. After the
+merge the migration needs applying on the shared stand; its SQL backfill folds
+ASCII only, so a stand row with an uppercase Cyrillic name heals on its next
+rename.
 
 ### A chat climbs the list with no new message in it
 Seen 2026-08-27 while recording the README demo on the simulator (alfa
@@ -989,10 +1011,15 @@ shaders on a chat's first open all draw without a scroll.
 
 ### A theme switch leaves one bubble light with unreadable text
 Seen 2026-08-29 in passing during the showcase run: switching the appearance
-to dark while the chat was open left one text bubble with its light
-background and its text repainted to white — unreadable until the cell was
-reconfigured by a scroll. The bubble image and the text colour are updated
-by different paths on a trait change. Open.
+to dark while the chat was open left a text bubble with its light background
+and its text repainted to white — unreadable until the cell was reconfigured
+by a scroll. The bubble plate is an image baked per appearance in the cell's
+configure while the text repaints dynamically, and nothing reconfigured the
+visible cells on a system light/dark switch (only a palette change did).
+Closed 2026-09-01: the feed reloads on a `UITraitUserInterfaceStyle` change;
+`ThemeSwitchTests.testAppearanceSwitchRebakesTheVisibleBubble` is red on the
+old code, and the live switch over an open chat shows the bubble re-baked
+under readable text.
 
 ### The pond sticker's bottom read as a dot grid
 Reported by the owner on 2026-08-28 («некрасиво сетчатый фон»): the bundled
@@ -1015,9 +1042,9 @@ it, the way an edit already took effect at enqueue.
 Seen 2026-09-01 while running `server/test/smoke.mjs` on a local stand for the
 call-privacy work, with several xcodebuilds sharing the host. One run out of
 three reported the failure; the two others were green on the same code, and
-the case is untouched by the branch. Looks timing-dependent under load, the
-way the cmid-sweep case below was before its stand vars were found. Not
-reproduced in isolation; left open as a symptom to watch on gate runs.
+the case is untouched by the branch. Resolved 2026-09-01: a previous run's owed push retried into the new run's
+mock over the same literal token — see «The server smoke test fails on push
+timing» above. The tokens now carry the run's suffix.
 
 ### Smoke: «cmid swept behind the sender's ack» fails — stand config, not a defect
 Found 2026-08-31 while running `server/test/smoke.mjs` for the avatar-privacy

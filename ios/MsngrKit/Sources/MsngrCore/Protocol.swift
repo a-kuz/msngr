@@ -146,6 +146,9 @@ public struct WSIncoming: Decodable {
     public let state: ChatStateDTO?
     /// profile: the whole card of whoever changed theirs
     public let user: APIClient.UserDTO?
+    /// chat: the public names of the roster (no bio or avatar), so a new
+    /// chat's rows are named the moment the state lands
+    public let users: [APIClient.UserDTO]?
     public let forAll: Bool?
     public let serverTime: Double?
     /// msg: a service frame (skd/reaction/edit)
