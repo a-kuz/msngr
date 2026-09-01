@@ -10,9 +10,11 @@ and the ringtone, ICE restart under a live call, ICE candidates off the
 journal (the ephemeral `callRelay` frame), the missed-call push
 (`service` + `notify`), and 1:1 video with the self-view, the flip, the
 signalled camera-off and the video-call entry point in the chat header
-(`video` on the first offer, so the callee rings as a video call), and the
+(`video` on the first offer, so the callee rings as a video call), the
 three-way call: the invite from the call screen, a short-lived mesh of
-exactly three with the invited-by row.
+exactly three with the invited-by row — and call waiting: a second caller
+during a live call shows a banner with refuse (they hear busy) or
+end-and-accept, and the live call ending on its own rings the waiter.
 
 Each item below stands on its own unless its "needs" line says otherwise.
 

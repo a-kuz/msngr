@@ -656,4 +656,107 @@ final class CallManagerTests: XCTestCase {
         let state = await manager.current
         XCTAssertEqual(state.phase, .active)
     }
+
+    /// Puts the manager on a standing call as the callee, over the factory's
+    /// first transport, and lands a second caller's offer behind it.
+    private func activateWithWaiting(_ manager: CallManager, log: SignalLog,
+                                     factory: TransportFactoryLog) async {
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "s")))
+        await manager.accept()
+        factory.all[0].emit(.connected)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.handle(event(CallSignal(type: .offer, callId: "c2", sdp: "s2"),
+                                   chatId: "chat2", from: "second"))
+    }
+
+    /// A second caller during a standing call waits on the screen instead of
+    /// being answered busy.
+    func testSecondCallerWaitsInsteadOfBusy() async {
+        let (manager, log, factory, _) = makeConferenceManager()
+        await activateWithWaiting(manager, log: log, factory: factory)
+        let state = await manager.current
+        XCTAssertEqual(state.phase, .active)
+        XCTAssertEqual(state.waitingCallerId, "second")
+        XCTAssertFalse(log.types.contains(.end))
+    }
+
+    /// Refusing the waiter answers them busy and the call stands untouched.
+    func testDeclineWaitingSendsBusy() async {
+        let (manager, log, factory, _) = makeConferenceManager()
+        await activateWithWaiting(manager, log: log, factory: factory)
+        await manager.declineWaiting()
+        let state = await manager.current
+        XCTAssertEqual(state.phase, .active)
+        XCTAssertNil(state.waitingCallerId)
+        let end = log.all.last!
+        XCTAssertEqual(end.0.type, .end)
+        XCTAssertEqual(end.0.callId, "c2")
+        XCTAssertEqual(end.0.reason, .busy)
+        XCTAssertEqual(end.1, "chat2")
+        XCTAssertFalse(factory.all[0].closed)
+    }
+
+    /// Trading the call for the waiter: the live call is hung up over its own
+    /// chat and the waiter's offer is answered on a fresh transport.
+    func testAcceptWaitingSwapsTheCall() async {
+        let (manager, log, factory, _) = makeConferenceManager()
+        await activateWithWaiting(manager, log: log, factory: factory)
+        await manager.acceptWaiting()
+        let state = await manager.current
+        XCTAssertEqual(state.phase, .connecting)
+        XCTAssertEqual(state.peerUserId, "second")
+        XCTAssertEqual(state.chatId, "chat2")
+        XCTAssertEqual(state.callId, "c2")
+        XCTAssertNil(state.waitingCallerId)
+        let hangup = log.all.first { $0.0.type == .end }!
+        XCTAssertEqual(hangup.0.callId, "c1")
+        XCTAssertEqual(hangup.0.reason, .hangup)
+        XCTAssertEqual(hangup.1, "chat1")
+        XCTAssertTrue(factory.all[0].closed)
+        XCTAssertEqual(factory.all[1].remoteOffer, "s2")
+        let answer = log.all.last!
+        XCTAssertEqual(answer.0.type, .answer)
+        XCTAssertEqual(answer.1, "chat2")
+    }
+
+    /// The waiter hanging up on their side clears the banner, nothing else.
+    func testWaiterCancelClearsTheBanner() async {
+        let (manager, log, factory, _) = makeConferenceManager()
+        await activateWithWaiting(manager, log: log, factory: factory)
+        await manager.handle(event(CallSignal(type: .end, callId: "c2", reason: .cancel),
+                                   chatId: "chat2", from: "second"))
+        let state = await manager.current
+        XCTAssertEqual(state.phase, .active)
+        XCTAssertNil(state.waitingCallerId)
+        XCTAssertFalse(factory.all[0].closed)
+        _ = log
+    }
+
+    /// The live call ending on its own promotes the waiter to ringing.
+    func testPeerEndPromotesWaiterToRinging() async {
+        let (manager, log, factory, _) = makeConferenceManager()
+        await activateWithWaiting(manager, log: log, factory: factory)
+        await manager.handle(event(CallSignal(type: .end, callId: "c1", reason: .hangup)))
+        let state = await manager.current
+        XCTAssertEqual(state.phase, .ringing)
+        XCTAssertEqual(state.peerUserId, "second")
+        XCTAssertEqual(state.callId, "c2")
+        XCTAssertNil(state.waitingCallerId)
+        await manager.accept()
+        XCTAssertEqual(factory.all[1].remoteOffer, "s2")
+        _ = log
+    }
+
+    /// A second offer while merely ringing is still answered busy: nothing
+    /// stands to wait behind.
+    func testSecondOfferWhileRingingStaysBusy() async {
+        let (manager, log, _, _) = makeConferenceManager()
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "s")))
+        await manager.handle(event(CallSignal(type: .offer, callId: "c2", sdp: "s2"),
+                                   chatId: "chat2", from: "second"))
+        let state = await manager.current
+        XCTAssertEqual(state.phase, .ringing)
+        XCTAssertNil(state.waitingCallerId)
+        XCTAssertEqual(log.all.last!.0.reason, .busy)
+    }
 }
