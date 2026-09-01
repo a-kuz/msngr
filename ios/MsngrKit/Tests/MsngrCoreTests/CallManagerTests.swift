@@ -535,6 +535,97 @@ final class CallManagerTests: XCTestCase {
         return (manager, log, factory, invites)
     }
 
+    /// Collects the conference cards a manager writes, with their chats.
+    final class CardSink: @unchecked Sendable {
+        private let lock = NSLock()
+        private var items: [(CallLive, String)] = []
+        func record(_ card: CallLive, chatId: String) {
+            lock.lock(); items.append((card, chatId)); lock.unlock()
+        }
+        var all: [(CallLive, String)] {
+            lock.lock(); defer { lock.unlock() }
+            return items
+        }
+    }
+
+    private func makeCardManager() -> (CallManager, SignalLog, TransportFactoryLog, CardSink) {
+        let log = SignalLog()
+        let factory = TransportFactoryLog()
+        let cards = CardSink()
+        let manager = CallManager(
+            ownUserId: "me",
+            sendSignal: { log.record($0, chatId: $1) },
+            makeTransport: { factory.make() },
+            openChat: { userId in "direct:me-\(userId)" },
+            sendLiveCard: { cards.record($0, chatId: $1) },
+            iceRestartDelay: 60)
+        return (manager, log, factory, cards)
+    }
+
+    /// The inviter writes the live card into the chat the call started in and
+    /// into the invited person's chat, naming everyone in the call.
+    func testInviteLeavesTheLiveCardInBothChats() async {
+        let (manager, log, factory, cards) = makeCardManager()
+        await manager.startCall(chatId: "chat1", peerUserId: "peer")
+        await manager.handle(event(CallSignal(type: .answer, callId: log.all[0].0.callId, sdp: "a")))
+        factory.all[0].emit(.connected)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        await manager.invite(userId: "carol")
+        XCTAssertEqual(Set(cards.all.map(\.1)), ["chat1", "direct:me-carol"])
+        for (card, _) in cards.all {
+            XCTAssertEqual(card.callId, log.all[0].0.callId)
+            XCTAssertEqual(Set(card.memberIds), ["me", "peer", "carol"])
+            XCTAssertTrue(card.isLive)
+        }
+    }
+
+    /// Hanging up closes every card this device wrote, once, and nothing is
+    /// written after that.
+    func testHangUpClosesTheLiveCards() async {
+        let (manager, log, factory, cards) = makeCardManager()
+        await manager.startCall(chatId: "chat1", peerUserId: "peer")
+        await manager.handle(event(CallSignal(type: .answer, callId: log.all[0].0.callId, sdp: "a")))
+        factory.all[0].emit(.connected)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.invite(userId: "carol")
+        let before = cards.all.count
+
+        await manager.hangUp()
+        let after = Array(cards.all.dropFirst(before))
+        XCTAssertEqual(Set(after.map(\.1)), ["chat1", "direct:me-carol"])
+        XCTAssertEqual(after.count, 2, "one closing card per chat, none for the legs torn down after")
+        XCTAssertTrue(after.allSatisfy { $0.0.endedAt != nil })
+    }
+
+    /// A member of neither chat with no card of their own — the invited
+    /// person, say — reads the card and joins: an offer with the card's callId
+    /// to its writer over this chat, and a leg to every other member.
+    func testJoinFromTheCardDialsTheWriterAndTheMembers() async {
+        let (manager, log, _, cards) = makeCardManager()
+        let card = CallLive(callId: "c1", startedAt: 100,
+                            members: [.init(id: "alice", name: "Alice"), .init(id: "bob", name: "Bob")])
+        await manager.join(card, chatId: "direct:me-alice", hostUserId: "alice")
+        let state = await manager.current
+        XCTAssertEqual(state.phase, .dialing)
+        XCTAssertEqual(state.callId, "c1")
+        XCTAssertEqual(state.peerUserId, "alice")
+        XCTAssertEqual(state.extraPeers, ["bob"])
+        XCTAssertEqual(log.types, [.offer, .offer])
+        XCTAssertEqual(log.all.map(\.1), ["direct:me-alice", "direct:me-bob"])
+        XCTAssertTrue(log.all.allSatisfy { $0.0.callId == "c1" })
+        XCTAssertTrue(cards.all.isEmpty, "the joiner writes no card of its own")
+
+        // an ended card is not joinable
+        let (idle, idleLog, _, _) = makeCardManager()
+        var ended = card
+        ended.endedAt = 200
+        await idle.join(ended, chatId: "direct:me-alice", hostUserId: "alice")
+        let idleState = await idle.current
+        XCTAssertEqual(idleState.phase, .idle)
+        XCTAssertTrue(idleLog.all.isEmpty)
+    }
+
     /// The inviter: a second leg opens toward the invited person, the offer
     /// names everyone already in, and the invited-by row lands in their chat.
     func testInviteOpensALegAndLeavesTheRow() async {

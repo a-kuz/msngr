@@ -76,6 +76,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     var onOpenLocation: (() -> Void)?
     /// a tap on a call row, asking to dial the peer again
     var onRedial: (() -> Void)?
+    /// a tap on a live conference card, asking to join that call
+    var onJoinCall: (() -> Void)?
     /// who this device is, for the poll's own-vote state
     var ownUserId = ""
     /// the key this account's vote sits under in a poll (its anonymous
@@ -177,6 +179,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         bubbleView.addSubview(locationView)
         callView.isHidden = true
         callView.onRedial = { [weak self] in self?.onRedial?() }
+        callView.onJoin = { [weak self] in self?.onJoinCall?() }
         bubbleView.addSubview(callView)
         shaderView.isHidden = true
         shaderView.isUserInteractionEnabled = true

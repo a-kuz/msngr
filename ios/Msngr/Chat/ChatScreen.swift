@@ -603,6 +603,13 @@ struct ChatScreen: View {
                          guard model.chat?.kind == .direct, let peerId = model.peer?.id else { return }
                          Task { await AppState.shared.callManager?.startCall(chatId: chatId, peerUserId: peerId) }
                      },
+                     onJoinCall: { msg in
+                         guard let card = msg.callLive else { return }
+                         Task {
+                             await AppState.shared.callManager?.join(card, chatId: chatId,
+                                                                     hostUserId: msg.fromUserId)
+                         }
+                     },
                      onDateTap: { showCalendar = true })
     }
 
@@ -1557,6 +1564,7 @@ struct MessagesView: UIViewControllerRepresentable {
     var onOpenContact: (Message) -> Void
     var onOpenLocation: (Message) -> Void
     var onRedial: () -> Void
+    var onJoinCall: (Message) -> Void
     var onDateTap: () -> Void
 
     func makeUIViewController(context: Context) -> MessagesViewController {
@@ -1659,6 +1667,7 @@ struct MessagesView: UIViewControllerRepresentable {
         vc.onOpenContact = onOpenContact
         vc.onOpenLocation = onOpenLocation
         vc.onRedial = onRedial
+        vc.onJoinCall = onJoinCall
         vc.onDateTap = onDateTap
         vc.pinnedSeqs = Set(model.chat?.pinnedSeqs ?? [])
         vc.ownUserId = model.ownUserId

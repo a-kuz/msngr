@@ -132,6 +132,11 @@ public actor CallManager {
     private let makeTransport: TransportFactory
     private let openChat: ChatOpener
     private let sendInviteRow: @Sendable (_ chatId: String, _ invitedUserId: String) async -> Void
+    /// Writes or updates the conference card in a chat.
+    private let sendLiveCard: @Sendable (CallLive, _ chatId: String) async -> Void
+    /// The chats holding this call's card, written by this device: the
+    /// inviter's, refreshed as people come and go and closed when the call ends.
+    private var liveCardChats: Set<String> = []
     private let dialTimeout: TimeInterval
     /// conference links beyond the primary peer, by userId
     private var extras: [String: PeerLink] = [:]
@@ -184,6 +189,7 @@ public actor CallManager {
                 makeTransport: @escaping TransportFactory,
                 openChat: @escaping ChatOpener = { _ in nil },
                 sendInviteRow: @Sendable @escaping (String, String) async -> Void = { _, _ in },
+                sendLiveCard: @Sendable @escaping (CallLive, String) async -> Void = { _, _ in },
                 dialTimeout: TimeInterval = CallSignal.offerLifetime,
                 iceRestartDelay: TimeInterval = 3.0) {
         self.ownUserId = ownUserId
@@ -193,6 +199,7 @@ public actor CallManager {
         self.makeTransport = makeTransport
         self.openChat = openChat
         self.sendInviteRow = sendInviteRow
+        self.sendLiveCard = sendLiveCard
         self.dialTimeout = dialTimeout
         self.iceRestartDelay = iceRestartDelay
     }
@@ -214,6 +221,9 @@ public actor CallManager {
                   openChat: openChat,
                   sendInviteRow: { [weak engine] chatId, invitedUserId in
                       await engine?.sendCallInviteRow(chatId: chatId, invitedUserId: invitedUserId)
+                  },
+                  sendLiveCard: { [weak engine] card, chatId in
+                      await engine?.sendCallLive(card, chatId: chatId)
                   })
         let signals = engine.callSignalStream.subscribe()
         Task { [weak self] in
@@ -311,8 +321,59 @@ public actor CallManager {
             await sendSignal(CallSignal(type: .offer, callId: callId, sdp: sdp,
                                         members: everyone), chatId)
             await sendInviteRow(chatId, userId)
+            // the card goes into the chat the call started in and into the
+            // invited person's chat; from here on this device keeps both current
+            if let primary = state.chatId { liveCardChats.insert(primary) }
+            liveCardChats.insert(chatId)
+            await refreshLiveCards()
         } catch {
             await closeLink(userId)
+        }
+    }
+
+    /// Joins the running conference a live card describes: an offer with its
+    /// callId to the card's writer over this chat — the callId is the ticket,
+    /// so it joins in place without ringing — and a leg to every other member.
+    public func join(_ card: CallLive, chatId: String, hostUserId: String) async {
+        guard case .idle = state.phase, card.isLive, hostUserId != ownUserId else { return }
+        isCaller = false
+        state = CallState(phase: .dialing, chatId: chatId, peerUserId: hostUserId, callId: card.callId)
+        do {
+            let transport = try makeTransport()
+            self.transport = transport
+            consume(transport)
+            let sdp = try await transport.makeOffer()
+            guard state.callId == card.callId, state.phase == .dialing else { return }
+            await sendSignal(CallSignal(type: .offer, callId: card.callId, sdp: sdp), chatId)
+            armDialTimeout(callId: card.callId)
+            for member in card.memberIds where member != ownUserId && member != hostUserId {
+                await dialLink(to: member, callId: card.callId)
+            }
+        } catch {
+            await finish(reason: .failed, notifyPeer: false)
+        }
+    }
+
+    /// Everyone in the call as this device sees it, this device first.
+    private var liveMembers: [String] {
+        var members = [ownUserId]
+        if let primary = state.peerUserId { members.append(primary) }
+        members.append(contentsOf: state.extraPeers)
+        return members
+    }
+
+    /// Brings every card this device wrote up to date; `endedAt` closes them
+    /// and forgets the chats, so nothing is written after the call.
+    private func refreshLiveCards(endedAt: Double? = nil) async {
+        guard !liveCardChats.isEmpty, let callId = state.callId else { return }
+        let card = CallLive(callId: callId,
+                            startedAt: state.connectedAt ?? Date().timeIntervalSince1970,
+                            members: liveMembers.map { CallLive.Member(id: $0, name: "") },
+                            endedAt: endedAt)
+        let chats = liveCardChats
+        if endedAt != nil { liveCardChats = [] }
+        for chatId in chats {
+            await sendLiveCard(card, chatId)
         }
     }
 
@@ -351,6 +412,7 @@ public actor CallManager {
                 await transport.add(candidates: early)
             }
             await sendSignal(CallSignal(type: .answer, callId: callId, sdp: answer), event.chatId)
+            await refreshLiveCards()
         } catch {
             await closeLink(event.fromUserId)
         }
@@ -405,6 +467,7 @@ public actor CallManager {
         link.flushTask?.cancel()
         await link.transport.close()
         state.extraPeers.removeAll { $0 == userId }
+        await refreshLiveCards()
     }
 
     /// Refuses the ringing call.
@@ -921,7 +984,10 @@ public actor CallManager {
     }
 
     private func teardown(showing phase: CallPhase) async {
-        if case .ended(let reason) = phase { await publishLog(reason: reason) }
+        if case .ended(let reason) = phase {
+            await publishLog(reason: reason)
+            await refreshLiveCards(endedAt: Date().timeIntervalSince1970)
+        }
         var next = state
         next.phase = phase
         next.muted = false

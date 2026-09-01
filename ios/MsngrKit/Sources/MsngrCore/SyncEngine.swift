@@ -1724,6 +1724,36 @@ public actor SyncEngine {
         try? await enqueue(content: content, chatId: chatId, clientMsgId: "clog:\(log.callId)")
     }
 
+    /// Writes the conference card into a chat, or brings the one already
+    /// there up to date: the first call lands the row, every later one edits
+    /// it in place, so a chat holds one card per call. Member names are filled
+    /// in here from the user table, since the reader's chat may not know them.
+    public func sendCallLive(_ card: CallLive, chatId: String) async {
+        let looked = try? await db.read { dbc -> (members: [CallLive.Member], existingId: String?) in
+            let members = try card.members.map { member in
+                CallLive.Member(id: member.id,
+                                name: try String.fetchOne(dbc, sql: "SELECT displayName FROM user WHERE id = ?",
+                                                          arguments: [member.id]) ?? member.name)
+            }
+            let existing = try String.fetchOne(
+                dbc, sql: "SELECT id FROM message WHERE chatId = ? AND kind = 'call' AND text LIKE ? AND text LIKE ?",
+                arguments: [chatId, CallLive.prefix + "%", "%\"callId\":\"\(card.callId)\"%"])
+            return (members, existing)
+        }
+        var named = card
+        if let members = looked?.members { named.members = members }
+        if let existingId = looked?.existingId {
+            var edit = ContentPayload(kind: "edit")
+            edit.targetLocalId = existingId
+            edit.text = named.encoded
+            try? await enqueue(content: edit, chatId: chatId)
+        } else {
+            var content = ContentPayload(kind: CallLive.kind)
+            content.text = named.encoded
+            try? await enqueue(content: content, chatId: chatId, clientMsgId: "clive:\(card.callId):\(chatId)")
+        }
+    }
+
     func applyContent(_ content: ContentPayload, chatId: String,
                       seq: Int, from: String, sentAt: Double, ts: Double) async {
         try? await db.write { [ownUserId] dbc in
@@ -2298,12 +2328,14 @@ public actor SyncEngine {
     /// everyone, but raises no unread count and no push.
     public static let serviceKinds: Set<String> =
         Set(["edit", "reaction", "disappearing", "listened", "pollVote", "callback",
-             CallSignal.kind, CallLog.kind, GroupEvent.kind])
+             CallSignal.kind, CallLog.kind, CallLive.kind, GroupEvent.kind])
         .union(SyncEngine.repairKinds)
 
-    /// Service content with no feed row of its own. A group event and a call
-    /// log are the exceptions: service on the wire, a row in the feed.
-    public static let rowlessKinds: Set<String> = serviceKinds.subtracting([GroupEvent.kind, CallLog.kind])
+    /// Service content with no feed row of its own. A group event, a call log
+    /// and a live call card are the exceptions: service on the wire, a row in
+    /// the feed.
+    public static let rowlessKinds: Set<String> =
+        serviceKinds.subtracting([GroupEvent.kind, CallLog.kind, CallLive.kind])
 
     /// Rowless kinds whose sent payload is kept under its seq
     /// (`sentServiceFrame`): they leave no message row to rebuild a repair
@@ -2342,7 +2374,7 @@ public actor SyncEngine {
         let now = Date().timeIntervalSince1970
         let isGroupEvent = content.kind == GroupEvent.kind
         let rowKind: MessageKind = isGroupEvent ? .system
-            : content.kind == CallLog.kind ? .call
+            : content.kind == CallLog.kind || content.kind == CallLive.kind ? .call
             : (MessageKind(rawValue: content.kind) ?? .text)
         var msg = Message(id: clientMsgId, chatId: chatId, fromUserId: ownUserId, sentAt: now,
                           kind: rowKind,
