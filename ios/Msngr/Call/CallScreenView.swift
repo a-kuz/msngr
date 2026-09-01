@@ -9,7 +9,9 @@ import MsngrCalls
 struct CallScreenView: View {
     @EnvironmentObject private var app: AppState
     @State private var peer: User?
+    @State private var extraNames: [String] = []
     @State private var transport: WebRTCTransport?
+    @State private var invitePickerShown = false
 
     private var state: CallState { app.callState }
 
@@ -27,9 +29,11 @@ struct CallScreenView: View {
                 if !state.remoteVideo {
                     AvatarView(name: peer?.displayName ?? "", avatarId: peer?.avatarId)
                         .frame(width: 104, height: 104)
-                    Text(peer?.displayName ?? "…")
+                    Text(names)
                         .textRole(Theme.Text.callName)
+                        .multilineTextAlignment(.center)
                         .padding(.top, 20)
+                        .padding(.horizontal, 24)
                     statusLine
                         .padding(.top, 6)
                 }
@@ -81,6 +85,30 @@ struct CallScreenView: View {
                 .accessibilityIdentifier("call.minimize")
             }
         }
+        .overlay(alignment: .topTrailing) {
+            // pulling a third person in: only on a standing call, and the
+            // mesh carries three at most
+            if state.phase == .active, state.extraPeers.count < 2, !state.localVideo {
+                Button {
+                    invitePickerShown = true
+                } label: {
+                    Image(systemName: "person.badge.plus")
+                        .font(Theme.glyph(17, max: 22))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .padding(.trailing, 8)
+                .accessibilityIdentifier("call.invite")
+            }
+        }
+        .sheet(isPresented: $invitePickerShown) {
+            CallInvitePicker(exclude: Set([app.session?.userId, state.peerUserId]
+                                              .compactMap { $0 } + state.extraPeers)) { userId in
+                Task { await app.callManager?.invite(userId: userId) }
+            }
+            .environmentObject(app)
+        }
         // the screen owns the display whole: a keyboard left up by the chat
         // underneath must not squeeze the controls upward — nor stay on top
         // of them, so whatever holds focus lets it go
@@ -89,7 +117,9 @@ struct CallScreenView: View {
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
                                             to: nil, from: nil, for: nil)
         }
-        .task(id: state.peerUserId) { await loadPeer() }
+        .task(id: "\(state.peerUserId ?? "")|\(state.extraPeers.joined(separator: ","))") {
+            await loadPeer()
+        }
         .accessibilityIdentifier("call.screen")
     }
 
@@ -180,14 +210,29 @@ struct CallScreenView: View {
         }
     }
 
+    /// Everyone on the call, the primary peer first.
+    private var names: String {
+        ([peer?.displayName ?? "…"] + extraNames).joined(separator: ", ")
+    }
+
     private func loadPeer() async {
         guard let id = state.peerUserId, let db = app.db else {
             peer = nil
+            extraNames = []
             return
         }
-        peer = try? await db.read { dbc in
-            try User.fetchOne(dbc, key: id).map { try ContactBookName.applied(dbc, to: $0) }
+        let extras = state.extraPeers
+        let loaded = try? await db.read { dbc -> (User?, [String]) in
+            let peer = try User.fetchOne(dbc, key: id)
+                .map { try ContactBookName.applied(dbc, to: $0) }
+            let names = try extras.compactMap { userId in
+                try User.fetchOne(dbc, key: userId)
+                    .map { try ContactBookName.applied(dbc, to: $0).displayName }
+            }
+            return (peer, names)
         }
+        peer = loaded?.0
+        extraNames = loaded?.1 ?? []
     }
 
     private static func duration(since start: Double?) -> String {
