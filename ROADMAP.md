@@ -1214,7 +1214,11 @@ build takes it from the environment (`make device TEAM=…`, local.mk).
     thread; after the fix the chat list's cost fell by a factor of 81
 - ⬜ measured 60/120 fps on a chat of tens of thousands of messages
 - ✅ animated reordering in the chat list (qa/runs/2026-08-21-chatlist-reorder)
-- ⬜ preloading and prefetching images along the scroll direction
+- 🟡 preloading and prefetching images along the scroll direction: the feed is
+    a prefetching data source and pulls the pictures of the cells the scroll is
+    about to reach, albums included (verified live by the callback and queue
+    counters on a chat of hundreds of photos); what it wins is not measurable
+    on the simulator against a local stand and needs a device
 
 ## The backend rework: a DO per user
 
