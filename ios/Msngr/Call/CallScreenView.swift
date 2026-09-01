@@ -46,27 +46,26 @@ struct CallScreenView: View {
                     .padding(.bottom, 56)
             }
             if state.localVideo, let transport {
-                LocalVideoView(transport: transport)
-                    .frame(width: 108, height: 144)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .overlay(alignment: .bottomTrailing) {
-                        Button {
-                            transport.switchCamera()
-                        } label: {
-                            Image(systemName: "arrow.triangle.2.circlepath.camera")
-                                .font(Theme.glyph(13, max: 17))
-                                .foregroundStyle(.white)
-                                .padding(6)
-                                .background(Circle().fill(.black.opacity(0.35)))
+                FloatingTile(margin: 14) {
+                    LocalVideoView(transport: transport)
+                        .frame(width: 108, height: 144)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .overlay(alignment: .bottomTrailing) {
+                            Button {
+                                transport.switchCamera()
+                            } label: {
+                                Image(systemName: "arrow.triangle.2.circlepath.camera")
+                                    .font(Theme.glyph(13, max: 17))
+                                    .foregroundStyle(.white)
+                                    .padding(6)
+                                    .background(Circle().fill(.black.opacity(0.35)))
+                            }
+                            .padding(4)
+                            .accessibilityIdentifier("call.flipCamera")
                         }
-                        .padding(4)
-                        .accessibilityIdentifier("call.flipCamera")
-                    }
-                    .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity,
-                           alignment: .topTrailing)
-                    .padding(.top, 52)
-                    .padding(.trailing, 14)
+                        .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
+                }
+                .padding(.top, 52)
             }
         }
         // re-read on every state change: the screen appears the instant the

@@ -841,6 +841,11 @@ public actor SyncEngine {
                                                 plaintext: plainChats.contains(item.chatId)))
                         ?? .undecryptable(reason: "exception")
                 }
+                // his envelope opened: the session in place works, and the next
+                // failure from him may rebuild it without waiting out the window
+                if case .undecryptable = result {} else {
+                    pairwiseRebuiltAt[item.from] = nil
+                }
                 switch result {
                 case .content(let payload) where payload.kind == CallSignal.kind:
                     deliverCallSignal(payload, chatId: item.chatId, from: item.from,
@@ -1243,6 +1248,7 @@ public actor SyncEngine {
             }
             return false
         }
+        pairwiseRebuiltAt[pending.from] = nil
         await storeIncoming(result, chatId: pending.chatId, seq: pending.seq,
                             from: pending.from, fromDevice: pending.fromDevice,
                             sentAt: pending.sentAt, ts: pending.ts)
@@ -1291,6 +1297,12 @@ public actor SyncEngine {
             "gave up chat=\(pending.chatId, privacy: .public) seq=\(pending.seq, privacy: .public) reason=\(pending.reason ?? "unknown", privacy: .public) attempts=\(pending.attempts, privacy: .public)")
     }
 
+    /// When the pairwise session with a peer was last marked for a rebuild, so
+    /// a wave of repair requests to him pays for one X3DH instead of one per
+    /// request. A peer whose envelope opens again is taken out: the session in
+    /// place works, and the next failure may rebuild at once.
+    private var pairwiseRebuiltAt: [String: Double] = [:]
+
     /// Asks the sender for a fresh copy once the attempt count and the backoff
     /// allow it. The user is not part of this: the request goes on its own.
     private func requestRepairIfDue(_ pending: PendingEnvelope, now: Double) async {
@@ -1325,9 +1337,15 @@ public actor SyncEngine {
         let attempt = pending.repairAttempts + 1
         // the session failed to open his envelope and the request would leave
         // through that same session; marking it for rebuild sends the request
-        // over a fresh X3DH, and the answer comes back into the new one
-        if let reason = pending.reason, MessageRepair.sessionReasons.contains(reason) {
+        // over a fresh X3DH, and the answer comes back into the new one. One
+        // rebuild serves the whole wave: a second one would throw away the
+        // session the first request has just built, and pay for another prekey
+        // bundle and another X3DH to do it
+        if let reason = pending.reason, MessageRepair.sessionReasons.contains(reason),
+           MessageRepair.sessionRebuildDue(lastRebuiltAt: pairwiseRebuiltAt[pending.from] ?? 0,
+                                           now: now) {
             try? e2ee.resetPairwiseSession(with: pending.from)
+            pairwiseRebuiltAt[pending.from] = now
         }
         var request = ContentPayload(kind: "repairRequest")
         request.to = pending.from
@@ -2485,6 +2503,22 @@ public actor SyncEngine {
 
     private var draining = false
 
+    /// Which item leaves next. The queue of one chat keeps its own order, but
+    /// the chats take turns: a wave of repair answers is thousands of frames in
+    /// one chat, and draining strictly by time held every other chat's messages
+    /// — new ones included — behind that wave.
+    static func nextToSend(_ ready: [OutboxItem], skipped: Set<String>,
+                           after lastChat: String?) -> OutboxItem? {
+        let waiting = ready.filter { !skipped.contains($0.clientMsgId) }
+        guard !waiting.isEmpty else { return nil }
+        // the chats in the order their oldest waiting item stands
+        var chats: [String] = []
+        for item in waiting where !chats.contains(item.chatId) { chats.append(item.chatId) }
+        let start = lastChat.flatMap { chats.firstIndex(of: $0) }.map { $0 + 1 } ?? 0
+        let chat = chats[start % chats.count]
+        return waiting.first { $0.chatId == chat }
+    }
+
     private func drainOutbox() async {
         guard connected, !draining else { return }
         draining = true
@@ -2493,13 +2527,19 @@ public actor SyncEngine {
         /// ready for the next pass, but must not head-of-line the rest of the
         /// queue within this one.
         var skipped: Set<String> = []
+        /// The chat whose item left last, so the next one comes from another
+        /// chat while there is one waiting.
+        var lastChat: String?
         while connected {
-            guard let item = (try? await db.read { dbc in
+            let ready = (try? await db.read { dbc in
                 // a scheduled item is ready too: it leaves now as a deferred
                 // envelope for the server to journal at its time
                 try OutboxItem.fetchAll(
                     dbc, sql: "SELECT * FROM outbox WHERE state = 'ready' ORDER BY createdAt")
-            })?.first(where: { !skipped.contains($0.clientMsgId) }) else { break }
+            }) ?? []
+            guard let item = SyncEngine.nextToSend(ready, skipped: skipped, after: lastChat)
+            else { break }
+            lastChat = item.chatId
 
             do {
                 try await sendOutboxItem(item)

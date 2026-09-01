@@ -48,6 +48,18 @@ public enum MessageRepair {
         "no_session", "pk_decrypt_failed", "bad_pk", "no_ciphertext", "exception",
     ]
 
+    /// Shortest wait between two rebuilds of the same pairwise session. A wave
+    /// of repair requests to one peer needs one fresh session, not one per
+    /// request: a rebuild costs a prekey bundle over the network and an X3DH
+    /// under the crypto gate, and rebuilding again throws away the session the
+    /// previous request has just built and the answer is coming back into.
+    public static let sessionRebuildInterval: TimeInterval = 60
+
+    /// True when the pairwise session with this peer should be rebuilt now.
+    public static func sessionRebuildDue(lastRebuiltAt: Double, now: Double) -> Bool {
+        now - lastRebuiltAt >= sessionRebuildInterval
+    }
+
     /// Shortest wait between two replays of the same envelope by the sweep.
     /// The replay that follows a freshly arrived key is not held back by it:
     /// that one runs the moment the key lands.
