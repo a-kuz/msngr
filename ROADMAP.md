@@ -67,7 +67,10 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ contact access on an explicit tap, the address book name taking
     precedence (qa/runs/2026-08-27-phone-discovery-run: «Boris Bravov» shown
     over the profile's «Bravo Service»)
-  - ⬜ inviting people who are not registered
+  - ✅ inviting people who are not registered: the numbers discovery could
+    not match get their own section in the new chat sheet, each row opening
+    the share sheet with an invite text carrying the sender's handle
+    (qa/runs/2026-09-01-invite-unregistered.md)
 
 ## The chat list
 
