@@ -177,26 +177,6 @@ peers drop the cached set and the per-send TOFU check reads the rotated key
 (smoke `identity heal bumped the device-set version`, `the rotated key is
 what peers now read`).
 
-### A read message's own banner shows over the open chat and stays in the shade
-Found 2026-08-27 during the notification-withdraw run
-(qa/runs/2026-08-27-notification-withdraw-run.md). A message arrived over the
-socket while the app sat in the background with the chat open behind it; the
-app posted its local notification, as designed for the background. On
-returning to the foreground the banner presented over the very chat that
-already showed the message, and after the message was read the notification
-was still in the shade a minute later, alone — the pushed stack around it was
-withdrawn correctly. Both halves closed in code: `shouldPresentSystemPush` now declines a local
-banner too when its chat is open or its message is read (the isLocal bypass
-kept only against the self-dedup — NotificationDecisionTests, the two
-own-local suppression cases), and the local-notification `add` re-runs
-`dropReadNotifications` after it lands, closing the race with the read's
-sweep. A live pass was attempted 2026-08-29 on the alfa fixture and came back
-inconclusive for this defect: the message from bravo never reached the feed
-at all (the severed alfa↔bravo pair, its own entry above), so no notification
-existed to present or withdraw — nothing showed over the open chat and the
-shade stayed empty, but that proves delivery was broken, not that the banner
-logic held. The live pass is still owed, on a chat pair whose sessions work.
-
 ### A held swipe on a chat row stutters
 Reported by the owner 2026-08-27: swiping a row sideways in the chat list
 with the finger kept on the screen, the row's motion is badly jerky. The list
@@ -292,6 +272,35 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### A read message's own banner shows over the open chat and stays in the shade
+Found 2026-08-27 during the notification-withdraw run
+(qa/runs/2026-08-27-notification-withdraw-run.md). A message arrived over the
+socket while the app sat in the background with the chat open behind it; the
+app posted its local notification, as designed for the background. On
+returning to the foreground the banner presented over the very chat that
+already showed the message, and after the message was read the notification
+was still in the shade a minute later, alone — the pushed stack around it was
+withdrawn correctly. Both halves closed in code: `shouldPresentSystemPush` now declines a local
+banner too when its chat is open or its message is read (the isLocal bypass
+kept only against the self-dedup — NotificationDecisionTests, the two
+own-local suppression cases), and the local-notification `add` re-runs
+`dropReadNotifications` after it lands, closing the race with the read's
+sweep. A live pass was attempted 2026-08-29 on the alfa fixture and came back
+inconclusive for this defect: the message from bravo never reached the feed
+at all (the severed alfa↔bravo pair, its own entry above), so no notification
+existed to present or withdraw — nothing showed over the open chat and the
+shade stayed empty, but that proves delivery was broken, not that the banner
+logic held.
+The pass was run 2026-09-01 on the rebuilt bravo and charlie homes, whose
+sessions do work. The chat with charlie was open on bravo, the app went to the
+background, charlie wrote: the message arrived over the socket and the app
+posted its local notification, which stood alone in the shade. On the
+foreground the chat came up with the message in the feed and no banner
+presented over it, and once the message was read the shade was empty. Both
+halves hold. The notification here is the app's own, over the socket — the
+shared stand's pushes reach no simulator, so the APNs path is not what this
+run covers.
 
 ### A chat behind a flooded one stops receiving messages altogether
 Found 2026-09-01 while running the notification-banner scenario on the bravo
