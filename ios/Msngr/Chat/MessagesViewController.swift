@@ -155,6 +155,13 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         backSwipe.delegate = self
         view.addGestureRecognizer(backSwipe)
         collectionView.panGestureRecognizer.require(toFail: backSwipe)
+        // a tap on the feed puts the keyboard away; it cancels nothing and
+        // recognises alongside the bubbles' own taps, so a link or a picture
+        // still opens from the same touch
+        let dismissTap = UITapGestureRecognizer(target: self, action: #selector(feedTapped))
+        dismissTap.cancelsTouchesInView = false
+        dismissTap.delegate = self
+        collectionView.addGestureRecognizer(dismissTap)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardChanged(_:)),
                                                name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(typeScaleChanged),
@@ -275,6 +282,15 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         let start = backSwipe.location(in: nil).x - backSwipe.translation(in: nil).x
         let v = backSwipe.velocity(in: view)
         return start < MessageCell.backSwipeEdge && v.x > abs(v.y)
+    }
+
+    func gestureRecognizer(_ g: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        g is UITapGestureRecognizer
+    }
+
+    @objc private func feedTapped() {
+        view.window?.endEditing(true)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
