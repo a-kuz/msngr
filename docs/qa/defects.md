@@ -36,18 +36,6 @@ sheet. Needs a workaround (the crash is user-visible on exactly the desktop
 target); none found yet — no public switch turns the focus map off for a
 window, and the assertion fires inside UIKit's own snapshot pass.
 
-### The server smoke test fails on push timing, on a different check per run
-Found 2026-08-28 by the gate after the shader-messages merge
-(`.claude/gates/main-shader.log`): `no push for own echo` was red on the
-gate's throwaway stand. On a second throwaway stand (`wrangler dev --port
-8811`, a fresh persist dir with the migrations applied) that check passed and
-`cmid swept behind the sender's ack` failed instead, with the same code:
-neither merge touched `server/`. Both checks wait for a push or an alarm with
-a fixed timeout, so a loaded host is the first suspect, but two different
-checks red on two stands is not yet shown to be the host. To investigate:
-run the smoke test alone on an idle host, and if it stays red, read the
-push and alarm timings the DO logs against the timeouts the test uses.
-
 ### An own service frame drags myReadUpTo over the peer's unread messages
 Found 2026-08-28 in passing while verifying the in-chat mention counter: the
 «Design» fixture chat sat at `myReadUpTo = lastSeq = 123` with
@@ -286,6 +274,23 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### The server smoke test fails on push timing, on a different check per run
+Found 2026-08-28 by the gate after the shader-messages merge: `no push for
+own echo` red on one stand, `cmid swept behind the sender's ack` on another,
+with server code untouched. The cmid half was stand config (its own closed
+entry below: the stand needs `CMID_MIN_AGE:0 CMID_SWEEP_EVERY:0`). The push
+half was pinned 2026-09-01 by printing the offending push: its `from` and
+`chatId` were ulids of a *previous* smoke run — every run registered the
+same literal APNs tokens (`alice-sim-udid`), and the push queue, which by
+design never gives up an owed push, retried an old run's undelivered push
+into the new run's mock, where the whole-log check counted it. The product
+is right on both sides; on a reused persist dir the failure reproduced 5/5
+and three runs after the fix are green on the same dirty stand, plus one on
+a fresh one. Closed in the test: the tokens carry the run's suffix, so runs
+no longer see each other's pushes. Covers the 2026-09-01 «no push for own
+echo failed once under host load» sighting as well — that stand's persist
+was reused too.
 
 ### A new request appears in the list with no animation
 Seen 2026-08-27 in the README demo recording. When a stranger's first message
@@ -1037,9 +1042,9 @@ it, the way an edit already took effect at enqueue.
 Seen 2026-09-01 while running `server/test/smoke.mjs` on a local stand for the
 call-privacy work, with several xcodebuilds sharing the host. One run out of
 three reported the failure; the two others were green on the same code, and
-the case is untouched by the branch. Looks timing-dependent under load, the
-way the cmid-sweep case below was before its stand vars were found. Not
-reproduced in isolation; left open as a symptom to watch on gate runs.
+the case is untouched by the branch. Resolved 2026-09-01: a previous run's owed push retried into the new run's
+mock over the same literal token — see «The server smoke test fails on push
+timing» above. The tokens now carry the run's suffix.
 
 ### Smoke: «cmid swept behind the sender's ack» fails — stand config, not a defect
 Found 2026-08-31 while running `server/test/smoke.mjs` for the avatar-privacy
