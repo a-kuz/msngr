@@ -134,6 +134,14 @@ final class AppState: ObservableObject {
         await resetToRegistration()
     }
 
+    /// Deleting the account: the server erases it whole, then the device is
+    /// wiped the same way a logout wipes it. A failed request keeps the
+    /// account — deletion must not be local-only.
+    func deleteAccount() async {
+        guard (try? await api?.deleteAccount()) != nil else { return }
+        await resetToRegistration()
+    }
+
     /// Back to a clean slate without a restart: the engine is stopped, database
     /// references are released, storage files and local session settings erased.
     func resetToRegistration() async {

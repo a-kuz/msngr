@@ -15,6 +15,7 @@ struct SettingsView: View {
     @State private var pinEnabled = PinStore.hasPin()
     @State private var biometrics = PinStore.biometricsEnabled()
     @State private var showLogoutConfirm = false
+    @State private var showDeleteAccountConfirm = false
     /// the media cache size shown next to the clear button; the label re-renders
     /// only when this state moves, so the clear writes the new size back into it
     @State private var cacheSize: Int64 = 0
@@ -232,8 +233,14 @@ struct SettingsView: View {
                         Label("Log out", systemImage: "rectangle.portrait.and.arrow.right")
                     }
                     .accessibilityIdentifier("settings.logout")
+                    Button(role: .destructive) {
+                        showDeleteAccountConfirm = true
+                    } label: {
+                        Label("Delete account", systemImage: "person.crop.circle.badge.xmark")
+                    }
+                    .accessibilityIdentifier("settings.deleteAccount")
                 } footer: {
-                    Text("This device's access to the account is revoked; messages and keys are deleted.")
+                    Text("Log out revokes this device only; deleting the account removes it from the server for good. The backup file in Data is the export of what is yours.")
                 }
             }
             .navigationTitle("Settings")
@@ -270,6 +277,16 @@ struct SettingsView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("Messages and keys on this device will be deleted. They cannot be recovered.")
+            }
+            .confirmationDialog("Delete the account?", isPresented: $showDeleteAccountConfirm,
+                                titleVisibility: .visible) {
+                Button("Delete account", role: .destructive) {
+                    dismiss()
+                    Task { await app.deleteAccount() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The account, its keys and its username leave the server for good; groups are left. Peers keep their copies of the history. There is no way back.")
             }
             .sheet(isPresented: $showPinSetup) {
                 PinSetupView { pin in

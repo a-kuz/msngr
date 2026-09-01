@@ -2106,6 +2106,32 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
 }
 
 {
+  // --- deleting the account whole ---
+  const gone = "gone" + (Date.now() % 1e8);
+  const doomed = await api("/api/register", { body: {
+    username: gone, displayName: "Doomed", ...fakeKeys("dm") } });
+  check("delete: registered", doomed.ok, JSON.stringify(doomed));
+  const dg = await api("/api/chats", { token: alice.token, method: "POST", body: {
+    kind: "group", title: "Doomed group", members: [doomed.userId] } });
+  check("delete: sits in a group", dg.ok, JSON.stringify(dg));
+  const del = await api("/api/account/delete", { token: doomed.token, body: {} });
+  check("account delete ok", del.ok, JSON.stringify(del));
+  const after = await api("/api/me", { token: doomed.token });
+  check("deleted token rejected", after.error === "unauthorized", JSON.stringify(after));
+  const lst = await api("/api/chats", { token: alice.token });
+  const doomedGroup = (lst.chats ?? []).find((ch) => ch.state?.chatId === dg.chatId);
+  check("deleted user left the group",
+    !!doomedGroup && doomedGroup.state.members.every((m) => m.userId !== doomed.userId),
+    JSON.stringify(doomedGroup?.state?.members));
+  const roster = await api(`/api/users?q=${gone}`, { token: alice.token });
+  check("deleted user not found by search",
+    (roster.users ?? []).every((u) => u.username !== gone), JSON.stringify(roster.users));
+  const again = await api("/api/register", { body: {
+    username: gone, displayName: "Reborn", ...fakeKeys("rb") } });
+  check("the freed handle registers again", again.ok, JSON.stringify(again));
+}
+
+{
   // --- deferred send: the envelope waits on the server and leaves on time ---
   const due = Date.now() + 1500;
   ca.send({ t: "defer", chatId: chat.chatId, clientMsgId: "cm-def1", sentAt: Date.now(),

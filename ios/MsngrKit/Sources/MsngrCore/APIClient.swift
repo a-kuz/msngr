@@ -305,6 +305,12 @@ public final class APIClient: @unchecked Sendable {
         _ = try await request("api/logout", method: "POST", jsonBody: [String: String]())
     }
 
+    /// Deletes the account on the server: groups are left, the user row and
+    /// the user's object are erased, the username is freed.
+    public func deleteAccount() async throws {
+        _ = try await request("api/account/delete", method: "POST", jsonBody: [String: String]())
+    }
+
     /// Revokes the token of another device of ours; the server closes its socket with code 4401.
     public func revokeSession(deviceId: String) async throws {
         _ = try await request("api/sessions/\(deviceId)/revoke", method: "POST",

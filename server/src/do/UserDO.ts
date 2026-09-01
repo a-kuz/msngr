@@ -468,6 +468,18 @@ export class UserDO implements DurableObject {
         return json({ ok: true, sounds });
       }
 
+      case "/account-wipe": {
+        // the account is being deleted: close every socket and erase the
+        // object whole — keys, chat flags, sounds, the address book, tokens
+        for (const ws of this.sockets()) {
+          try { ws.close(1000, "account_deleted"); } catch { /* already gone */ }
+        }
+        await this.state.storage.deleteAlarm();
+        await this.state.storage.deleteAll();
+        this.userId = null;
+        return json({ ok: true });
+      }
+
       case "/sound-exceptions": {
         const chats: { chatId: string; sound: string }[] = [];
         for (const [k, v] of await this.state.storage.list<ChatFlags>({ prefix: "chat:" })) {

@@ -35,6 +35,46 @@
         }
       }
     },
+    "Delete account" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить аккаунт"
+          }
+        }
+      }
+    },
+    "Delete the account?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить аккаунт?"
+          }
+        }
+      }
+    },
+    "The account, its keys and its username leave the server for good; groups are left. Peers keep their copies of the history. There is no way back." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Аккаунт, его ключи и юзернейм навсегда удаляются с сервера; из групп вы выходите. У собеседников остаются их копии переписки. Пути назад нет."
+          }
+        }
+      }
+    },
+    "Log out revokes this device only; deleting the account removes it from the server for good. The backup file in Data is the export of what is yours." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выход отключает только это устройство; удаление аккаунта стирает его с сервера навсегда. Файл резервной копии в разделе «Данные» — это экспорт всего вашего."
+          }
+        }
+      }
+    },
     "Verified" : {
       "localizations" : {
         "ru" : {
