@@ -82,13 +82,25 @@ from `blocked = 620` to draining within the minute — `inflight` and `ready`
 alternating as the requests left — and the identity the store now trusts is
 byte-for-byte the one the server hands out for bravo's single device.
 
-What is left is the tail, and it is slow by construction rather than broken:
-the newest seq of a chat is let past the per-peer ceiling, but a message from
-twenty minutes ago still queues behind six thousand envelopes of debt, each
-with its own backoff. A pair that fell this far behind drains over hours. The
-question worth settling separately is whether a re-registered fixture peer
-should present as an identity change at all, since the homes are meant to be
-handed around.
+One more thing that kept the tail from ever ending, and it is fixed (2370886):
+an envelope that had spent its five attempts stayed a hole for good, so a pair
+that fell behind kept its holes even after the two of them could talk again.
+Such envelopes get their attempts back when one of the peer's messages opens —
+proof the session works — at most once every five minutes per peer, with the
+ceiling still governing how many are asked for at a time, and an envelope past
+the week it is kept for left alone so the sweep can still drop it.
+
+Where the pair stands as of 2026-09-02, measured on both homes with both
+online: alfa holds 6256 of bravo's envelopes, 2796 of them with every attempt
+spent and 20 in flight against the ceiling; bravo's outbox is not blocked and
+it trusts alfa, but its dozen answers sat `inflight` — sent, waiting for an ack
+that did not come — for five minutes without moving, and alfa's readable count
+in the chat did not change. So the revival above has not yet had its trigger:
+nothing of bravo's has opened on alfa since the acceptance. The next thread to
+pull is that stall between `inflight` and the ack, not the repair policy.
+
+Left over: whether a re-registered fixture peer should present as an identity
+change at all, since the homes are meant to be handed around.
 
 ### A held swipe on a chat row stutters
 Reported by the owner 2026-08-27: swiping a row sideways in the chat list
