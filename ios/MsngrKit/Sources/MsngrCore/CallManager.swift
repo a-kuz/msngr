@@ -10,6 +10,8 @@ public enum CallTransportEvent: Sendable {
     case disconnected
     /// the transport gave up
     case failed
+    /// the peer started (or stopped) sending video
+    case remoteVideo(Bool)
 }
 
 /// The media half of a call: SDP, ICE and audio live here. The production
@@ -27,6 +29,9 @@ public protocol CallMediaTransport: AnyObject, Sendable {
     func answerOffer(_ sdp: String) async throws -> String
     func add(candidates: [CallSignal.IceCandidate]) async
     func setMuted(_ muted: Bool) async
+    /// turns the local camera on or off; adding the track the first time
+    /// changes the SDP, so the manager follows up with a renegotiation offer
+    func setVideo(enabled: Bool) async
     func close() async
     func events() -> AsyncStream<CallTransportEvent>
 }
@@ -52,6 +57,10 @@ public struct CallState: Equatable, Sendable {
     public var peerUserId: String?
     public var callId: String?
     public var muted = false
+    /// this side's camera is sending
+    public var localVideo = false
+    /// the peer's camera is sending
+    public var remoteVideo = false
     /// when media started flowing, for the duration timer
     public var connectedAt: Double?
 
@@ -218,6 +227,23 @@ public actor CallManager {
         await transport?.setMuted(muted)
     }
 
+    /// Turns the local camera on or off. The first time a video track joins
+    /// the connection the SDP changes, so a renegotiation offer for the same
+    /// call follows; the peer answers it on the live transport.
+    public func setVideo(_ on: Bool) async {
+        guard state.phase == .active || state.phase == .connecting,
+              let transport, let chatId = state.chatId, let callId = state.callId else { return }
+        await transport.setVideo(enabled: on)
+        state.localVideo = on
+        if let sdp = try? await transport.makeOffer(), state.callId == callId {
+            await sendSignal(CallSignal(type: .offer, callId: callId, sdp: sdp), chatId)
+        }
+    }
+
+    /// The transport this call runs on, for the UI to reach media surfaces
+    /// (video renderers) the core does not model.
+    public func activeTransport() -> CallMediaTransport? { transport }
+
     /// The UI dismisses the ended-call screen.
     public func reset() {
         guard case .ended = state.phase else { return }
@@ -376,6 +402,8 @@ public actor CallManager {
             scheduleIceRestart()
         case .failed:
             await finish(reason: .failed, notifyPeer: true)
+        case .remoteVideo(let on):
+            state.remoteVideo = on
         }
     }
 
@@ -452,6 +480,8 @@ public actor CallManager {
         var next = state
         next.phase = phase
         next.muted = false
+        next.localVideo = false
+        next.remoteVideo = false
         await teardown(showing: next)
     }
 
