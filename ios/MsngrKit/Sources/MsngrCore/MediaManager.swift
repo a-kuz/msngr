@@ -159,6 +159,18 @@ public final class MediaManager: @unchecked Sendable {
         return try await task.value
     }
 
+    /// A blob that was never encrypted: a story's frame. A story is an access
+    /// rule rather than a key, so its bytes lie on the server as they are and
+    /// come back needing nothing but a cache entry.
+    public func fetchPlain(mediaId: String, mime: String) async throws -> URL {
+        if let cached = cachedURL(for: mediaId, mime: mime) { return cached }
+        let data = try await api.downloadMedia(mediaId)
+        let url = cacheDir.appendingPathComponent(cacheFileName(mediaId, mime: mime))
+        try data.write(to: url, options: .atomic)
+        enforceCacheCeiling()
+        return url
+    }
+
     /// The preview blob (a video's thumbnail), addressed by its own fields in MediaInfo.
     public func fetchThumb(_ media: MediaInfo) async throws -> URL? {
         guard let id = media.thumbMediaId, let keyB64 = media.thumbKey, let hashB64 = media.thumbHash else { return nil }

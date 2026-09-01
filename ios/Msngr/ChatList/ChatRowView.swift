@@ -4,7 +4,11 @@ import MsngrCore
 struct ChatRowView: View {
     let item: ChatListItem
     let ownUserId: String
+    /// Told by the list: a tap on a ringed avatar opens that author's stories
+    /// instead of the chat.
+    var onOpenStories: ((StoriesModel.Author) -> Void)?
     @ObservedObject private var theme = ThemeStore.shared
+    @ObservedObject private var stories = StoriesModel.shared
     @Environment(\.dynamicTypeSize) private var typeSize
     /// a beat of overshoot on the unread capsule while the count grows
     @State private var badgePulse = false
@@ -14,6 +18,19 @@ struct ChatRowView: View {
             AvatarView(name: item.title, avatarId: item.avatarId,
                        online: item.peer?.online ?? false, glyph: item.avatarGlyph)
                 .frame(width: avatarSide, height: avatarSide)
+                // a live story puts a ring around the picture: full while
+                // something in it is unwatched, faint once it has been seen
+                .overlay {
+                    if let peerId = item.peer?.id, stories.hasStories(peerId) {
+                        Circle()
+                            .strokeBorder(Theme.accent.opacity(stories.ring(for: peerId) ? 1 : 0.3),
+                                          lineWidth: 2)
+                            .padding(-3)
+                            .accessibilityIdentifier("chatlist.storyRing")
+                    }
+                }
+                .contentShape(Circle())
+                .onTapGesture { openStories() }
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 4) {
@@ -100,6 +117,12 @@ struct ChatRowView: View {
     /// The avatar grows with the row but slower than the text: at a large size
     /// it would otherwise eat half the row's width.
     private var avatarSide: CGFloat { typeSize.scaled(54, relativeTo: .subheadline, max: 74) }
+
+    private func openStories() {
+        guard let peerId = item.peer?.id,
+              let author = stories.authors.first(where: { $0.id == peerId }) else { return }
+        onOpenStories?(author)
+    }
     private var badgeSide: CGFloat { typeSize.scaled(21, relativeTo: .caption1, max: 32) }
 
     /// A request before it is accepted: no preview, no counter, no ticks.

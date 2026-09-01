@@ -536,6 +536,111 @@ public final class APIClient: @unchecked Sendable {
         struct Body: Encodable { let userId: String; let admin: Bool }
         _ = try await request("api/chats/\(chatId)/admins", method: "POST", jsonBody: Body(userId: userId, admin: admin))
     }
+    // MARK: - Stories
+
+    /// One frame of a story: a picture or a video, and the text laid over it.
+    /// Not encrypted — who may see the story is an access rule, not a key.
+    public struct StoryFrame: Codable, Equatable, Identifiable, Sendable {
+        public var mediaId: String
+        public var type: String        // photo | video
+        public var w: Int?
+        public var h: Int?
+        public var dur: Double?
+        public var text: String?
+        public var textColor: String?
+        public var plateColor: String?
+        /// Where the text sits on the frame, as a fraction of its width and
+        /// height: the author drags it there, and the page and the viewer both
+        /// put it back in the same place whatever the screen.
+        public var tx: Double?
+        public var ty: Double?
+        public var id: String { mediaId }
+
+        public init(mediaId: String, type: String, w: Int? = nil, h: Int? = nil,
+                    dur: Double? = nil, text: String? = nil,
+                    textColor: String? = nil, plateColor: String? = nil,
+                    tx: Double? = nil, ty: Double? = nil) {
+            self.mediaId = mediaId
+            self.type = type
+            self.w = w
+            self.h = h
+            self.dur = dur
+            self.text = text
+            self.textColor = textColor
+            self.plateColor = plateColor
+            self.tx = tx
+            self.ty = ty
+        }
+    }
+
+    public struct StoryDTO: Decodable, Identifiable, Equatable {
+        public let id: String
+        public let authorId: String
+        public let username: String
+        public let displayName: String
+        public let avatarId: String?
+        public let createdAt: Double
+        public let expiresAt: Double
+        public let frames: [StoryFrame]
+        public let audience: String
+        /// The public link, while the creator keeps one open.
+        public let link: String?
+        public let seen: Bool
+    }
+
+    public struct StoryViewer: Decodable, Identifiable, Equatable {
+        public let viewer_id: String
+        public let seen_at: Double
+        public let username: String
+        public let display_name: String
+        public let avatar_id: String?
+        public var id: String { viewer_id }
+    }
+
+    public struct StoryPosted: Decodable {
+        public let storyId: String
+        public let link: String?
+    }
+
+    public func postStory(frames: [StoryFrame], audience: String,
+                          hours: Int, link: Bool) async throws -> StoryPosted {
+        struct Body: Encodable {
+            let frames: [StoryFrame]; let audience: String; let hours: Int; let link: Bool
+        }
+        return try await post("api/stories",
+                              body: Body(frames: frames, audience: audience,
+                                         hours: hours, link: link),
+                              as: StoryPosted.self)
+    }
+
+    public func stories() async throws -> [StoryDTO] {
+        struct Response: Decodable { let stories: [StoryDTO] }
+        return try await get("api/stories", as: Response.self).stories
+    }
+
+    public func markStorySeen(_ storyId: String) async throws {
+        _ = try await request("api/stories/\(storyId)/seen", method: "POST", jsonBody: [String: String]())
+    }
+
+    public func storyViewers(_ storyId: String) async throws -> [StoryViewer] {
+        struct Response: Decodable { let viewers: [StoryViewer] }
+        return try await get("api/stories/\(storyId)/viewers", as: Response.self).viewers
+    }
+
+    public func takeStoryDown(_ storyId: String) async throws {
+        struct Body: Encodable { let takeDown: Bool }
+        _ = try await request("api/stories/\(storyId)", method: "POST", jsonBody: Body(takeDown: true))
+    }
+
+    /// Opens a public link or closes it. A closed one is never handed out
+    /// again: asking for a link after a revocation mints a new code.
+    public func setStoryLink(_ storyId: String, open: Bool) async throws -> String? {
+        struct Body: Encodable { let link: Bool }
+        struct Response: Decodable { let link: String? }
+        return try await post("api/stories/\(storyId)", body: Body(link: open),
+                              as: Response.self).link
+    }
+
     // MARK: - Bots
 
     public struct BotDTO: Decodable, Identifiable {
