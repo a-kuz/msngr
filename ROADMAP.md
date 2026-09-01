@@ -685,7 +685,11 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   - ✅ the 60-digit safety number in the chat info, matching the number an
     independent side computes for the same pair (qa/runs/2026-08-21-safety-number)
   - ⬜ comparing by QR
-  - ⬜ a "verified" mark after the comparison
+  - ✅ a "verified" mark after the comparison: the toggle under the unfolded
+    safety number, a static seal while it is folded, kept in the local trust
+    table and dropped by an accepted key change
+    (qa/runs/2026-09-01-verified-mark.md; KeyChangeTests
+    `testVerifiedMarkClearsOnKeyChange`)
 - Privacy
   - ✅ blocking a user takes effect in an existing chat: a blocked user's send is
     not delivered, and the blocker gets an explicit `blocked` error instead of a
