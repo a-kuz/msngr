@@ -34,12 +34,14 @@ covered by the smoke test.
 
 ## Features not built yet
 
-### 1:1 video
-The transport is already WebRTC: add the camera track next to the audio one,
-a local preview, the remote stream rendered full-screen in CallScreen, a
-camera on/off toggle and front/back flip. The signaling does not change
-(the SDP renegotiates media by itself); the offer may carry `video: true`
-so the ringing screen can say what kind of call it is.
+### 1:1 video: what remains
+The core is shipped: the camera toggle in the call renegotiates the same
+call, the peer's stream renders full-screen, the self-view floats in the
+corner, and the simulator exercises the whole pipeline through a synthetic
+capturer. What remains: the front/back camera flip, telling the peer the
+camera went *off* (today their view just freezes), a video-call entry point
+before the call starts (`video: true` on the offer so the ringing screen
+says so), and the device check with a real camera.
 
 ### System picture-in-picture
 The in-app fold (the floating tile over the chats) is shipped; what remains

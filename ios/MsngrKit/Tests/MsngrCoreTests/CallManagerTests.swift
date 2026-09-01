@@ -19,7 +19,11 @@ final class FakeTransport: CallMediaTransport, @unchecked Sendable {
     }
 
     var restarted = false
+    var videoEnabled: Bool?
     func makeOffer() async throws -> String { "offer-sdp" }
+    func setVideo(enabled: Bool) async {
+        lock.lock(); videoEnabled = enabled; lock.unlock()
+    }
     func restartOffer() async throws -> String {
         lock.lock(); restarted = true; lock.unlock()
         return "restart-sdp"
@@ -423,6 +427,33 @@ final class CallManagerTests: XCTestCase {
         let state = await manager.current
         XCTAssertEqual(state.phase, .active)
         XCTAssertFalse(transport.closed)
+    }
+
+    /// Turning the camera on adds the track and renegotiates the same call:
+    /// a second offer with the same callId, answered on the live transport.
+    func testCameraOnRenegotiates() async {
+        let (manager, log, transport, _) = makeManagerWithLogs()
+        await activateAsCaller(manager, log: log, transport: transport)
+        await manager.setVideo(true)
+        XCTAssertEqual(transport.videoEnabled, true)
+        XCTAssertEqual(log.types, [.offer, .offer])
+        XCTAssertEqual(log.all[1].0.callId, log.all[0].0.callId)
+        let state = await manager.current
+        XCTAssertTrue(state.localVideo)
+        XCTAssertEqual(state.phase, .active)
+    }
+
+    /// The peer's camera reaching the transport shows up in the state.
+    func testRemoteVideoReachesTheState() async {
+        let (manager, log, transport, _) = makeManagerWithLogs()
+        await activateAsCaller(manager, log: log, transport: transport)
+        transport.emit(.remoteVideo(true))
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        var state = await manager.current
+        XCTAssertTrue(state.remoteVideo)
+        await manager.hangUp()
+        state = await manager.current
+        XCTAssertFalse(state.remoteVideo)
     }
 
     /// Candidates ride the relay and can outrun the journaled offer: they are
