@@ -1039,7 +1039,11 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   per-app language on the app's page in Settings, and the app's settings show
   a «Язык» row with the current language that opens Settings
   (qa/runs/2026-08-27-language)
-- ⬜ exporting and deleting the account
+- ✅ exporting and deleting the account: the backup file in «Данные» is the
+  full export; «Удалить аккаунт» in the settings leaves every group, wipes the
+  UserDO and the D1 rows, frees the username and returns the app to
+  registration (qa/runs/2026-09-01-delete-account.md, smoke delete-account
+  block)
 
 ## Storage and data
 
