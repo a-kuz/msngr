@@ -86,10 +86,20 @@ Found in passing, and fixed (7b35e95): the 620 blocked sends had each written
 their own «identity_changed» system line, so that one chat carries six hundred
 identical rows for one change.
 
-What is left for this entry is the acceptance itself, on a pair whose keys
-really did change — and the question of whether a re-registered peer should
-present as an identity change at all in a fixture that is meant to be handed
-around.
+The acceptance was then run, and it is the product's own answer to this state:
+the chat carries a banner saying delivery has stopped until the new key is
+accepted, and its «Принять» is what moves it. On the alfa home the queue went
+from `blocked = 620` to draining within the minute — `inflight` and `ready`
+alternating as the requests left — and the identity the store now trusts is
+byte-for-byte the one the server hands out for bravo's single device.
+
+What is left is the tail, and it is slow by construction rather than broken:
+the newest seq of a chat is let past the per-peer ceiling, but a message from
+twenty minutes ago still queues behind six thousand envelopes of debt, each
+with its own backoff. A pair that fell this far behind drains over hours. The
+question worth settling separately is whether a re-registered fixture peer
+should present as an identity change at all, since the homes are meant to be
+handed around.
 
 ### A held swipe on a chat row stutters
 Reported by the owner 2026-08-27: swiping a row sideways in the chat list
