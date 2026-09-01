@@ -52,6 +52,8 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
 
     private(set) var collectionView: UICollectionView!
     private var items: [ChatFeedItem] = []
+    /// mediaIds already handed to the prefetch, so a re-shown range is not fetched twice
+    private var prefetchedMedia: Set<String> = []
     private var width: CGFloat = 0
     /// The message waiting for its highlight flash after a jump from a quote.
     private var pendingHighlightId: String?
@@ -119,6 +121,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         collectionView.backgroundColor = .clear
         collectionView.dataSource = self
         collectionView.delegate = self
+        collectionView.prefetchDataSource = self
         collectionView.keyboardDismissMode = .interactive
         collectionView.contentInsetAdjustmentBehavior = .never
         // the feed is flipped, so the system edge effect lands mirrored: it clears
@@ -928,6 +931,37 @@ enum MessageContextAction {
     case sendNow, reschedule, cancelScheduled
     /// a report of someone else's message
     case report
+}
+
+extension MessagesViewController: UICollectionViewDataSourcePrefetching {
+    /// The feed pulls the picture of a cell the scroll is about to reach:
+    /// UIKit hands the indexes ahead of the scroll direction, and the fetch
+    /// warms MediaManager's file cache so the cell configures from disk.
+    /// A full video blob is never prefetched — only its thumb.
+    func collectionView(_ cv: UICollectionView, prefetchItemsAt indexPaths: [IndexPath]) {
+        for path in indexPaths {
+            guard path.item < items.count,
+                  case .message(let msg, _, _, _, _, _, _) = items[path.item] else { continue }
+            // an album carries its pictures in `album`, a single photo or video in `media`
+            for media in (msg.album ?? []) + [msg.media].compactMap({ $0 }) {
+                let thumb: MediaInfo = {
+                    if media.type == "video", media.thumbMediaId != nil || media.thumbLocalPath != nil {
+                        var t = MediaInfo(type: "photo", mediaId: media.thumbMediaId ?? "",
+                                          key: media.thumbKey ?? "", hash: media.thumbHash ?? "",
+                                          size: 0, mime: "image/jpeg")
+                        t.localPath = media.thumbLocalPath
+                        return t
+                    }
+                    return media
+                }()
+                guard thumb.type == "photo" || thumb.mime.hasPrefix("image/") else { continue }
+                let key = thumb.mediaId
+                guard !key.isEmpty, !prefetchedMedia.contains(key) else { continue }
+                prefetchedMedia.insert(key)
+                Task { _ = try? await AppState.shared.media?.fetch(thumb) }
+            }
+        }
+    }
 }
 
 extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
