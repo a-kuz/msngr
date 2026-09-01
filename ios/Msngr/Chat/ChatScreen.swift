@@ -34,6 +34,7 @@ struct ChatScreen: View {
     @State private var shownContact: Message?
     @State private var shownLocation: Message?
     @State private var forwardMessage: Message?
+    @State private var reportMessage: Message?
     @State private var forwardingSelection = false
     @State private var reactionRoster: ReactionRosterRequest?
     @State private var pollVotersMessage: Message?
@@ -436,6 +437,14 @@ struct ChatScreen: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .forwardRequested)) { note in
             forwardMessage = note.object as? Message
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .reportRequested)) { note in
+            reportMessage = note.object as? Message
+        }
+        .sheet(item: $reportMessage) { msg in
+            ReportView(chatId: chatId,
+                       targetUserId: model.chat?.kind == .group ? msg.fromUserId : model.peer?.id,
+                       message: msg)
         }
         .onReceive(NotificationCenter.default.publisher(for: .editHistoryRequested)) { note in
             editHistoryMessage = note.object as? Message
@@ -1564,6 +1573,7 @@ struct MessagesView: UIViewControllerRepresentable {
             case .pin: model.pin(msg)
             case .unpin: model.unpin(msg)
             case .forward: NotificationCenter.default.post(name: .forwardRequested, object: msg)
+            case .report: NotificationCenter.default.post(name: .reportRequested, object: msg)
             case .select: withAnimation(Theme.springFast) { model.beginSelection(with: msg) }
             case .resend: model.resend(msg)
             case .sendNow: model.sendScheduledNow(msg)
@@ -1624,6 +1634,7 @@ struct MessagesView: UIViewControllerRepresentable {
 
 extension Notification.Name {
     static let forwardRequested = Notification.Name("forwardRequested")
+    static let reportRequested = Notification.Name("reportRequested")
     static let editHistoryRequested = Notification.Name("editHistoryRequested")
     static let readByRequested = Notification.Name("readByRequested")
 }

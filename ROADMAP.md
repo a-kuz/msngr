@@ -750,8 +750,11 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     named exceptions ride the same single check (`privacyAllows`; the
     privacy, discovery, group-invites, exceptions and receipts blocks in
     smoke)
-  - ⬜ reporting a chat or a message: what leaves the device is only what the
-    reporter chose to attach, and blocking is offered in the same step
+  - ✅ reporting a chat or a message: what leaves the device is only what the
+    reporter chose to attach, and blocking is offered in the same step —
+    «Пожаловаться» in the message menu and the chat card, a reason, optional
+    details, the attach toggle with the E2EE footnote, and «Пожаловаться и
+    заблокировать» (smoke report block, qa/runs/2026-09-01-report.md)
   - ✅ a request's content is hidden until it is accepted: the feed, the chat list,
     the in-app banner, the badge (ChatPrivacyTests, ChatFeedTests units, request-privacy-run)
 

@@ -926,6 +926,8 @@ enum MessageContextAction {
     case saveSticker
     /// a message still waiting for its scheduled time
     case sendNow, reschedule, cancelScheduled
+    /// a report of someone else's message
+    case report
 }
 
 extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {

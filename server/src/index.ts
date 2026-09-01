@@ -1223,6 +1223,33 @@ app.get("/api/blocked", async (c) => {
   return json({ ok: true, blocked: rows.results.map((r) => r.blocked_id) });
 });
 
+const REPORT_REASONS = ["spam", "violence", "scam", "other"];
+
+// A report of a chat or a message. The server cannot read messages, so the
+// body carries only what the reporter chose to attach, decrypted on their
+// device: excerpts of `{seq, senderId, text}`.
+app.post("/api/report", async (c) => {
+  const { userId } = c.get("auth");
+  const b = await c.req.json<{
+    chatId?: string; targetUserId?: string; reason: string; comment?: string;
+    attached?: { seq?: number; senderId?: string; text?: string }[];
+  }>();
+  if (!REPORT_REASONS.includes(b.reason)) return json({ ok: false, error: "bad_reason" }, 400);
+  if (!b.chatId && !b.targetUserId) return json({ ok: false, error: "no_target" }, 400);
+  const attached = Array.isArray(b.attached) && b.attached.length
+    ? JSON.stringify(b.attached.slice(0, 20).map((m) => ({
+        seq: typeof m.seq === "number" ? m.seq : null,
+        senderId: typeof m.senderId === "string" ? m.senderId : null,
+        text: typeof m.text === "string" ? m.text.slice(0, 4096) : null,
+      })))
+    : null;
+  await c.env.DB.prepare(
+    "INSERT INTO reports (reporter_id, chat_id, target_user_id, reason, comment, attached, created_at) VALUES (?,?,?,?,?,?,?)"
+  ).bind(userId, b.chatId ?? null, b.targetUserId ?? null, b.reason,
+         b.comment ? String(b.comment).slice(0, 2048) : null, attached, Date.now()).run();
+  return json({ ok: true });
+});
+
 const LAST_SEEN_VALUES: LastSeenVisibility[] = ["everyone", "contacts", "nobody"];
 
 app.get("/api/privacy", async (c) => {

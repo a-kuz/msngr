@@ -727,6 +727,27 @@ public final class APIClient: @unchecked Sendable {
         struct Body: Encodable { let userId: String; let blocked: Bool }
         _ = try await request("api/block", method: "POST", jsonBody: Body(userId: userId, blocked: blocked))
     }
+    public struct ReportedMessage: Encodable, Sendable {
+        public let seq: Int64?
+        public let senderId: String?
+        public let text: String?
+        public init(seq: Int64?, senderId: String?, text: String?) {
+            self.seq = seq; self.senderId = senderId; self.text = text
+        }
+    }
+    /// A report of a chat or a message. Only what the reporter attaches leaves
+    /// the device: the server cannot read the conversation itself.
+    public func report(chatId: String?, targetUserId: String?, reason: String,
+                       comment: String?, attached: [ReportedMessage]) async throws {
+        struct Body: Encodable {
+            let chatId: String?; let targetUserId: String?; let reason: String
+            let comment: String?; let attached: [ReportedMessage]
+        }
+        _ = try await request("api/report", method: "POST",
+                              jsonBody: Body(chatId: chatId, targetUserId: targetUserId,
+                                             reason: reason, comment: comment, attached: attached))
+    }
+
     public struct BlockedResponse: Decodable { public let blocked: [String] }
     public func blockedUsers() async throws -> [String] {
         try await get("api/blocked", as: BlockedResponse.self).blocked
