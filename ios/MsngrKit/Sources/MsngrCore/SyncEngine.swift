@@ -214,6 +214,13 @@ public actor SyncEngine {
         }
         await ws.nudge()
         try? await ws.sendRaw(Data(#"{"t":"fg"}"#.utf8))
+        // and the catch-up is opened again from the cursors the database holds.
+        // A socket that outlived the background can be believed alive while the
+        // frames sent to it were dropped on the way; without this the message
+        // that arrived while the app was away waited for a reconnect, and a
+        // foreground alone never brought it — the chat stayed one seq behind
+        // with nothing to say so
+        await sendSyncCursors()
         outboxWakeup.continuation.yield()
         await sweepExpiredMutes()
     }
@@ -428,6 +435,11 @@ public actor SyncEngine {
 
     /// Chats that still had history past their cursor after the last portion.
     private var catchupPending: Set<String> = []
+    /// Chats the last portion answered at all. A portion that runs out of
+    /// budget leaves the rest of the list untouched and says nothing about
+    /// them, and a chat the client believes it is caught up on would then never
+    /// be asked for again — which is a message that never arrives.
+    private var catchupAnswered: Set<String> = []
     /// Cursors of the portion last asked for. The next request only goes out
     /// with different ones, otherwise the catch-up would spin in place.
     private var catchupSent: [String: Int] = [:]
@@ -439,6 +451,7 @@ public actor SyncEngine {
             try HistoryWindow.catchupCursors(dbc)
         }) ?? [:]
         catchupPending = []
+        catchupAnswered = []
         catchupSent = cursors
         try? await ws.send(.sync(cursors: cursors,
                                  deviceVersions: e2ee.deviceCacheVersions()))
@@ -459,7 +472,17 @@ public actor SyncEngine {
                 try Self.recountUnread(dbc, chatId: chatId, ownUserId: ownUserId)
             }
         }
+        catchupAnswered.insert(chatId)
         if f.more == true { catchupPending.insert(chatId) } else { catchupPending.remove(chatId) }
+    }
+
+    /// Which chats the next portion asks for: the ones that said they have more
+    /// history, and the ones the portion never reached. A chat left untouched
+    /// says nothing about itself, and asking only the answered ones is how a
+    /// quiet chat behind a flooded one stopped being asked for at all.
+    static func nextPortion(asked: Set<String>, answered: Set<String>,
+                            pending: Set<String>) -> Set<String> {
+        pending.union(asked.subtracting(answered))
     }
 
     /// End of a portion: while the server says there is more to replay, the
@@ -468,10 +491,12 @@ public actor SyncEngine {
     /// why the catch-up runs as a loop of frames rather than one long request.
     private func finishCatchupPortion(more: Bool) async {
         guard more, connected else { return }
-        let pending = catchupPending
+        let wanted = Self.nextPortion(asked: Set(catchupSent.keys),
+                                      answered: catchupAnswered,
+                                      pending: catchupPending)
         let cursors = (try? await db.read { dbc -> [String: Int] in
             let behind = try HistoryWindow.catchupCursors(dbc)
-                .filter { pending.contains($0.key) }
+                .filter { wanted.contains($0.key) }
             // the portion ran out before it reached the chats that are behind:
             // ask for those whose journal is known to run past their cursor
             return behind.isEmpty ? try HistoryWindow.catchupCursors(dbc, behindOnly: true) : behind
@@ -1028,7 +1053,9 @@ public actor SyncEngine {
                                       fromDevice: fromDevice, sentAt: sentAt, ts: ts, body: data,
                                       reason: reason, attempts: attempts, firstSeenAt: now,
                                       lastTriedAt: now, repairAttempts: 0, repairAskedAt: 0)
-        await requestRepairIfDue(pending, now: now)
+        // one envelope, so the counts it needs are read for it alone
+        var state = await sweepState()
+        await requestRepairIfDue(pending, now: now, state: &state)
     }
 
     /// The device keeps failing to open prekey envelopes addressed to it: the
@@ -1107,10 +1134,12 @@ public actor SyncEngine {
                                 arguments: [chatId, seq]) ?? 1
     }
 
-    private func pendingEnvelopes(chatId: String?) async -> [PendingEnvelope] {
+    private func pendingEnvelopes(chatId: String?,
+                                  limit: Int? = nil, offset: Int = 0) async -> [PendingEnvelope] {
+        let window = limit.map { " LIMIT \($0) OFFSET \(offset)" } ?? ""
         let sql = chatId == nil
-            ? "SELECT * FROM pendingDecrypt ORDER BY chatId, seq"
-            : "SELECT * FROM pendingDecrypt WHERE chatId = ? ORDER BY seq"
+            ? "SELECT * FROM pendingDecrypt ORDER BY chatId, seq\(window)"
+            : "SELECT * FROM pendingDecrypt WHERE chatId = ? ORDER BY seq\(window)"
         let arguments: StatementArguments = chatId.map { [$0] } ?? []
         return (try? await db.read { dbc in
             try Row.fetchAll(dbc, sql: sql, arguments: arguments).map {
@@ -1148,10 +1177,22 @@ public actor SyncEngine {
         sweeping = true
         defer { sweeping = false }
         let now = Date().timeIntervalSince1970
-        for pending in await pendingEnvelopes(chatId: nil) {
+        // what the whole pass needs to know, read once instead of per envelope:
+        // a pile of thousands turned the per-row queries into minutes of the
+        // engine's own time, and everything else it serves — the catch-up, the
+        // frames arriving live — waited behind them
+        var state = await sweepState()
+        // the pass has a ceiling and the passes walk the pile in turn, so a
+        // debt of thousands is worked through without any one pass holding the
+        // engine for as long as the whole of it takes
+        let batch = await pendingEnvelopes(chatId: nil, limit: Self.sweepBudget,
+                                           offset: sweepOffset)
+        sweepOffset = batch.count < Self.sweepBudget ? 0 : sweepOffset + Self.sweepBudget
+        for pending in batch {
             // ahead of the retry gate: a buried envelope needs no attempt,
             // no repair request and no week of waiting
-            if await buriedByPendingDelete(pending) { continue }
+            if state.deletePending.contains(Message.feedId(chatId: pending.chatId, seq: pending.seq)),
+               await buriedByPendingDelete(pending) { continue }
             if MessageRepair.expired(firstSeenAt: pending.firstSeenAt,
                                      repairAttempts: pending.repairAttempts, now: now) {
                 await dropExpired(pending)
@@ -1161,12 +1202,54 @@ public actor SyncEngine {
                await replay(pending) {
                 continue
             }
-            await requestRepairIfDue(pending, now: now)
+            await requestRepairIfDue(pending, now: now, state: &state)
         }
         // a debt of stale prekey envelopes may predate the code that acts on
         // them: the sweep gives the standing pile the same answer a fresh
         // envelope gets, or the device would wait for someone to write again
         await republishPrekeysIfDue(now: now)
+    }
+
+    /// Envelopes one pass looks at. The pile of a home whose pairwise session
+    /// broke runs to thousands, and a pass over all of them is minutes of the
+    /// engine's time; the rest waits for the next pass.
+    static let sweepBudget = 200
+
+    /// Where the next pass starts in the pile, so the passes take it in turn
+    /// instead of looking at the same head of it every time.
+    private var sweepOffset = 0
+
+    /// What a sweep needs to know about the whole pile, read in three queries
+    /// rather than three per envelope.
+    struct SweepState {
+        /// Unanswered repairs standing per sender, against the per-peer ceiling.
+        var inFlight: [String: Int] = [:]
+        /// Chats that are still an unanswered request: their author must not
+        /// learn anyone is on the other side, so no repair leaves for them.
+        var requestChats: Set<String> = []
+        /// Seqs a delete is already buffered for, `chatId:seq`.
+        var deletePending: Set<String> = []
+    }
+
+    private func sweepState() async -> SweepState {
+        (try? await db.read { dbc in
+            var state = SweepState()
+            for row in try Row.fetchAll(dbc, sql: """
+                SELECT fromUserId, COUNT(*) AS n FROM pendingDecrypt
+                WHERE repairAttempts > 0 AND repairAttempts < ?
+                GROUP BY fromUserId
+                """, arguments: [MessageRepair.maxAttempts]) {
+                state.inFlight[row["fromUserId"]] = row["n"]
+            }
+            state.requestChats = Set(try String.fetchAll(
+                dbc, sql: "SELECT id FROM chat WHERE isRequest = 1"))
+            for row in try Row.fetchAll(
+                dbc, sql: "SELECT chatId, targetSeq FROM pendingApply WHERE kind = 'deleted'") {
+                state.deletePending.insert(
+                    Message.feedId(chatId: row["chatId"], seq: row["targetSeq"]))
+            }
+            return state
+        }) ?? SweepState()
     }
 
     /// Writes the tombstone of a deleted-for-all message whose envelope sits in
@@ -1305,34 +1388,23 @@ public actor SyncEngine {
 
     /// Asks the sender for a fresh copy once the attempt count and the backoff
     /// allow it. The user is not part of this: the request goes on its own.
-    private func requestRepairIfDue(_ pending: PendingEnvelope, now: Double) async {
+    private func requestRepairIfDue(_ pending: PendingEnvelope, now: Double,
+                                    state: inout SweepState) async {
         guard MessageRepair.repairDue(reason: pending.reason, firstSeenAt: pending.firstSeenAt,
                                       repairAttempts: pending.repairAttempts,
                                       repairAskedAt: pending.repairAskedAt, now: now) else { return }
         // an unaccepted request: the author must not learn anyone is on the
         // other side, so the envelope waits and a later pass asks for the copy
-        let isRequest = (try? await db.read { dbc in
-            try Bool.fetchOne(dbc, sql: "SELECT isRequest FROM chat WHERE id = ?",
-                              arguments: [pending.chatId]) ?? false
-        }) ?? false
-        guard !isRequest else { return }
+        guard !state.requestChats.contains(pending.chatId) else { return }
         // a new repair joins the queue only while the sender's unanswered ones
         // fit under the ceiling; a broken session otherwise turns every answer
         // into the next request, and the queue grows instead of draining. A row
         // whose attempts are spent is not in flight — nothing will ever answer
         // it, so it must not hold the ceiling shut for the rest of the queue
         if pending.repairAttempts == 0 {
-            let inFlight = (try? await db.read { dbc in
-                try Int.fetchOne(dbc, sql: """
-                    SELECT COUNT(*) FROM pendingDecrypt
-                    WHERE fromUserId = ? AND repairAttempts > 0 AND repairAttempts < ?
-                    """, arguments: [pending.from, MessageRepair.maxAttempts]) ?? 0
-            }) ?? 0
-            guard inFlight < MessageRepair.maxInFlightRepairsPerPeer else {
-                MsngrLog.repair.notice(
-                    "repair ceiling reached for \(pending.from, privacy: .public), not asking seq=\(pending.seq, privacy: .public)")
-                return
-            }
+            guard state.inFlight[pending.from, default: 0]
+                    < MessageRepair.maxInFlightRepairsPerPeer else { return }
+            state.inFlight[pending.from, default: 0] += 1
         }
         let attempt = pending.repairAttempts + 1
         // the session failed to open his envelope and the request would leave

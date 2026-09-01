@@ -943,6 +943,24 @@ check("catch-up msg frames carry the clientMsgId",
   resumedMsgs.length > 0 && resumedMsgs.every((f) => typeof f.clientMsgId === "string"),
   JSON.stringify(resumedMsgs[0]));
 
+// 19c. A flooded chat must not eat the portion. Spending one budget over the
+// chats in order left the rest of the list untouched, and an untouched chat
+// gets no syncState at all — the client then re-asked only the chats that had
+// answered, and a message in a quiet chat behind a flooded one never arrived.
+const cb8 = new Client("bob8", bob.token);
+await cb8.connect();
+const shareMark = cb8.mark();
+// the flooded chat first, so it is the one that would take the whole budget
+cb8.send({ t: "sync", cursors: { [grp.chatId]: 1, [chat.chatId]: 0 } });
+const shareDone = await cb8.waitAfter(shareMark, (f) => f.t === "syncDone", 20000);
+const shareStates = cb8.frames.slice(shareMark).filter((f) => f.t === "syncState");
+check("a portion answers about every chat it was asked for",
+  !!shareDone && shareStates.some((s) => s.chatId === grp.chatId)
+  && shareStates.some((s) => s.chatId === chat.chatId),
+  JSON.stringify(shareStates.map((s) => s.chatId)));
+check("the quiet chat's history comes in that first portion",
+  cb8.frames.slice(shareMark).some((f) => f.t === "msg" && f.chatId === chat.chatId));
+
 // 20. Blocking inside an existing chat
 const henry = await api("/api/register", { body: {
   username: "henry_" + suffix, displayName: "Henry", ...fakeKeys("h") } });

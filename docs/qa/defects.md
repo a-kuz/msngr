@@ -17,6 +17,29 @@ follows the same rule as the bubble (fixed in the bots commit); what is left
 open is ordering: `sortedAt` and the feed's own order still lean on `sentAt`,
 so a bad clock can still misplace a message inside its day.
 
+### A chat behind a flooded one stops receiving messages altogether
+Found 2026-09-01 while running the notification-banner scenario on the bravo
+and charlie homes, and it is the mechanism behind the «service storm» entry
+below. Charlie sent bravo a message; charlie's side had it journaled (one
+tick), the server's snapshot and its REST history both held it (seq 12,
+addressed to bravo's device), bravo was foreground with the chat open and the
+socket live — and bravo's copy of that chat stood at `syncedSeq = lastSeq = 11`
+for eleven minutes across four foregrounds, with no row and no envelope in
+`pendingDecrypt`. The flooded group on the same socket moved 13841 → 13873
+throughout. Only a cold start brought the message.
+The cause is the catch-up's budget. `serveCatchup` spends one budget of 128
+records over the chats in the order they come, so the flooded chat took all of
+it and every other chat was left untouched — and an untouched chat gets no
+`syncState` at all. The client then asked the next portion only for the chats
+that had answered (`catchupPending`), and its fallback asks for chats it knows
+to be behind, which this one was not: from its side it was caught up at 11.
+So the chat fell out of the catch-up for good, portion after portion.
+Closed on both sides: every chat of a portion gets a share of the budget
+(`SYNC_BUDGET / chats in the portion`), and the client asks the next portion
+for the chats it was answered about *and* the chats it never heard back on
+(`SyncEngine.nextPortion`, `CatchupPortionTests`). Coming back to the
+foreground also re-opens the catch-up, which it did not do at all before.
+
 ### iPad with a hardware keyboard: a tap around the settings sheet crashes the app
 Found 2026-08-30 on the iPad Pro 11" simulator with ConnectHardwareKeyboard on
 (the Mac «Designed for iPad» case has a hardware keyboard always). Repro: open
