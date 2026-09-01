@@ -1219,6 +1219,50 @@
         }
       }
     },
+    "1 GB" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 ГБ"
+          }
+        }
+      }
+    },
+    "100 MB" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "100 МБ"
+          }
+        }
+      }
+    },
+    "5 GB" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "5 ГБ"
+          }
+        }
+      }
+    },
+    "500 MB" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "500 МБ"
+          }
+        }
+      }
+    },
     "1 chat" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1951,6 +1995,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Звонки"
+          }
+        }
+      }
+    },
+    "Calls you make and receive will be listed here." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Здесь появятся ваши входящие и исходящие звонки."
           }
         }
       }
@@ -3622,7 +3677,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Выход отключает только это устройство; удаление аккаунта стирает его с сервера навсегда. Файл резервной копии в разделе «Данные» — это экспорт всего вашего."
+            "value" : "Выход отключает только это устройство; удаление аккаунта стирает его с сервера навсегда. Резервная копия в разделе «Данные» — это экспорт всего вашего."
           }
         }
       }
@@ -5795,7 +5850,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Их звук повсюду"
+            "value" : "Звук собеседника"
           }
         }
       }
@@ -6500,7 +6555,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Кто может добавлять меня в группы"
+            "value" : "Приглашения в группы"
           }
         }
       }
@@ -6511,7 +6566,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Кто может мне звонить"
+            "value" : "Кто может звонить"
           }
         }
       }
@@ -6522,7 +6577,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Кто может найти меня по номеру"
+            "value" : "Поиск по номеру"
           }
         }
       }

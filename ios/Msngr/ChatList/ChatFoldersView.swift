@@ -69,8 +69,10 @@ struct ChatFoldersView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button(isEditing ? "Done" : "Edit") {
-                        editMode?.wrappedValue = isEditing ? .inactive : .active
+                    if !model.folders.isEmpty {
+                        Button(isEditing ? "Done" : "Edit") {
+                            editMode?.wrappedValue = isEditing ? .inactive : .active
+                        }
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {

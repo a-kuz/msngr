@@ -136,7 +136,7 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings.language")
                 }
 
-                Section("Notifications") {
+                Section {
                     NavigationLink {
                         NotificationsView()
                     } label: {
@@ -194,12 +194,6 @@ struct SettingsView: View {
 
                 Section {
                     NavigationLink {
-                        BackupView()
-                    } label: {
-                        Label("Backup", systemImage: "icloud.and.arrow.up")
-                    }
-                    .accessibilityIdentifier("settings.backup")
-                    NavigationLink {
                         BotsView()
                     } label: {
                         Label("My bots", systemImage: "cpu")
@@ -208,6 +202,12 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        BackupView()
+                    } label: {
+                        Label("Backup", systemImage: "icloud.and.arrow.up")
+                    }
+                    .accessibilityIdentifier("settings.backup")
                     Picker(selection: $cacheCeiling) {
                         ForEach(MediaCacheCeiling.allCases) { option in
                             Text(option.label).tag(option)
@@ -223,8 +223,10 @@ struct SettingsView: View {
                         HStack {
                             Label("Clear media cache", systemImage: "trash")
                             Spacer()
+                            // an explicit grey: inside a tinted button .secondary
+                            // is derived from the accent and comes out orange
                             Text(Self.sizeLabel(cacheSize))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Color(uiColor: .secondaryLabel))
                         }
                     }
                     .onAppear { cacheSize = app.media?.totalCacheSize() ?? 0 }

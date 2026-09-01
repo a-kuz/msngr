@@ -100,13 +100,17 @@ struct ChatListView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                        .accessibilityLabel(Text("Settings"))
+                        .accessibilityIdentifier("chatlist.settings")
                 }
                 ToolbarItem(placement: .topBarLeading) {
                     Button { path.append(CallsRoute()) } label: { Image(systemName: "phone") }
+                        .accessibilityLabel(Text("Calls"))
                         .accessibilityIdentifier("chatlist.calls")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showNewChat = true } label: { Image(systemName: "square.and.pencil") }
+                        .accessibilityLabel(Text("New chat"))
                         .accessibilityIdentifier("chatlist.new")
                         .keyboardShortcut("n", modifiers: .command)
                 }
