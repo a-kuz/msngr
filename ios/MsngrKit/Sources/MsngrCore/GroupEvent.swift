@@ -22,6 +22,9 @@ public struct GroupEvent: Codable, Equatable, Sendable {
         case avatar
         case description
         case descriptionCleared
+        /// pulled into a running call; lands in the direct chat between
+        /// inviter and invitee, written by the inviter
+        case callInvite
     }
 
     public var verb: Verb
@@ -100,6 +103,10 @@ public struct GroupEvent: Codable, Equatable, Sendable {
         case .descriptionCleared:
             return isOwn ? CoreStrings.string("You removed the group description")
                          : CoreStrings.string("\(who) removed the group description")
+        case .callInvite:
+            if aboutMe { return CoreStrings.string("\(who) invited you to a call") }
+            return isOwn ? CoreStrings.string("You invited \(name) to a call")
+                         : CoreStrings.string("\(who) invited \(name) to a call")
         }
     }
 }

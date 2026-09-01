@@ -41,6 +41,10 @@ public struct CallSignal: Codable, Equatable, Sendable {
     /// offer: whether the sender's camera is on — carried on renegotiation
     /// so the peer learns the camera went off (the track alone only freezes)
     public var video: Bool?
+    /// offer into a conference: everyone already in the call, so the invited
+    /// side knows whom else to link up with. Knowing the callId is the ticket:
+    /// only a participant has it, so a same-callId offer joins without ringing.
+    public var members: [String]?
 
     public struct IceCandidate: Codable, Equatable, Sendable {
         public var sdpMid: String?
@@ -56,13 +60,14 @@ public struct CallSignal: Codable, Equatable, Sendable {
 
     public init(type: SignalType, callId: String, sdp: String? = nil,
                 candidates: [IceCandidate]? = nil, reason: EndReason? = nil,
-                video: Bool? = nil) {
+                video: Bool? = nil, members: [String]? = nil) {
         self.type = type
         self.callId = callId
         self.sdp = sdp
         self.candidates = candidates
         self.reason = reason
         self.video = video
+        self.members = members
     }
 
     /// The `ContentPayload` kind a call signal travels under.
