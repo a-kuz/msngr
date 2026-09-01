@@ -54,25 +54,6 @@ report appeared in DiagnosticReports. Not reproducible on this build; nothing
 was changed for it, because a workaround with no reproduction to answer would
 be blind.
 
-### An own service frame drags myReadUpTo over the peer's unread messages
-Found 2026-08-28 in passing while verifying the in-chat mention counter: the
-«Design» fixture chat sat at `myReadUpTo = lastSeq = 123` with
-`unreadCount = 20`. `advanceChat` let a service frame advance `myReadUpTo` when
-the frame was the reader's own (`isOwn OR myReadUpTo >= seq - 1`), so an own
-sender-key handout or reaction echo arriving after the peer's unread content
-marked all of it read — the unread count stayed, the cursor lied, and
-everything built on the cursor (the mention mark, the mention counter, read
-receipts derived from `myReadUpTo`) saw a fully-read chat.
-Two writers did it: `advanceChat` let any own service frame advance the
-cursor (`isOwn OR myReadUpTo >= seq - 1`), and the sent-ack path stamped
-`myReadUpTo = MAX(myReadUpTo, seq)` for every own ack — including the acks of
-rowless service frames (the fixture chat had no message row at any of the
-swallowed seqs).
-Closed in the same change: only a contiguous read may swallow a service seq in
-`advanceChat` (`testOwnServiceFrameDoesNotSwallowForeignUnread` and its
-fully-read counterpart hold both sides), and the sent ack moves the cursor
-only when the send has a message row — a send the reader actually saw.
-
 ### «Сообщение ещё не загружено» placeholders pile up in the fixture group
 Seen 2026-08-28 in the «Design» fixture chat: twenty identical placeholders
 filling a screen between two content messages. Measured on the device
@@ -82,7 +63,7 @@ and the feed made one placeholder per contiguous run, about ninety of them.
 Closed by 37841a3: a hole between two messages of the feed is one placeholder
 carrying the number of messages behind it
 (`testHoleBrokenBySkippedSeqsIsStillOnePlaceholder`).
-Open underneath it: the repair protocol recurses without a ceiling once a
+Underneath it, and closed too: the repair protocol recursed without a ceiling once a
 pairwise session is broken past healing. Watched over 2026-08-28 on the alfa
 fixture against the bravo CLI: 443 unopenable envelopes grew to 908 and then
 to 2575 (`no_session`), in bursts of 200–400 a minute that coincide exactly
@@ -141,6 +122,24 @@ with `lastSeq` 4569 while the app sat foreground for over ten minutes — a
 message sent to alfa during that window never arrived even as an envelope
 (`pendingDecrypt` tops out at seq 3965), so the starvation covers live
 delivery of the same chat, not only other chats' catch-up.
+
+Closed 2026-09-01 by the three causes underneath it, each found by measuring
+rather than by reading. The per-frame cost: a wave of repair requests to one
+peer rebuilt the pairwise session once per request, each rebuild throwing away
+the one the previous request had just built — one rebuild now serves the wave
+(`testAWaveOfRepairsRebuildsTheSessionOnce`, red on the old behaviour). The
+fairness of sending: the outbox drained strictly by time, so a wave of repair
+answers in one chat stood in front of every other chat's messages — the chats
+now take turns (`OutboxFairnessTests`). The fairness of receiving, which was
+the half that lost messages outright and has its own entry in the closed list:
+one budget spent over the chats in order, and an untouched chat never asked for
+again. And underneath all three, the largest: the sweep of unreadable envelopes
+walked thousands of rows with three queries each on the engine's own actor —
+about twelve rows a second over 8775 of them, twelve minutes during which the
+engine served nothing else. Verified live on the rebuilt bravo and charlie
+homes with 8775 unreadable envelopes standing: every chat's cursor reaches
+`lastSeq`, and a message sent to the flooded home arrives over the socket or on
+the first foreground.
 
 ### A severed pairwise session never heals: both sides ask, neither answer arrives
 Found 2026-08-29 while walking the repair debt on the alfa fixture. The
@@ -233,6 +232,13 @@ three accounts named «Akuz» differ only by the small @handle in search — and
 renamed account's old username is up for grabs the same second, so whoever
 watches it inherits the searches for @oldname. Worth deciding: highlight the
 @handle in search, a cool-down before a freed name re-enters circulation.
+Both were decided the same way and are in place. The cool-down is the
+`released_usernames` row a rename writes and `USERNAME_QUARANTINE_MS`, checked
+at registration and at rename alike, with three smoke cases over it («a freshly
+freed handle is quarantined, not free» and its two neighbours). The handle in
+search is no longer the row's smallest secondary line: it carries weight and
+the primary colour, because the display name several accounts may share is not
+what tells them apart (5161deb).
 
 ### A row moving up the chat list flies through the rows above it
 Seen 2026-08-27 in the README demo recording (simulator, alfa fixture). When a
@@ -272,6 +278,25 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### An own service frame drags myReadUpTo over the peer's unread messages
+Found 2026-08-28 in passing while verifying the in-chat mention counter: the
+«Design» fixture chat sat at `myReadUpTo = lastSeq = 123` with
+`unreadCount = 20`. `advanceChat` let a service frame advance `myReadUpTo` when
+the frame was the reader's own (`isOwn OR myReadUpTo >= seq - 1`), so an own
+sender-key handout or reaction echo arriving after the peer's unread content
+marked all of it read — the unread count stayed, the cursor lied, and
+everything built on the cursor (the mention mark, the mention counter, read
+receipts derived from `myReadUpTo`) saw a fully-read chat.
+Two writers did it: `advanceChat` let any own service frame advance the
+cursor (`isOwn OR myReadUpTo >= seq - 1`), and the sent-ack path stamped
+`myReadUpTo = MAX(myReadUpTo, seq)` for every own ack — including the acks of
+rowless service frames (the fixture chat had no message row at any of the
+swallowed seqs).
+Closed in the same change: only a contiguous read may swallow a service seq in
+`advanceChat` (`testOwnServiceFrameDoesNotSwallowForeignUnread` and its
+fully-read counterpart hold both sides), and the sent ack moves the cursor
+only when the send has a message row — a send the reader actually saw.
 
 ### A read message's own banner shows over the open chat and stays in the shade
 Found 2026-08-27 during the notification-withdraw run
