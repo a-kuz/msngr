@@ -4,16 +4,20 @@ import { USER_CARD_COLUMNS } from "./types";
 import { authenticate } from "./auth";
 import {
   ulid, newToken, sha256hex, json, err, directChatName, b64url, provisionCode,
-  isValidUsername, isValidDisplayName, USERNAME_QUARANTINE_MS, verifyEd25519, readPrivacy,
+  isValidUsername, isValidDisplayName, verifyEd25519, readPrivacy,
   hiddenAvatarOwners, privacyAllows,
 } from "./util";
 import type { LastSeenVisibility } from "./types";
 import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "./version";
 import { newCounters, wrapDB } from "./perf";
+import { claimHandle, releaseHandle, resolveHandle } from "./do/HandleDO";
+import { directoryPut, directoryRemove, directorySearch, type DirectoryCard } from "./do/DirectoryDO";
 
 export { UserDO } from "./do/UserDO";
 export { ConversationDO } from "./do/ConversationDO";
 export { ApnsTokenDO } from "./do/ApnsTokenDO";
+export { HandleDO } from "./do/HandleDO";
+export { DirectoryDO } from "./do/DirectoryDO";
 
 type Vars = { auth: AuthCtx };
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
@@ -25,12 +29,13 @@ function convStub(env: Env, chatId: string) {
   return env.CONV_DO.get(env.CONV_DO.idFromName(chatId));
 }
 
-/// The row for `username` in `released_usernames`, if a rename has ever freed
-/// it and nothing has purged the row since.
-function quarantineRow(env: Env, username: string) {
-  return env.DB.prepare(
-    "SELECT released_by, released_at FROM released_usernames WHERE username = ?"
-  ).bind(username).first<{ released_by: string; released_at: number }>();
+/// Copies the account's card into the people-search index. The card is read
+/// from the `users` row, which is where a profile change lands first.
+async function indexUser(env: Env, userId: string): Promise<void> {
+  const card = await env.DB.prepare(
+    "SELECT id, username, display_name, avatar_id, bot_owner, bot_commands FROM users WHERE id = ?"
+  ).bind(userId).first<DirectoryCard>();
+  if (card) await directoryPut(env, card);
 }
 
 // --- the public page of a story ---
@@ -157,18 +162,16 @@ app.post("/api/register", async (c) => {
   }
 
   const now = Date.now();
-  const quarantine = await quarantineRow(c.env, b.username);
-  if (quarantine && now - quarantine.released_at < USERNAME_QUARANTINE_MS) {
-    return err("username_taken", 409);
-  }
   const userId = ulid(now);
   const deviceId = ulid(now);
   const token = newToken();
   const tokenHash = await sha256hex(token);
 
-  // The keys go into the user's object first: if the username loses the race
-  // below, storage under a never-issued userId is unreachable, while the
-  // reverse order would burn the username on a failed keys write.
+  // The handle object is the authority: the claim is the one step that can
+  // lose to someone else, so it goes first and nothing is written for a
+  // handle that was not won.
+  if (!(await claimHandle(c.env, b.username, userId))) return err("username_taken", 409);
+
   const kw = await userStub(c.env, userId).fetch("https://do/keys-register", {
     method: "POST",
     body: JSON.stringify({
@@ -178,7 +181,10 @@ app.post("/api/register", async (c) => {
       oneTimePrekeys: b.oneTimePrekeys,
     }),
   });
-  if (!kw.ok) return err("keys_write_failed", 500);
+  if (!kw.ok) {
+    await releaseHandle(c.env, b.username, userId, false);
+    return err("keys_write_failed", 500);
+  }
 
   try {
     await c.env.DB.batch([
@@ -190,10 +196,11 @@ app.post("/api/register", async (c) => {
       ).bind(deviceId, userId, b.device?.name ?? null, tokenHash, now),
     ]);
   } catch (e) {
-    const msg = String(e);
-    if (msg.includes("UNIQUE")) return err("username_taken", 409);
+    await releaseHandle(c.env, b.username, userId, false);
+    await userStub(c.env, userId).fetch("https://do/account-wipe", { method: "POST", body: "{}" });
     throw e;
   }
+  await indexUser(c.env, userId);
   return json({ ok: true, userId, deviceId, token });
 });
 
@@ -355,9 +362,9 @@ interface RestoreRow {
 app.post("/api/restore/start", async (c) => {
   const b = await c.req.json<{ username: string }>();
   if (!isValidUsername(b.username)) return err("bad_username");
-  const user = await c.env.DB.prepare("SELECT id FROM users WHERE username = ?")
-    .bind(b.username).first<{ id: string }>();
-  if (!user) return err("account_not_found", 404);
+  const ownerId = await resolveHandle(c.env, b.username);
+  if (!ownerId) return err("account_not_found", 404);
+  const user = { id: ownerId };
   const kd = await userStub(c.env, user.id).fetch("https://do/keys-devices");
   const known = (await kd.json()) as {
     devices: Array<{ identityKey: string; identitySignKey: string }>;
@@ -498,11 +505,16 @@ app.post("/api/logout", async (c) => {
 
 // Deleting the account whole. Groups are left so the members stop seeing the
 // user; a direct peer keeps their copy of the history — it is theirs, and
-// there is no key to read the deleted side's anyway. The username is freed by
-// the row going, and the user's object erases everything it holds: keys,
-// sessions, flags, sounds, the address book, push tokens.
+// there is no key to read the deleted side's anyway. The handle is released
+// outright, the card leaves the search index, and the user's object erases
+// everything it holds: keys, sessions, flags, sounds, the address book, push
+// tokens.
 app.post("/api/account/delete", async (c) => {
   const { userId } = c.get("auth");
+  const me = await c.env.DB.prepare("SELECT username FROM users WHERE id = ?")
+    .bind(userId).first<{ username: string }>();
+  if (me) await releaseHandle(c.env, me.username, userId, false);
+  await directoryRemove(c.env, userId);
   const cr = await userStub(c.env, userId).fetch("https://do/chats", { method: "POST", body: "{}" });
   const cj = (await cr.json()) as { ok: boolean; chats?: Record<string, unknown> };
   for (const chatId of Object.keys(cj.chats ?? {})) {
@@ -583,23 +595,15 @@ app.get("/api/users", async (c) => {
   // a username gets typed with a leading @ and stray spaces often enough
   const q = (c.req.query("q") ?? "").trim().replace(/^@+/, "");
   if (q.length < 2) return json({ ok: true, users: [] });
-  // The query is folded in JS and matched against the JS-folded display_name_lc
-  // column: SQLite's LOWER folds ASCII only, and display names are free Unicode.
-  // Usernames are ASCII by the registration rule, so LOWER is enough there.
-  const like = `%${q.toLowerCase()}%`;
-  const rows = await c.env.DB.prepare(
-    `SELECT u.id, u.username, u.display_name, u.avatar_id, u.bot_owner, u.bot_commands
-     FROM users u
-     WHERE LOWER(u.username) LIKE ? OR u.display_name_lc LIKE ?
-     ORDER BY CASE WHEN LOWER(u.username) = ? THEN 0 ELSE 1 END, u.username
-     LIMIT 20`
-  ).bind(like, like, q.toLowerCase()).all<{ id: string; avatar_id: string | null }>();
+  // folded in JS, like the index itself: SQLite's LOWER folds ASCII only, and
+  // display names are free Unicode
+  const users = await directorySearch(c.env, q.toLowerCase());
   const { userId } = c.get("auth");
-  const hidden = await hiddenAvatarOwners(c.env, userId, rows.results.map((r) => r.id));
-  for (const r of rows.results) {
+  const hidden = await hiddenAvatarOwners(c.env, userId, users.map((r) => r.id));
+  for (const r of users) {
     if (hidden.has(r.id)) r.avatar_id = null;
   }
-  return json({ ok: true, users: rows.results });
+  return json({ ok: true, users });
 });
 
 // A user profile. Presence comes with it only for someone this user is already visible
@@ -768,43 +772,32 @@ app.post("/api/profile", async (c) => {
      bio = COALESCE(?, bio), avatar_id = COALESCE(?, avatar_id) WHERE id = ?`
   ).bind(b.displayName?.trim() ?? null, b.displayName?.trim().toLowerCase() ?? null,
          b.bio ?? null, b.avatarId ?? null, userId).run();
+  await indexUser(c.env, userId);
   await broadcastProfile(c.env, userId);
   return json({ ok: true });
 });
 
 // A rename. The handle is the one thing about a person that other people type,
-// so it is checked by the same rule as at registration and taken under the same
-// UNIQUE index: the row holds one username, and the single UPDATE that takes the
-// new one is what frees the old.
+// so it is checked by the same rule as at registration and taken from the same
+// authority: the new handle's object grants the claim, the row is moved, and
+// the old handle's object releases it into quarantine.
 app.post("/api/username", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{ username?: string }>();
   if (!isValidUsername(b.username)) return err("bad_username");
 
-  const now = Date.now();
-  const quarantine = await quarantineRow(c.env, b.username);
-  if (quarantine && quarantine.released_by !== userId &&
-      now - quarantine.released_at < USERNAME_QUARANTINE_MS) {
-    return err("username_taken", 409);
-  }
-
   const current = await c.env.DB.prepare("SELECT username FROM users WHERE id = ?")
     .bind(userId).first<{ username: string }>();
   if (!current) return err("not_found", 404);
-
-  try {
-    await c.env.DB.batch([
-      c.env.DB.prepare("UPDATE users SET username = ? WHERE id = ?").bind(b.username, userId),
-      c.env.DB.prepare(
-        `INSERT INTO released_usernames (username, released_by, released_at) VALUES (?,?,?)
-         ON CONFLICT(username) DO UPDATE SET released_by = excluded.released_by,
-                                              released_at = excluded.released_at`
-      ).bind(current.username, userId, now),
-    ]);
-  } catch (e) {
-    if (String(e).includes("UNIQUE")) return err("username_taken", 409);
-    throw e;
+  if (current.username.toLowerCase() === b.username.toLowerCase()) {
+    // the same handle in another case: nothing to claim or free
+    await c.env.DB.prepare("UPDATE users SET username = ? WHERE id = ?").bind(b.username, userId).run();
+  } else {
+    if (!(await claimHandle(c.env, b.username, userId))) return err("username_taken", 409);
+    await c.env.DB.prepare("UPDATE users SET username = ? WHERE id = ?").bind(b.username, userId).run();
+    await releaseHandle(c.env, current.username, userId, true);
   }
+  await indexUser(c.env, userId);
   await broadcastProfile(c.env, userId);
   return json({ ok: true, username: b.username });
 });
@@ -956,6 +949,21 @@ app.post("/api/dev/fault", async (c) => {
   return new Response(r.body, r);
 });
 
+// Dev hook for a stand whose accounts predate the handle and directory
+// objects: every `users` row claims its handle and lands in the search index.
+// Idempotent; a handle already held by someone else is reported, not taken.
+app.post("/api/dev/reindex", async (c) => {
+  const rows = await c.env.DB.prepare(
+    "SELECT id, username, display_name, avatar_id, bot_owner, bot_commands FROM users"
+  ).all<DirectoryCard>();
+  const clashes: string[] = [];
+  for (const card of rows.results) {
+    if (!(await claimHandle(c.env, card.username, card.id))) clashes.push(card.username);
+    await directoryPut(c.env, card);
+  }
+  return json({ ok: true, indexed: rows.results.length, clashes });
+});
+
 app.post("/api/chats/:id/members", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{ add?: string[]; remove?: string[] }>();
@@ -1074,13 +1082,10 @@ app.post("/api/bots", async (c) => {
   const commands = b.commands === undefined ? [] : cleanCommands(b.commands);
   if (commands === null) return err("bad_commands");
   const now = Date.now();
-  const quarantine = await quarantineRow(c.env, b.username);
-  if (quarantine && now - quarantine.released_at < USERNAME_QUARANTINE_MS) {
-    return err("username_taken", 409);
-  }
   const botId = ulid(now);
   const deviceId = ulid(now);
   const token = newToken();
+  if (!(await claimHandle(c.env, b.username, botId))) return err("username_taken", 409);
   try {
     await c.env.DB.batch([
       c.env.DB.prepare(
@@ -1093,9 +1098,10 @@ app.post("/api/bots", async (c) => {
       ).bind(deviceId, botId, "bot", await sha256hex(token), now),
     ]);
   } catch (e) {
-    if (String(e).includes("UNIQUE")) return err("username_taken", 409);
+    await releaseHandle(c.env, b.username, botId, false);
     throw e;
   }
+  await indexUser(c.env, botId);
   return json({ ok: true, botId, token });
 });
 
@@ -1129,6 +1135,7 @@ app.post("/api/bots/:id", async (c) => {
     await c.env.DB.prepare("UPDATE users SET bot_commands = ? WHERE id = ?")
       .bind(JSON.stringify(commands), botId).run();
   }
+  if (b.displayName !== undefined || b.commands !== undefined) await indexUser(c.env, botId);
   let token: string | undefined;
   if (b.newToken) {
     token = newToken();
@@ -1326,6 +1333,7 @@ app.post("/api/avatar", async (c) => {
   } else {
     await c.env.DB.prepare("UPDATE users SET avatar_id = ? WHERE id = ?")
       .bind(mediaId, userId).run();
+    await indexUser(c.env, userId);
     await broadcastProfile(c.env, userId);
   }
   return json({ ok: true, avatarId: mediaId });

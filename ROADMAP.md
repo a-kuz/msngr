@@ -1311,8 +1311,10 @@ Decided in `docs/research/2026-08-19-per-user-do.md`; the queue orders the steps
 - ✅ the message's identity is `(chatId, seq)`, the msgId ULID is gone from the
   database, the frames and the REST (run-msgid,
   `runs/2026-08-21-msgid-run.md`)
-- ⬜ `HandleDO`: the username claim and quarantine, designed together with the
-  people-search index
+- ✅ `HandleDO`: the username claim and quarantine live in an object per handle,
+  and people search reads `DirectoryDO`, a card per account over four SQLite
+  shards merged on read; `released_usernames` is dropped (smoke: the claim in
+  any case, the quarantine, a bot's clash with a person's handle)
 - ⬜ subscriptions between objects: a snapshot on subscribe, deltas after, the
   source deciding what a subscriber may see
 - ⬜ what is left in D1 follows into the user's object; the leftover tables are

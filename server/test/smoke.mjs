@@ -133,6 +133,10 @@ check("register", alice.ok && bob.ok && carol.ok, JSON.stringify(alice));
 const dupe = await api("/api/register", { body: {
   username: "alice_" + suffix, displayName: "X", ...fakeKeys("x") } });
 check("username uniqueness", !dupe.ok && dupe.error === "username_taken");
+const dupeCase = await api("/api/register", { body: {
+  username: "ALICE_" + suffix, displayName: "X", ...fakeKeys("xc") } });
+check("a handle is one handle in any case", !dupeCase.ok && dupeCase.error === "username_taken",
+  JSON.stringify(dupeCase));
 
 // 2. Search and prekeys
 const found = await api(`/api/users?q=bob_${suffix}`, { token: alice.token });
@@ -2344,6 +2348,13 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
     username: `bad_${suffix}`, displayName: "Bad", commands: [{ command: "Not A Command" }],
   } });
   check("a command that is not a word is refused", badCmd.status === 400, String(badCmd.status));
+  const botClash = await api("/api/bots", { token: alice.token, body: {
+    username: `alice_${suffix}`, displayName: "Clash" } });
+  check("a bot cannot take a person's handle", botClash.error === "username_taken",
+    JSON.stringify(botClash));
+  check("the bot is found by search",
+    (await api(`/api/users?q=helper_${suffix}`, { token: bob.token })).users
+      .some((u) => u.id === bot.botId && u.bot_owner === alice.userId));
   const mine = await api("/api/bots", { token: alice.token });
   check("the owner lists their bots", mine.bots?.some((b) => b.id === bot.botId),
     JSON.stringify(mine.bots?.length));

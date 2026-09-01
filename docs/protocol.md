@@ -40,6 +40,20 @@ The source of truth is the code: `server/src/index.ts` (the router),
 - `clientMsgId` — the client's UUID, the idempotency key of a send. The dedup key
   on the server is `cmid:<from>/<clientMsgId>`; a repeat returns the original
   `msgId`/`seq`.
+- `username` — the handle, `[a-zA-Z0-9_]{3,32}`, one handle in any case. Its
+  owner is decided by a Durable Object per handle (`HandleDO`, addressed by the
+  folded name): registration, a rename and a bot's creation claim the handle
+  there before anything else is written, so uniqueness comes from the
+  addressing and needs no index. A rename releases the old handle into a
+  14-day quarantine kept in the same object; the one who released it may take
+  it straight back, anyone else waits. Deleting the account frees the handle
+  outright. `POST /api/restore/start` resolves a handle to its owner there.
+- people search is a substring match over the handle and the display name, so
+  it has an index of its own: `DirectoryDO`, a card per account in SQLite
+  storage over four shards by a hash of the user id. A search asks every shard
+  and merges (exact handle first, then by handle, 20 results); a profile
+  change, a rename and a new bot rewrite the account's card in its shard, an
+  account deletion removes it.
 
 ## HTTP API
 
@@ -64,7 +78,8 @@ POST /api/provision/:id/claim     (x-provision-token) {identityKey, identitySign
                                   identityKeySig, signedPrekey, oneTimePrekeys, device:{name}}
                                   → {userId, deviceId, token}
 POST /api/provision/:id/cancel    (x-provision-token)
-GET  /api/users?q=                search by username/displayName (LOWER LIKE, limit 20)
+GET  /api/users?q=                search by username/displayName (substring, folded
+                                  in JS, over the DirectoryDO shards, limit 20)
 GET  /api/users/:id               → {user, presence:{online,lastSeen}, canCall}
                                   canCall: the target's call tier judged for the
                                   viewer, what the dial button is shown by
@@ -162,6 +177,10 @@ POST /api/block                   {userId, blocked}
 GET  /api/blocked                 → {blocked:[userId]}
 POST /api/dev/fault               {failEvents} — dev hook: the caller's own session
                                   object rejects that many frame deliveries
+POST /api/dev/reindex             dev hook for a stand whose accounts predate the
+                                  handle and directory objects: every users row
+                                  claims its handle and lands in the search index
+                                  → {indexed, clashes}
 ```
 
 Rights: only an admin can remove members and change group settings; an admin can

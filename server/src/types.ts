@@ -4,6 +4,10 @@ export interface Env {
   USER_DO: DurableObjectNamespace;
   CONV_DO: DurableObjectNamespace;
   APNS_DO: DurableObjectNamespace;
+  /// One object per username: who holds it, and the quarantine after a rename.
+  HANDLE_DO: DurableObjectNamespace;
+  /// The people-search index, sharded by user id.
+  DIRECTORY_DO: DurableObjectNamespace;
   APNS_ENV: string;
   /// Overrides the APNs endpoint, e.g. the dev mock at http://localhost:9871.
   /// Unset means Apple's production or sandbox host, picked by the device's apns-env.
