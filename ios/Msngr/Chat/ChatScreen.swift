@@ -111,12 +111,14 @@ struct ChatScreen: View {
                     .accessibilityIdentifier("chat.shaderBackground")
             case .image(let name):
                 if let img = UIImage(contentsOfFile: ShaderSurfaces.imagesDir.appendingPathComponent(name).path) {
-                    Image(uiImage: img)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    // the picture fills the screen behind the feed and takes no
+                    // part in the layout: a `scaledToFill` image inside the stack
+                    // grows the stack itself and pushes the feed off the screen
+                    Color.clear
+                        .overlay(Image(uiImage: img).resizable().scaledToFill())
                         .clipped()
                         .ignoresSafeArea()
+                        .allowsHitTesting(false)
                         .accessibilityIdentifier("chat.imageBackground")
                 }
             case nil:

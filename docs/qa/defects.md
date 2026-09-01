@@ -1055,3 +1055,15 @@ needs the stand started with `--var CMID_MIN_AGE:0 --var CMID_SWEEP_EVERY:0`
 minimum, so nothing is swept and the resend answers as a dupe). With those
 vars the case is green on the same code; the reproduction «on a clean HEAD»
 ran a stand without them. Closed as environment, no product change.
+
+### A picture background pushed the feed off the screen — fixed
+Reported by the owner 2026-09-01, minutes after the feed background landed:
+a chat with a picture background showed no messages at all («фон чата сломал
+чат», «он сделал чат широким»). The picture was placed straight into the
+screen's ZStack with `.resizable().scaledToFill()`, which lets the image
+dictate the stack's size: the stack grew to the picture's width and the feed
+went off the screen with it. A shader background never did this — the canvas
+takes the size it is given. Fixed the same day: the picture is drawn as
+`Color.clear.overlay(Image…)` and clipped, so it fills the screen and takes
+no part in the layout. Verified live on the reporter's own chat of hundreds
+of photos (qa/runs/2026-09-01-background-fix.png).
