@@ -36,6 +36,10 @@ struct ChatListView: View {
     @ObservedObject private var theme = ThemeStore.shared
     @State private var showNewChat = false
     @State private var showSettings = false
+    @State private var showStoryComposer = false
+    /// The author whose stories are being watched, if any.
+    @State private var watchingStories: StoriesModel.Author?
+    @ObservedObject private var stories = StoriesModel.shared
     @State private var path = NavigationPath()
     /// chat whose deletion is waiting for confirmation
     @State private var deleteCandidate: ChatListItem?
@@ -100,6 +104,12 @@ struct ChatListView: View {
                         .accessibilityIdentifier("chatlist.calls")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button { showStoryComposer = true } label: {
+                        Image(systemName: "plus.circle.dashed")
+                    }
+                    .accessibilityIdentifier("chatlist.newStory")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button { showNewChat = true } label: { Image(systemName: "square.and.pencil") }
                         .accessibilityIdentifier("chatlist.new")
                         .keyboardShortcut("n", modifiers: .command)
@@ -123,6 +133,13 @@ struct ChatListView: View {
             .sheet(isPresented: $showSettings) {
                 SettingsView()
             }
+            .sheet(isPresented: $showStoryComposer) {
+                StoryComposerView { _ in }
+            }
+            .fullScreenCover(item: $watchingStories) { author in
+                StoryViewerView(author: author) { watchingStories = nil }
+            }
+            .task(id: app.ready) { await stories.load() }
             .sheet(isPresented: $showFolders) {
                 ChatFoldersView(model: model)
             }
@@ -319,7 +336,8 @@ struct ChatListView: View {
                                   onOpen: { path.append($0) },
                                   onOpenArchive: { path.append(ArchiveRoute()) },
                                   onDelete: { deleteCandidate = $0 },
-                                  onNewFolder: { showFolders = true })
+                                  onNewFolder: { showFolders = true },
+                                  onOpenStories: { watchingStories = $0 })
         .overlay {
             if model.loaded, let folder, items.isEmpty {
                 folderEmptyState(folder)

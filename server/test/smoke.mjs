@@ -2409,6 +2409,99 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
   cbot.ws.close(); cuser.ws.close();
 }
 
+// --- stories: an access rule instead of a key, and a page outside the app
+{
+  const upload = async (token, bytes) => {
+    const r = await fetch(BASE + "/api/media", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/octet-stream" },
+      body: bytes,
+    });
+    return (await r.json()).mediaId;
+  };
+  const photo = await upload(alice.token, new Uint8Array([1, 2, 3, 4]));
+  const posted = await api("/api/stories", { token: alice.token, body: {
+    frames: [{ mediaId: photo, type: "photo", text: "первый кадр", textColor: "#fff" }],
+    audience: "contacts", hours: 24, link: true,
+  } });
+  check("a story is published", !!posted.storyId, JSON.stringify(posted));
+  check("the link is minted with it", (posted.link ?? "").includes("/s/"), posted.link);
+
+  const badFrames = await apiRaw("/api/stories", { token: alice.token,
+    body: { frames: [{ type: "photo" }] } });
+  check("a frame without media is refused", badFrames.status === 400, String(badFrames.status));
+  const badAudience = await apiRaw("/api/stories", { token: alice.token,
+    body: { frames: [{ mediaId: photo, type: "photo" }], audience: "the world" } });
+  check("an audience nobody defined is refused", badAudience.status === 400,
+    String(badAudience.status));
+
+  // bob shares a direct chat with alice, carol does not
+  const bobSees = await api("/api/stories", { token: bob.token });
+  check("someone with a direct chat sees it",
+    bobSees.stories?.some((s) => s.id === posted.storyId), JSON.stringify(bobSees.stories?.length));
+  const carolSees = await api("/api/stories", { token: carol.token });
+  check("a stranger does not see a contacts-only story",
+    !carolSees.stories?.some((s) => s.id === posted.storyId), JSON.stringify(carolSees.stories));
+  const open = await api("/api/stories", { token: alice.token, body: {
+    frames: [{ mediaId: photo, type: "photo" }], audience: "everyone",
+  } });
+  const carolOpen = await api("/api/stories", { token: carol.token });
+  check("a story for everyone reaches a stranger",
+    carolOpen.stories?.some((s) => s.id === open.storyId), JSON.stringify(carolOpen.stories?.length));
+
+  // who watched belongs to the author
+  const beforeSeen = bobSees.stories.find((s) => s.id === posted.storyId);
+  check("a story arrives unwatched", beforeSeen?.seen === false, JSON.stringify(beforeSeen?.seen));
+  await api(`/api/stories/${posted.storyId}/seen`, { token: bob.token, body: {} });
+  const afterSeen = await api("/api/stories", { token: bob.token });
+  check("watching it is remembered",
+    afterSeen.stories.find((s) => s.id === posted.storyId)?.seen === true);
+  const viewers = await api(`/api/stories/${posted.storyId}/viewers`, { token: alice.token });
+  check("the author sees who watched",
+    viewers.viewers?.length === 1 && viewers.viewers[0].viewer_id === bob.userId,
+    JSON.stringify(viewers.viewers));
+  const notAuthor = await apiRaw(`/api/stories/${posted.storyId}/viewers`, { token: bob.token });
+  check("nobody else sees who watched", notAuthor.status === 403, String(notAuthor.status));
+
+  // the page outside the app
+  const code = posted.link.split("/s/")[1];
+  const page = await fetch(`${BASE}/s/${code}`);
+  const html = await page.text();
+  check("the public page opens with no account", page.status === 200, String(page.status));
+  check("the page carries the text over the frame", html.includes("первый кадр"),
+    html.slice(0, 200));
+  check("the page names no audience",
+    !html.includes(bob.userId) && !html.includes(alice.userId), "an id leaked into the page");
+  const frame = await fetch(`${BASE}/s/${code}/m/0`);
+  check("the frame is served through the link", frame.status === 200
+    && frame.headers.get("content-type") === "image/jpeg", String(frame.status));
+  const noFrame = await fetch(`${BASE}/s/${code}/m/7`);
+  check("a frame the story has not got is not served", noFrame.status === 404,
+    String(noFrame.status));
+
+  // revoking, and what a kept link shows afterwards
+  const revoked = await api(`/api/stories/${posted.storyId}`, { token: alice.token,
+    body: { link: false } });
+  check("the link is revoked", revoked.link === null, JSON.stringify(revoked));
+  const afterRevoke = await fetch(`${BASE}/s/${code}`);
+  const revokedHtml = await afterRevoke.text();
+  check("a kept link says the story is gone", revokedHtml.includes("больше не открывается"),
+    revokedHtml.slice(0, 200));
+  check("its frames stop being served", (await fetch(`${BASE}/s/${code}/m/0`)).status === 404);
+  const again = await api(`/api/stories/${posted.storyId}`, { token: alice.token,
+    body: { link: true } });
+  check("a new link is a new code", !again.link.endsWith(code), again.link);
+
+  // taking the story down
+  await api(`/api/stories/${posted.storyId}`, { token: alice.token, body: { takeDown: true } });
+  const gone = await api("/api/stories", { token: bob.token });
+  check("a story taken down is gone for everyone",
+    !gone.stories?.some((s) => s.id === posted.storyId), JSON.stringify(gone.stories?.length));
+  const notMine = await apiRaw(`/api/stories/${open.storyId}`, { token: bob.token,
+    body: { takeDown: true } });
+  check("only the author takes a story down", notMine.status === 403, String(notMine.status));
+}
+
 cmal.ws.close(); ctre.ws.close();
 ca.ws.close(); cb2.ws.close(); cb3.ws.close(); cb4.ws.close(); ca2.ws.close(); ce.ws.close();
 cf.ws.close(); cg.ws.close();

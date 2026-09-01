@@ -33,6 +33,101 @@ function quarantineRow(env: Env, username: string) {
   ).bind(username).first<{ released_by: string; released_at: number }>();
 }
 
+// --- the public page of a story ---
+//
+// No account, no app, no auth: the link is the whole of the access. The page
+// carries the media and the text over it and nothing else — who watched belongs
+// to the creator, and the page never counts a view.
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (ch) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]!);
+}
+
+function storyPage(title: string, body: string): Response {
+  return new Response(
+    `<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>${escapeHtml(title)}</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #101014; color: #f2f2f7;
+         font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 480px; margin: 0 auto; padding: 16px; }
+  figure { margin: 0 0 16px; position: relative; }
+  img, video { width: 100%; display: block; border-radius: 14px; background: #000; }
+  figcaption { position: absolute; left: 12px; right: 12px; bottom: 16px;
+               padding: 8px 12px; border-radius: 10px; font-size: 18px; text-align: center; }
+  .note { color: #8e8e93; font-size: 14px; text-align: center; padding: 24px 0; }
+</style></head><body><main>${body}</main></body></html>`,
+    { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } }
+  );
+}
+
+app.get("/s/:code", async (c) => {
+  const story = await c.env.DB.prepare(
+    "SELECT * FROM stories WHERE link_code = ?"
+  ).bind(c.req.param("code")).first<{
+    id: string; frames: string; expires_at: number; link_revoked: number; taken_down: number;
+  }>();
+  // a link that was revoked, a story taken down and a story whose day is over
+  // all read the same from outside: there is nothing here any more
+  if (!story || story.link_revoked || story.taken_down || story.expires_at <= Date.now()) {
+    return storyPage("msngr", `<p class="note">Эта ссылка больше не открывается.</p>`);
+  }
+  const frames = JSON.parse(story.frames) as Array<{
+    mediaId: string; type: string; text?: string; textColor?: string; plateColor?: string;
+  }>;
+  const body = frames.map((f, i) => {
+    const src = `/s/${c.req.param("code")}/m/${i}`;
+    const media = f.type === "video"
+      ? `<video src="${src}" controls playsinline></video>`
+      : `<img src="${src}" alt="">`;
+    const caption = f.text
+      ? `<figcaption style="color:${escapeHtml(f.textColor ?? "#fff")};` +
+        `background:${escapeHtml(f.plateColor ?? "rgba(0,0,0,.35)")}">${escapeHtml(f.text)}</figcaption>`
+      : "";
+    return `<figure>${media}${caption}</figure>`;
+  }).join("");
+  return storyPage("msngr", body);
+});
+
+/// One frame's bytes, addressed by its place in the story rather than by its
+/// media id: the link is the access, and nothing else of the bucket is reachable
+/// through it.
+app.get("/s/:code/m/:index", async (c) => {
+  const story = await c.env.DB.prepare(
+    "SELECT frames, expires_at, link_revoked, taken_down FROM stories WHERE link_code = ?"
+  ).bind(c.req.param("code")).first<{
+    frames: string; expires_at: number; link_revoked: number; taken_down: number;
+  }>();
+  if (!story || story.link_revoked || story.taken_down || story.expires_at <= Date.now()) {
+    return err("not_found", 404);
+  }
+  const frames = JSON.parse(story.frames) as Array<{ mediaId: string; type: string }>;
+  const frame = frames[Number(c.req.param("index"))];
+  if (!frame) return err("not_found", 404);
+  // the range is passed on only when one was asked for: handing R2 a header set
+  // with no Range in it still answers 206, and a partial answer to a whole
+  // request is a lie about what was sent
+  const wanted = c.req.raw.headers.get("range");
+  const obj = await c.env.MEDIA.get(frame.mediaId,
+                                    wanted ? { range: c.req.raw.headers } : undefined);
+  if (!obj) return err("not_found", 404);
+  const headers = new Headers();
+  headers.set("content-type", frame.type === "video" ? "video/mp4" : "image/jpeg");
+  headers.set("accept-ranges", "bytes");
+  headers.set("cache-control", "private, max-age=300");
+  if (wanted && obj.range && "offset" in obj.range) {
+    const offset = obj.range.offset ?? 0;
+    const length = obj.range.length ?? obj.size - offset;
+    headers.set("content-range", `bytes ${offset}-${offset + length - 1}/${obj.size}`);
+    return new Response(obj.body, { status: 206, headers });
+  }
+  return new Response(obj.body, { headers });
+});
+
 // What this server speaks: its protocol version and the floor it still serves.
 // No auth: a client asks before it has an account.
 app.get("/api/version", (c) =>
@@ -1179,14 +1274,15 @@ app.post("/api/media", async (c) => {
 });
 
 app.get("/api/media/:id", async (c) => {
-  const obj = await c.env.MEDIA.get(c.req.param("id"), {
-    range: c.req.raw.headers,
-  });
+  // only a request that asked for a range gets a partial answer
+  const wanted = c.req.raw.headers.get("range");
+  const obj = await c.env.MEDIA.get(c.req.param("id"),
+                                    wanted ? { range: c.req.raw.headers } : undefined);
   if (!obj) return err("not_found", 404);
   const headers = new Headers();
   obj.writeHttpMetadata(headers);
   headers.set("accept-ranges", "bytes");
-  if (obj.range && "offset" in obj.range) {
+  if (wanted && obj.range && "offset" in obj.range) {
     const offset = obj.range.offset ?? 0;
     const length = obj.range.length ?? obj.size - offset;
     headers.set("content-range", `bytes ${offset}-${offset + length - 1}/${obj.size}`);
@@ -1463,6 +1559,165 @@ app.post("/api/privacy", async (c) => {
   // again travels to them at once instead of waiting for a refetch
   if (next.avatar !== current.avatar) await broadcastProfile(c.env, userId);
   return json({ ok: true, privacy: next });
+});
+
+// --- stories ---
+//
+// A story is not end-to-end encrypted. Who may see one is an access rule, not a
+// key: that is what lets it live for a day for a chosen audience, and what
+// makes a public link possible at all. The composer says so before the story
+// goes out.
+
+interface StoryRow {
+  id: string; author_id: string; created_at: number; expires_at: number;
+  frames: string; audience: string;
+  link_code: string | null; link_revoked: number; taken_down: number;
+}
+
+const STORY_AUDIENCES = ["everyone", "contacts"];
+/// How long a story may be asked to live. A day is the default; a week is the
+/// ceiling, so nothing published by accident stays for a month.
+const STORY_MAX_HOURS = 24 * 7;
+
+/// The frames as the composer built them: a media id per frame, and the text
+/// laid over it. The server keeps them as they are — it renders the public
+/// page from them and hands them to the app unchanged.
+function cleanFrames(value: unknown): unknown[] | null {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 20) return null;
+  for (const f of value) {
+    const frame = f as { mediaId?: unknown; type?: unknown };
+    if (typeof frame?.mediaId !== "string" || !frame.mediaId) return null;
+    if (frame.type !== "photo" && frame.type !== "video") return null;
+  }
+  return value;
+}
+
+/// The people this user has a direct chat with. A direct chat's id is derived
+/// from the two ids, so the list is read out of the chat list itself without
+/// asking a single conversation object.
+async function directPeers(env: Env, userId: string): Promise<string[]> {
+  const r = await userStub(env, userId).fetch("https://do/chats");
+  const { chats } = (await r.json()) as { chats: Record<string, unknown> };
+  const peers: string[] = [];
+  for (const chatId of Object.keys(chats)) {
+    if (!chatId.startsWith("direct:")) continue;
+    const [a, b] = chatId.slice("direct:".length).split(":");
+    const peer = a === userId ? b : a;
+    if (peer && peer !== userId) peers.push(peer);
+  }
+  return peers;
+}
+
+app.post("/api/stories", async (c) => {
+  const { userId } = c.get("auth");
+  const b = await c.req.json<{
+    frames: unknown; audience?: string; hours?: number; link?: boolean;
+  }>();
+  const frames = cleanFrames(b.frames);
+  if (!frames) return err("bad_frames");
+  const audience = b.audience ?? "contacts";
+  if (!STORY_AUDIENCES.includes(audience)) return err("bad_audience");
+  const hours = Math.min(Math.max(b.hours ?? 24, 1), STORY_MAX_HOURS);
+  const now = Date.now();
+  const id = ulid(now);
+  const code = b.link ? b64url(crypto.getRandomValues(new Uint8Array(9))) : null;
+  await c.env.DB.prepare(
+    `INSERT INTO stories (id, author_id, created_at, expires_at, frames, audience, link_code)
+     VALUES (?,?,?,?,?,?,?)`
+  ).bind(id, userId, now, now + hours * 3600_000, JSON.stringify(frames), audience, code).run();
+  return json({ ok: true, storyId: id, link: code ? `${new URL(c.req.url).origin}/s/${code}` : null });
+});
+
+/// Everything this user may watch right now, newest author first, with their
+/// own stories among them.
+app.get("/api/stories", async (c) => {
+  const { userId } = c.get("auth");
+  const now = Date.now();
+  const peers = await directPeers(c.env, userId);
+  const ids = [...new Set([userId, ...peers])];
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = await c.env.DB.prepare(
+    `SELECT s.*, u.username, u.display_name, u.avatar_id
+     FROM stories s JOIN users u ON u.id = s.author_id
+     WHERE s.taken_down = 0 AND s.expires_at > ?
+       AND (s.author_id IN (${placeholders}) OR s.audience = 'everyone')
+     ORDER BY s.created_at`
+  ).bind(now, ...ids).all<StoryRow & { username: string; display_name: string; avatar_id: string | null }>();
+  const seen = await c.env.DB.prepare(
+    "SELECT story_id FROM story_views WHERE viewer_id = ?"
+  ).bind(userId).all<{ story_id: string }>();
+  const watched = new Set(seen.results.map((r) => r.story_id));
+  const blocked = await c.env.DB.prepare(
+    "SELECT user_id, blocked_id FROM blocks WHERE user_id = ? OR blocked_id = ?"
+  ).bind(userId, userId).all<{ user_id: string; blocked_id: string }>();
+  const hidden = new Set(blocked.results.flatMap((r) => [r.user_id, r.blocked_id]));
+  const stories = rows.results
+    .filter((r) => !hidden.has(r.author_id) || r.author_id === userId)
+    .map((r) => ({
+      id: r.id, authorId: r.author_id, username: r.username, displayName: r.display_name,
+      avatarId: r.avatar_id, createdAt: r.created_at, expiresAt: r.expires_at,
+      frames: JSON.parse(r.frames), audience: r.audience,
+      link: r.link_code && !r.link_revoked ? `${new URL(c.req.url).origin}/s/${r.link_code}` : null,
+      seen: watched.has(r.id),
+    }));
+  return json({ ok: true, stories });
+});
+
+app.post("/api/stories/:id/seen", async (c) => {
+  const { userId } = c.get("auth");
+  await c.env.DB.prepare(
+    `INSERT INTO story_views (story_id, viewer_id, seen_at) VALUES (?,?,?)
+     ON CONFLICT(story_id, viewer_id) DO NOTHING`
+  ).bind(c.req.param("id"), userId, Date.now()).run();
+  return json({ ok: true });
+});
+
+/// Who watched. The creator's alone: nobody else is told, and the public page
+/// is not counted at all.
+app.get("/api/stories/:id/viewers", async (c) => {
+  const { userId } = c.get("auth");
+  const story = await c.env.DB.prepare(
+    "SELECT author_id FROM stories WHERE id = ?"
+  ).bind(c.req.param("id")).first<{ author_id: string }>();
+  if (!story) return err("not_found", 404);
+  if (story.author_id !== userId) return err("not_author", 403);
+  const rows = await c.env.DB.prepare(
+    `SELECT v.viewer_id, v.seen_at, u.username, u.display_name, u.avatar_id
+     FROM story_views v JOIN users u ON u.id = v.viewer_id
+     WHERE v.story_id = ? ORDER BY v.seen_at DESC`
+  ).bind(c.req.param("id")).all();
+  return json({ ok: true, viewers: rows.results });
+});
+
+/// Taking it down, and minting or revoking its public link.
+app.post("/api/stories/:id", async (c) => {
+  const { userId } = c.get("auth");
+  const id = c.req.param("id");
+  const b = await c.req.json<{ takeDown?: boolean; link?: boolean }>();
+  const story = await c.env.DB.prepare(
+    "SELECT * FROM stories WHERE id = ?"
+  ).bind(id).first<StoryRow>();
+  if (!story) return err("not_found", 404);
+  if (story.author_id !== userId) return err("not_author", 403);
+  if (b.takeDown) {
+    await c.env.DB.prepare("UPDATE stories SET taken_down = 1 WHERE id = ?").bind(id).run();
+    return json({ ok: true });
+  }
+  if (b.link === true) {
+    // a revoked link is never handed out again: a new one is a new code
+    const code = story.link_code && !story.link_revoked
+      ? story.link_code
+      : b64url(crypto.getRandomValues(new Uint8Array(9)));
+    await c.env.DB.prepare(
+      "UPDATE stories SET link_code = ?, link_revoked = 0 WHERE id = ?"
+    ).bind(code, id).run();
+    return json({ ok: true, link: `${new URL(c.req.url).origin}/s/${code}` });
+  }
+  if (b.link === false) {
+    await c.env.DB.prepare("UPDATE stories SET link_revoked = 1 WHERE id = ?").bind(id).run();
+    return json({ ok: true, link: null });
+  }
+  return err("nothing_to_do");
 });
 
 export default {
