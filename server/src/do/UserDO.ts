@@ -1040,13 +1040,20 @@ export class UserDO implements DurableObject {
     // a chat left untouched keeps its cursor and gets no syncState: the client
     // sees it stayed behind and asks for it in the next portion
     let pending = false;
+    // every chat of the portion gets a share of the budget. Spending it in
+    // order let one flooded chat take the whole of it and leave the rest of the
+    // list untouched portion after portion — a message in a quiet chat then
+    // never arrived at all, because the client only re-asks for the chats the
+    // portion answered
+    const touching = Math.max(1, Math.min(Object.keys(cursors).length, SYNC_CHATS));
+    const share = Math.max(1, Math.floor(SYNC_BUDGET / touching));
     for (const [chatId, from] of Object.entries(cursors)) {
       if (budget <= 0 || chats <= 0) {
         pending = true;
         continue;
       }
       chats--;
-      const limit = Math.min(SYNC_PAGE, budget);
+      const limit = Math.min(SYNC_PAGE, share, budget);
       const res = await this.convStub(chatId).fetch(
         `https://do/history?fromSeq=${from}&limit=${limit}&userId=${userId}`
       );
