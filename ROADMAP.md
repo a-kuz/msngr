@@ -941,17 +941,24 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   «📞» previews in the chat list, a tap redials (live run 2026-08-31)
 - ⬜ a VoIP/call push so an incoming call rings with the app closed (blocked
   on the dev signing certificate for device pushes)
-- ⬜ our own TURN (coturn on the stand) for NAT paths STUN cannot cross — a
-  system change on the shared server, the owner's call
+- ✅ our own TURN (coturn on the stand) for NAT paths STUN cannot cross:
+  coturn on adad (:3478, relay 49160–49400, systemd) and `turn:` in the
+  client's ICE servers (the merge of worktree-calls, 2026-09-01; details in
+  CALLS-ROADMAP.md)
 - ⬜ 1:1 audio on CF Calls, the provider behind our own protocol
 - ⬜ end-to-end encryption over insertable streams
 - ⬜ a video call
 - ⬜ a group call
 - ⬜ CallKit and PushKit
-- ⬜ ringback while dialing, and the callee's ringtone
-- ⬜ a push for an incoming call, and a missed-call notification with a way back
-- ⬜ the in-app call bar: the call keeps going behind the interface, a timer on
-  the bar, a tap returns to the call screen
+- ✅ ringback while dialing, and the callee's ringtone (CallSounds, the merge
+  of worktree-calls 2026-09-01)
+- 🟡 a push for an incoming call, and a missed-call notification with a way
+  back (the missed-call push is shipped — the caller's `callLog` rides
+  `service` + `notify`, covered in smoke; the incoming-call ring with the app
+  closed is the VoIP push, blocked on the device signing certificate)
+- ✅ the in-app call bar: the call folds into a floating tile over the chats,
+  the timer on it, a tap returns to the call screen (the merge of
+  worktree-calls 2026-09-01)
 - ⬜ picture-in-picture for a video call, including the call minimized to the
   system PiP window
 - ⬜ a second incoming call during a call: decline, or hold and switch
