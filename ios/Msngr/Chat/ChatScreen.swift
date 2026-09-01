@@ -235,6 +235,20 @@ struct ChatScreen: View {
                             .accessibilityLabel(String(localized: "Call"))
                             .accessibilityIdentifier("chat.call")
                         }
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Button {
+                                Task {
+                                    await AppState.shared.callManager?.startCall(
+                                        chatId: chatId, peerUserId: peerId, video: true)
+                                }
+                            } label: {
+                                Image(systemName: "video")
+                                    .font(Theme.glyph(17, max: 24))
+                                    .foregroundStyle(Color.primary)
+                            }
+                            .accessibilityLabel(String(localized: "Video call"))
+                            .accessibilityIdentifier("chat.videoCall")
+                        }
                     }
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button { openSearch() } label: {

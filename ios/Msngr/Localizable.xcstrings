@@ -3249,6 +3249,28 @@
         }
       }
     },
+    "Incoming video call" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Входящий видеозвонок"
+          }
+        }
+      }
+    },
+    "Video call" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Видеозвонок"
+          }
+        }
+      }
+    },
     "Add to call" : {
       "extractionState" : "manual",
       "localizations" : {
