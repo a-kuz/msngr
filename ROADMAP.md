@@ -872,14 +872,21 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     the sender on the receiver's object, between the chat's explicit sound
     and the shape default; the picker on the direct chat's info screen
     (the person-sound cases in smoke; live pick 2026-09-01)
-  - ⬜ a sound of its own for a mention, louder than the chat's own
+  - 🟡 a sound of its own for a mention, louder than the chat's own: the server
+    cannot see a mention (the text is encrypted), so the choice belongs to the
+    extension, which does not run on the simulator — device work
   - ✅ a muted chat still notifying on a mention or a reply to you
     (qa/runs/2026-08-28-mute-reply; NotificationDecisionTests,
     MentionMarkdownTests `mentionsUser`; the mention live run in
     qa/runs/2026-08-28-mention-token)
-  - ⬜ a set of sounds to pick from, and a silent choice
-  - ⬜ the sound travels with the push (`apns-sound`) so the extension does not
-    have to be running for it to be right
+  - ✅ a set of sounds to pick from, and a silent choice: three bundled chimes
+    with an audible preview, the system default, and «Без звука», which sends
+    the push with no sound field at all (the silent case in smoke;
+    qa/runs/2026-09-01-notify-silent.md)
+  - ✅ the sound travels with the push (`apns-sound`) so the extension does not
+    have to be running for it to be right: the resolved name rides `aps.sound`
+    of every push, and a silent choice omits the field (the sound and silent
+    cases in smoke)
 
 ## Groups
 
