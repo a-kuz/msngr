@@ -1082,8 +1082,13 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ✅ the invited-by row in the pairwise chat of the inviter and the invited
   (created on the spot when they had none): «Вы пригласили X в звонок», a
   system line written by the inviter once (live run 2026-09-01)
-- ⬜ the live call bubble that stays live in the chats it was placed into:
-  join from there, the timer and the participants on it
+- ✅ the live call card that stays live in the chats it was placed into: the
+  inviter writes it into the chat the call started in and into each invited
+  person's chat, edits it as people come and go and closes it when the call
+  ends; the row shows the participants and a running clock, and a tap on a
+  live card joins — an offer with the card's callId to its writer, a leg to
+  every other member (CallManagerTests card tests, CallSignalTests;
+  qa/runs/2026-09-02-call-card.md, a three-simulator run)
 
 ## Settings
 

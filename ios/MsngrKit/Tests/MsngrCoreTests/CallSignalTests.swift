@@ -14,6 +14,23 @@ final class CallSignalTests: XCTestCase {
         XCTAssertNil(CallLive.decode(CallLog(outcome: .missed, callId: "c1").encoded))
     }
 
+    /// An incoming card lands as a `.call` row, the way a call log does, not
+    /// as text.
+    func testIncomingCardLandsAsACallRow() async throws {
+        let db = try AppDatabase.openInMemory()
+        var content = ContentPayload(kind: CallLive.kind)
+        content.text = CallLive(callId: "c1", startedAt: 1, members: [.init(id: "peer", name: "Peer")]).encoded
+        try await db.write { dbc in
+            try SyncEngine.applyContent(dbc, content, chatId: "chat1", seq: 3, from: "peer",
+                                        sentAt: 1, ts: 1, ownUserId: "me")
+        }
+        let row = try await db.read { dbc in
+            try Message.fetchOne(dbc, key: Message.feedId(chatId: "chat1", seq: 3))
+        }
+        XCTAssertEqual(row?.kind, .call)
+        XCTAssertEqual(row?.callLive?.callId, "c1")
+    }
+
     func testRoundTripThroughContentText() {
         let signal = CallSignal(
             type: .offer, callId: "c1",

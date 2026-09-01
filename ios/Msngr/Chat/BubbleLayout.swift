@@ -274,7 +274,10 @@ enum BubbleLayout {
             contentWidth = max(contentWidth, w)
             y += h
         case .call:
-            let w = min(attachmentWidth, maxBubbleWidth - 2 * hPadding)
+            // a conference card names everyone in the call, so it takes the
+            // wide slot a map card takes
+            let wide = msg.callLive != nil
+            let w = min(attachmentWidth + (wide ? 60 : 0), maxBubbleWidth - 2 * hPadding)
             let h = attachmentHeight
             voiceFrame = CGRect(x: hPadding, y: y, width: w, height: h) // a call borrows the voiceFrame slot
             contentWidth = max(contentWidth, w)
@@ -575,7 +578,7 @@ enum BubbleLayout {
                 && MessageMarkdown.mentionsUser(msg.text ?? "", userId: OwnUser.id),
             showTail: showTail,
             timeString: timeString,
-            edited: msg.edited,
+            edited: Self.showsEditedMark(msg),
             statusWidth: statusWidth)
     }
 
@@ -690,10 +693,16 @@ enum BubbleLayout {
     /// Room in the status line for the listened dots of a voice or round video.
     static let noteDotsSpan: CGFloat = 14
 
+    /// A call row is rewritten by the machinery (the conference card follows
+    /// the call), never by a person, so it carries no edited mark.
+    static func showsEditedMark(_ msg: Message) -> Bool {
+        msg.edited && msg.kind != .call
+    }
+
     static func statusWidth(_ msg: Message, timeString: String) -> CGFloat {
         let font = timeFont
         var w = timeString.size(withAttributes: [.font: font]).width
-        if msg.edited { w += editedMark.size(withAttributes: [.font: font]).width }
+        if showsEditedMark(msg) { w += editedMark.size(withAttributes: [.font: font]).width }
         if msg.isOutgoing { w += tickWidth }
         // the dots' slot is always reserved: the time must not shift when a
         // note flips between heard and unheard
