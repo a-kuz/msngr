@@ -1120,6 +1120,39 @@
         }
       }
     },
+    "Calls" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звонки"
+          }
+        }
+      }
+    },
+    "On hold" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На удержании"
+          }
+        }
+      }
+    },
+    "No calls yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пока нет звонков"
+          }
+        }
+      }
+    },
     "Call ended" : {
       "extractionState" : "manual",
       "localizations" : {

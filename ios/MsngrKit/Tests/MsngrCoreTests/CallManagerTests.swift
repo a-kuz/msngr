@@ -41,6 +41,10 @@ final class FakeTransport: CallMediaTransport, @unchecked Sendable {
     func setMuted(_ muted: Bool) async {
         lock.lock(); self.muted = muted; lock.unlock()
     }
+    var held: Bool?
+    func setHeld(_ held: Bool) async {
+        lock.lock(); self.held = held; lock.unlock()
+    }
     func close() async {
         lock.lock(); closed = true; lock.unlock()
         continuation?.finish()
@@ -744,6 +748,99 @@ final class CallManagerTests: XCTestCase {
         XCTAssertNil(state.waitingCallerId)
         await manager.accept()
         XCTAssertEqual(factory.all[1].remoteOffer, "s2")
+        _ = log
+    }
+
+    /// Hold-and-accept parks the live call on its open transport, tells its
+    /// peer, and answers the waiter.
+    func testHoldAndAcceptParksTheCall() async {
+        let (manager, log, factory, _) = makeConferenceManager()
+        await activateWithWaiting(manager, log: log, factory: factory)
+        await manager.holdAndAcceptWaiting()
+        let state = await manager.current
+        XCTAssertEqual(state.phase, .connecting)
+        XCTAssertEqual(state.peerUserId, "second")
+        XCTAssertEqual(state.heldPeerId, "peer")
+        XCTAssertNil(state.waitingCallerId)
+        XCTAssertFalse(factory.all[0].closed)
+        XCTAssertEqual(factory.all[0].held, true)
+        let hold = log.all.first { $0.0.type == .hold }!
+        XCTAssertEqual(hold.0.callId, "c1")
+        XCTAssertEqual(hold.0.held, true)
+        XCTAssertEqual(hold.1, "chat1")
+        XCTAssertEqual(log.all.last!.0.type, .answer)
+        XCTAssertEqual(log.all.last!.1, "chat2")
+    }
+
+    /// Switching swaps the two calls: the live one parks, the parked one
+    /// speaks again, and both peers are told.
+    func testSwitchToHeldSwapsTheCalls() async {
+        let (manager, log, factory, _) = makeConferenceManager()
+        await activateWithWaiting(manager, log: log, factory: factory)
+        await manager.holdAndAcceptWaiting()
+        factory.all[1].emit(.connected)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.switchToHeld()
+        let state = await manager.current
+        XCTAssertEqual(state.phase, .active)
+        XCTAssertEqual(state.peerUserId, "peer")
+        XCTAssertEqual(state.chatId, "chat1")
+        XCTAssertEqual(state.heldPeerId, "second")
+        XCTAssertEqual(factory.all[0].held, false)
+        XCTAssertEqual(factory.all[1].held, true)
+        let holds = log.all.filter { $0.0.type == .hold }
+        XCTAssertEqual(holds.last!.0.held, false)
+        XCTAssertEqual(holds.last!.1, "chat1")
+    }
+
+    /// Hanging up the live call brings the parked one back.
+    func testHangUpUnparksTheHeldCall() async {
+        let (manager, log, factory, _) = makeConferenceManager()
+        await activateWithWaiting(manager, log: log, factory: factory)
+        await manager.holdAndAcceptWaiting()
+        factory.all[1].emit(.connected)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.hangUp()
+        let state = await manager.current
+        XCTAssertEqual(state.phase, .active)
+        XCTAssertEqual(state.peerUserId, "peer")
+        XCTAssertNil(state.heldPeerId)
+        XCTAssertEqual(factory.all[0].held, false)
+        XCTAssertTrue(factory.all[1].closed)
+        _ = log
+    }
+
+    /// The parked call's peer hanging up empties the hold slot; the live
+    /// call stands.
+    func testHeldPeerEndDropsOnlyTheHeldCall() async {
+        let (manager, log, factory, _) = makeConferenceManager()
+        await activateWithWaiting(manager, log: log, factory: factory)
+        await manager.holdAndAcceptWaiting()
+        factory.all[1].emit(.connected)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.handle(event(CallSignal(type: .end, callId: "c1", reason: .hangup)))
+        let state = await manager.current
+        XCTAssertEqual(state.phase, .active)
+        XCTAssertEqual(state.peerUserId, "second")
+        XCTAssertNil(state.heldPeerId)
+        XCTAssertTrue(factory.all[0].closed)
+        XCTAssertFalse(factory.all[1].closed)
+        _ = log
+    }
+
+    /// The peer's hold signal shows as their silence, on and off.
+    func testRemoteHoldReachesTheState() async {
+        let (manager, log, factory, _) = makeConferenceManager()
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "s")))
+        await manager.accept()
+        factory.all[0].emit(.connected)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.handle(event(CallSignal(type: .hold, callId: "c1", held: true)))
+        var state = await manager.current
+        XCTAssertTrue(state.remoteHold)
+        await manager.handle(event(CallSignal(type: .hold, callId: "c1", held: false)))
+        state = await manager.current
+        XCTAssertFalse(state.remoteHold)
         _ = log
     }
 

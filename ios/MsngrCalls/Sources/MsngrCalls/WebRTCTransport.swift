@@ -133,6 +133,16 @@ public final class WebRTCTransport: NSObject, CallMediaTransport, @unchecked Sen
         audioTrack.isEnabled = !muted
     }
 
+    /// Holding silences the call both ways without closing it: nothing is
+    /// sent and nothing is played, and the connection keeps standing. The
+    /// camera is setVideo's business and is left alone.
+    public func setHeld(_ held: Bool) async {
+        audioTrack.isEnabled = !held
+        for receiver in pc.receivers {
+            (receiver.track as? RTCAudioTrack)?.isEnabled = !held
+        }
+    }
+
     public func setVideo(enabled: Bool) async {
         if enabled {
             if videoTrack == nil {

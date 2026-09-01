@@ -13,6 +13,9 @@ struct RootView: View {
 /// the archive needs a type of its own.
 struct ArchiveRoute: Hashable {}
 
+/// The calls list as a point on the navigation path.
+struct CallsRoute: Hashable {}
+
 /// Cmd+F moves focus into the search field where the system allows it;
 /// on earlier systems the shortcut is simply inert.
 private struct SearchFocusIfAvailable: ViewModifier {
@@ -92,6 +95,10 @@ struct ChatListView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
                 }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { path.append(CallsRoute()) } label: { Image(systemName: "phone") }
+                        .accessibilityIdentifier("chatlist.calls")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showNewChat = true } label: { Image(systemName: "square.and.pencil") }
                         .accessibilityIdentifier("chatlist.new")
@@ -103,6 +110,9 @@ struct ChatListView: View {
             }
             .navigationDestination(for: ArchiveRoute.self) { _ in
                 ArchiveView(model: model)
+            }
+            .navigationDestination(for: CallsRoute.self) { _ in
+                CallsListView()
             }
             .sheet(isPresented: $showNewChat) {
                 NewChatView { chatId in
