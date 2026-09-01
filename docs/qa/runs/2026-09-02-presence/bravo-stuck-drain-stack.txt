@@ -1,0 +1,14 @@
+    +           285 SyncEngine.drainIncoming()  SyncEngine.swift:396
+    +             285 SyncEngine.applyIncomingBatch(_:)  SyncEngine.swift:895
+    +               285 SyncEngine.retryPending(chatId:)  SyncEngine.swift:1165
+    +                 285 SyncEngine.replay(_:)  SyncEngine.swift:1331
+    +                   285 E2EEManager.decrypt(envelopeJSON:chatId:fromUserId:fromDeviceId:plaintext:)  E2EE.swift:480
+    +                     285 IncomingDecryptor.decrypt(envelopeJSON:chatId:fromUserId:fromDeviceId:plaintext:)  IncomingDecryptor.swift:39
+    +                       285 CryptoGate.withLock<A>(timeout:_:)  CryptoGate.swift:100
+    +                         285 partial apply for closure #1 in IncomingDecryptor.decrypt(envelopeJSON:chatId:fromUserId:fromDeviceId:plaintext:)  /
+    +                           285 closure #1 in IncomingDecryptor.decrypt(envelopeJSON:chatId:fromUserId:fromDeviceId:plaintext:)  IncomingDecryptor
+    +                             285 IncomingDecryptor.decrypt(envelopeJSON:chatId:fromUserId:fromDeviceId:plaintext:holding:)  IncomingDecryptor.swi
+    +                               229 IncomingDecryptor.decryptPairwise(box:chatId:fromUserId:fromDeviceId:)  IncomingDecryptor.swift:110
+    +                               ! 225 DoubleRatchetSession.decrypt(_:)  DoubleRatchet.swift:131
+    +                               ! : 201 DoubleRatchetSession.skipRecvKeys(until:)  DoubleRatchet.swift:168
+--

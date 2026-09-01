@@ -1,0 +1,6 @@
+1788301757 open
+1788301757 {"t":"hello","serverTime":1788301757.504,"protocol":1,"minProtocol":1}
+1788301757 {"t":"presence","userId":"01M0JWM37KTG2M98BF93TR21G8","online":true,"lastSeen":1788301685.504}
+1788301757 {"t":"presence","userId":"01M0JWM38P2EEGHNA457DR5GNE","online":false,"lastSeen":1788298737.28}
+1788301764 {"t":"presence","userId":"01M0JWM37KTG2M98BF93TR21G8","online":false,"lastSeen":1788301764.6}
+1788301771 {"t":"presence","userId":"01M0JWM37KTG2M98BF93TR21G8","online":true,"lastSeen":1788301771.319}

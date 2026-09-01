@@ -26,6 +26,10 @@ type Reasons = Record<string, true>;
 interface PeerPresence {
   online: boolean;
   lastSeen: number;
+  /// The source's flip counter (`presenceStamp`). Two flips in one second
+  /// travel as two pushes that can land in either order; the subscriber keeps
+  /// the higher stamp and drops the rest.
+  stamp: number;
 }
 /// Presence pushes in flight at once from one object.
 const PRESENCE_FAN = 20;
@@ -86,6 +90,9 @@ interface SocketAttachment {
   deviceId: string;
   // time of the last ping, in seconds; a socket without a fresh one counts as hung
   lastPing: number;
+  // the app behind this socket said it went to the background: its pings keep
+  // the socket alive but do not read as online until it says `fg`
+  bg?: boolean;
 }
 
 /// Push queue. A frame's delivery is acknowledged the moment the sockets have
@@ -288,8 +295,9 @@ export class UserDO implements DurableObject {
   /// A presence flip: the new state goes to every subscriber allowed to see it.
   private async broadcastPresence(online: boolean) {
     const lastSeen = nowSec();
-    await this.state.storage.put("lastSeen", lastSeen);
-    await this.pushPresence(await this.subscribers(), { online, lastSeen });
+    const stamp = ((await this.state.storage.get<number>("presenceStamp")) ?? 0) + 1;
+    await this.state.storage.put({ lastSeen, presenceStamp: stamp });
+    await this.pushPresence(await this.subscribers(), { online, lastSeen, stamp });
   }
 
   private async subscribers(): Promise<string[]> {
@@ -298,9 +306,11 @@ export class UserDO implements DurableObject {
   }
 
   private async ownPresence(): Promise<PeerPresence> {
+    const got = await this.state.storage.get<number>(["lastSeen", "presenceStamp"]);
     return {
       online: this.presenceFresh(),
-      lastSeen: (await this.state.storage.get<number>("lastSeen")) ?? 0,
+      lastSeen: got.get("lastSeen") ?? 0,
+      stamp: got.get("presenceStamp") ?? 0,
     };
   }
 
@@ -560,8 +570,11 @@ export class UserDO implements DurableObject {
         // see it. Kept even before this object's own roster call has landed —
         // a chat's members are told at once, and the source's snapshot can
         // arrive first
-        const b = (await req.json()) as { userId: string; online: boolean; lastSeen: number };
-        await this.state.storage.put(PEER_PREFIX + b.userId, { online: b.online, lastSeen: b.lastSeen } satisfies PeerPresence);
+        const b = (await req.json()) as PeerPresence & { userId: string };
+        const held = await this.state.storage.get<PeerPresence>(PEER_PREFIX + b.userId);
+        if (held && held.stamp > b.stamp) return json({ ok: true });
+        await this.state.storage.put(PEER_PREFIX + b.userId,
+          { online: b.online, lastSeen: b.lastSeen, stamp: b.stamp } satisfies PeerPresence);
         this.broadcast({ t: "presence", userId: b.userId, online: b.online, lastSeen: b.lastSeen });
         return json({ ok: true });
       }
@@ -1401,21 +1414,23 @@ export class UserDO implements DurableObject {
         // presence rides on ping-pong: a fresh ping means online, silence past the TTL
         // (the alarm) or an explicit "bg" means offline. An open socket says nothing on
         // its own, since iOS holds it for minutes after the app is backgrounded.
+        this.send(ws, { t: "pong" });
+        // a socket whose app is in the background stays a socket, not a presence
+        if (att.bg) return;
         const wasFresh = this.presenceFresh();
         ws.serializeAttachment({ ...att, lastPing: nowSec() } satisfies SocketAttachment);
-        this.send(ws, { t: "pong" });
         await this.armPresenceCheck();
         if (!wasFresh) await this.broadcastPresence(true);
         return;
       }
 
       case "bg":
-        ws.serializeAttachment({ ...att, lastPing: 0 } satisfies SocketAttachment);
+        ws.serializeAttachment({ ...att, lastPing: 0, bg: true } satisfies SocketAttachment);
         await this.broadcastPresence(false);
         return;
 
       case "fg": {
-        ws.serializeAttachment({ ...att, lastPing: nowSec() } satisfies SocketAttachment);
+        ws.serializeAttachment({ ...att, lastPing: nowSec(), bg: false } satisfies SocketAttachment);
         await this.armPresenceCheck();
         await this.broadcastPresence(true);
         return;
