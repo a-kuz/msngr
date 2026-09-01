@@ -4199,6 +4199,17 @@
         }
       }
     },
+    "Silent" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без звука"
+          }
+        }
+      }
+    },
     "Scam" : {
       "extractionState" : "manual",
       "localizations" : {

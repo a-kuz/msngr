@@ -1645,6 +1645,16 @@ check("service frame does not grow the badge", pushSvc?.body.aps.badge === 1,
   const sndPush5 = await waitPush(pushFor(`olga-sim-${suffix}`, s6));
   check("the chat's explicit sound still wins over the person's",
     sndPush5?.body.aps.sound === "chime2.caf", JSON.stringify(sndPush5?.body.aps));
+  // a silent choice: the push carries no sound field at all, so the system
+  // posts the banner without playing anything
+  await api(`/api/chats/${gchat.chatId}/flags`, { token: olga.token, body: { sound: "none" } });
+  const s7 = await gsend("cm-snd6");
+  const sndPush6 = await waitPush(pushFor(`olga-sim-${suffix}`, s7));
+  check("a silent chat pushes with no sound field",
+    sndPush6 !== undefined && !("sound" in sndPush6.body.aps),
+    JSON.stringify(sndPush6?.body.aps));
+  await api(`/api/chats/${gchat.chatId}/flags`, { token: olga.token,
+    body: { sound: "chime2.caf" } });
   // with the chat and the person both set, the exceptions list names them both
   const exc = await api("/api/notify-sounds/exceptions", { token: olga.token });
   check("exceptions list the chat's sound",

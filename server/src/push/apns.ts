@@ -42,9 +42,9 @@ async function apnsJwt(env: Env, force: boolean): Promise<string | null> {
 
 export interface PushPayload {
   chatId: string;
-  /// APNs sound name: a caf file bundled with the app, or "default". Resolved
-  /// by the sender's object from the chat's own sound, then the user's
-  /// direct/group default.
+  /// APNs sound name: a caf file bundled with the app, "default", or "none"
+  /// for a silent push. Resolved by the sender's object from the chat's own
+  /// sound, then the user's direct/group default.
   sound?: string;
   seq?: number; // position of the message in its chat; the client shows a burst in this order
   sentAt?: number; // send time in ms, which orders messages across chats
@@ -88,6 +88,13 @@ export function envelopeForDevice(body: unknown, address: string): string | unde
   return JSON.stringify({ ...env, msgs: { [address]: box } });
 }
 
+/// A silent choice carries no sound field at all: the system then posts the
+/// banner without playing anything, whether the extension ran or not.
+function soundField(sound?: string): { sound?: string } {
+  if (sound === "none") return {};
+  return { sound: sound ?? "default" };
+}
+
 /// The APNs body of one push. The envelope is the first thing to go when the
 /// payload does not fit: everything else is what orders the burst and counts
 /// the badge.
@@ -97,7 +104,7 @@ export function pushBody(payload: PushPayload): string {
       aps: {
         alert: payload.alert,
         ...(payload.badge !== undefined ? { badge: payload.badge } : {}),
-        sound: payload.sound ?? "default",
+        ...soundField(payload.sound),
         "thread-id": payload.chatId,
       },
       chatId: payload.chatId,
@@ -109,7 +116,7 @@ export function pushBody(payload: PushPayload): string {
       aps: {
         alert: { title: "Msngr", body: "Новое сообщение" },
         ...(payload.badge !== undefined ? { badge: payload.badge } : {}),
-        sound: payload.sound ?? "default",
+        ...soundField(payload.sound),
         "mutable-content": 1,
         "thread-id": payload.chatId,
       },
