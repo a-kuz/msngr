@@ -870,6 +870,7 @@ public actor SyncEngine {
                 // failure from him may rebuild it without waiting out the window
                 if case .undecryptable = result {} else {
                     pairwiseRebuiltAt[item.from] = nil
+                    await reviveGivenUpRepairs(from: item.from)
                 }
                 switch result {
                 case .content(let payload) where payload.kind == CallSignal.kind:
@@ -1343,6 +1344,7 @@ public actor SyncEngine {
             return false
         }
         pairwiseRebuiltAt[pending.from] = nil
+        await reviveGivenUpRepairs(from: pending.from)
         await storeIncoming(result, chatId: pending.chatId, seq: pending.seq,
                             from: pending.from, fromDevice: pending.fromDevice,
                             sentAt: pending.sentAt, ts: pending.ts)
@@ -1389,6 +1391,43 @@ public actor SyncEngine {
         }
         MsngrLog.repair.error(
             "gave up chat=\(pending.chatId, privacy: .public) seq=\(pending.seq, privacy: .public) reason=\(pending.reason ?? "unknown", privacy: .public) attempts=\(pending.attempts, privacy: .public)")
+    }
+
+    /// When a peer's given-up repairs were last given another round.
+    private var repairRevivedAt: [String: Double] = [:]
+
+    /// An envelope from this peer finally opened, which says the session with
+    /// him works again. Everything of his that was given up on while it did not
+    /// — five spent attempts and a week of waiting ahead of it — is worth one
+    /// more round; without this a pair that fell behind kept its holes for good
+    /// even after the two of them could talk again. The per-peer ceiling still
+    /// governs how many of them are asked for at a time.
+    private func reviveGivenUpRepairs(from peer: String) async {
+        let now = Date().timeIntervalSince1970
+        guard MessageRepair.repairRevivalDue(lastRevivedAt: repairRevivedAt[peer] ?? 0,
+                                             now: now) else { return }
+        repairRevivedAt[peer] = now
+        let revived = (try? await db.write { dbc -> Int in
+            try SyncEngine.reviveSpentRepairs(dbc, from: peer)
+        }) ?? 0
+        guard revived > 0 else { return }
+        MsngrLog.repair.notice(
+            "revived \(revived, privacy: .public) given-up repairs for \(peer, privacy: .public)")
+    }
+
+    /// Clears the attempt count of the envelopes from this peer that had spent
+    /// every one of them and are still within the life an envelope is kept for
+    /// — one past it has nothing to be asked about and is the sweep's to drop,
+    /// which it can only do while the attempts read as spent. Returns how many
+    /// were revived.
+    @discardableResult
+    static func reviveSpentRepairs(_ dbc: GRDB.Database, from peer: String,
+                                   now: Double = Date().timeIntervalSince1970) throws -> Int {
+        try dbc.execute(sql: """
+            UPDATE pendingDecrypt SET repairAttempts = 0, repairAskedAt = 0
+            WHERE fromUserId = ? AND repairAttempts >= ? AND firstSeenAt > ?
+            """, arguments: [peer, MessageRepair.maxAttempts, now - MessageRepair.envelopeTTL])
+        return dbc.changesCount
     }
 
     /// When the pairwise session with a peer was last marked for a rebuild, so
