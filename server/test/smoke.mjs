@@ -1575,9 +1575,23 @@ check("service frame does not grow the badge", pushSvc?.body.aps.badge === 1,
   const sndPush5 = await waitPush(pushFor("olga-sim-udid", s6));
   check("the chat's explicit sound still wins over the person's",
     sndPush5?.body.aps.sound === "chime2.caf", JSON.stringify(sndPush5?.body.aps));
+  // with the chat and the person both set, the exceptions list names them both
+  const exc = await api("/api/notify-sounds/exceptions", { token: olga.token });
+  check("exceptions list the chat's sound",
+    exc.chats?.some((e) => e.chatId === gchat.chatId && e.sound === "chime2.caf"),
+    JSON.stringify(exc.chats));
+  check("exceptions list the person's sound",
+    exc.people?.some((e) => e.userId === nils.userId && e.sound === "chime3.caf"),
+    JSON.stringify(exc.people));
   await api(`/api/chats/${gchat.chatId}/flags`, { token: olga.token, body: { sound: null } });
   await api(`/api/notify-sounds/person/${nils.userId}`, { token: olga.token,
     body: { sound: null } });
+  // clearing both empties the list again
+  const exc2 = await api("/api/notify-sounds/exceptions", { token: olga.token });
+  check("cleared sounds leave the exceptions list",
+    !exc2.chats?.some((e) => e.chatId === gchat.chatId)
+      && !exc2.people?.some((e) => e.userId === nils.userId),
+    JSON.stringify(exc2));
   cni.ws.close();
 }
 
