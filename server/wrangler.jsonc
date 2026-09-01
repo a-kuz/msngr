@@ -6,13 +6,16 @@
     "bindings": [
       { "name": "USER_DO", "class_name": "UserDO" },
       { "name": "CONV_DO", "class_name": "ConversationDO" },
-      { "name": "APNS_DO", "class_name": "ApnsTokenDO" }
+      { "name": "APNS_DO", "class_name": "ApnsTokenDO" },
+      { "name": "HANDLE_DO", "class_name": "HandleDO" },
+      { "name": "DIRECTORY_DO", "class_name": "DirectoryDO" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["UserSessionDO", "ConversationDO"] },
     { "tag": "v2", "new_sqlite_classes": ["ApnsTokenDO"] },
-    { "tag": "v3", "renamed_classes": [{ "from": "UserSessionDO", "to": "UserDO" }] }
+    { "tag": "v3", "renamed_classes": [{ "from": "UserSessionDO", "to": "UserDO" }] },
+    { "tag": "v4", "new_sqlite_classes": ["HandleDO", "DirectoryDO"] }
   ],
   "d1_databases": [
     {
