@@ -48,6 +48,18 @@ public enum MessageRepair {
         "no_session", "pk_decrypt_failed", "bad_pk", "no_ciphertext", "exception",
     ]
 
+    /// Shortest wait between two revivals of a peer's given-up repairs. An
+    /// envelope that finally opens is proof the session with that peer works
+    /// again, and the messages that were given up on while it did not are worth
+    /// one more round; the wait keeps a stream of arrivals from reviving the
+    /// same pile over and over.
+    public static let repairRevivalInterval: TimeInterval = 300
+
+    /// True when a peer's spent repairs should be given another round now.
+    public static func repairRevivalDue(lastRevivedAt: Double, now: Double) -> Bool {
+        now - lastRevivedAt >= repairRevivalInterval
+    }
+
     /// Shortest wait between two rebuilds of the same pairwise session. A wave
     /// of repair requests to one peer needs one fresh session, not one per
     /// request: a rebuild costs a prekey bundle over the network and an X3DH

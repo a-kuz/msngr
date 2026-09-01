@@ -90,14 +90,22 @@ struct CallsListView: View {
         return date.formatted(.dateTime.day().month())
     }
 
+    /// The calls this device knows of, newest first. Ordered by the server's
+    /// clock where there is one — the same value the row shows — so a peer
+    /// whose own clock is wrong cannot stand at the top of the list for good,
+    /// or push real calls out of the window it is cut to.
+    static func calls(_ dbc: GRDB.Database) throws -> [Message] {
+        try Message.fetchAll(dbc, sql: """
+            SELECT * FROM message WHERE kind = 'call'
+            ORDER BY COALESCE(serverTs, sentAt) DESC LIMIT 300
+            """)
+    }
+
     private func observe() {
         guard let db = app.db, let ownId = app.session?.userId else { return }
         observation = ValueObservation
             .tracking { dbc -> [CallsListItem] in
-                let msgs = try Message.fetchAll(dbc, sql: """
-                    SELECT * FROM message WHERE kind = 'call'
-                    ORDER BY sentAt DESC LIMIT 300
-                    """)
+                let msgs = try CallsListView.calls(dbc)
                 var peers: [String: User] = [:]
                 for chatId in Set(msgs.map(\.chatId)) {
                     if let peerId = try String.fetchOne(
