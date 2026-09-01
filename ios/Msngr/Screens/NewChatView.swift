@@ -32,6 +32,14 @@ struct NewChatView: View {
         let avatarId: String?
     }
 
+    /// A book entry whose number matched no registered user: an invite target.
+    struct InvitableContact: Identifiable {
+        let id: String       // the number's hash
+        let name: String
+        let phone: String
+    }
+    @State private var invitable: [InvitableContact] = []
+
     var body: some View {
         NavigationStack {
             List {
@@ -51,6 +59,23 @@ struct NewChatView: View {
                     Section("Contacts") {
                         ForEach(contacts) { c in
                             row(id: c.id, name: c.bookName, username: c.username, avatarId: c.avatarId)
+                        }
+                    }
+                }
+                if !groupMode && !invitable.isEmpty {
+                    Section("Invite to Msngr") {
+                        ForEach(invitable) { c in
+                            ShareLink(item: inviteText) {
+                                HStack {
+                                    VStack(alignment: .leading) {
+                                        Text(c.name).foregroundStyle(.primary)
+                                        Text(c.phone).font(.footnote).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "square.and.arrow.up")
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
                         }
                     }
                 }
@@ -202,23 +227,36 @@ struct NewChatView: View {
         }
         let keys = [CNContactPhoneNumbersKey, CNContactGivenNameKey, CNContactFamilyNameKey] as [CNKeyDescriptor]
         let request = CNContactFetchRequest(keysToFetch: keys)
-        var hashToName: [String: String] = [:]
+        var hashToEntry: [String: (name: String, phone: String)] = [:]
         try? store.enumerateContacts(with: request) { contact, _ in
             let name = "\(contact.givenName) \(contact.familyName)".trimmingCharacters(in: .whitespaces)
             for phone in contact.phoneNumbers {
                 let normalized = Phone.e164(phone.value.stringValue)
                 guard !normalized.isEmpty else { continue }
-                hashToName[Phone.hash(normalized)] = name.isEmpty ? normalized : name
+                hashToEntry[Phone.hash(normalized)] = (name.isEmpty ? normalized : name, normalized)
             }
         }
-        guard !hashToName.isEmpty,
-              let matches = try? await app.api.discoverContacts(hashes: Array(hashToName.keys)) else { return }
+        guard !hashToEntry.isEmpty,
+              let matches = try? await app.api.discoverContacts(hashes: Array(hashToEntry.keys)) else { return }
         contacts = matches.map {
             ContactMatch(id: $0.id, username: $0.username,
-                         bookName: hashToName[$0.phone_hash] ?? $0.display_name,
+                         bookName: hashToEntry[$0.phone_hash]?.name ?? $0.display_name,
                          avatarId: $0.avatar_id)
         }
         .sorted { $0.bookName < $1.bookName }
+        // whoever the numbers did not find is someone to invite
+        let matched = Set(matches.map(\.phone_hash))
+        invitable = hashToEntry
+            .filter { !matched.contains($0.key) }
+            .map { InvitableContact(id: $0.key, name: $0.value.name, phone: $0.value.phone) }
+            .sorted { $0.name < $1.name }
+    }
+
+    /// The text an invite shares: there is no store page yet, so it carries
+    /// the sender's handle for the day the invitee installs the app.
+    private var inviteText: String {
+        String(format: String(localized: "I'm on Msngr, my username is @%@. Join me!"),
+               app.session?.username ?? "")
     }
 }
 
