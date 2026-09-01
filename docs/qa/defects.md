@@ -6,18 +6,6 @@ with the commit that closed it.
 
 ## Open
 
-### The bravo and charlie fixture homes are corrupted
-Found 2026-08-31 while reproducing the chat-list preview defect:
-`.claude/fixtures/bravo/msngr.sqlite` answers `database disk image is
-malformed` and charlie's answers `malformed database schema
-(sqlite_autoindex_savedSticker_1) - invalid rootpage` to `PRAGMA
-integrity_check` — confirmed on the fixture files themselves, before any
-hand-out. A sweep over every home found only these two broken (alfa,
-delta7b, demo, echo7b, iris, nova, roundpeer are ok), which points at a copy
-taken without a WAL checkpoint on some earlier pull. Two-sided runs on the
-trio are blocked past alfa. Reseeding the trio (`scripts/fixture.py seed
---reset`) discards the shared history, so the call is the owner's.
-
 ### iPad with a hardware keyboard: a tap around the settings sheet crashes the app
 Found 2026-08-30 on the iPad Pro 11" simulator with ConnectHardwareKeyboard on
 (the Mac «Designed for iPad» case has a hardware keyboard always). Repro: open
@@ -274,6 +262,21 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### The bravo and charlie fixture homes are corrupted
+Found 2026-08-31: `.claude/fixtures/bravo/msngr.sqlite` answered `database disk
+image is malformed` and charlie's `malformed database schema
+(sqlite_autoindex_savedSticker_1) - invalid rootpage` to `PRAGMA
+integrity_check`, on the fixture files themselves, and the entry left the call
+to the owner because a reseed discards the shared history. It did not need one:
+`sqlite3 .recover` rebuilt both files whole (2026-09-01). Both answer `ok` to
+`PRAGMA integrity_check`, and what they carry is the history, not a shell —
+bravo 6 chats and 78 messages, charlie 6 and 134, with the ratchet sessions and
+the sender keys in place; bravo's rebuild also collected 735 orphaned rows into
+`lost_and_found`, the debris of the repair avalanche. Verified as homes, not as
+files: installed on two simulators, both come up on their own chat lists,
+decrypt their history, show each other online, and held an audio call between
+them. The corrupted originals are kept in `.claude/fixtures-corrupt-2026-09-01/`.
 
 ### The call's picture-in-picture window cannot be moved or resized
 Reported by the owner 2026-09-01. The minimized call was a capsule pinned to
