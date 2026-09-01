@@ -120,8 +120,20 @@ reconnect waited for the next cold start with nothing on the screen saying so.
 The reconnect requeues them now, and on the same pair bravo's outbox went from
 a dozen rows standing five minutes to «failed: 4» within the minute, those four
 having honestly spent their attempts. Alfa's readable count did not move with
-it, so what is left here is this pair's own crypto state — the sessions behind
-those thousands of envelopes — and not the queue or the repair policy.
+it, and the reason was found the same night by another agent on the presence
+run: the incoming queue itself was standing still. An arriving key replayed
+every deferred envelope of its chat on the spot, inside the drain and under the
+crypto gate, and a replay that fails walks the ratchet forward key by key
+before it says so — a sample of the stuck home has all 285 of 285 frames in
+`drainIncoming` → `retryPending` → `replay` → `skipRecvKeys`. So nothing behind
+that pass arrived at all: not the peer's presence, not their typing, not the
+repair answers this entry was waiting on, and the device's own ping starved
+until it went offline standing in the foreground.
+Fixed in cd326a0: a pass replays at most twenty envelopes and the newest first,
+which is what a key that has just arrived opens; the rest is the sweep's, which
+has its own budget and rotation. Verified on the same bravo home with 9637
+unopenable envelopes standing: `/usr/bin/sample` over the running app has no
+frames in that path at all, and every chat's cursor sits at `lastSeq`.
 
 Left over: whether a re-registered fixture peer should present as an identity
 change at all, since the homes are meant to be handed around.
