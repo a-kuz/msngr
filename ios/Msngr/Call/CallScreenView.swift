@@ -10,6 +10,7 @@ struct CallScreenView: View {
     @EnvironmentObject private var app: AppState
     @State private var peer: User?
     @State private var extraNames: [String] = []
+    @State private var waitingName: String?
     @State private var transport: WebRTCTransport?
     @State private var invitePickerShown = false
 
@@ -111,6 +112,13 @@ struct CallScreenView: View {
             }
             .environmentObject(app)
         }
+        .overlay(alignment: .top) {
+            if state.waitingCallerId != nil {
+                waitingBanner
+                    .padding(.top, 52)
+                    .padding(.horizontal, 16)
+            }
+        }
         // the screen owns the display whole: a keyboard left up by the chat
         // underneath must not squeeze the controls upward — nor stay on top
         // of them, so whatever holds focus lets it go
@@ -119,10 +127,51 @@ struct CallScreenView: View {
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
                                             to: nil, from: nil, for: nil)
         }
-        .task(id: "\(state.peerUserId ?? "")|\(state.extraPeers.joined(separator: ","))") {
+        .task(id: "\(state.peerUserId ?? "")|\(state.extraPeers.joined(separator: ","))|\(state.waitingCallerId ?? "")") {
             await loadPeer()
         }
         .accessibilityIdentifier("call.screen")
+    }
+
+    /// Someone else is calling behind the live call: refuse them, or end
+    /// this call and take theirs.
+    private var waitingBanner: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(waitingName ?? "…")
+                    .textRole(Theme.Text.callControlLabel)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+                Text("Incoming call")
+                    .textRole(Theme.Text.callControlLabel)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 12)
+            Button {
+                Task { await app.callManager?.declineWaiting() }
+            } label: {
+                Image(systemName: "phone.down.fill")
+                    .font(Theme.glyph(15, max: 19))
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(.red))
+            }
+            .accessibilityIdentifier("call.waiting.decline")
+            Button {
+                Task { await app.callManager?.acceptWaiting() }
+            } label: {
+                Image(systemName: "phone.fill")
+                    .font(Theme.glyph(15, max: 19))
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(.green))
+            }
+            .accessibilityIdentifier("call.waiting.accept")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 16).fill(.thinMaterial))
+        .accessibilityIdentifier("call.waiting")
     }
 
     /// While ringing, `remoteVideo` only says what kind of call is asking;
@@ -227,20 +276,27 @@ struct CallScreenView: View {
         guard let id = state.peerUserId, let db = app.db else {
             peer = nil
             extraNames = []
+            waitingName = nil
             return
         }
         let extras = state.extraPeers
-        let loaded = try? await db.read { dbc -> (User?, [String]) in
+        let waitingId = state.waitingCallerId
+        let loaded = try? await db.read { dbc -> (User?, [String], String?) in
             let peer = try User.fetchOne(dbc, key: id)
                 .map { try ContactBookName.applied(dbc, to: $0) }
             let names = try extras.compactMap { userId in
                 try User.fetchOne(dbc, key: userId)
                     .map { try ContactBookName.applied(dbc, to: $0).displayName }
             }
-            return (peer, names)
+            let waiting = try waitingId.flatMap { userId in
+                try User.fetchOne(dbc, key: userId)
+                    .map { try ContactBookName.applied(dbc, to: $0).displayName }
+            }
+            return (peer, names, waiting)
         }
         peer = loaded?.0
         extraNames = loaded?.1 ?? []
+        waitingName = loaded?.2
     }
 
     private static func duration(since start: Double?) -> String {
