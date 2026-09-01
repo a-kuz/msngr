@@ -17,46 +17,6 @@ follows the same rule as the bubble (fixed in the bots commit); what is left
 open is ordering: `sortedAt` and the feed's own order still lean on `sentAt`,
 so a bad clock can still misplace a message inside its day.
 
-### A chat behind a flooded one stops receiving messages altogether
-Found 2026-09-01 while running the notification-banner scenario on the bravo
-and charlie homes, and it is the mechanism behind the «service storm» entry
-below. Charlie sent bravo a message; charlie's side had it journaled (one
-tick), the server's snapshot and its REST history both held it (seq 12,
-addressed to bravo's device), bravo was foreground with the chat open and the
-socket live — and bravo's copy of that chat stood at `syncedSeq = lastSeq = 11`
-for eleven minutes across four foregrounds, with no row and no envelope in
-`pendingDecrypt`. The flooded group on the same socket moved 13841 → 13873
-throughout. Only a cold start brought the message.
-The cause is the catch-up's budget. `serveCatchup` spends one budget of 128
-records over the chats in the order they come, so the flooded chat took all of
-it and every other chat was left untouched — and an untouched chat gets no
-`syncState` at all. The client then asked the next portion only for the chats
-that had answered (`catchupPending`), and its fallback asks for chats it knows
-to be behind, which this one was not: from its side it was caught up at 11.
-So the chat fell out of the catch-up for good, portion after portion.
-Fixed on both sides: every chat of a portion gets a share of the budget
-(`SYNC_BUDGET / chats in the portion`), and the client asks the next portion
-for the chats it was answered about *and* the chats it never heard back on
-(`SyncEngine.nextPortion`, `CatchupPortionTests`). Coming back to the
-foreground also re-opens the catch-up, which it did not do at all before.
-Held by two smoke checks — «a portion answers about every chat it was asked
-for» and «the quiet chat's history comes in that first portion» — both red with
-the budget spent in order and green with the share.
-
-Underneath it, and the larger half of the same stall: the sweep of unreadable
-envelopes walked every row of the pile with three queries each and logged a
-line per row. The app's own log on the flooded home reads about twelve rows a
-second over 8775 of them — twelve minutes of the engine's actor, during which
-nothing else it serves runs. A pass now reads what it needs in three queries,
-looks at 200 envelopes, and the passes take the pile in turn; the same log over
-a foreground is silent.
-
-Still owed: the live pass. The shared stand carries the server half only after
-the next deploy, and until then the scenario cannot come out green there — on
-the stand as it stands the message's chat still ends a foreground with
-`lastSeq` moved to 14 and no row, no envelope and no gap record under it, which
-is the same hole seen from the other side.
-
 ### The smoke's cmid sweep check is red on a stand configured for it
 Seen 2026-09-01: «cmid swept behind the sender's ack» fails on a stand started
 with `--var CMID_MIN_AGE:0 --var CMID_SWEEP_EVERY:0` and a fresh persist dir —
@@ -332,6 +292,49 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### A chat behind a flooded one stops receiving messages altogether
+Found 2026-09-01 while running the notification-banner scenario on the bravo
+and charlie homes, and it is the mechanism behind the «service storm» entry
+below. Charlie sent bravo a message; charlie's side had it journaled (one
+tick), the server's snapshot and its REST history both held it (seq 12,
+addressed to bravo's device), bravo was foreground with the chat open and the
+socket live — and bravo's copy of that chat stood at `syncedSeq = lastSeq = 11`
+for eleven minutes across four foregrounds, with no row and no envelope in
+`pendingDecrypt`. The flooded group on the same socket moved 13841 → 13873
+throughout. Only a cold start brought the message.
+The cause is the catch-up's budget. `serveCatchup` spends one budget of 128
+records over the chats in the order they come, so the flooded chat took all of
+it and every other chat was left untouched — and an untouched chat gets no
+`syncState` at all. The client then asked the next portion only for the chats
+that had answered (`catchupPending`), and its fallback asks for chats it knows
+to be behind, which this one was not: from its side it was caught up at 11.
+So the chat fell out of the catch-up for good, portion after portion.
+Fixed on both sides: every chat of a portion gets a share of the budget
+(`SYNC_BUDGET / chats in the portion`), and the client asks the next portion
+for the chats it was answered about *and* the chats it never heard back on
+(`SyncEngine.nextPortion`, `CatchupPortionTests`). Coming back to the
+foreground also re-opens the catch-up, which it did not do at all before.
+Held by two smoke checks — «a portion answers about every chat it was asked
+for» and «the quiet chat's history comes in that first portion» — both red with
+the budget spent in order and green with the share.
+
+Underneath it, and the larger half of the same stall: the sweep of unreadable
+envelopes walked every row of the pile with three queries each and logged a
+line per row. The app's own log on the flooded home reads about twelve rows a
+second over 8775 of them — twelve minutes of the engine's actor, during which
+nothing else it serves runs. A pass now reads what it needs in three queries,
+looks at 200 envelopes, and the passes take the pile in turn; the same log over
+a foreground is silent.
+
+Verified live on the same two homes once the stand carried the server half
+(2026-09-01). The seq that had been standing lost for eleven minutes arrived on
+its own the moment the stand was updated, with its row and its text. Two fresh
+rounds after that: a message sent while bravo sat in the background arrived over
+the socket while it was still there, and the next one, sent after the process
+had been suspended, arrived on the first foreground — no cold start in either.
+Before the fix the same scenario went eleven minutes and four foregrounds with
+`lastSeq` moved and no row, no envelope and no gap record under it.
 
 ### The bravo and charlie fixture homes are corrupted
 Found 2026-08-31: `.claude/fixtures/bravo/msngr.sqlite` answered `database disk
