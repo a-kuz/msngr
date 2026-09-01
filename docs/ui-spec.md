@@ -38,9 +38,11 @@ Layout plans are cached in an `NSCache` whose key covers
 the id, the width, the grouping flags and a hash of the content; the cache is
 dropped when the width, the palette or the type size changes.
 
-The keyboard uses `keyboardDismissMode = .interactive` and the insets are
-computed by hand from the safe area and the keyboard frame. A feed that was at
-the bottom returns to the bottom once the insets change.
+The keyboard uses `keyboardDismissMode = .interactive`, and a tap anywhere on
+the feed ends editing as well; that tap cancels nothing, so a link or a picture
+under the finger still opens. The insets are computed by hand from the safe
+area and the keyboard frame. A feed that was at the bottom returns to the
+bottom once the insets change.
 
 ## The bubble: where the status sits
 
