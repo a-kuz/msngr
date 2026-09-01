@@ -393,6 +393,32 @@ app.post("/api/logout", async (c) => {
   return json({ ok: true });
 });
 
+// Deleting the account whole. Groups are left so the members stop seeing the
+// user; a direct peer keeps their copy of the history — it is theirs, and
+// there is no key to read the deleted side's anyway. The username is freed by
+// the row going, and the user's object erases everything it holds: keys,
+// sessions, flags, sounds, the address book, push tokens.
+app.post("/api/account/delete", async (c) => {
+  const { userId } = c.get("auth");
+  const cr = await userStub(c.env, userId).fetch("https://do/chats", { method: "POST", body: "{}" });
+  const cj = (await cr.json()) as { ok: boolean; chats?: Record<string, unknown> };
+  for (const chatId of Object.keys(cj.chats ?? {})) {
+    if (chatId.startsWith("direct:") || chatId.startsWith("self:")) continue;
+    await convStub(c.env, chatId).fetch("https://do/leave", {
+      method: "POST", body: JSON.stringify({ userId }),
+    });
+  }
+  await userStub(c.env, userId).fetch("https://do/account-wipe", { method: "POST", body: "{}" });
+  await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM privacy_exceptions WHERE user_id = ? OR peer_id = ?").bind(userId, userId),
+    c.env.DB.prepare("DELETE FROM privacy_settings WHERE user_id = ?").bind(userId),
+    c.env.DB.prepare("DELETE FROM blocks WHERE user_id = ? OR blocked_id = ?").bind(userId, userId),
+    c.env.DB.prepare("DELETE FROM devices WHERE user_id = ?").bind(userId),
+    c.env.DB.prepare("DELETE FROM users WHERE id = ?").bind(userId),
+  ]);
+  return json({ ok: true });
+});
+
 app.post("/api/sessions/:deviceId/revoke", async (c) => {
   const { userId } = c.get("auth");
   const target = c.req.param("deviceId");
