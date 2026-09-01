@@ -34,6 +34,21 @@ report appeared in DiagnosticReports. Not reproducible on this build; nothing
 was changed for it, because a workaround with no reproduction to answer would
 be blind.
 
+Two hypotheses were then tested and both are out. The crash reports say the
+focus map trips over a container guide whose parent environment is gone, while
+`UIFocusSystem` re-evaluates its locked environments after a CACommit — the
+whole stack is UIKit's, with nothing of ours on it. Until 2026-09-01 the chat
+list always carried a supplementary header over a section with no rows, which
+is the kind of thing a focus map has to take as a container, and that header is
+gone since 324b74d — so the obvious guess was that the fix had cured the crash
+as a side effect. It had not: the revision before it (f5301a6), built and run
+on a fresh iPad Pro 11" with the hardware keyboard connected and the empty
+header plainly on screen, went through the same fifteen rounds without
+aborting once. So the crash is reproducible neither before nor after that
+change, and what differs from 2026-08-30 is not the chat list. The next thing
+to vary is the device and the runtime: the original three crashes came from
+another iPad simulator, and the home installed on it was alfa's, not demo's.
+
 ### A severed pairwise session never heals: both sides ask, neither answer arrives
 Found 2026-08-29 while walking the repair debt on the alfa fixture. The
 alfa↔bravo pair is broken symmetrically: alfa holds 2937 of bravo's envelopes
