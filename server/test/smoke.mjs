@@ -274,6 +274,25 @@ cb.send({ t: "typing", chatId: chat.chatId, kind: "text" });
 const typing = await ca.waitFor((f) => f.t === "typing" && f.from === bob.userId);
 check("typing", !!typing);
 
+// 7b. The ephemeral call relay: the envelope reaches the peer's live socket
+// with its addressing, and leaves nothing in the journal
+cb.send({ t: "callRelay", chatId: chat.chatId, sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const relayed = await ca.waitFor((f) => f.t === "callRelay" && f.chatId === chat.chatId);
+check("call relay reaches the peer", !!relayed
+  && relayed.from === bob.userId && !!relayed.fromDevice && !!relayed.body);
+{
+  const before = (await api(`/api/chats/${chat.chatId}/history?fromSeq=0`,
+    { token: alice.token })).msgs.length;
+  const relayMark = ca.mark();
+  cb.send({ t: "callRelay", chatId: chat.chatId, sentAt: Date.now(),
+    body: { v: 1, mode: "pw", msgs: {} } });
+  await ca.waitAfter(relayMark, (f) => f.t === "callRelay" && f.chatId === chat.chatId);
+  const after = (await api(`/api/chats/${chat.chatId}/history?fromSeq=0`,
+    { token: alice.token })).msgs.length;
+  check("call relay is not journaled", before === after, `${before} -> ${after}`);
+}
+
 // 7a. A changed card reaches the people who see it, over the socket
 const renameMark = ca.mark();
 const renamed = await api("/api/profile", { token: bob.token, body: { displayName: "Bob Renamed" } });
@@ -1459,6 +1478,18 @@ ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p4", sentAt: Date.n
   service: true, body: { v: 1, mode: "skd", c: "c2tk" } });
 const p4 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p4");
 check("no push for service", !(await waitPush(pushFor("eve-sim-udid", p4), 1200)));
+
+// (c0) a service frame flagged notify (a missed-call record) does push, and
+// still does not grow the badge
+ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p4n", sentAt: Date.now(),
+  service: true, notify: true, body: { v: 1, mode: "pw", msgs: {} } });
+const p4n = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p4n");
+const push4n = await waitPush(pushFor("eve-sim-udid", p4n));
+check("notify service frame pushes", !!push4n);
+check("notify service frame keeps the badge", push4n?.body.aps.badge === 1,
+  `badge=${push4n?.body.aps.badge}`);
+check("notify frame travels service on ws", !!(await ce.waitFor((f) =>
+  f.t === "msg" && f.seq === p4n.seq && f.service === true)));
 
 // (c1) A service frame takes a seq but does not grow the badge: in a read chat the read
 // mark absorbs it, exactly the way the client moves the cursor. The server counts the

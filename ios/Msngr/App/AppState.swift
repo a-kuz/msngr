@@ -56,6 +56,8 @@ final class AppState: ObservableObject {
 
     /// the one call this device can be in, mirrored for the overlay
     @Published var callState = CallState()
+    /// the call folded into the floating tile so the app is usable underneath
+    @Published var callMinimized = false
 
     private(set) var db: DatabaseQueue!
     private(set) var api: APIClient!
@@ -279,6 +281,22 @@ final class AppState: ObservableObject {
         callStateTask = Task { [weak self] in
             for await state in states {
                 self?.callState = state
+                CallSounds.shared.apply(state.phase)
+                switch state.phase {
+                case .idle:
+                    self?.callMinimized = false
+                case .ended:
+                    // unfold so the outcome is seen, then dismiss: the screen
+                    // may be re-created by the unfold itself, so the timer
+                    // lives here rather than in a view callback
+                    self?.callMinimized = false
+                    Task { [weak self] in
+                        try? await Task.sleep(nanoseconds: 1_500_000_000)
+                        await self?.callManager?.reset()
+                    }
+                default:
+                    break
+                }
             }
         }
     }

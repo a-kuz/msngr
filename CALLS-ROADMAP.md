@@ -24,22 +24,13 @@ in the system log. Only worth building together with the VoIP push (CallKit
 without a wake-up path only covers the app-open case the in-app screen
 already handles), and not verifiable on the simulator.
 
-### Push on a missed call
-A closed app never learns it was called: the `callLog` frame is service, so
-no push and no badge. The caller's device, on giving up (`cancel`/`timeout`),
-should raise exactly one notification on the callee. The server cannot tell a
-missed call from any other frame — the signaling is E2EE — so the shape is
-the caller sending the callLog envelope push-raising (NSE decrypts and shows
-«Пропущенный звонок») without letting it grow unread as a message. Needs a
-frame that pushes but does not count; today those two travel together on the
-`service` flag.
-
-### Self-hosted TURN (coturn on adad)
-STUN-only ICE fails where both ends sit behind symmetric NAT (typical LTE).
-coturn on the adad server relays those calls; a package install and a
-10-line config, plus the `turn:` entry with credentials in
-`WebRTCTransport.iceServers`. Installing anything on the shared server is
-the owner's call.
+### Push on a missed call: the device check
+The mechanics are shipped: the caller's missed-call `callLog` travels
+`service` + `notify` — a push without unread — and the banner says
+«Пропущенный звонок». The NSE path (decrypt, write the row, rewrite the
+banner) is device work, blocked with the rest of device pushes on the K2
+certificate; on the simulator only the server side is verifiable and is
+covered by the smoke test.
 
 ## Features not built yet
 
@@ -50,13 +41,11 @@ camera on/off toggle and front/back flip. The signaling does not change
 (the SDP renegotiates media by itself); the offer may carry `video: true`
 so the ringing screen can say what kind of call it is.
 
-### Picture-in-picture
-The ongoing call shrinks into a floating tile instead of owning the whole
-screen: in-app first (the user browses chats while talking; the tile returns
-to the full screen on tap), then the system PiP (AVPictureInPictureController
-over the remote video track) when the app goes to background. In-app PiP is
-simulator-checkable; system PiP for video calls needs a device entitlement
-check.
+### System picture-in-picture
+The in-app fold (the floating tile over the chats) is shipped; what remains
+is the system PiP — AVPictureInPictureController over the remote video track
+when the app goes to background. Needs 1:1 video first, and a device for the
+entitlement check.
 
 ### Group calls
 A different animal: P2P mesh does not scale past three, so this is an SFU —
@@ -80,30 +69,9 @@ row is written by the inviter exactly once.
 
 ## Polish
 
-### Caller named as in my address book
-The ringing screen, CallScreen, the call row and the future missed-call push
-show the peer's self-chosen profile name. Where my synced address book holds
-their number, my local name for them should win — the same resolution
-contact discovery already does at match time, applied at display time. One
-lookup point (local db: matched contact name by userId) used by CallScreen,
-CallMessageView and the chat header.
+### ICE restart: the device check
+The restart itself is shipped: a disconnect the caller sees for longer than
+the delay sends a fresh offer with new ICE credentials over the same
+signaling, and the callee answers it on the live transport. What remains is
+the honest check — a device walking out of Wi-Fi range into LTE.
 
-### Ring and dial sounds
-The call is silent until media flows: no dial tone for the caller, no
-ringtone for the callee, no hang-up click. Local audio assets played by
-CallManager phase transitions; respect the mute switch and stop cleanly on
-`connected`.
-
-### ICE restart on network change
-Today `disconnected` just waits and `failed` hangs up. A Wi-Fi→LTE move
-should trigger an ICE restart (new offer with `iceRestart: true` over the
-same signaling) instead of dropping the call. Testable on the simulator by
-toggling the host network only roughly; the honest check is a device walking
-out of Wi-Fi range.
-
-### Ephemeral relay frame for ICE candidates
-Candidate batches ride the chat journal as service frames: a few rows per
-call that nobody ever reads again. A relay-only frame (like `typing`,
-encrypted but not journaled) keeps the journal clean. Touches
-`server/src/types.ts` and the DO relay path — coordinate with the
-orchestrator, other branches edit those files.

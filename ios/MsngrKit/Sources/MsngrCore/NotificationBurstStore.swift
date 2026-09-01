@@ -155,6 +155,7 @@ public enum NotificationBurstStore {
                                            arguments: [item.chatId, item.seq])
         let senderId = message?.fromUserId
         let sender = try senderId.flatMap { try User.fetchOne(dbc, key: $0) }
+            .map { try ContactBookName.applied(dbc, to: $0) }
         let senderInfo = NotificationContentBuilder.SenderInfo(
             userId: senderId ?? "",
             displayName: sender?.displayName ?? "",

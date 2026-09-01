@@ -69,6 +69,11 @@ public enum NotificationContentBuilder {
                              showsMessageText: Bool = true,
                              isDeleted: Bool = false) -> NotificationContent? {
         guard !isDeleted, !silentKinds.contains(payload.kind) else { return nil }
+        // a call row notifies only as the missed call it records; every other
+        // outcome was lived through on screen
+        if payload.kind == CallLog.kind || payload.kind == MessageKind.call.rawValue {
+            guard CallLog.decode(payload.text)?.outcome == .missed else { return nil }
+        }
         let name = sender.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let groupTitle = chat.title?.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = name.isEmpty
@@ -148,6 +153,8 @@ public enum NotificationContentBuilder {
         case "file":
             let name = payload.media?.name?.trimmingCharacters(in: .whitespacesAndNewlines)
             return withCaption("📎 " + (name?.isEmpty == false ? name! : CoreStrings.string("File")), caption)
+        case CallLog.kind, MessageKind.call.rawValue:
+            return CoreStrings.string("📞 Missed call")
         default:
             return caption.isEmpty ? hiddenTextBody : caption
         }

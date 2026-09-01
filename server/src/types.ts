@@ -31,7 +31,7 @@ export type ClientFrame =
   | { t: "sync"; cursors: Record<string, number>; deviceVersions?: Record<string, number> }
   // catchup: next portion for the chats that are still behind
   | { t: "catchup"; cursors: Record<string, number> }
-  | { t: "send"; chatId: string; clientMsgId: string; sentAt: number; body: unknown; service?: boolean }
+  | { t: "send"; chatId: string; clientMsgId: string; sentAt: number; body: unknown; service?: boolean; notify?: boolean }
   // a scheduled send: the envelope is encrypted now, journaled by the server at
   // dueAt (ms since epoch). Re-sending the same clientMsgId before the deadline
   // replaces the envelope and the deadline (reschedule, edit)
@@ -40,6 +40,9 @@ export type ClientFrame =
   | { t: "recv"; chatId: string; seqs: number[] }
   | { t: "read"; chatId: string; upToSeq: number }
   | { t: "typing"; chatId: string; kind: string | null }
+  // an ephemeral E2E envelope for a call's ICE candidates: relayed to live
+  // sockets, never journaled — a lost batch is superseded by the next one
+  | { t: "callRelay"; chatId: string; sentAt: number; body: unknown }
   | { t: "delete"; chatId: string; seqs: number[]; forAll: boolean }
   | { t: "ping" }
   | { t: "bg" }   // app went to background: presence goes offline at once
@@ -80,9 +83,10 @@ export type ServerFrame =
   | { t: "sent"; chatId: string; clientMsgId: string; seq: number; ts: number }
   /// a defer frame's ack: the server holds the envelope and will journal it at dueAt
   | { t: "deferred"; chatId: string; clientMsgId: string; dueAt: number }
-  | { t: "msg"; chatId: string; seq: number; from: string; fromDevice: string; clientMsgId?: string; sentAt: number; ts: number; body: unknown; service?: boolean }
+  | { t: "msg"; chatId: string; seq: number; from: string; fromDevice: string; clientMsgId?: string; sentAt: number; ts: number; body: unknown; service?: boolean; notify?: boolean }
   | { t: "receipt"; chatId: string; kind: "delivered" | "read"; upToSeq?: number; seqs?: number[]; by: string }
   | { t: "typing"; chatId: string; from: string; kind: string | null }
+  | { t: "callRelay"; chatId: string; from: string; fromDevice: string; sentAt: number; body: unknown }
   | { t: "presence"; userId: string; online: boolean; lastSeen: number }
   /// someone's card changed: name, bio, avatar or username. The profile is
   /// public, so the frame carries the whole row rather than a hint to refetch

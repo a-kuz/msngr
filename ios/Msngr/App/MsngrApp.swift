@@ -23,12 +23,20 @@ struct MsngrApp: App {
                     RegisterView()
                         .environmentObject(app)
                 }
-                // the call rides over the whole app and under the safety screens
+                // the call rides over the whole app and under the safety screens;
+                // minimized it folds into the floating tile and the app is usable
                 if app.callState.phase != .idle {
-                    CallScreenView()
-                        .environmentObject(app)
-                        .transition(.opacity)
-                        .zIndex(7)
+                    if app.callMinimized {
+                        CallPipTile()
+                            .environmentObject(app)
+                            .transition(.opacity)
+                            .zIndex(7)
+                    } else {
+                        CallScreenView()
+                            .environmentObject(app)
+                            .transition(.opacity)
+                            .zIndex(7)
+                    }
                 }
                 // revoked device: a dead end on top of everything but the passcode
                 if app.sessionRevoked {

@@ -350,6 +350,16 @@ export class UserDO implements DurableObject {
           if (!muted && !isOwnEcho) {
             await this.enqueuePush(frame);
           }
+        } else if (frame.t === "msg" && frame.service && frame.notify) {
+          // a service frame that still notifies (a missed-call record): the
+          // push goes out, but the chat is not relisted and unread stays put
+          const flags = await this.clearExpiredMute(frame.chatId);
+          const muted = muteActive(flags, nowSec());
+          const userId = await this.getUserId();
+          const isOwnEcho = userId !== null && frame.from === userId;
+          if (!muted && !isOwnEcho) {
+            await this.enqueuePush(frame);
+          }
         }
         if (inboxKey && frame.t === "msg") {
           await this.state.storage.put(inboxKey, frame.seq);
@@ -1155,6 +1165,7 @@ export class UserDO implements DurableObject {
             from: userId, fromDevice: att.deviceId,
             clientMsgId: frame.clientMsgId, sentAt: frame.sentAt, body: frame.body,
             service: frame.service ?? false,
+            ...(frame.notify ? { notify: true } : {}),
           }),
         });
         const r = (await res.json()) as { ok: boolean; seq?: number; ts?: number; error?: string };
@@ -1231,6 +1242,14 @@ export class UserDO implements DurableObject {
         await this.convStub(frame.chatId).fetch("https://do/typing", {
           method: "POST",
           body: JSON.stringify({ userId, kind: frame.kind }),
+        });
+        return;
+
+      case "callRelay":
+        await this.convStub(frame.chatId).fetch("https://do/call-relay", {
+          method: "POST",
+          body: JSON.stringify({ userId, deviceId: att.deviceId,
+                                 sentAt: frame.sentAt, body: frame.body }),
         });
         return;
 

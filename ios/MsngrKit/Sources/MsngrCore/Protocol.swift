@@ -34,13 +34,18 @@ public enum WSOutgoing {
     case sync(cursors: [String: Int], deviceVersions: [String: Int])
     /// The next batch for the chats that are still behind.
     case catchup(cursors: [String: Int])
-    // service: a service frame (skd/reaction/edit/disappearing)
-    case send(chatId: String, clientMsgId: String, sentAt: Double, body: Envelope, service: Bool)
+    // service: a service frame (skd/reaction/edit/disappearing);
+    // notify: a service frame that still raises a push (a missed-call record)
+    case send(chatId: String, clientMsgId: String, sentAt: Double, body: Envelope, service: Bool,
+              notify: Bool = false)
     /// A scheduled send: the envelope is encrypted now and journaled by the
     /// server at dueAt (ms since epoch). The same clientMsgId sent again
     /// before the deadline replaces the envelope and the deadline.
     case defer_(chatId: String, clientMsgId: String, sentAt: Double, body: Envelope, dueAt: Double)
     case deferCancel(chatId: String, clientMsgId: String)
+    /// An ephemeral E2E envelope for a call's ICE candidates: relayed to the
+    /// peer's live sockets, never journaled.
+    case callRelay(chatId: String, sentAt: Double, body: Envelope)
     case recv(chatId: String, seqs: [Int])
     case read(chatId: String, upToSeq: Int)
     case typing(chatId: String, kind: String?)
@@ -55,15 +60,19 @@ public enum WSOutgoing {
             if !deviceVersions.isEmpty { obj["deviceVersions"] = deviceVersions }
         case .catchup(let cursors):
             obj = ["t": "catchup", "cursors": cursors]
-        case .send(let chatId, let clientMsgId, let sentAt, let body, let service):
+        case .send(let chatId, let clientMsgId, let sentAt, let body, let service, let notify):
             obj = ["t": "send", "chatId": chatId, "clientMsgId": clientMsgId,
                    "sentAt": sentAt, "body": try body.jsonObject()]
             if service { obj["service"] = true }
+            if service && notify { obj["notify"] = true }
         case .defer_(let chatId, let clientMsgId, let sentAt, let body, let dueAt):
             obj = ["t": "defer", "chatId": chatId, "clientMsgId": clientMsgId,
                    "sentAt": sentAt, "body": try body.jsonObject(), "dueAt": dueAt]
         case .deferCancel(let chatId, let clientMsgId):
             obj = ["t": "deferCancel", "chatId": chatId, "clientMsgId": clientMsgId]
+        case .callRelay(let chatId, let sentAt, let body):
+            obj = ["t": "callRelay", "chatId": chatId, "sentAt": sentAt,
+                   "body": try body.jsonObject()]
         case .recv(let chatId, let seqs):
             obj = ["t": "recv", "chatId": chatId, "seqs": seqs]
         case .read(let chatId, let upToSeq):
