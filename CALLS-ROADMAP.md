@@ -14,7 +14,9 @@ signalled camera-off and the video-call entry point in the chat header
 three-way call: the invite from the call screen, a short-lived mesh of
 exactly three with the invited-by row — and call waiting: a second caller
 during a live call shows a banner with refuse (they hear busy) or
-end-and-accept, and the live call ending on its own rings the waiter.
+end-and-accept, and the live call ending on its own rings the waiter — and
+the calls list: the phone button on the chat list opens every call
+newest-first, a tap redials.
 
 Each item below stands on its own unless its "needs" line says otherwise.
 

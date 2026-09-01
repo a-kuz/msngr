@@ -1060,6 +1060,28 @@
         }
       }
     },
+    "Calls" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звонки"
+          }
+        }
+      }
+    },
+    "No calls yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пока нет звонков"
+          }
+        }
+      }
+    },
     "Call ended" : {
       "extractionState" : "manual",
       "localizations" : {
