@@ -11,6 +11,7 @@ struct CallScreenView: View {
     @State private var peer: User?
     @State private var extraNames: [String] = []
     @State private var waitingName: String?
+    @State private var heldName: String?
     @State private var transport: WebRTCTransport?
     @State private var invitePickerShown = false
 
@@ -113,11 +114,16 @@ struct CallScreenView: View {
             .environmentObject(app)
         }
         .overlay(alignment: .top) {
-            if state.waitingCallerId != nil {
-                waitingBanner
-                    .padding(.top, 52)
-                    .padding(.horizontal, 16)
+            VStack(spacing: 8) {
+                if state.waitingCallerId != nil {
+                    waitingBanner
+                }
+                if state.heldPeerId != nil {
+                    heldBanner
+                }
             }
+            .padding(.top, 52)
+            .padding(.horizontal, 16)
         }
         // the screen owns the display whole: a keyboard left up by the chat
         // underneath must not squeeze the controls upward — nor stay on top
@@ -127,7 +133,7 @@ struct CallScreenView: View {
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
                                             to: nil, from: nil, for: nil)
         }
-        .task(id: "\(state.peerUserId ?? "")|\(state.extraPeers.joined(separator: ","))|\(state.waitingCallerId ?? "")") {
+        .task(id: "\(state.peerUserId ?? "")|\(state.extraPeers.joined(separator: ","))|\(state.waitingCallerId ?? "")|\(state.heldPeerId ?? "")") {
             await loadPeer()
         }
         .accessibilityIdentifier("call.screen")
@@ -160,6 +166,16 @@ struct CallScreenView: View {
             Button {
                 Task { await app.callManager?.acceptWaiting() }
             } label: {
+                Image(systemName: "phone.down.fill")
+                    .font(Theme.glyph(15, max: 19))
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(.orange))
+            }
+            .accessibilityIdentifier("call.waiting.endAccept")
+            Button {
+                Task { await app.callManager?.holdAndAcceptWaiting() }
+            } label: {
                 Image(systemName: "phone.fill")
                     .font(Theme.glyph(15, max: 19))
                     .foregroundStyle(.white)
@@ -172,6 +188,36 @@ struct CallScreenView: View {
         .padding(.vertical, 10)
         .background(RoundedRectangle(cornerRadius: 16).fill(.thinMaterial))
         .accessibilityIdentifier("call.waiting")
+    }
+
+    /// The call parked behind this one: who waits there, and the switch back.
+    private var heldBanner: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(heldName ?? "…")
+                    .textRole(Theme.Text.callControlLabel)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+                Text("On hold")
+                    .textRole(Theme.Text.callControlLabel)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 12)
+            Button {
+                Task { await app.callManager?.switchToHeld() }
+            } label: {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(Theme.glyph(15, max: 19))
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(Color(.systemGray)))
+            }
+            .accessibilityIdentifier("call.held.switch")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 16).fill(.thinMaterial))
+        .accessibilityIdentifier("call.held")
     }
 
     /// While ringing, `remoteVideo` only says what kind of call is asking;
@@ -201,9 +247,13 @@ struct CallScreenView: View {
             case .connecting:
                 Text("Connecting…")
             case .active:
-                TimelineView(.periodic(from: .now, by: 1)) { _ in
-                    Text(Self.duration(since: state.connectedAt))
-                        .monospacedDigit()
+                if state.remoteHold {
+                    Text("On hold")
+                } else {
+                    TimelineView(.periodic(from: .now, by: 1)) { _ in
+                        Text(Self.duration(since: state.connectedAt))
+                            .monospacedDigit()
+                    }
                 }
             case .ended(let reason):
                 Text(Self.outcome(reason))
@@ -277,26 +327,27 @@ struct CallScreenView: View {
             peer = nil
             extraNames = []
             waitingName = nil
+            heldName = nil
             return
         }
         let extras = state.extraPeers
         let waitingId = state.waitingCallerId
-        let loaded = try? await db.read { dbc -> (User?, [String], String?) in
+        let heldId = state.heldPeerId
+        let loaded = try? await db.read { dbc -> (User?, [String], String?, String?) in
+            func name(_ userId: String) throws -> String? {
+                try User.fetchOne(dbc, key: userId)
+                    .map { try ContactBookName.applied(dbc, to: $0).displayName }
+            }
             let peer = try User.fetchOne(dbc, key: id)
                 .map { try ContactBookName.applied(dbc, to: $0) }
-            let names = try extras.compactMap { userId in
-                try User.fetchOne(dbc, key: userId)
-                    .map { try ContactBookName.applied(dbc, to: $0).displayName }
-            }
-            let waiting = try waitingId.flatMap { userId in
-                try User.fetchOne(dbc, key: userId)
-                    .map { try ContactBookName.applied(dbc, to: $0).displayName }
-            }
-            return (peer, names, waiting)
+            let names = try extras.compactMap { try name($0) }
+            return (peer, names, try waitingId.flatMap { try name($0) },
+                    try heldId.flatMap { try name($0) })
         }
         peer = loaded?.0
         extraNames = loaded?.1 ?? []
         waitingName = loaded?.2
+        heldName = loaded?.3
     }
 
     private static func duration(since start: Double?) -> String {

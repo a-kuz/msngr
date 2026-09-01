@@ -20,6 +20,9 @@ public struct CallSignal: Codable, Equatable, Sendable {
         case ice
         /// closes the call from either side, `reason` says how
         case end
+        /// the sender put this call on hold (`held` true) or took it back
+        /// (`held` false); media keeps flowing, muted both ways on their side
+        case hold
     }
 
     /// Why a call ended. `hangup` after it was up, `cancel` by the caller
@@ -45,6 +48,8 @@ public struct CallSignal: Codable, Equatable, Sendable {
     /// side knows whom else to link up with. Knowing the callId is the ticket:
     /// only a participant has it, so a same-callId offer joins without ringing.
     public var members: [String]?
+    /// hold: whether the sender is holding the call now
+    public var held: Bool?
 
     public struct IceCandidate: Codable, Equatable, Sendable {
         public var sdpMid: String?
@@ -60,7 +65,7 @@ public struct CallSignal: Codable, Equatable, Sendable {
 
     public init(type: SignalType, callId: String, sdp: String? = nil,
                 candidates: [IceCandidate]? = nil, reason: EndReason? = nil,
-                video: Bool? = nil, members: [String]? = nil) {
+                video: Bool? = nil, members: [String]? = nil, held: Bool? = nil) {
         self.type = type
         self.callId = callId
         self.sdp = sdp
@@ -68,6 +73,7 @@ public struct CallSignal: Codable, Equatable, Sendable {
         self.reason = reason
         self.video = video
         self.members = members
+        self.held = held
     }
 
     /// The `ContentPayload` kind a call signal travels under.
