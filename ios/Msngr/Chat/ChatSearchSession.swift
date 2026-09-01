@@ -35,19 +35,41 @@ final class ChatSearchSession: ObservableObject {
     private var generation = 0
     private var relay: AnyCancellable?
 
-    init(results: ChatSearchModel, count: @escaping (String) async -> Int?) {
+    init(results: ChatSearchModel, count: @escaping (String) async -> Int?,
+         destination: Destination = Destination()) {
         self.results = results
         self.counter = count
+        self.destination = destination
         // the screen watches the session alone, while the matches live one object
         // deeper: their changes are passed on as this object's own
         relay = results.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
     }
 
+    /// Where the search goes. A channel keeps its text where the server can
+    /// read it, and its history reaches further back than the part this device
+    /// has pulled, so the query is answered there; every other kind is
+    /// encrypted and is searched in the database. Which one this chat is
+    /// becomes known after the screen has loaded it, so the closures read the
+    /// answer through this box instead of capturing it.
+    final class Destination: @unchecked Sendable { var channel = false }
+    private let destination: Destination
+
+    /// Told by the screen once the chat is loaded.
+    func searchesOnServer(_ channel: Bool) { destination.channel = channel }
+
     convenience init(chatId: String) {
+        let box = Destination()
         self.init(results: ChatSearchModel(pages: { query, after in
-            await ChatSearchModel.databasePage(query: query, after: after, chatId: chatId)
+            box.channel
+                ? await ChatSearchModel.channelPage(query: query, chatId: chatId)
+                : await ChatSearchModel.databasePage(query: query, after: after, chatId: chatId)
         }, people: nil),
-                  count: { query in await ChatSearchSession.databaseCount(query: query, chatId: chatId) })
+                  count: { query in
+                      box.channel
+                          ? await ChatSearchModel.channelPage(query: query, chatId: chatId)?.hits.count
+                          : await ChatSearchSession.databaseCount(query: query, chatId: chatId)
+                  },
+                  destination: box)
     }
 
     var hits: [MessageSearchHit] { results.hits }

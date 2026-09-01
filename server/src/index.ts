@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { Env, AuthCtx, ChatState, PublicUser } from "./types";
+import type { Env, AuthCtx, ChatState, ChatKind, PublicUser } from "./types";
 import { authenticate } from "./auth";
 import {
   ulid, newToken, sha256hex, json, err, directChatName, b64url, provisionCode,
@@ -750,10 +750,12 @@ async function addableToGroup(
 // --- chats ---
 app.post("/api/chats", async (c) => {
   const { userId } = c.get("auth");
-  const b = await c.req.json<{ kind: "direct" | "group" | "self"; memberIds: string[]; title?: string }>();
+  const b = await c.req.json<{ kind: ChatKind; memberIds: string[]; title?: string }>();
   let members = [...new Set(b.memberIds)].filter((m) => m !== userId);
   if (b.kind === "direct" && members.length !== 1) return err("direct_needs_one_peer");
   if (b.kind === "self" && members.length !== 0) return err("self_has_no_peers");
+  // a channel is a name before it is an audience: it opens with the owner alone
+  if (b.kind === "channel" && !b.title?.trim()) return err("channel_needs_title");
 
   // a block in either direction forbids opening the direct chat
   if (b.kind === "direct") {
@@ -938,6 +940,25 @@ app.post("/api/chats/:id/admins", async (c) => {
   return new Response(r.body, r);
 });
 
+app.post("/api/chats/:id/roles", async (c) => {
+  const { userId } = c.get("auth");
+  const b = await c.req.json();
+  const r = await convStub(c.env, c.req.param("id")).fetch("https://do/roles", {
+    method: "POST", body: JSON.stringify({ ...b, actor: userId }),
+  });
+  return new Response(r.body, r);
+});
+
+// A channel's posts are journaled in the clear, so its history is searched
+// where it lies. Every other kind is E2EE and is searched on the device.
+app.get("/api/chats/:id/search", async (c) => {
+  const { userId } = c.get("auth");
+  const qs = new URL(c.req.url).searchParams;
+  qs.set("userId", userId);
+  const r = await convStub(c.env, c.req.param("id")).fetch(`https://do/search?${qs.toString()}`);
+  return new Response(r.body, r);
+});
+
 app.post("/api/chats/:id/pin-message", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json();
@@ -1019,6 +1040,9 @@ app.post("/api/chats/:id/invite", async (c) => {
   const me = sj.state?.members.find((m) => m.userId === userId);
   if (!sj.ok || !me) return err("not_member", 403);
   if (sj.state!.kind === "group" && sj.state!.invitePolicy === "admins" && me.role !== "admin")
+    return err("not_allowed", 403);
+  // a channel's link is what its audience arrives by, and it is the editors' to hand out
+  if (sj.state!.kind === "channel" && me.role !== "owner" && me.role !== "editor")
     return err("not_allowed", 403);
   const code = b64url(crypto.getRandomValues(new Uint8Array(9)));
   await c.env.DB.prepare(

@@ -13,7 +13,10 @@ struct NewChatView: View {
     @State private var contacts: [ContactMatch] = []
     @State private var contactsDenied = false
     @State private var contactsStatus = CNContactStore.authorizationStatus(for: .contacts)
-    @State private var groupMode = false
+    /// What this screen is making: an ordinary chat, a group, or a channel.
+    enum Mode { case chat, group, channel }
+    @State private var mode: Mode = .chat
+    private var groupMode: Bool { mode == .group }
     @State private var groupTitle = ""
     @State private var selected: Set<String> = []
     /// The search in flight. A keystroke cancels it: without that every letter
@@ -43,19 +46,52 @@ struct NewChatView: View {
     var body: some View {
         NavigationStack {
             List {
+                // the two things that are made rather than found stand at the
+                // top of the list, above the search: a menu behind an icon hid
+                // them both
+                if mode == .chat {
+                    Section {
+                        Button {
+                            withAnimation { mode = .group }
+                        } label: {
+                            Label("New group", systemImage: "person.3")
+                        }
+                        .accessibilityIdentifier("newChat.group")
+                        Button {
+                            withAnimation { mode = .channel }
+                        } label: {
+                            Label("New channel", systemImage: "megaphone")
+                        }
+                        .accessibilityIdentifier("newChat.channel")
+                        if contactsStatus == .notDetermined {
+                            Button {
+                                Task { await requestContactsAndSync() }
+                            } label: {
+                                Label("Find via contacts", systemImage: "person.2")
+                            }
+                        }
+                    }
+                }
                 if groupMode {
                     Section {
                         TextField("Group name", text: $groupTitle)
                     }
                 }
-                if !results.isEmpty {
+                if mode == .channel {
+                    Section {
+                        TextField("Channel name", text: $groupTitle)
+                    } footer: {
+                        Text("A channel is not encrypted: its posts are stored on the server in the clear, so anyone who subscribes later reads the whole history.")
+                    }
+                }
+                if mode != .channel, !results.isEmpty {
                     Section("Global search") {
                         ForEach(results, id: \.id) { u in
                             row(id: u.id, name: u.display_name, username: u.username, avatarId: u.avatar_id)
                         }
                     }
                 }
-                if !contacts.isEmpty {
+                if mode != .channel, !contacts.isEmpty {
                     Section("Contacts") {
                         ForEach(contacts) { c in
                             row(id: c.id, name: c.bookName, username: c.username, avatarId: c.avatarId)
@@ -88,26 +124,14 @@ struct NewChatView: View {
                 }
             }
             .overlay {
-                if !groupMode && results.isEmpty && contacts.isEmpty {
-                    if query.count >= 2, answered != query {
+                // the placeholder stands in for a result, so it waits for a
+                // query: with nothing typed the list already shows the two
+                // things that are made rather than found
+                if mode == .chat && results.isEmpty && contacts.isEmpty && query.count >= 2 {
+                    if answered != query {
                         ProgressView()
-                    } else if query.count >= 2 {
-                        ContentUnavailableView.search(text: query)
                     } else {
-                        ContentUnavailableView {
-                            Label("Find someone", systemImage: "person.crop.circle.badge.plus")
-                        } description: {
-                            Text("Enter a username or a name.")
-                        } actions: {
-                            if contactsStatus == .notDetermined {
-                                Button {
-                                    Task { await requestContactsAndSync() }
-                                } label: {
-                                    Label("Find via contacts", systemImage: "person.2")
-                                }
-                                .buttonStyle(.bordered)
-                            }
-                        }
+                        ContentUnavailableView.search(text: query)
                     }
                 }
             }
@@ -133,24 +157,22 @@ struct NewChatView: View {
                     answered = q
                 }
             }
-            .navigationTitle(groupMode ? "New group" : "New chat")
+            .navigationTitle(mode == .group ? "New group" : mode == .channel ? "New channel" : "New chat")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    if groupMode {
-                        Button("Create") {
-                            Task { await createGroup() }
-                        }
-                        .disabled(selected.isEmpty || groupTitle.isEmpty)
-                    } else {
-                        Button {
-                            withAnimation { groupMode = true }
-                        } label: {
-                            Image(systemName: "person.3")
-                        }
+                    switch mode {
+                    case .group:
+                        Button("Create") { Task { await createGroup() } }
+                            .disabled(selected.isEmpty || groupTitle.isEmpty)
+                    case .channel:
+                        Button("Create") { Task { await createChannel() } }
+                            .disabled(groupTitle.trimmingCharacters(in: .whitespaces).isEmpty)
+                    case .chat:
+                        EmptyView()
                     }
                 }
             }
@@ -204,6 +226,16 @@ struct NewChatView: View {
         await DefaultDisappearingTimer.apply(chatId: created.chatId, existedBefore: created.existed ?? false)
         await GroupInvites.deliver(groupChatId: created.chatId, title: groupTitle,
                                    to: created.invited ?? [])
+        onOpen(created.chatId)
+    }
+
+    /// A channel opens with its owner alone: the audience arrives by the link.
+    private func createChannel() async {
+        let title = groupTitle.trimmingCharacters(in: .whitespaces)
+        guard let created = try? await app.api.createChatDetailed(kind: ChatKind.channel.rawValue,
+                                                                  memberIds: [], title: title)
+        else { return }
+        try? await app.engine.refreshSnapshot()
         onOpen(created.chatId)
     }
 

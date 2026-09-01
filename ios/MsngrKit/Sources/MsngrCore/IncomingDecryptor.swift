@@ -28,18 +28,24 @@ public struct IncomingDecryptor: Sendable {
     private func addr(_ userId: String, _ deviceId: String) -> String { "\(userId)/\(deviceId)" }
 
     /// Opens an envelope, taking the gate for the length of the ratchet step.
+    ///
+    /// `plaintext` is the caller's statement that this chat is a channel, whose
+    /// posts travel readable. Everywhere else a readable envelope is refused:
+    /// otherwise anyone could put an unencrypted message into an encrypted chat
+    /// and have it read as an ordinary one.
     public func decrypt(envelopeJSON: JSONValue, chatId: String,
-                        fromUserId: String, fromDeviceId: String) throws -> DecryptedIncoming {
+                        fromUserId: String, fromDeviceId: String,
+                        plaintext: Bool = false) throws -> DecryptedIncoming {
         try gate.withLock { ticket in
             try decrypt(envelopeJSON: envelopeJSON, chatId: chatId, fromUserId: fromUserId,
-                        fromDeviceId: fromDeviceId, holding: ticket)
+                        fromDeviceId: fromDeviceId, plaintext: plaintext, holding: ticket)
         }
     }
 
     /// Same, for a caller that already holds the gate — the extension takes it
     /// before opening the transaction it decrypts and stores in.
     public func decrypt(envelopeJSON: JSONValue, chatId: String, fromUserId: String,
-                        fromDeviceId: String,
+                        fromDeviceId: String, plaintext: Bool = false,
                         holding _: CryptoGate.Ticket) throws -> DecryptedIncoming {
         let env: Envelope
         do { env = try envelopeJSON.decoded(Envelope.self) }
@@ -54,6 +60,10 @@ public struct IncomingDecryptor: Sendable {
         }
 
         switch env.mode {
+        case "plain":
+            guard plaintext else { return .undecryptable(reason: "plaintext_refused") }
+            guard let content = env.p else { return .undecryptable(reason: "bad_plain") }
+            return .content(content)
         case "pw":
             guard let box = env.msgs?[addr(ownUserId, ownDeviceId)] else {
                 return .undecryptable(reason: "not_addressed")

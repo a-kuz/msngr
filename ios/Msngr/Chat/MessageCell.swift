@@ -10,6 +10,9 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     var onContextAction: ((MessageContextAction) -> Void)?
     /// set by the feed: an outgoing message in a group offers the read-by list
     var isGroupChat = false
+    /// set by the feed: a subscriber of a channel answers a post with a comment,
+    /// and the menu says so
+    var commentsOnly = false
     /// Tap on a reaction capsule. Separate from onReact: in a group it opens
     /// the list of who reacted instead of toggling.
     var onCapsuleTap: ((String) -> Void)?
@@ -1649,7 +1652,9 @@ extension MessageCell {
             presentContextMenu(items, in: window, msg: msg, showsReactions: false)
             return
         }
-        items.append(.init(title: String(localized: "Reply"), icon: "arrowshape.turn.up.left", id: "chat.menu.reply") { [weak self] in
+        items.append(.init(title: commentsOnly ? String(localized: "Comment") : String(localized: "Reply"),
+                           icon: commentsOnly ? "text.bubble" : "arrowshape.turn.up.left",
+                           id: "chat.menu.reply") { [weak self] in
             self?.onContextAction?(.reply)
         })
         // a photo or album goes to the clipboard as an image, text as a string

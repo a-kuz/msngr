@@ -21,6 +21,8 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     var onContextAction: ((Message, MessageContextAction) -> Void)?
     /// an outgoing message in a group offers the read-by list in its menu
     var isGroupChat = false
+    /// a subscriber of a channel: the menu offers a comment instead of a reply
+    var commentsOnly = false
     /// how many people besides the sender a note reaches: the listened dots
     /// compare it against who has actually listened
     var noteRecipients = 1
@@ -576,6 +578,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     private func configureMessageCell(_ cell: MessageCell, msg: Message, plan: BubbleLayoutPlan,
                                       avatar: FeedAvatar? = nil) {
         cell.isGroupChat = isGroupChat
+        cell.commentsOnly = commentsOnly
         cell.noteRecipients = noteRecipients
         cell.ownUserId = ownUserId
         cell.onVotePoll = { [weak self] votes in self?.onVotePoll?(msg, votes) }

@@ -2225,6 +2225,94 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
   check("a cancelled deferred send never leaves", !cancelled, JSON.stringify(cancelled));
 }
 
+// --- channels: plaintext posts, roles, history for a late subscriber, search
+{
+  const plain = (kind, text) => ({ v: 1, mode: "plain", p: { kind, text } });
+  const chan = await api("/api/chats", { token: alice.token,
+    body: { kind: "channel", memberIds: [], title: `Chan ${suffix}` } });
+  check("a channel is created", !!chan.chatId, JSON.stringify(chan));
+  const noTitle = await apiRaw("/api/chats", { token: alice.token,
+    body: { kind: "channel", memberIds: [], title: "  " } });
+  check("a channel without a title is refused", noTitle.status === 400,
+    String(noTitle.status));
+
+  const cch = new Client("chan-alice", alice.token);
+  await cch.connect();
+  await cch.waitFor((f) => f.t === "hello");
+  cch.send({ t: "send", chatId: chan.chatId, clientMsgId: "ch-1", sentAt: Date.now(),
+    body: plain("text", "first post about otters") });
+  const post1 = await cch.waitFor((f) => f.t === "sent" && f.clientMsgId === "ch-1");
+  check("the owner posts to the channel", !!post1, JSON.stringify(post1));
+  cch.send({ t: "send", chatId: chan.chatId, clientMsgId: "ch-2", sentAt: Date.now(),
+    body: plain("text", "second post about badgers") });
+  await cch.waitFor((f) => f.t === "sent" && f.clientMsgId === "ch-2");
+
+  // a reader arrives by the invite link and gets everything posted before them
+  const inv = await api(`/api/chats/${chan.chatId}/invite`, { token: alice.token, body: {} });
+  const joined = await api(`/api/join/${inv.code}`, { token: bob.token, body: {} });
+  check("a reader joins a channel by its link", joined.chatId === chan.chatId,
+    JSON.stringify(joined));
+  const hist = await api(`/api/chats/${chan.chatId}/history?fromSeq=0`, { token: bob.token });
+  check("a late subscriber reads the whole history", hist.msgs?.length === 2,
+    JSON.stringify(hist.msgs?.length));
+  check("the post is plaintext on the server",
+    hist.msgs?.[0]?.body?.p?.text === "first post about otters",
+    JSON.stringify(hist.msgs?.[0]?.body));
+
+  // a reader may comment and react, and may not post
+  const cbr = new Client("chan-bob", bob.token);
+  await cbr.connect();
+  await cbr.waitFor((f) => f.t === "hello");
+  cbr.send({ t: "send", chatId: chan.chatId, clientMsgId: "ch-r1", sentAt: Date.now(),
+    body: plain("text", "readers cannot post") });
+  const refused = await cbr.waitFor((f) => f.t === "error" && f.clientMsgId === "ch-r1");
+  check("a reader cannot post to a channel", refused?.error === "not_allowed",
+    JSON.stringify(refused));
+  cbr.send({ t: "send", chatId: chan.chatId, clientMsgId: "ch-r2", sentAt: Date.now(),
+    body: { v: 1, mode: "plain", p: { kind: "comment", text: "nice otters", targetSeq: post1.seq } } });
+  const comment = await cbr.waitFor((f) => f.t === "sent" && f.clientMsgId === "ch-r2");
+  check("a reader comments under a post", !!comment, JSON.stringify(comment));
+  cbr.send({ t: "send", chatId: chan.chatId, clientMsgId: "ch-r3", sentAt: Date.now(),
+    body: { v: 1, mode: "plain", p: { kind: "reaction", emoji: "👍", targetSeq: post1.seq } },
+    service: true });
+  check("a reader reacts to a post",
+    !!(await cbr.waitFor((f) => f.t === "sent" && f.clientMsgId === "ch-r3")));
+
+  // the owner hands out the right to post and takes it back
+  const promoted = await api(`/api/chats/${chan.chatId}/roles`, { token: alice.token,
+    body: { userId: bob.userId, role: "editor" } });
+  check("the owner makes a reader an editor", promoted.ok === true, JSON.stringify(promoted));
+  cbr.send({ t: "send", chatId: chan.chatId, clientMsgId: "ch-r4", sentAt: Date.now(),
+    body: plain("text", "an editor posts") });
+  check("an editor posts to the channel",
+    !!(await cbr.waitFor((f) => f.t === "sent" && f.clientMsgId === "ch-r4")));
+  const notOwner = await apiRaw(`/api/chats/${chan.chatId}/roles`, { token: bob.token,
+    body: { userId: alice.userId, role: "reader" } });
+  check("an editor cannot change roles", notOwner.status === 403, String(notOwner.status));
+  await api(`/api/chats/${chan.chatId}/roles`, { token: alice.token,
+    body: { userId: bob.userId, role: "reader" } });
+  cbr.send({ t: "send", chatId: chan.chatId, clientMsgId: "ch-r5", sentAt: Date.now(),
+    body: plain("text", "demoted again") });
+  check("a demoted editor cannot post",
+    (await cbr.waitFor((f) => f.t === "error" && f.clientMsgId === "ch-r5"))?.error === "not_allowed");
+
+  // the server searches what it can read
+  const hits = await api(`/api/chats/${chan.chatId}/search?q=badgers`, { token: bob.token });
+  check("the server searches a channel's history", hits.hits?.length === 1,
+    JSON.stringify(hits.hits));
+  check("the hit names its post", hits.hits?.[0]?.text === "second post about badgers",
+    JSON.stringify(hits.hits?.[0]));
+  const none = await api(`/api/chats/${chan.chatId}/search?q=elephants`, { token: bob.token });
+  check("a search with no match answers empty", none.hits?.length === 0, JSON.stringify(none));
+  const notChannel = await apiRaw(`/api/chats/${chat.chatId}/search?q=hi`, { token: alice.token });
+  check("an encrypted chat is not searched on the server", notChannel.status === 400,
+    String(notChannel.status));
+  const outsider = await apiRaw(`/api/chats/${chan.chatId}/search?q=otters`, { token: carol.token });
+  check("a non-subscriber cannot search a channel", outsider.status === 403,
+    String(outsider.status));
+  cch.ws.close(); cbr.ws.close();
+}
+
 cmal.ws.close(); ctre.ws.close();
 ca.ws.close(); cb2.ws.close(); cb3.ws.close(); cb4.ws.close(); ca2.ws.close(); ce.ws.close();
 cf.ws.close(); cg.ws.close();

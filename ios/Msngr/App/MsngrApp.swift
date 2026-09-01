@@ -69,6 +69,7 @@ struct MsngrApp: App {
             .onChange(of: scenePhase) { _, phase in
                 app.scenePhaseChanged(phase)
             }
+            .onOpenURL { url in InviteLink.open(url) }
         }
     }
 }

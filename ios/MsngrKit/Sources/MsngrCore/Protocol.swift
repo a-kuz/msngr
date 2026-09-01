@@ -92,14 +92,26 @@ public enum WSOutgoing {
 /// skd travels inside pw, since distributing a sender key is an ordinary pairwise message.
 public struct Envelope: Codable {
     public var v: Int = MsngrProtocol.envelopeVersion
-    public var mode: String            // "pw" | "skm"
+    public var mode: String            // "pw" | "skm" | "plain"
     public var msgs: [String: PairwiseBox]?   // "userId/deviceId" -> box
     public var c: String?              // skm ciphertext b64
     public var keyId: String?
     public var iteration: UInt32?
     public var sig: String?
+    /// plain: the content itself, as the server journals it. A channel is not
+    /// end-to-end encrypted, and this is where that shows: the post travels
+    /// readable, which is what lets the server search it and hand a whole
+    /// history to a subscriber who arrived after it was written.
+    public var p: ContentPayload?
 
     public init(mode: String) { self.mode = mode }
+
+    /// The envelope of a channel post: the content as it stands.
+    public static func plain(_ content: ContentPayload) -> Envelope {
+        var env = Envelope(mode: "plain")
+        env.p = content
+        return env
+    }
 
     func jsonObject() throws -> Any {
         try JSONSerialization.jsonObject(with: JSONEncoder().encode(self))

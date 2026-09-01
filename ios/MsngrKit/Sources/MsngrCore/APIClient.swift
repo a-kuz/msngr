@@ -533,6 +533,28 @@ public final class APIClient: @unchecked Sendable {
         struct Body: Encodable { let userId: String; let admin: Bool }
         _ = try await request("api/chats/\(chatId)/admins", method: "POST", jsonBody: Body(userId: userId, admin: admin))
     }
+    /// A channel's roles: the owner hands out the right to post and takes it back.
+    public func setChannelRole(_ chatId: String, userId: String, role: ChatRole) async throws {
+        struct Body: Encodable { let userId: String; let role: String }
+        _ = try await request("api/chats/\(chatId)/roles", method: "POST",
+                              jsonBody: Body(userId: userId, role: role.rawValue))
+    }
+
+    public struct ChannelHit: Decodable, Identifiable, Equatable {
+        public let seq: Int
+        public let from: String
+        public let ts: Double
+        public let text: String
+        public var id: Int { seq }
+    }
+    /// Search over a channel's history, answered by the server: a channel is
+    /// the one kind whose text it can read.
+    public func searchChannel(_ chatId: String, query: String) async throws -> [ChannelHit] {
+        struct Response: Decodable { let hits: [ChannelHit] }
+        let escaped = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        return try await get("api/chats/\(chatId)/search?q=\(escaped)", as: Response.self).hits
+    }
+
     public func pinMessage(_ chatId: String, seq: Int?, pinned: Bool = true) async throws {
         struct Body: Encodable { let seq: Int?; let pinned: Bool }
         _ = try await request("api/chats/\(chatId)/pin-message", method: "POST",

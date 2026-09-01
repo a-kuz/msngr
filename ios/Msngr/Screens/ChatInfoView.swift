@@ -62,6 +62,11 @@ struct ChatInfoView: View {
     #endif
 
     private var isGroup: Bool { model.chat?.kind == .group }
+    private var isChannel: Bool { model.chat?.kind == .channel }
+    /// A chat with a title, a roster and a link: a group or a channel. What
+    /// differs between the two is the wording and who may do what, not the shape
+    /// of this screen.
+    private var isGroupLike: Bool { isGroup || isChannel }
     private var isSaved: Bool { model.chat?.kind == .saved }
     @ObservedObject private var surfaces = ShaderSurfaces.shared
     @State private var composingBackground = false
@@ -88,8 +93,8 @@ struct ChatInfoView: View {
             Section {
                 VStack(spacing: 10) {
                     groupAvatar
-                    if isGroup && canEditSettings {
-                        TextField("Group name", text: $editTitle)
+                    if isGroupLike && canEditSettings {
+                        TextField(isChannel ? "Channel name" : "Group name", text: $editTitle)
                             .font(.title3.bold())
                             .multilineTextAlignment(.center)
                             .textFieldStyle(.roundedBorder)
@@ -99,12 +104,20 @@ struct ChatInfoView: View {
                         Text(model.headerTitle).font(.title2.bold())
                     }
                     if !isSaved {
-                        Text(isGroup ? ChatViewModel.membersText(model.members.count)
+                        Text(isChannel ? ChatViewModel.subscribersText(model.members.count)
+                             : isGroup ? ChatViewModel.membersText(model.members.count)
                              : "@\(model.peer?.username ?? "")")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
-                    if isGroup && canEditSettings && titleChanged {
+                    if isChannel {
+                        Text("Posts in this channel are not encrypted: the server stores them in the clear.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .accessibilityIdentifier("chatInfo.channelPlaintext")
+                    }
+                    if isGroupLike && canEditSettings && titleChanged {
                         Button("Save name", action: saveTitle)
                             .buttonStyle(.borderedProminent)
                             .disabled(savingSettings)
@@ -115,7 +128,7 @@ struct ChatInfoView: View {
                 .listRowBackground(Color.clear)
             }
 
-            if isGroup { descriptionSection }
+            if isGroupLike { descriptionSection }
 
             backgroundSection
 
@@ -240,7 +253,7 @@ struct ChatInfoView: View {
                     }
                     .accessibilityIdentifier("chatInfo.report")
                 }
-            } else if isGroup, !isSaved {
+            } else if isGroupLike, !isSaved {
                 Section {
                     Button(role: .destructive) {
                         showReport = true
@@ -251,8 +264,8 @@ struct ChatInfoView: View {
                 }
             }
 
-            if isGroup {
-                if canEditSettings { rightsSection }
+            if isGroupLike {
+                if isGroup && canEditSettings { rightsSection }
                 Section {
                     ForEach(model.members) { member in
                         memberRow(member)
@@ -279,7 +292,7 @@ struct ChatInfoView: View {
                     }
                 } header: {
                     HStack {
-                        Text("Members")
+                        Text(isChannel ? "Subscribers" : "Members")
                         Spacer()
                         Text(CountFormatter.short(model.members.count))
                     }
@@ -290,7 +303,7 @@ struct ChatInfoView: View {
             seedSection
             #endif
         }
-        .navigationTitle(isGroup ? "Group" : isSaved ? "Saved Messages" : "Profile")
+        .navigationTitle(isChannel ? "Channel" : isGroup ? "Group" : isSaved ? "Saved Messages" : "Profile")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             ttl = model.chat?.ttlSeconds ?? 0
@@ -386,7 +399,8 @@ struct ChatInfoView: View {
     private var descriptionSection: some View {
         if canEditSettings {
             Section("Description") {
-                TextField("What this group is about", text: $editDescription, axis: .vertical)
+                TextField(isChannel ? "What this channel is about" : "What this group is about",
+                          text: $editDescription, axis: .vertical)
                     .lineLimit(1...5)
                     .accessibilityIdentifier("chatInfo.description")
                 if descriptionChanged {
@@ -529,6 +543,10 @@ struct ChatInfoView: View {
             Spacer()
             if role == ChatPermissions.adminRole {
                 Text("admin").font(.caption).foregroundStyle(.secondary)
+            } else if role == ChatRole.owner.rawValue {
+                Text("owner").font(.caption).foregroundStyle(.secondary)
+            } else if role == ChatRole.editor.rawValue {
+                Text("editor").font(.caption).foregroundStyle(.secondary)
             }
         }
         .swipeActions {
@@ -562,6 +580,20 @@ struct ChatInfoView: View {
                 }
                 .tint(.orange)
             }
+            if member.id != model.ownUserId,
+               ChatPermissions.canManageChannelRoles(kind: kind, role: myRole) {
+                let isEditor = role == ChatRole.editor.rawValue
+                Button {
+                    Task {
+                        try? await app.api.setChannelRole(model.chatId, userId: member.id,
+                                                          role: isEditor ? .reader : .editor)
+                    }
+                } label: {
+                    Label(isEditor ? "Revoke editor" : "Make editor",
+                          systemImage: isEditor ? "person.badge.minus" : "square.and.pencil")
+                }
+                .tint(.orange)
+            }
         }
     }
 
@@ -578,24 +610,27 @@ struct ChatInfoView: View {
             }
             .accessibilityIdentifier("chatInfo.clearHistory")
             // the chat with yourself is cleared, never deleted: it is part of the account
-            if (!isGroup && !isSaved) || ChatPermissions.canLeave(kind: kind, role: myRole) {
+            if (!isGroupLike && !isSaved) || ChatPermissions.canLeave(kind: kind, role: myRole) {
                 Button(role: .destructive) {
                     showLeaveConfirm = true
                 } label: {
-                    Label(isGroup ? "Leave group" : "Delete chat",
-                          systemImage: isGroup ? "rectangle.portrait.and.arrow.right" : "trash")
+                    Label(isChannel ? "Unsubscribe" : isGroup ? "Leave group" : "Delete chat",
+                          systemImage: isGroupLike ? "rectangle.portrait.and.arrow.right" : "trash")
                 }
-                .accessibilityIdentifier(isGroup ? "chatInfo.leave" : "chatInfo.deleteChat")
+                .accessibilityIdentifier(isGroupLike ? "chatInfo.leave" : "chatInfo.deleteChat")
             }
         }
     }
 
     private var deleteConfirmTitle: String {
-        isGroup ? String(localized: "Leave group?") : String(localized: "Delete chat?")
+        isChannel ? String(localized: "Unsubscribe?")
+            : isGroup ? String(localized: "Leave group?") : String(localized: "Delete chat?")
     }
 
     private var deleteConfirmMessage: String {
-        isGroup
+        isChannel
+            ? String(localized: "You will stop receiving this channel's posts, and they will be deleted from this device.")
+            : isGroup
             ? String(localized: "You will leave the group, and its messages will be deleted from this device.")
             : String(localized: "The chat and its messages will be deleted from this device. The other person keeps the conversation. If they write again, the chat comes back.")
     }

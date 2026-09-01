@@ -790,6 +790,10 @@ public actor SyncEngine {
             for seq in known { stored.insert(Message.feedId(chatId: chatId, seq: seq)) }
         }
 
+        // channels among the chats of this batch: their posts travel readable,
+        // and a readable envelope is opened for no other chat
+        let plainChats = await plaintextChats(chatIds)
+
         var content: [(IncomingFrame, ContentPayload)] = []
         var cursors: [IncomingFrame] = []
         var announce: [IncomingFrame] = []
@@ -833,7 +837,8 @@ public actor SyncEngine {
                     result = .undecryptable(reason: "own_echo") // already stored under its clientMsgId
                 } else {
                     result = (try? e2ee.decrypt(envelopeJSON: body, chatId: item.chatId,
-                                                fromUserId: item.from, fromDeviceId: item.fromDevice))
+                                                fromUserId: item.from, fromDeviceId: item.fromDevice,
+                                                plaintext: plainChats.contains(item.chatId)))
                         ?? .undecryptable(reason: "exception")
                 }
                 switch result {
@@ -1224,7 +1229,8 @@ public actor SyncEngine {
             return false
         }
         let result = (try? e2ee.decrypt(envelopeJSON: body, chatId: pending.chatId,
-                                        fromUserId: pending.from, fromDeviceId: pending.fromDevice))
+                                        fromUserId: pending.from, fromDeviceId: pending.fromDevice,
+                                        plaintext: await isChannel(pending.chatId)))
             ?? .undecryptable(reason: "exception")
         if case .undecryptable(let reason) = result {
             try? await db.write { dbc in
@@ -1860,6 +1866,7 @@ public actor SyncEngine {
         let upper = min(to, from + HistoryWindow.serverPageSize - 1)
         guard let dtos = try? await api.history(chatId: chatId, fromSeq: from - 1,
                                                 toSeq: upper, limit: upper - from + 1) else { return false }
+        let isPlaintextChat = await isChannel(chatId)
         var reasons: [Int: String] = [:]   // seq -> why it produced no feed row
         for m in dtos where m.seq >= from && m.seq <= upper {
             guard m.deleted != true, let body = m.body else {
@@ -1875,7 +1882,8 @@ public actor SyncEngine {
                 continue
             }
             let result = (try? e2ee.decrypt(envelopeJSON: body, chatId: chatId,
-                                            fromUserId: m.from, fromDeviceId: m.fromDevice))
+                                            fromUserId: m.from, fromDeviceId: m.fromDevice,
+                                            plaintext: isPlaintextChat))
                 ?? .undecryptable(reason: "exception")
             switch result {
             case .senderKeyDistribution(let keyChatId, let keyId):
@@ -2545,6 +2553,22 @@ public actor SyncEngine {
     /// arrived yet (`gone == false`, we wait for it), or the message never went out.
     struct TargetNotAcked: Error { let gone: Bool }
 
+    /// Which of these chats journal their content readable. A channel is the
+    /// only kind that does, and a readable envelope is opened for no other.
+    private func plaintextChats(_ ids: Set<String>) async -> Set<String> {
+        guard !ids.isEmpty else { return [] }
+        return (try? await db.read { dbc in
+            try String.fetchSet(dbc, sql: """
+                SELECT id FROM chat WHERE kind = ?
+                  AND id IN (\(databaseQuestionMarks(count: ids.count)))
+                """, arguments: StatementArguments([ChatKind.channel.rawValue] + [String](ids)))
+        }) ?? []
+    }
+
+    private func isChannel(_ chatId: String) async -> Bool {
+        await plaintextChats([chatId]).contains(chatId)
+    }
+
     private func sendOutboxItem(_ item: OutboxItem) async throws {
         var content = try JSONDecoder().decode(ContentPayload.self, from: item.payload)
         // media attached offline is uploaded before the envelope is encrypted;
@@ -2583,7 +2607,12 @@ public actor SyncEngine {
                                         notify: notify))
             }
         }
-        if let addressee = content.to {
+        if info.kind == ChatKind.channel.rawValue {
+            // a channel is not end-to-end encrypted: the post travels readable,
+            // which is what lets the server search it and hand it to a
+            // subscriber who arrives later
+            try await dispatch(Envelope.plain(content))
+        } else if let addressee = content.to {
             // an addressed frame (a repair request, a copy, a chain ack)
             // concerns two devices, so it goes pairwise even in a group
             let env = try await e2ee.encryptDirect(content: content, chatId: item.chatId,

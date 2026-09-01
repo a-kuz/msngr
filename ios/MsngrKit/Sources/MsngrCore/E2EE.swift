@@ -475,9 +475,11 @@ public final class E2EEManager: @unchecked Sendable {
     /// keys and no network, which is what lets the notification service
     /// extension do it too.
     public func decrypt(envelopeJSON: JSONValue, chatId: String,
-                        fromUserId: String, fromDeviceId: String) throws -> DecryptedIncoming {
+                        fromUserId: String, fromDeviceId: String,
+                        plaintext: Bool = false) throws -> DecryptedIncoming {
         try incoming.decrypt(envelopeJSON: envelopeJSON, chatId: chatId,
-                             fromUserId: fromUserId, fromDeviceId: fromDeviceId)
+                             fromUserId: fromUserId, fromDeviceId: fromDeviceId,
+                             plaintext: plaintext)
     }
 
 }

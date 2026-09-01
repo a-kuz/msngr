@@ -131,6 +131,8 @@ struct NotificationsView: View {
                 switch chat.kind {
                 case .group:
                     title = chat.title ?? String(localized: "Group")
+                case .channel:
+                    title = chat.title ?? String(localized: "Channel")
                 case .saved:
                     title = String(localized: "Saved Messages")
                 case .direct:
