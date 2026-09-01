@@ -337,9 +337,9 @@ final class ChatViewModel: ObservableObject {
         // with the chat
         let msgs = try HistoryWindow.messages(dbc, chatId: chatId, floor: floor,
                                               limit: plan.recompute ? nil : plan.capacity)
-        let users = try User.fetchAll(dbc, sql: """
+        let users = try ContactBookName.applied(dbc, to: User.fetchAll(dbc, sql: """
             SELECT u.* FROM user u JOIN member m ON m.userId = u.id WHERE m.chatId = ?
-            """, arguments: [chatId])
+            """, arguments: [chatId]))
         // the pending key change is read here rather than from the main thread: a
         // read of its own would block on the writer queue, and during a burst that
         // queue is busy applying messages

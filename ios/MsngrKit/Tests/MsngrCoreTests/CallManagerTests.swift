@@ -18,7 +18,12 @@ final class FakeTransport: CallMediaTransport, @unchecked Sendable {
         continuation = c
     }
 
+    var restarted = false
     func makeOffer() async throws -> String { "offer-sdp" }
+    func restartOffer() async throws -> String {
+        lock.lock(); restarted = true; lock.unlock()
+        return "restart-sdp"
+    }
     func acceptAnswer(_ sdp: String) async throws {
         lock.lock(); remoteAnswer = sdp; lock.unlock()
     }
@@ -74,7 +79,8 @@ final class CallManagerTests: XCTestCase {
         return (m, log, t)
     }
 
-    func makeManagerWithLogs(dialTimeout: TimeInterval = 60)
+    func makeManagerWithLogs(dialTimeout: TimeInterval = 60,
+                             iceRestartDelay: TimeInterval = 3.0)
         -> (CallManager, SignalLog, FakeTransport, LogSink) {
         let log = SignalLog()
         let logs = LogSink()
@@ -84,7 +90,8 @@ final class CallManagerTests: XCTestCase {
             sendSignal: { log.record($0, chatId: $1) },
             sendLog: { logs.record($0, chatId: $1) },
             makeTransport: { transport },
-            dialTimeout: dialTimeout)
+            dialTimeout: dialTimeout,
+            iceRestartDelay: iceRestartDelay)
         return (manager, log, transport, logs)
     }
 
@@ -350,5 +357,96 @@ final class CallManagerTests: XCTestCase {
         let state = await manager.current
         XCTAssertTrue(state.muted)
         XCTAssertEqual(transport.muted, true)
+    }
+
+    /// Brings a manager into the active phase as the caller.
+    private func activateAsCaller(_ manager: CallManager, log: SignalLog,
+                                  transport: FakeTransport) async {
+        await manager.startCall(chatId: "chat1", peerUserId: "peer")
+        await manager.handle(event(CallSignal(type: .answer, callId: log.all[0].0.callId,
+                                              sdp: "their-answer")))
+        transport.emit(.connected)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+    }
+
+    /// A disconnect that outlives the delay makes the caller send a fresh
+    /// offer for the same call.
+    func testDisconnectTriggersIceRestartOffer() async {
+        let (manager, log, transport, _) = makeManagerWithLogs(iceRestartDelay: 0.05)
+        await activateAsCaller(manager, log: log, transport: transport)
+        transport.emit(.disconnected)
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertTrue(transport.restarted)
+        XCTAssertEqual(log.types, [.offer, .offer])
+        XCTAssertEqual(log.all[1].0.callId, log.all[0].0.callId)
+        XCTAssertEqual(log.all[1].0.sdp, "restart-sdp")
+        let state = await manager.current
+        XCTAssertEqual(state.phase, .active)
+    }
+
+    /// Media returning within the delay cancels the pending restart.
+    func testReconnectWithinDelayCancelsRestart() async {
+        let (manager, log, transport, _) = makeManagerWithLogs(iceRestartDelay: 0.2)
+        await activateAsCaller(manager, log: log, transport: transport)
+        transport.emit(.disconnected)
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        transport.emit(.connected)
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        XCTAssertFalse(transport.restarted)
+        XCTAssertEqual(log.types, [.offer])
+    }
+
+    /// The callee never restarts on its own: one side restarting keeps the
+    /// offers from glaring.
+    func testCalleeDoesNotRestart() async {
+        let (manager, log, transport, _) = makeManagerWithLogs(iceRestartDelay: 0.05)
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "their-offer")))
+        await manager.accept()
+        transport.emit(.connected)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        transport.emit(.disconnected)
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertFalse(transport.restarted)
+        XCTAssertEqual(log.types, [.answer])
+    }
+
+    /// The callee answers a restart offer on the live transport, in place.
+    func testRestartOfferAnsweredInPlace() async {
+        let (manager, log, transport) = makeManager()
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "their-offer")))
+        await manager.accept()
+        transport.emit(.connected)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "restart-offer")))
+        XCTAssertEqual(transport.remoteOffer, "restart-offer")
+        XCTAssertEqual(log.types, [.answer, .answer])
+        let state = await manager.current
+        XCTAssertEqual(state.phase, .active)
+        XCTAssertFalse(transport.closed)
+    }
+
+    /// Candidates ride the relay and can outrun the journaled offer: they are
+    /// held by callId and applied once the offer lands and the call is taken.
+    func testCandidatesAheadOfTheirOfferAreHeld() async {
+        let (manager, _, transport) = makeManager()
+        let cand = CallSignal.IceCandidate(sdpMid: "0", sdpMLineIndex: 0, candidate: "cand-early")
+        await manager.handle(event(CallSignal(type: .ice, callId: "c1", candidates: [cand])))
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "their-offer")))
+        await manager.accept()
+        XCTAssertEqual(transport.added.map(\.candidate), ["cand-early"])
+    }
+
+    /// The caller applies the answer to its restart offer without leaving the
+    /// active phase.
+    func testRestartAnswerAcceptedWhileActive() async {
+        let (manager, log, transport, _) = makeManagerWithLogs(iceRestartDelay: 0.05)
+        await activateAsCaller(manager, log: log, transport: transport)
+        transport.emit(.disconnected)
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        await manager.handle(event(CallSignal(type: .answer, callId: log.all[0].0.callId,
+                                              sdp: "restart-answer")))
+        XCTAssertEqual(transport.remoteAnswer, "restart-answer")
+        let state = await manager.current
+        XCTAssertEqual(state.phase, .active)
     }
 }

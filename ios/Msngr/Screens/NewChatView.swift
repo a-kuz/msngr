@@ -244,6 +244,14 @@ struct NewChatView: View {
                          avatarId: $0.avatar_id)
         }
         .sorted { $0.bookName < $1.bookName }
+        // remember what the book calls each matched user: chat titles, the call
+        // screen and notifications show this name instead of the profile's
+        let names = Dictionary(uniqueKeysWithValues: matches.compactMap { m in
+            hashToEntry[m.phone_hash].map { (m.id, $0.name) }
+        })
+        try? await app.db?.write { dbc in
+            try ContactBookName.store(dbc, names: names)
+        }
         // whoever the numbers did not find is someone to invite
         let matched = Set(matches.map(\.phone_hash))
         invitable = hashToEntry
