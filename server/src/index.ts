@@ -952,6 +952,15 @@ app.post("/api/notify-sounds", async (c) => {
   return new Response(r.body, r);
 });
 
+// Every chat and person with a sound of their own, for the settings list.
+app.get("/api/notify-sounds/exceptions", async (c) => {
+  const { userId } = c.get("auth");
+  const r = await userStub(c.env, userId).fetch("https://do/sound-exceptions", {
+    method: "POST", body: "{}",
+  });
+  return new Response(r.body, r);
+});
+
 app.get("/api/chats/:id/flags", async (c) => {
   const { userId } = c.get("auth");
   const r = await userStub(c.env, userId).fetch("https://do/flags-read", {
