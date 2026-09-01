@@ -38,6 +38,20 @@ public enum ChatKind: String, Codable {
     case direct, group
     /// The chat with yourself: one per user, its only member is the owner.
     case saved = "self"
+    /// A channel: the owner and the editors post, everyone else reads and
+    /// comments. The one kind that is not end-to-end encrypted — its posts are
+    /// journaled in the clear so the server can search them and hand the whole
+    /// history to whoever subscribes later. The interface says so plainly.
+    case channel
+}
+
+/// What someone may do in the chat they are in. A group has admins and members;
+/// a channel has an owner, editors who post and readers who comment.
+public enum ChatRole: String, Codable {
+    case admin, member, owner, editor, reader
+
+    /// Whether this role may put a post into a channel.
+    public var postsToChannel: Bool { self == .owner || self == .editor }
 }
 
 public struct Chat: Codable, Identifiable, Equatable, FetchableRecord, PersistableRecord {

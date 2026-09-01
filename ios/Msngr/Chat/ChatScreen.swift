@@ -163,7 +163,7 @@ struct ChatScreen: View {
                     } else if searching {
                         ChatSearchMatchBar(session: search, onStep: stepSearch,
                                            onShowList: { search.resultsShown = true })
-                    } else if !model.canSend {
+                    } else if !model.canSend && !model.canComment {
                         readOnlyNote
                     } else {
                         InputBar(model: model, text: $text,
@@ -312,6 +312,8 @@ struct ChatScreen: View {
         // in once the chat has actually arrived (and still only into an empty field)
         .onChange(of: model.chat?.id) { _, _ in
             if text.isEmpty, let draft = model.chat?.draft { text = draft }
+            // the kind arrives with the chat, and it decides where a search goes
+            search.searchesOnServer(model.kind == .channel)
         }
         // entering with nothing unread returns the feed to where the reader left
         // off; an explicit jump request (search) outranks it
@@ -602,17 +604,25 @@ struct ChatScreen: View {
     /// Empty chat: a centred hint instead of a bare background.
     private var emptyChatHint: some View {
         VStack(spacing: 8) {
-            Image(systemName: model.isSavedChat ? AvatarStyle.savedGlyph : "bubble.left.and.bubble.right")
+            Image(systemName: model.isSavedChat ? AvatarStyle.savedGlyph
+                  : model.kind == .channel ? "megaphone" : "bubble.left.and.bubble.right")
                 .font(Theme.glyph(34, max: 48))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
             Text(model.isSavedChat
                  ? String(localized: "Notes to yourself")
+                 : model.kind == .channel
+                 ? String(localized: "Write the first post")
                  : String(localized: "Start a conversation"))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Label(String(localized: "End-to-end encrypted"), systemImage: "lock.fill")
+            // a channel is the one place where the promise is the other way
+            // round, and the empty screen is where it is easiest to read
+            Label(model.kind == .channel
+                  ? String(localized: "Not encrypted")
+                  : String(localized: "End-to-end encrypted"),
+                  systemImage: model.kind == .channel ? "lock.open" : "lock.fill")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
@@ -943,7 +953,9 @@ struct ChatScreen: View {
     }
 
     private var readOnlyNote: some View {
-        Text(String(localized: "Only admins can write to this group"))
+        Text(model.kind == .channel
+             ? String(localized: "Tap a post to comment on it")
+             : String(localized: "Only admins can write to this group"))
             .font(.footnote)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
@@ -1574,6 +1586,7 @@ struct MessagesView: UIViewControllerRepresentable {
         // callbacks that capture bindings are reinstalled on every update: a binding
         // captured in makeUIViewController outlives the body that produced it
         vc.isGroupChat = model.chat?.kind == .group
+        vc.commentsOnly = model.commentsOnly
         vc.noteRecipients = max(model.members.count - 1, 1)
         vc.onVotePoll = { [weak model] msg, votes in model?.votePoll(msg, votes: votes) }
         vc.onTranscript = { [weak model] msg in model?.toggleTranscript(msg) }

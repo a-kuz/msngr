@@ -77,10 +77,13 @@ POST /api/prekeys                 {oneTimePrekeys:[{id,key}]} — a top-up (up t
 POST /api/profile                 {displayName?, bio?, avatarId?}
 POST /api/avatar                  raw body (image/jpeg) → {avatarId};  GET /api/avatar/:id
                                   ?chatId=<id> — the chat's avatar instead of your own profile
-POST /api/chats                   {kind:"direct"|"group"|"self", memberIds[], title?} → {chatId}
+POST /api/chats                   {kind:"direct"|"group"|"self"|"channel", memberIds[], title?}
+                                  → {chatId}
                                   "self" is the chat with yourself: memberIds is empty, the
                                   id is `self:<userId>`, so the call is idempotent and every
                                   user has exactly one; its messages raise no push
+                                  "channel" needs a title and opens with its owner alone;
+                                  its audience arrives by the invite link
 GET  /api/chats                   snapshot: [{flags, state}] + the profiles of all members
 GET  /api/chats/:id/history       ?fromSeq=&toSeq=&limit=&dir=back
                                   → {msgs:[StoredMsg], scanned, lastScannedSeq}
@@ -96,6 +99,13 @@ POST /api/chats/:id/settings      {title?, avatarId?, description?,
                                   sendPolicy?, invitePolicy?} — a policy is "all" or
                                   "admins" and is a group's alone
 POST /api/chats/:id/admins        {userId, admin:bool}
+POST /api/chats/:id/roles         {userId, role:"editor"|"reader"} — a channel's roles,
+                                  the owner's alone. A reader may send only `comment` and
+                                  `reaction`; the object reads the kind out of the plain
+                                  envelope and refuses anything else with `not_allowed`
+GET  /api/chats/:id/search        ?q=&limit= → {hits:[{seq, from, ts, text}]} — a channel
+                                  only: it is the one kind whose text the server can read.
+                                  Every other kind answers `not_channel`
 POST /api/chats/:id/pin-message   {msgId|null}
 POST /api/chats/:id/flags         {pinned?, muted?, mutedUntil?, archived?} — local to
                                   the user; mutedUntil is in seconds, null = indefinitely
@@ -351,12 +361,20 @@ groups every member counts as having accepted.
 
 ## E2E envelope (`body`)
 
-The server does not look inside. Two modes:
+The server does not look inside — except in a channel, which is not end-to-end
+encrypted at all. Three modes:
 
 ```
-{v:1, mode:"pw",  msgs:{ "<userId>/<deviceId>": PairwiseBox, ... }}
-{v:1, mode:"skm", c, keyId, iteration, sig}
+{v:1, mode:"pw",    msgs:{ "<userId>/<deviceId>": PairwiseBox, ... }}
+{v:1, mode:"skm",   c, keyId, iteration, sig}
+{v:1, mode:"plain", p: ContentPayload}
 ```
+
+`plain` belongs to a channel and to nothing else. The content travels readable,
+which is what lets the object search the journal and hand a whole history to a
+subscriber who arrives later. A client opens a `plain` envelope only for a chat
+whose kind is `channel`; anywhere else it is refused as `plaintext_refused`, so
+a readable envelope cannot be slipped into an encrypted conversation.
 
 `PairwiseBox`:
 

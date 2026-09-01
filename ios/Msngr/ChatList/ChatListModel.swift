@@ -19,6 +19,7 @@ struct ChatListItem: Identifiable, Equatable {
         case .direct: return peer?.displayName ?? "…"
         case .saved: return String(localized: "Saved Messages")
         case .group: return chat.title ?? String(localized: "Group")
+        case .channel: return chat.title ?? String(localized: "Channel")
         }
     }
 

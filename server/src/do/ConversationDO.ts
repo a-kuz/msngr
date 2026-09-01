@@ -1,4 +1,4 @@
-import type { Env, ChatState, ChatMember, ChatPolicy, StoredMsg, ServerFrame, PublicUser } from "../types";
+import type { Env, ChatState, ChatKind, ChatMember, ChatPolicy, StoredMsg, ServerFrame, PublicUser } from "../types";
 import { json, err, seqKey, SEQ_PAD, nowSec, shouldArmAlarm, readPrivacy, privacyAllows } from "../util";
 import {
   newCounters, snapshot, diff, logPerf, wrapState, wrapDB, wrapStub, type PerfCounters,
@@ -121,7 +121,7 @@ function fanoutRetryable(frame: ServerFrame): boolean {
 
 interface Meta {
   chatId: string;
-  kind: "direct" | "group" | "self";
+  kind: ChatKind;
   title: string | null;
   avatarId: string | null;
   description: string | null;
@@ -146,6 +146,41 @@ interface Meta {
 /// A policy an older chat has no value for is the permissive one.
 function policy(value: ChatPolicy | undefined): ChatPolicy {
   return value === "admins" ? "admins" : "all";
+}
+
+/// The role someone joining this kind of chat starts with.
+function memberRole(kind: ChatKind, isCreator: boolean): ChatMember["role"] {
+  if (kind === "channel") return isCreator ? "owner" : "reader";
+  return kind === "group" && isCreator ? "admin" : "member";
+}
+
+/// Who runs a channel: the owner and the editors post, everyone else reads.
+function canPostToChannel(role: ChatMember["role"]): boolean {
+  return role === "owner" || role === "editor";
+}
+
+/// What a reader of a channel is allowed to add under a post. A comment and a
+/// reaction are the whole list: everything else is a post, and posting belongs
+/// to the editors.
+const CHANNEL_READER_KINDS = new Set(["comment", "reaction"]);
+
+/// The text of a plaintext body, or null when there is none to read: an
+/// encrypted envelope, or a post that carries only media.
+function plainText(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const env = body as { mode?: string; p?: { text?: unknown } };
+  if (env.mode !== "plain" || !env.p) return null;
+  return typeof env.p.text === "string" && env.p.text ? env.p.text : null;
+}
+
+/// The content kind of a plaintext body, or null for an encrypted envelope.
+/// A channel journals its posts in the clear, which is what lets the object
+/// tell a reader's comment from a post it must refuse.
+function plainKind(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const env = body as { mode?: string; p?: { kind?: unknown } };
+  if (env.mode !== "plain" || !env.p) return null;
+  return typeof env.p.kind === "string" ? env.p.kind : null;
 }
 
 export class ConversationDO implements DurableObject {
@@ -779,7 +814,7 @@ export class ConversationDO implements DurableObject {
 
     if (path === "/create" && req.method === "POST") {
       const b = (await req.json()) as {
-        chatId: string; kind: "direct" | "group" | "self"; title: string | null;
+        chatId: string; kind: ChatKind; title: string | null;
         memberIds: string[]; createdBy: string;
       };
       const existing = await this.loadMeta();
@@ -807,7 +842,7 @@ export class ConversationDO implements DurableObject {
       for (const uid of new Set([b.createdBy, ...b.memberIds])) {
         const m: ChatMember = {
           userId: uid,
-          role: b.kind === "group" && uid === b.createdBy ? "admin" : "member",
+          role: memberRole(b.kind, uid === b.createdBy),
           joinedAt: now,
           // message request: in a direct chat the recipient has to accept the conversation
           accepted: uid === b.createdBy || b.kind === "group",
@@ -916,6 +951,12 @@ export class ConversationDO implements DurableObject {
         // working for everyone: without them the member could not read the chat.
         if (meta.kind === "group" && !b.service &&
             policy(meta.sendPolicy) === "admins" && sender.role !== "admin")
+          return err("not_allowed", 403);
+        // In a channel the post belongs to the owner and the editors. A reader
+        // adds a comment or a reaction under one, and the object can tell them
+        // apart because a channel is journaled in the clear.
+        if (meta.kind === "channel" && !b.service && !canPostToChannel(sender.role) &&
+            !CHANNEL_READER_KINDS.has(plainKind(b.body) ?? ""))
           return err("not_allowed", 403);
 
         // Blocks in a direct chat cut two ways. Writing to someone the sender himself
@@ -1113,8 +1154,14 @@ export class ConversationDO implements DurableObject {
           b.viaInvite === true && !actor &&
           b.add.length === 1 && b.add[0] === b.actor && b.remove.length === 0;
         if (!actor && !selfJoin) return err("not_member", 403);
-        if (meta.kind !== "group") return err("not_group", 400);
-        if (actor) {
+        if (meta.kind !== "group" && meta.kind !== "channel") return err("not_group", 400);
+        if (actor && meta.kind === "channel") {
+          // subscribing to a channel is your own business; bringing anyone
+          // else in or out of it is the editors'
+          const onlySelf = b.add.length + b.remove.length === 1 &&
+            [...b.add, ...b.remove][0] === b.actor;
+          if (!onlySelf && !canPostToChannel(actor.role)) return err("not_allowed", 403);
+        } else if (actor) {
           // only an admin can remove a member
           if (b.remove.length && actor.role !== "admin") return err("not_admin", 403);
           // an admin adds anyone; a member adds others while invitePolicy
@@ -1129,7 +1176,9 @@ export class ConversationDO implements DurableObject {
         const added: string[] = [];
         for (const uid of b.add) {
           if (members.has(uid)) continue;
-          const m: ChatMember = { userId: uid, role: "member", joinedAt: now, accepted: true };
+          const m: ChatMember = {
+            userId: uid, role: memberRole(meta.kind, false), joinedAt: now, accepted: true,
+          };
           members.set(uid, m);
           await this.state.storage.put("member:" + uid, m);
           added.push(uid);
@@ -1186,6 +1235,7 @@ export class ConversationDO implements DurableObject {
         const actor = members.get(b.actor);
         if (!actor) return err("not_member", 403);
         if (meta.kind === "group" && actor.role !== "admin") return err("not_admin", 403);
+        if (meta.kind === "channel" && !canPostToChannel(actor.role)) return err("not_admin", 403);
         if (b.title !== undefined) meta.title = b.title;
         if (b.avatarId !== undefined) meta.avatarId = b.avatarId;
         if (b.description !== undefined) meta.description = b.description;
@@ -1211,6 +1261,56 @@ export class ConversationDO implements DurableObject {
         await this.state.storage.put("member:" + b.userId, target);
         await this.broadcastChat("members");
         return json({ ok: true });
+      }
+
+      // A channel's roles. The owner hands out and takes back the right to
+      // post; there is no way to hand the channel itself over.
+      case "/roles": {
+        const b = (await req.json()) as { actor: string; userId: string; role: "editor" | "reader" };
+        if (meta.kind !== "channel") return err("not_channel", 400);
+        const members = await this.loadMembers();
+        const actor = members.get(b.actor);
+        const target = members.get(b.userId);
+        if (!actor || actor.role !== "owner") return err("not_admin", 403);
+        if (!target) return err("not_member", 400);
+        if (target.role === "owner") return err("not_allowed", 403);
+        if (b.role !== "editor" && b.role !== "reader") return err("bad_role");
+        target.role = b.role;
+        await this.state.storage.put("member:" + b.userId, target);
+        this.members = members;
+        await this.broadcastChat("members");
+        return json({ ok: true });
+      }
+
+      // Search over the journal. Only a channel keeps its text where the
+      // server can read it, so this is the one kind the server can answer for;
+      // an encrypted chat is searched on the device.
+      case "/search": {
+        const viewer = url.searchParams.get("userId") ?? "";
+        if (!(await this.loadMembers()).has(viewer)) return err("not_member", 403);
+        if (meta.kind !== "channel") return err("not_channel", 400);
+        const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
+        if (!q) return json({ ok: true, hits: [] });
+        const limit = Math.min(Number(url.searchParams.get("limit") ?? "50"), 100);
+        const hits: Array<{ seq: number; from: string; ts: number; text: string }> = [];
+        // newest first, and the walk stops as soon as the page is full
+        let cursor = meta.lastSeq + 1;
+        while (cursor > 1 && hits.length < limit) {
+          const listed = await this.state.storage.list<StoredMsg>({
+            start: seqKey(1), end: seqKey(cursor), limit: HISTORY_PAGE, reverse: true,
+          });
+          if (listed.size === 0) break;
+          for (const m of listed.values()) {
+            cursor = Math.min(cursor, m.seq);
+            if (m.deleted || m.service) continue;
+            const text = plainText(m.body);
+            if (text && text.toLowerCase().includes(q)) {
+              hits.push({ seq: m.seq, from: m.from, ts: m.ts, text });
+              if (hits.length >= limit) break;
+            }
+          }
+        }
+        return json({ ok: true, hits });
       }
 
       case "/pin-message": {

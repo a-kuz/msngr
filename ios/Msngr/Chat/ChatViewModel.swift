@@ -751,6 +751,7 @@ final class ChatViewModel: ObservableObject {
         switch chat?.kind {
         case .direct: return peer?.displayName ?? "…"
         case .saved: return String(localized: "Saved Messages")
+        case .channel: return chat?.title ?? String(localized: "Channel")
         case .group, nil: return chat?.title ?? String(localized: "Group")
         }
     }
@@ -765,6 +766,9 @@ final class ChatViewModel: ObservableObject {
                 return "\(name) " + String(localized: "typing…")
             }
             return String(localized: "typing…")
+        }
+        if chat?.kind == .channel {
+            return Self.subscribersText(members.count)
         }
         if chat?.kind == .group {
             return Self.membersText(members.count)
@@ -783,6 +787,10 @@ final class ChatViewModel: ObservableObject {
         String(localized: "\(count) participants")
     }
 
+    static func subscribersText(_ count: Int) -> String {
+        String(localized: "\(count) subscribers")
+    }
+
     static func lastSeenText(_ lastSeen: TimeInterval, now: Date = Date()) -> String {
         let elapsed = now.timeIntervalSince1970 - lastSeen
         if elapsed < 60 { return String(localized: "last seen just now") }
@@ -793,7 +801,15 @@ final class ChatViewModel: ObservableObject {
 
     // MARK: - Rights
 
-    private var kind: ChatKind { chat?.kind ?? .direct }
+    var kind: ChatKind { chat?.kind ?? .direct }
+
+    /// A subscriber of a channel: they comment under a post and never post.
+    var commentsOnly: Bool {
+        kind == .channel && !ChatPermissions.postsToChannel(myRole)
+    }
+
+    /// The composer a subscriber gets: it opens on a post they chose to answer.
+    var canComment: Bool { commentsOnly && replyingTo != nil }
 
     /// Whether this chat takes my messages at all. A group whose rights are set
     /// to admins is read-only for everyone else, and the input field gives way
@@ -921,8 +937,11 @@ final class ChatViewModel: ObservableObject {
             self.editing = nil
             return
         }
-        var c = ContentPayload(kind: "text")
+        // a subscriber of a channel writes comments and nothing else: the kind
+        // is what the server holds them to, so it is set here and not guessed
+        var c = ContentPayload(kind: commentsOnly ? "comment" : "text")
         c.text = tokenized
+        if commentsOnly { c.targetSeq = replyingTo?.seq }
         c.bubbleShader = pendingBubbleShader
         pendingBubbleShader = nil
         // the card goes out only while the text still carries its link

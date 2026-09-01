@@ -909,12 +909,34 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 
 ## Channels
 
-- ⬜ a "channel" chat kind with an explicit marker and a choice at creation
-- ⬜ without E2EE: plaintext on the server, history for new subscribers
-- ⬜ roles: owner, editors, readers
-- ⬜ server-side search over a channel's history
-- ⬜ channel media through CF Stream / Images
-- ⬜ subscriber comments and reactions
+- ✅ a "channel" kind, chosen at creation («Новый канал» in the new-chat list),
+  with a megaphone and «N подписчиков» where a group says participants
+  (qa/runs/2026-09-01-channel-run)
+- ✅ without E2EE: the post travels as a `plain` envelope and is journaled
+  readable, and a subscriber who arrives later reads the whole history from
+  seq 1. The promise is stated where it is read — under the name field at
+  creation, on the chat card, and on the empty channel — and a readable
+  envelope is refused in every other kind of chat (smoke `the post is
+  plaintext on the server`, `a late subscriber reads the whole history`;
+  qa/runs/2026-09-01-channel-run)
+- ✅ roles: owner, editors, readers. The owner hands out and takes back the
+  right to post, an editor cannot change roles, and a subscriber has no
+  composer at all (smoke `the owner makes a reader an editor` …
+  `a demoted editor cannot post`; qa/runs/2026-09-01-channel-run)
+- ✅ server-side search over a channel's history: the in-chat search of a
+  channel goes to `/api/chats/:id/search` instead of the device's database,
+  so it covers what this device never pulled (smoke `the server searches a
+  channel's history`; the live search in qa/runs/2026-09-01-channel-run is in
+  the stand's log)
+- 🟡 channel media: a picture or a video travels the ordinary media path with
+  its key in the readable body, so the server can serve it to any subscriber
+  and read it itself. CF Stream / Images is not wired — there is no binding
+  for either
+- ✅ subscriber comments and reactions: a subscriber answers a post
+  («Прокомментировать» in its menu) and reacts to it; the object holds them to
+  those two kinds, which it can tell apart because the channel is readable
+  (smoke `a reader comments under a post`, `a reader cannot post to a
+  channel`; qa/runs/2026-09-01-channel-run)
 
 ## Stories
 

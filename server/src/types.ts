@@ -115,9 +115,13 @@ export type ServerFrame =
   | { t: "error"; error: string; chatId?: string; clientMsgId?: string }
   | { t: "pong" };
 
+/// A group has admins and members; a channel has an owner, editors who may
+/// post, and readers who may only comment and react.
+export type ChatRole = "admin" | "member" | "owner" | "editor" | "reader";
+
 export interface ChatMember {
   userId: string;
-  role: "admin" | "member";
+  role: ChatRole;
   joinedAt: number;
   /// message request: false means the chat sits in requests, and receipts and presence
   /// are withheld from whoever started it
@@ -127,9 +131,14 @@ export interface ChatMember {
 /// Who may act in a group: everyone in it, or only its admins.
 export type ChatPolicy = "all" | "admins";
 
+/// A channel is the one kind that is not end-to-end encrypted: its posts are
+/// journaled in the clear, so the server can search them and hand the whole
+/// history to whoever subscribes later.
+export type ChatKind = "direct" | "group" | "self" | "channel";
+
 export interface ChatState {
   chatId: string;
-  kind: "direct" | "group" | "self";
+  kind: ChatKind;
   title: string | null;
   avatarId: string | null;
   description: string | null;

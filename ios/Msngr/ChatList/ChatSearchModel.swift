@@ -143,6 +143,35 @@ final class ChatSearchModel: ObservableObject {
         }
     }
 
+    /// A channel is searched where its text lies: on the server. The device
+    /// holds only the part of the history it has pulled, and the point of the
+    /// search is the rest of it. One answer is the whole result — the server
+    /// caps the page — so there is nothing to continue from.
+    static func channelPage(query: String, chatId: String) async -> MessageSearchPage? {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return MessageSearchPage(hits: [], cursor: nil, reachedEnd: true) }
+        guard let found = try? await AppState.shared.api.searchChannel(chatId, query: trimmed) else {
+            return nil
+        }
+        let hits = found.map { hit in
+            MessageSearchHit(id: Message.feedId(chatId: chatId, seq: hit.seq), chatId: chatId,
+                             fromUserId: hit.from, kind: .text, sortedAt: hit.ts,
+                             snippet: snippet(hit.text, query: trimmed))
+        }
+        return MessageSearchPage(hits: hits, cursor: nil, reachedEnd: true)
+    }
+
+    /// Marks the query inside the found text, the way the database search marks it.
+    private static func snippet(_ text: String, query: String) -> MessageSearchSnippet {
+        var matches: [Range<String.Index>] = []
+        var from = text.startIndex
+        while let range = text.range(of: query, options: .caseInsensitive, range: from..<text.endIndex) {
+            matches.append(range)
+            from = range.upperBound
+        }
+        return MessageSearchSnippet(text: text, matches: matches)
+    }
+
     /// The people half: the same server call the new-chat list makes.
     static func serverPeople(query: String) async -> [APIClient.UserDTO] {
         (try? await AppState.shared.api.searchUsers(query)) ?? []

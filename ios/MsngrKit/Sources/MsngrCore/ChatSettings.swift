@@ -71,12 +71,19 @@ public enum ChatPermissions {
     /// Title, avatar and description: admins only in a group, any member in a direct chat.
     public static func canEditSettings(kind: ChatKind, role: String?) -> Bool {
         guard let role else { return false }
+        if kind == .channel { return postsToChannel(role) }
         return kind == .direct || role == adminRole
     }
 
-    /// Only a group admin can remove members.
+    /// Only a group admin can remove members; in a channel that is the editors'.
     public static func canRemoveMembers(kind: ChatKind, role: String?) -> Bool {
-        kind == .group && role == adminRole
+        if kind == .channel { return postsToChannel(role) }
+        return kind == .group && role == adminRole
+    }
+
+    /// Whether this role puts posts into a channel: the owner and the editors do.
+    public static func postsToChannel(_ role: String?) -> Bool {
+        role == ChatRole.owner.rawValue || role == ChatRole.editor.rawValue
     }
 
     /// Writing to the chat. A group whose `sendPolicy` is `admins` is read-only
@@ -84,6 +91,7 @@ public enum ChatPermissions {
     /// travels regardless, which is why this is asked about the input field
     /// alone.
     public static func canSend(kind: ChatKind, role: String?, sendPolicy: String) -> Bool {
+        if kind == .channel { return postsToChannel(role) }
         guard kind == .group else { return true }
         guard let role else { return false }
         return sendPolicy != adminPolicy || role == adminRole
@@ -91,6 +99,7 @@ public enum ChatPermissions {
 
     /// Adding a member and minting an invite link, under the group's `invitePolicy`.
     public static func canInvite(kind: ChatKind, role: String?, invitePolicy: String) -> Bool {
+        if kind == .channel { return postsToChannel(role) }
         guard kind == .group, let role else { return false }
         return invitePolicy != adminPolicy || role == adminRole
     }
@@ -106,8 +115,14 @@ public enum ChatPermissions {
         kind == .group && role == adminRole
     }
 
-    /// Any member of a group can leave it.
+    /// Only a channel's owner hands out and takes back the right to post.
+    public static func canManageChannelRoles(kind: ChatKind, role: String?) -> Bool {
+        kind == .channel && role == ChatRole.owner.rawValue
+    }
+
+    /// Any member of a group can leave it; a subscriber unsubscribes the same way.
     public static func canLeave(kind: ChatKind, role: String?) -> Bool {
-        kind == .group && role != nil
+        if kind == .channel { return role != nil && role != ChatRole.owner.rawValue }
+        return kind == .group && role != nil
     }
 }
