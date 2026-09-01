@@ -120,22 +120,6 @@ app's own view of it, and only then look at the window geometry of the banner
 only as tall as the measured content, which would push the visible banner below
 the window's own bounds, where touches do not reach it).
 
-### Impersonation by display name, and a freed username taken instantly
-Raised 2026-08-19 while answering whether a stranger can register someone
-else's username (they cannot: `[a-zA-Z0-9_]{3,32}`, UNIQUE COLLATE NOCASE,
-the race resolved by the index). What remains: the display name is free text —
-three accounts named «Akuz» differ only by the small @handle in search — and a
-renamed account's old username is up for grabs the same second, so whoever
-watches it inherits the searches for @oldname. Worth deciding: highlight the
-@handle in search, a cool-down before a freed name re-enters circulation.
-Both were decided the same way and are in place. The cool-down is the
-`released_usernames` row a rename writes and `USERNAME_QUARANTINE_MS`, checked
-at registration and at rename alike, with three smoke cases over it («a freshly
-freed handle is quarantined, not free» and its two neighbours). The handle in
-search is no longer the row's smallest secondary line: it carries weight and
-the primary colour, because the display name several accounts may share is not
-what tells them apart (5161deb).
-
 ### A row moving up the chat list flies through the rows above it
 Seen 2026-08-27 in the README demo recording (simulator, alfa fixture). When a
 message from «Charlie Service» lifted its row from the bottom to second place,
@@ -174,6 +158,20 @@ not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
 ## Closed
+
+### Impersonation by display name, and a freed username taken instantly
+Raised 2026-08-19 while answering whether a stranger can register someone
+else's username (they cannot: `[a-zA-Z0-9_]{3,32}`, UNIQUE COLLATE NOCASE,
+the race resolved by the index). What remained: the display name is free text —
+three accounts named «Akuz» differ only by the small @handle in search — and a
+renamed account's old username was up for grabs the same second, so whoever
+watched it inherited the searches for @oldname. Both are decided and in place.
+The cool-down is the `released_usernames` row a rename writes and
+`USERNAME_QUARANTINE_MS`, checked at registration and at rename alike, with
+three smoke cases over it («a freshly freed handle is quarantined, not free»
+and its two neighbours). The handle in search is no longer the row's smallest
+secondary line: it carries weight and the primary colour, because the display
+name several accounts may share is not what tells them apart (5161deb).
 
 ### A silent identity rotation is not re-checked by TOFU while a device list is cached
 Found 2026-08-27 in passing during the multi-device TOFU run
