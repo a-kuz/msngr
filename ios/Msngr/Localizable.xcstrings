@@ -6384,13 +6384,13 @@
         }
       }
     },
-    "Votes still travel end-to-end encrypted between the members; the app just never shows who chose what." : {
+    "Votes travel end-to-end encrypted and carry a pseudonym instead of a name, so nobody's app can tell who chose what." : {
       "extractionState" : "manual",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Голоса по-прежнему идут между участниками со сквозным шифрованием; приложение просто не показывает, кто что выбрал."
+            "value" : "Голоса идут со сквозным шифрованием и несут псевдоним вместо имени, так что ничьё приложение не узнает, кто что выбрал."
           }
         }
       }

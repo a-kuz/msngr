@@ -1771,7 +1771,8 @@ public actor SyncEngine {
         case "pollVote":
             if let target = content.targetSeq {
                 let found = try SyncEngine.applyPollVote(dbc, chatId: chatId, targetSeq: target,
-                                                         userId: from, votes: content.votes ?? [])
+                                                         userId: from, votes: content.votes ?? [],
+                                                         voter: content.voter)
                 if !found {
                     try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetSeq: target,
                                                       kind: "pollVote", fromUserId: from,
@@ -1892,7 +1893,8 @@ public actor SyncEngine {
             case "pollVote":
                 if let target = content.targetSeq {
                     let found = try SyncEngine.applyPollVote(dbc, chatId: chatId, targetSeq: target,
-                                                             userId: from, votes: content.votes ?? [])
+                                                             userId: from, votes: content.votes ?? [],
+                                                             voter: content.voter)
                     if !found {
                         try SyncEngine.bufferPendingApply(dbc, chatId: chatId, targetSeq: target,
                                                           kind: "pollVote", fromUserId: from,
@@ -3381,17 +3383,22 @@ public actor SyncEngine {
     }
 
     /// Applies one voter's current choice to a poll: the entry is replaced
-    /// whole, an empty choice retracts it. Returns false when the poll is not
+    /// whole, an empty choice retracts it. In an anonymous poll the entry is
+    /// keyed by the pseudonym the vote carries; a named poll ignores the
+    /// pseudonym and keys by the sender, so a pseudonym cannot hide a vote in
+    /// a poll whose author asked for names. Returns false when the poll is not
     /// stored yet.
     @discardableResult
     static func applyPollVote(_ dbc: GRDB.Database, chatId: String, targetSeq: Int,
-                              userId: String, votes: [Int]) throws -> Bool {
+                              userId: String, votes: [Int], voter: String? = nil) throws -> Bool {
         guard let row = try Row.fetchOne(
-            dbc, sql: "SELECT id, pollVotes FROM message WHERE chatId = ? AND seq = ?",
+            dbc, sql: "SELECT id, poll, pollVotes FROM message WHERE chatId = ? AND seq = ?",
             arguments: [chatId, targetSeq]) else { return false }
+        let poll = (row["poll"] as String?).flatMap { try? JSONDecoder().decode(PollInfo.self, from: Data($0.utf8)) }
+        let key = (poll?.anonymous == true ? voter : nil) ?? userId
         var all = (try? JSONDecoder().decode([String: [Int]].self,
                                              from: Data((row["pollVotes"] as String).utf8))) ?? [:]
-        if votes.isEmpty { all.removeValue(forKey: userId) } else { all[userId] = votes.sorted() }
+        if votes.isEmpty { all.removeValue(forKey: key) } else { all[key] = votes.sorted() }
         let json = String(data: try JSONEncoder().encode(all), encoding: .utf8)!
         try dbc.execute(sql: "UPDATE message SET pollVotes = ? WHERE id = ?",
                         arguments: [json, row["id"] as String])
@@ -3472,7 +3479,8 @@ public actor SyncEngine {
             case "pollVote":
                 if let content {
                     try applyPollVote(dbc, chatId: chatId, targetSeq: seq,
-                                      userId: row["fromUserId"], votes: content.votes ?? [])
+                                      userId: row["fromUserId"], votes: content.votes ?? [],
+                                      voter: content.voter)
                 }
             default:
                 break

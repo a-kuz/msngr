@@ -1616,6 +1616,7 @@ struct MessagesView: UIViewControllerRepresentable {
         vc.commentsOnly = model.commentsOnly
         vc.noteRecipients = max(model.members.count - 1, 1)
         vc.onVotePoll = { [weak model] msg, votes in model?.votePoll(msg, votes: votes) }
+        vc.pollVoterKey = { [weak model] msg in model?.pollVoterKey(msg) ?? "" }
         vc.onButton = { [weak model] button in model?.pressButton(button) }
         vc.onTranscript = { [weak model] msg in model?.toggleTranscript(msg) }
         vc.onRetranscribe = { [weak model] msg in model?.retranscribe(msg) }
