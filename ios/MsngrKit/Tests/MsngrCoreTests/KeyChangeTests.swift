@@ -67,4 +67,22 @@ final class KeyChangeTests: XCTestCase {
         }
         XCTAssertEqual(pending, 1)
     }
+
+    /// The verified mark set after a safety-number comparison holds under the
+    /// same key and comes off with the key change it was vouching for.
+    func testVerifiedMarkClearsOnKeyChange() throws {
+        let db = try AppDatabase.openInMemory()
+        let store = try IdentityStore(db: db, masterKeyProvider: StaticMasterKey())
+        _ = try store.checkTrust(userId: "bob", identitySigning: "k1")
+        XCTAssertFalse(try store.isVerified(userId: "bob"))
+
+        try store.markVerified(userId: "bob", verified: true)
+        XCTAssertTrue(try store.isVerified(userId: "bob"))
+        _ = try store.checkTrust(userId: "bob", identitySigning: "k1")
+        XCTAssertTrue(try store.isVerified(userId: "bob"), "the same key keeps the mark")
+
+        _ = try store.checkTrust(userId: "bob", identitySigning: "k2")
+        try store.acceptChangedKey(userId: "bob")
+        XCTAssertFalse(try store.isVerified(userId: "bob"), "an accepted new key drops the mark")
+    }
 }

@@ -488,4 +488,14 @@ public final class IdentityStore: @unchecked Sendable {
                             arguments: [verified, userId])
         }
     }
+
+    /// Whether the user marked this peer verified after comparing safety
+    /// numbers; false until the first comparison and after any key change.
+    public func isVerified(userId: String) throws -> Bool {
+        try read { dbc in
+            try Bool.fetchOne(
+                dbc, sql: "SELECT verified FROM trustedIdentity WHERE userId = ?",
+                arguments: [userId]) ?? false
+        }
+    }
 }

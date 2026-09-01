@@ -35,6 +35,26 @@
         }
       }
     },
+    "Verified" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверено"
+          }
+        }
+      }
+    },
+    "Turn this on once the numbers on both devices match. A key change takes the mark off." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включите, когда числа на обоих устройствах совпали. Смена ключа снимает отметку."
+          }
+        }
+      }
+    },
     "Chats with their own sound" : {
       "localizations" : {
         "ru" : {

@@ -215,6 +215,16 @@ public final class E2EEManager: @unchecked Sendable {
         try gate.withLock { _ in try store.acceptChangedKey(userId: userId) }
     }
 
+    /// The user compared the safety number out of band; the mark holds until
+    /// the peer's identity key changes (`acceptChangedKey` clears it).
+    public func setVerified(userId: String, _ verified: Bool) throws {
+        try gate.withLock { _ in try store.markVerified(userId: userId, verified: verified) }
+    }
+
+    public func isVerified(userId: String) throws -> Bool {
+        try store.isVerified(userId: userId)
+    }
+
     /// Rotates the sender key, e.g. after a member leaves the group.
     public func rotateSenderKey(chatId: String) throws {
         try store.deleteSenderKeyOut(chatId: chatId)

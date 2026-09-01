@@ -37,6 +37,8 @@ struct ChatInfoView: View {
     @State private var showAddMembers = false
     @State private var inviteLink: String?
     @State private var safetyNumber: String?
+    /// The mark set after comparing safety numbers; a key change clears it.
+    @State private var peerVerified = false
     @State private var editTitle = ""
     @State private var editDescription = ""
     @State private var ttl: Int = 0
@@ -208,6 +210,19 @@ struct ChatInfoView: View {
                         Text(sn.chunked(5).joined(separator: "  "))
                             .font(.system(.footnote, design: .monospaced))
                             .foregroundStyle(.secondary)
+                        Toggle(isOn: $peerVerified) {
+                            Label("Verified", systemImage: peerVerified ? "checkmark.seal.fill" : "checkmark.seal")
+                        }
+                        .accessibilityIdentifier("chatInfo.verified")
+                        .onChange(of: peerVerified) { _, on in
+                            try? app.e2ee?.setVerified(userId: peer.id, on)
+                        }
+                        Text("Turn this on once the numbers on both devices match. A key change takes the mark off.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else if peerVerified {
+                        Label("Verified", systemImage: "checkmark.seal.fill")
+                            .foregroundStyle(.secondary)
                     }
                     Button(role: peer.isBlocked ? .none : .destructive) {
                         showBlockConfirm = true
@@ -266,6 +281,9 @@ struct ChatInfoView: View {
             editDescription = model.chat?.chatDescription ?? ""
             rolesModel.start(chatId: model.chatId, db: app.db)
             loadAttachmentsCount()
+            if let peerId = model.peer?.id {
+                peerVerified = (try? app.e2ee?.isVerified(userId: peerId)) ?? false
+            }
         }
         .onChange(of: model.chat?.chatDescription) { _, new in
             if !descriptionChanged || editDescription.isEmpty { editDescription = new ?? "" }
