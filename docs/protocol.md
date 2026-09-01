@@ -442,7 +442,7 @@ asked for it.
 
 - `kind`: `text` | `photo` | `video` | `file` | `voice` | `album` | `contact` |
   `shader` | `sticker` | `edit` | `reaction` | `disappearing` | `groupEvent` |
-  `call` | `callLog` | `repairRequest` | `repair` | `skdAck`;
+  `call` | `callLog` | `callLive` | `repairRequest` | `repair` | `skdAck`;
 - `shader` — `ShaderDocument`: `{name?, passes: [{id, kind, code, inputs}], haptics?}`,
   a Shadertoy project as user code. `id` is `image`, `A`–`D` or `common`;
   `kind` is `image` | `buffer` | `common`; `code` is GLSL in the Shadertoy
@@ -505,6 +505,17 @@ asked for it.
   with a feed row on both sides — no unread count and no push — but unlike
   one it does move the chat up the list: a missed call is exactly the thing
   the list has to show;
+- `callLive` is the card a conference leaves in the chats it reached, in
+  `text` as `live:` followed by JSON (`CallLive`): `{callId, startedAt,
+  members: [{id, name}], endedAt?}`. The inviter writes it into the chat the
+  call started in and into the chat of each person they pull in
+  (`clientMsgId` is `clive:<callId>:<chatId>`), then keeps it current with
+  ordinary `edit` frames on that row as people join or leave, and closes it
+  with `endedAt` when the call ends. Service on the wire with a feed row, like
+  `callLog`. A reader joins a live card by sending an `offer` with its
+  `callId` to the card's writer over the same chat — the callId is the ticket,
+  so the offer joins in place instead of ringing — and a leg to every other
+  member;
 - `to` — an addressed frame: the envelope is encrypted pairwise to a single
   member, even in a group. The whole repair protocol travels this way.
 

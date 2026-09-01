@@ -147,9 +147,61 @@ public struct CallLog: Codable, Equatable, Sendable {
     }
 }
 
+/// The card a conference leaves in the chats it reached: who is in it and
+/// since when, and once it is over, when it ended. The inviter writes it into
+/// the chat the call started in and into the chat of each person they pull in,
+/// and edits it as people come and go; a tap on a live card joins the call.
+/// Like a call log it is service on the wire with a `.call` row in the feed.
+public struct CallLive: Codable, Equatable, Sendable {
+    public struct Member: Codable, Equatable, Sendable {
+        public var id: String
+        /// the display name as the writer knew it; a reader's chat may not
+        /// hold every member, so the name travels with the card
+        public var name: String
+        public init(id: String, name: String) {
+            self.id = id
+            self.name = name
+        }
+    }
+
+    public var callId: String
+    /// when media first flowed, on the writer's clock
+    public var startedAt: Double
+    public var members: [Member]
+    public var endedAt: Double?
+
+    public init(callId: String, startedAt: Double, members: [Member], endedAt: Double? = nil) {
+        self.callId = callId
+        self.startedAt = startedAt
+        self.members = members
+        self.endedAt = endedAt
+    }
+
+    public var isLive: Bool { endedAt == nil }
+    public var memberIds: [String] { members.map(\.id) }
+
+    /// The `ContentPayload` kind the card travels under.
+    public static let kind = "callLive"
+    /// Marks the text of a `.call` feed row as a live card.
+    public static let prefix = "live:"
+
+    public var encoded: String {
+        guard let data = try? JSONEncoder().encode(self),
+              let json = String(data: data, encoding: .utf8) else { return Self.prefix }
+        return Self.prefix + json
+    }
+
+    public static func decode(_ text: String?) -> CallLive? {
+        guard let text, text.hasPrefix(prefix) else { return nil }
+        return try? JSONDecoder().decode(CallLive.self, from: Data(text.dropFirst(prefix.count).utf8))
+    }
+}
+
 extension Message {
     /// The call log of a `.call` row, decoded from its text.
     public var callLog: CallLog? { CallLog.decode(text) }
+    /// The conference card of a `.call` row, decoded from its text.
+    public var callLive: CallLive? { CallLive.decode(text) }
 }
 
 /// A call signal as it reaches the running call machinery.

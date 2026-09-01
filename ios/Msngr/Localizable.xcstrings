@@ -4357,6 +4357,39 @@
         }
       }
     },
+    "Group call" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Групповой звонок"
+          }
+        }
+      }
+    },
+    "Group call ended" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Групповой звонок завершён"
+          }
+        }
+      }
+    },
+    "Someone" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Кто-то"
+          }
+        }
+      }
+    },
     "Outgoing call" : {
       "extractionState" : "manual",
       "localizations" : {

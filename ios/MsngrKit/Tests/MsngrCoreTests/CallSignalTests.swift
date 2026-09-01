@@ -2,6 +2,18 @@ import XCTest
 @testable import MsngrCore
 
 final class CallSignalTests: XCTestCase {
+    /// The conference card: service on the wire with a row in the feed, and
+    /// its text never reads as a call log or the other way round.
+    func testLiveCallCardIsServiceWithARow() {
+        XCTAssertTrue(SyncEngine.serviceKinds.contains(CallLive.kind))
+        XCTAssertFalse(SyncEngine.rowlessKinds.contains(CallLive.kind))
+        let card = CallLive(callId: "c1", startedAt: 100,
+                            members: [.init(id: "a", name: "Alice")], endedAt: nil)
+        XCTAssertEqual(CallLive.decode(card.encoded), card)
+        XCTAssertNil(CallLog.decode(card.encoded))
+        XCTAssertNil(CallLive.decode(CallLog(outcome: .missed, callId: "c1").encoded))
+    }
+
     func testRoundTripThroughContentText() {
         let signal = CallSignal(
             type: .offer, callId: "c1",
