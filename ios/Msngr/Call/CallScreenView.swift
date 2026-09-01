@@ -1,6 +1,7 @@
 import SwiftUI
 import GRDB
 import MsngrCore
+import MsngrCalls
 
 /// The call, full screen over everything but the passcode: who, what phase,
 /// and the few controls a call has. Shown while `AppState.callState` is not
@@ -8,6 +9,7 @@ import MsngrCore
 struct CallScreenView: View {
     @EnvironmentObject private var app: AppState
     @State private var peer: User?
+    @State private var transport: WebRTCTransport?
 
     private var state: CallState { app.callState }
 
@@ -16,19 +18,53 @@ struct CallScreenView: View {
             LinearGradient(colors: [Color(.systemIndigo).opacity(0.6), Color(.systemBackground)],
                            startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
+            if state.remoteVideo, let transport {
+                RemoteVideoView(transport: transport)
+                    .ignoresSafeArea()
+            }
             VStack(spacing: 0) {
                 Spacer()
-                AvatarView(name: peer?.displayName ?? "", avatarId: peer?.avatarId)
-                    .frame(width: 104, height: 104)
-                Text(peer?.displayName ?? "…")
-                    .textRole(Theme.Text.callName)
-                    .padding(.top, 20)
-                statusLine
-                    .padding(.top, 6)
+                if !state.remoteVideo {
+                    AvatarView(name: peer?.displayName ?? "", avatarId: peer?.avatarId)
+                        .frame(width: 104, height: 104)
+                    Text(peer?.displayName ?? "…")
+                        .textRole(Theme.Text.callName)
+                        .padding(.top, 20)
+                    statusLine
+                        .padding(.top, 6)
+                }
                 Spacer()
                 controls
                     .padding(.bottom, 56)
             }
+            if state.localVideo, let transport {
+                LocalVideoView(transport: transport)
+                    .frame(width: 108, height: 144)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(alignment: .bottomTrailing) {
+                        Button {
+                            transport.switchCamera()
+                        } label: {
+                            Image(systemName: "arrow.triangle.2.circlepath.camera")
+                                .font(Theme.glyph(13, max: 17))
+                                .foregroundStyle(.white)
+                                .padding(6)
+                                .background(Circle().fill(.black.opacity(0.35)))
+                        }
+                        .padding(4)
+                        .accessibilityIdentifier("call.flipCamera")
+                    }
+                    .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity,
+                           alignment: .topTrailing)
+                    .padding(.top, 52)
+                    .padding(.trailing, 14)
+            }
+        }
+        // re-read on every state change: the screen appears the instant the
+        // phase leaves idle, which is before startCall has built the transport
+        .task(id: state) {
+            transport = await app.callManager?.activeTransport() as? WebRTCTransport
         }
         .overlay(alignment: .topLeading) {
             if minimizable {
@@ -46,8 +82,13 @@ struct CallScreenView: View {
             }
         }
         // the screen owns the display whole: a keyboard left up by the chat
-        // underneath must not squeeze the controls upward
+        // underneath must not squeeze the controls upward — nor stay on top
+        // of them, so whatever holds focus lets it go
         .ignoresSafeArea(.keyboard)
+        .onAppear {
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                            to: nil, from: nil, for: nil)
+        }
         .task(id: state.peerUserId) { await loadPeer() }
         .accessibilityIdentifier("call.screen")
     }
@@ -103,6 +144,13 @@ struct CallScreenView: View {
                         color: state.muted ? .white : Color(.systemGray2),
                         label: String(localized: "Mute"), id: "call.mute") {
                     Task { await app.callManager?.setMuted(!state.muted) }
+                }
+                if state.phase == .active {
+                    control(glyph: state.localVideo ? "video.fill" : "video.slash.fill",
+                            color: state.localVideo ? .white : Color(.systemGray2),
+                            label: String(localized: "Camera"), id: "call.video") {
+                        Task { await app.callManager?.setVideo(!state.localVideo) }
+                    }
                 }
                 control(glyph: "phone.down.fill", color: .red, label: String(localized: "End call"),
                         id: "call.hangup") {
