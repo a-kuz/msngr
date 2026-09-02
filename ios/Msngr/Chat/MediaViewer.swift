@@ -87,6 +87,9 @@ struct MediaViewerView: View {
     @State private var heroDone: Bool
     @State private var closing = false
     @State private var markingUp = false
+    /// The app stays portrait, so a turned phone is answered here: the picture
+    /// turns with the device while the chrome and the paging stay in place.
+    @State private var rotation: Angle = .zero
 
     init(message: Message, startIndex: Int, hero: MediaViewerHero?,
          onEdited: ((UIImage) -> Void)? = nil, onDismiss: @escaping (Bool) -> Void) {
@@ -123,13 +126,41 @@ struct MediaViewerView: View {
         }
         .ignoresSafeArea()
         .statusBarHidden()
+        .onAppear {
+            UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+            followDevice(animated: false)
+        }
+        .onDisappear { UIDevice.current.endGeneratingDeviceOrientationNotifications() }
+        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
+            followDevice(animated: true)
+        }
+    }
+
+    /// Turns the picture against the way the device has been turned, so it
+    /// stays upright for the reader; face up, face down and unknown keep the
+    /// last turn.
+    private func followDevice(animated: Bool) {
+        let target: Angle
+        switch UIDevice.current.orientation {
+        case .portrait: target = .zero
+        case .landscapeLeft: target = .degrees(90)
+        case .landscapeRight: target = .degrees(-90)
+        case .portraitUpsideDown: target = .degrees(180)
+        default: return
+        }
+        guard target != rotation else { return }
+        if animated {
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) { rotation = target }
+        } else {
+            rotation = target
+        }
     }
 
     private var content: some View {
         ZStack {
             TabView(selection: $index) {
                 ForEach(Array(medias.enumerated()), id: \.offset) { i, media in
-                    MediaPage(media: media)
+                    MediaPage(media: media, rotation: rotation)
                         .tag(i)
                 }
             }
@@ -253,9 +284,9 @@ struct MediaViewerView: View {
     }
 
     /// Close with the hero flight back into the bubble when the picture on screen is
-    /// still the one that flew in; otherwise the plain fade.
+    /// still the one that flew in and stands upright; otherwise the plain fade.
     private func close() {
-        guard hero != nil, index == startIndex, !closing else {
+        guard hero != nil, index == startIndex, rotation == .zero, !closing else {
             onDismiss(false)
             return
         }
@@ -275,6 +306,9 @@ struct MediaViewerView: View {
 
 private struct MediaPage: View {
     let media: MediaInfo
+    /// The turn of the device: photos and GIFs are fitted into the turned
+    /// screen and turned back upright. A video keeps the player's own layout.
+    let rotation: Angle
     @State private var localURL: URL?
     @State private var videoItem: AVPlayerItem?
     @State private var streamedId: String?
@@ -292,11 +326,11 @@ private struct MediaPage: View {
             } else if let url = localURL, media.mime == "image/gif" {
                 // a GIF is animated here as well: AsyncImage would show its first
                 // frame and nothing else
-                GIFPage(url: url)
+                turned { GIFPage(url: url) }
             } else if let url = localURL {
                 AsyncImage(url: url) { phase in
                     if let image = phase.image {
-                        image.resizable().scaledToFit()
+                        turned { image.resizable().scaledToFit() }
                             .scaleEffect(scale)
                             .gesture(
                                 MagnificationGesture()
@@ -352,6 +386,21 @@ private struct MediaPage: View {
         }
         if let url = try? await mm.fetch(media) {
             videoItem = AVPlayerItem(url: url)
+        }
+    }
+
+    /// Fits the content into the screen as the device holds it: a quarter turn
+    /// swaps the width and the height it is fitted into, and the turn itself
+    /// brings it back upright.
+    private func turned<V: View>(@ViewBuilder _ content: () -> V) -> some View {
+        let content = content()
+        return GeometryReader { geo in
+            let quarter = abs(rotation.degrees.truncatingRemainder(dividingBy: 180)) > 45
+            content
+                .frame(width: quarter ? geo.size.height : geo.size.width,
+                       height: quarter ? geo.size.width : geo.size.height)
+                .rotationEffect(rotation)
+                .frame(width: geo.size.width, height: geo.size.height)
         }
     }
 

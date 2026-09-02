@@ -727,13 +727,11 @@ struct ChatScreen: View {
                     }
                 }
             }
-            // the feed runs under the bar, so the name needs a ground of its own,
-            // and it is the same glass at the same height as the chevron and the
-            // trailing glyphs beside it: the three capsules read as one set
+            // the bar wraps the item in its own glass capsule, the same one the
+            // chevron and the trailing glyphs stand on: only the insets are ours
             .padding(.leading, 5)
             .padding(.trailing, 12)
             .padding(.vertical, 5)
-            .glassEffect(.regular, in: Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("chat.header")

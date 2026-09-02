@@ -1337,9 +1337,10 @@ final class UnreadMarkerCell: UICollectionViewCell {
     }
 
     private func layoutBand() {
-        band.frame = CGRect(x: 0, y: FeedNote.air / 2, width: contentView.bounds.width,
+        // the gap shift moves the band as a whole: the text stays centred in it
+        band.frame = CGRect(x: 0, y: FeedNote.air / 2 + FeedNote.gapShift, width: contentView.bounds.width,
                             height: max(0, contentView.bounds.height - FeedNote.air))
-        label.frame = band.bounds.insetBy(dx: 12, dy: 0).offsetBy(dx: 0, dy: FeedNote.gapShift)
+        label.frame = band.bounds.insetBy(dx: 12, dy: 0)
     }
 
     /// "N unread messages" in the plural forms of the current locale.
