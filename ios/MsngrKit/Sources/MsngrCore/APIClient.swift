@@ -584,8 +584,8 @@ public final class APIClient: @unchecked Sendable {
         public let frames: [StoryFrame]
         public let audience: String
         /// The public link, while the creator keeps one open.
-        public let link: String?
-        public let seen: Bool
+        public var link: String?
+        public var seen: Bool
         /// The caller's own heart on it.
         public var liked: Bool
         /// How many watched and how many left a heart: the author's numbers,

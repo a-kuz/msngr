@@ -26,6 +26,10 @@ public actor SyncEngine {
 
     /// typing events are never stored, they go straight to UI subscribers
     public nonisolated let typingStream = Broadcast<(chatId: String, userId: String, kind: String?)>()
+    /// Story frames as they arrive: a story delivered, taken down, its counts
+    /// moved, or this user's own watch made on another device. Stories keep
+    /// no row in the database, so the frame goes to whoever holds the list.
+    public nonisolated let storyStream = Broadcast<WSIncoming>()
     /// call signaling is never stored either: it goes straight to the call
     /// engine, which judges each signal against the call it is running
     public nonisolated let callSignalStream = Broadcast<CallSignalEvent>()
@@ -550,6 +554,8 @@ public actor SyncEngine {
                                   fromDevice: fromDevice,
                                   sentAt: f.sentAt ?? Date().timeIntervalSince1970)
             }
+        case "story":
+            storyStream.send(f)
         case "presence":
             if let userId = f.userId, let online = f.online {
                 try? await db.write { dbc in

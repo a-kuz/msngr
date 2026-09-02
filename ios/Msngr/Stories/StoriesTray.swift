@@ -13,7 +13,6 @@ struct StoriesTray: View {
     var onOpen: (StoriesModel.Author) -> Void
 
     @EnvironmentObject var app: AppState
-    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var stories = StoriesModel.shared
     @State private var me: User?
 
@@ -51,18 +50,11 @@ struct StoriesTray: View {
         .scrollDisabled(p < 0.5 && others.count < 8)
         .accessibilityIdentifier("stories.tray")
         .task(id: app.ready) { await loadMe() }
-        // the list is read again whenever the app comes to the front, and
-        // once a minute while it stays there: a story is live for hours, and
-        // nothing about it travels over the socket
+        // the list is read once per connection and then follows the socket:
+        // a story posted, taken down or watched arrives as a frame
         .task(id: app.ready) {
-            guard app.ready else { return }
-            while !Task.isCancelled {
-                await stories.load()
-                try? await Task.sleep(for: .seconds(60))
-            }
-        }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await stories.load() } }
+            guard app.ready, let engine = app.engine else { return }
+            await stories.follow(engine)
         }
     }
 
@@ -151,6 +143,12 @@ final class StoriesTrayFollower: ObservableObject {
     }
 
     func didScroll(_ sv: UIScrollView) {
+        // only the finger, or the momentum it left, moves the tray. The offset
+        // also moves when the system re-insets the list — the safe area
+        // changes twice across a push and a pop — and reading those as a
+        // scroll folded the tray and took its delta out of the inset while
+        // the rows were away, so they came back standing under the header
+        guard sv.isTracking || sv.isDragging || sv.isDecelerating else { return }
         let pull = pull(sv)
         if !expanded {
             set(progress: min(1, max(0, pull) / delta))

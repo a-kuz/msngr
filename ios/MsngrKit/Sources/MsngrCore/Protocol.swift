@@ -164,6 +164,14 @@ public struct WSIncoming: Decodable {
     /// chat: the public names of the roster (no bio or avatar), so a new
     /// chat's rows are named the moment the state lands
     public let users: [APIClient.UserDTO]?
+    /// story: `new` carries the story as the list shows it; every event names it
+    public let storyId: String?
+    public let story: APIClient.StoryDTO?
+    /// story `stats`: the author's counts; `mark`: this user's own watch and heart
+    public let views: Int?
+    public let likes: Int?
+    public let seen: Bool?
+    public let liked: Bool?
     public let forAll: Bool?
     public let serverTime: Double?
     /// msg: a service frame (skd/reaction/edit)

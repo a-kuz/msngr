@@ -2,14 +2,18 @@ import Foundation
 import MsngrCore
 
 /// Everyone's live stories, grouped by their author. A story is not encrypted:
-/// who may see one is an access rule the server keeps, so the whole list comes
-/// from the server and nothing of it is stored on the device.
+/// who may see one is an access rule the server keeps, so the list comes from
+/// the server and nothing of it is stored on the device. It is read once per
+/// connection and then follows the socket: a story delivered, taken down, its
+/// counts moved or this user's own watch made elsewhere arrives as a frame,
+/// and the list is never asked for again while the socket stands.
 @MainActor
 final class StoriesModel: ObservableObject {
     static let shared = StoriesModel()
 
     @Published private(set) var stories: [APIClient.StoryDTO] = []
     @Published private(set) var loading = false
+    private var following: Task<Void, Never>?
 
     /// Authors in the order the list shows them: the ones with something
     /// unwatched first, then by their newest story.
@@ -46,25 +50,72 @@ final class StoriesModel: ObservableObject {
         stories.contains { $0.authorId == userId }
     }
 
+    /// Keeps the list in step with the engine for as long as the caller's task
+    /// lives: the list is read on every connection — a frame sent while the
+    /// socket was down is gone, and the server's inbox is the truth — and the
+    /// frames in between are applied one by one.
+    func follow(_ engine: SyncEngine) async {
+        following?.cancel()
+        let frames = Task { [weak self] in
+            for await frame in engine.storyStream.subscribe() {
+                guard let self else { return }
+                self.apply(frame)
+            }
+        }
+        following = frames
+        defer { frames.cancel() }
+        for await up in engine.connectionStream.subscribe() {
+            if up { await load() }
+        }
+    }
+
+    private func apply(_ f: WSIncoming) {
+        guard let storyId = f.storyId else { return }
+        switch f.event {
+        case "new":
+            guard let story = f.story else { return }
+            if let i = stories.firstIndex(where: { $0.id == storyId }) {
+                stories[i] = story
+            } else {
+                stories.append(story)
+                stories.sort { $0.createdAt < $1.createdAt }
+            }
+        case "removed":
+            stories.removeAll { $0.id == storyId }
+        case "stats":
+            guard let i = stories.firstIndex(where: { $0.id == storyId }) else { return }
+            stories[i].views = f.views ?? stories[i].views
+            stories[i].likes = f.likes ?? stories[i].likes
+        case "mark":
+            guard let i = stories.firstIndex(where: { $0.id == storyId }) else { return }
+            if let seen = f.seen { stories[i].seen = seen }
+            if let liked = f.liked { stories[i].liked = liked }
+        default:
+            break
+        }
+    }
+
+    /// The whole list from the server; expired stories fall out here.
     func load() async {
-        // the list is asked for as soon as the chat list appears, which can be
-        // before the account has finished coming up
         guard !loading, AppState.shared.ready, let api = AppState.shared.api else { return }
         loading = true
         defer { loading = false }
         stories = (try? await api.stories()) ?? stories
     }
 
-    /// Watched: the server remembers it, and the ring goes out here without
-    /// waiting for the list to be read again.
+    /// Watched: the ring goes out here at once, and the server remembers it
+    /// behind the frame — the author's counts move through their own socket.
     func markSeen(_ storyId: String) async {
         guard let api = AppState.shared.api,
               let index = stories.firstIndex(where: { $0.id == storyId }), !stories[index].seen,
               stories[index].authorId != AppState.shared.session?.userId else {
             return
         }
-        try? await api.markStorySeen(storyId)
-        await load()
+        stories[index].seen = true
+        for attempt in 0..<3 {
+            if (try? await api.markStorySeen(storyId)) != nil { return }
+            try? await Task.sleep(for: .seconds(1 << attempt))
+        }
     }
 
     /// A heart on someone's story, on or off. The heart shows at once and the
@@ -77,6 +128,7 @@ final class StoriesModel: ObservableObject {
             return
         }
         stories[index].liked = on
+        stories[index].seen = true
         for attempt in 0..<3 {
             if (try? await api.likeStory(storyId, on: on)) != nil { return }
             try? await Task.sleep(for: .seconds(1 << attempt))
@@ -88,7 +140,7 @@ final class StoriesModel: ObservableObject {
 
     func takeDown(_ storyId: String) async {
         guard let api = AppState.shared.api else { return }
-        try? await api.takeStoryDown(storyId)
         stories.removeAll { $0.id == storyId }
+        try? await api.takeStoryDown(storyId)
     }
 }
