@@ -446,8 +446,10 @@ A ✅ goes in only together with a link to the evidence.
     tap opens the card sheet or the full map
     (qa/runs/2026-08-31-contact-location; ContactLocationTests)
   - 🟡 GIFs: an animated one is sent unchanged and plays in the feed and the
-    viewer (qa/runs/2026-08-21-gif-run.md); a GIF picker and stickers are not
-    built
+    viewer (qa/runs/2026-08-21-gif-run.md). Stickers are the shader stickers
+    above (their own pack, «В стикеры» on a received one). A GIF search picker
+    is not built: it needs a provider (Tenor or GIPHY) and a key for it, which
+    the project does not have — an external blocker, not device work
   - ⬜ shooting a photo or a video from the attachment sheet, without leaving the
     chat for the system camera
   - ✅ receiving what other apps share: a photo, a file or a link arrives through
@@ -845,7 +847,9 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   - ✅ the push carries seq and sentAt — the display order is built from them (smoke `push carries seq`, `push carries sentAt`)
   - 🟡 the coalescing window: the extension holds pushes back, plans a batch and answers by seq in a single chain
     (NotificationBurstTests, NotificationBurstGateTests units; single pushes run through the chain live on the
-    simulator — qa/runs/2026-09-02-nse-simulator-run; a burst through the extension is not run live yet)
+    simulator — qa/runs/2026-09-02-nse-simulator-run. A burst through the extension is not seen live: three
+    sends a second apart reached the simulator ~1.8 s apart and each window had closed before the next push
+    came, so the batch path is held by the units until a device with a real avalanche)
   - ✅ one message, one banner: the claim to show is written into the database and taken by both the app and the extension
     (NotificationBurstStoreTests units, qa/runs/2026-08-15-push-burst for the app's banner; the extension's
     claim live 2026-09-02 — one banner per message with the app killed, qa/runs/2026-09-02-nse-simulator-run)
