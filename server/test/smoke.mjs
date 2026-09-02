@@ -2513,9 +2513,18 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
   const open = await api("/api/stories", { token: alice.token, body: {
     frames: [{ mediaId: photo, type: "photo" }], audience: "everyone",
   } });
+  // there is no feed of the whole service: a stranger's list still holds only
+  // their own peers' stories, while a story open to everyone lets a stranger
+  // who reached it act on it
   const carolOpen = await api("/api/stories", { token: carol.token });
-  check("a story for everyone reaches a stranger",
-    carolOpen.stories?.some((s) => s.id === open.storyId), JSON.stringify(carolOpen.stories?.length));
+  check("a story for everyone is not a feed for strangers",
+    !carolOpen.stories?.some((s) => s.id === open.storyId), JSON.stringify(carolOpen.stories?.length));
+  const strangerSeen = await apiRaw(`/api/stories/${open.storyId}/seen`, { token: carol.token, body: {} });
+  check("a stranger who reached an open story may watch it", strangerSeen.status === 200,
+    String(strangerSeen.status));
+  const strangerClosed = await apiRaw(`/api/stories/${posted.storyId}/seen`, { token: carol.token, body: {} });
+  check("a contacts-only story refuses a stranger's watch", strangerClosed.status === 404,
+    String(strangerClosed.status));
 
   // who watched belongs to the author
   const beforeSeen = bobSees.stories.find((s) => s.id === posted.storyId);

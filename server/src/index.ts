@@ -20,6 +20,8 @@ export { ConversationDO } from "./do/ConversationDO";
 export { ApnsTokenDO } from "./do/ApnsTokenDO";
 export { HandleDO } from "./do/HandleDO";
 export { DirectoryDO } from "./do/DirectoryDO";
+export { StoriesDO } from "./do/StoriesDO";
+import { storiesStub, authorOf, authorOfLink } from "./do/StoriesDO";
 
 type Vars = { auth: AuthCtx };
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
@@ -73,21 +75,26 @@ function storyPage(title: string, body: string): Response {
   );
 }
 
+/// The frames behind a public link, from the author's object the code names.
+/// A link that was revoked, a story taken down and a story whose day is over
+/// all read the same from outside: there is nothing here any more.
+async function publicFrames(env: Env, code: string): Promise<Array<{
+  mediaId: string; type: string; text?: string; textColor?: string; plateColor?: string;
+  tx?: number; ty?: number;
+}> | null> {
+  const author = await authorOfLink(env, code);
+  if (!author) return null;
+  const r = await storiesStub(env, author).fetch(`https://do/public?code=${encodeURIComponent(code)}`);
+  if (!r.ok) return null;
+  const j = (await r.json()) as { frames: Array<{ mediaId: string; type: string }> };
+  return j.frames;
+}
+
 app.get("/s/:code", async (c) => {
-  const story = await c.env.DB.prepare(
-    "SELECT * FROM stories WHERE link_code = ?"
-  ).bind(c.req.param("code")).first<{
-    id: string; frames: string; expires_at: number; link_revoked: number; taken_down: number;
-  }>();
-  // a link that was revoked, a story taken down and a story whose day is over
-  // all read the same from outside: there is nothing here any more
-  if (!story || story.link_revoked || story.taken_down || story.expires_at <= Date.now()) {
+  const frames = await publicFrames(c.env, c.req.param("code"));
+  if (!frames) {
     return storyPage("msngr", `<p class="note">Эта ссылка больше не открывается.</p>`);
   }
-  const frames = JSON.parse(story.frames) as Array<{
-    mediaId: string; type: string; text?: string; textColor?: string; plateColor?: string;
-    tx?: number; ty?: number;
-  }>;
   // the text stands where the author dragged it: the same fraction of the
   // frame here as in the app
   const pct = (v: unknown, fallback: number) =>
@@ -111,15 +118,8 @@ app.get("/s/:code", async (c) => {
 /// media id: the link is the access, and nothing else of the bucket is reachable
 /// through it.
 app.get("/s/:code/m/:index", async (c) => {
-  const story = await c.env.DB.prepare(
-    "SELECT frames, expires_at, link_revoked, taken_down FROM stories WHERE link_code = ?"
-  ).bind(c.req.param("code")).first<{
-    frames: string; expires_at: number; link_revoked: number; taken_down: number;
-  }>();
-  if (!story || story.link_revoked || story.taken_down || story.expires_at <= Date.now()) {
-    return err("not_found", 404);
-  }
-  const frames = JSON.parse(story.frames) as Array<{ mediaId: string; type: string }>;
+  const frames = await publicFrames(c.env, c.req.param("code"));
+  if (!frames) return err("not_found", 404);
   const frame = frames[Number(c.req.param("index"))];
   if (!frame) return err("not_found", 404);
   // the range is passed on only when one was asked for: handing R2 a header set
@@ -526,6 +526,7 @@ app.post("/api/account/delete", async (c) => {
     });
   }
   await userStub(c.env, userId).fetch("https://do/account-wipe", { method: "POST", body: "{}" });
+  await storiesStub(c.env, userId).fetch("https://do/wipe", { method: "POST", body: "{}" });
   await c.env.DB.batch([
     c.env.DB.prepare("DELETE FROM privacy_exceptions WHERE user_id = ? OR peer_id = ?").bind(userId, userId),
     c.env.DB.prepare("DELETE FROM privacy_settings WHERE user_id = ?").bind(userId),
@@ -1636,14 +1637,19 @@ app.post("/api/privacy", async (c) => {
 // A story is not end-to-end encrypted. Who may see one is an access rule, not a
 // key: that is what lets it live for a day for a chosen audience, and what
 // makes a public link possible at all. The composer says so before the story
-// goes out.
+// goes out. The stories themselves, the watches and the hearts live in the
+// author's StoriesDO; the Worker decides who may ask it and joins the names.
 
-interface StoryRow {
-  id: string; author_id: string; created_at: number; expires_at: number;
-  frames: string; audience: string;
-  link_code: string | null; link_revoked: number; taken_down: number;
+/// A story as the author's object hands it out.
+interface StoryOut {
+  id: string; createdAt: number; expiresAt: number; frames: unknown[]; audience: string;
+  code: string | null; seen: boolean; liked: boolean; views: number | null; likes: number | null;
 }
 
+/// `contacts`: the people the author shares a direct chat with. `everyone`:
+/// anyone who has reached the author — through a handle, a contact or the
+/// link. Neither is a feed of the whole service: the list a viewer sees is
+/// always their own peers'.
 const STORY_AUDIENCES = ["everyone", "contacts"];
 /// How long a story may be asked to live. A day is the default; a week is the
 /// ceiling, so nothing published by accident stays for a month.
@@ -1696,99 +1702,93 @@ app.post("/api/stories", async (c) => {
   const audience = b.audience ?? "contacts";
   if (!STORY_AUDIENCES.includes(audience)) return err("bad_audience");
   const hours = Math.min(Math.max(b.hours ?? 24, 1), STORY_MAX_HOURS);
-  const now = Date.now();
-  const id = ulid(now);
-  const code = b.link ? b64url(crypto.getRandomValues(new Uint8Array(9))) : null;
-  await c.env.DB.prepare(
-    `INSERT INTO stories (id, author_id, created_at, expires_at, frames, audience, link_code)
-     VALUES (?,?,?,?,?,?,?)`
-  ).bind(id, userId, now, now + hours * 3600_000, JSON.stringify(frames), audience, code).run();
-  return json({ ok: true, storyId: id, link: code ? `${publicOrigin(c)}/s/${code}` : null });
+  const r = await storiesStub(c.env, userId).fetch("https://do/publish", {
+    method: "POST",
+    body: JSON.stringify({ authorId: userId, frames, audience, hours, link: b.link === true }),
+  });
+  const j = (await r.json()) as { id: string; code: string | null };
+  return json({ ok: true, storyId: j.id, link: j.code ? `${publicOrigin(c)}/s/${j.code}` : null });
 });
+
+/// The author's live stories as one viewer sees them.
+async function liveStories(env: Env, authorId: string, viewerId: string): Promise<StoryOut[]> {
+  const r = await storiesStub(env, authorId).fetch(
+    `https://do/live?author=${encodeURIComponent(authorId)}&viewer=${encodeURIComponent(viewerId)}`,
+  );
+  const j = (await r.json()) as { stories: StoryOut[] };
+  return j.stories;
+}
+
+/// Whether this user may watch the author's stories at all: no block between
+/// them, and — unless the story is open to everyone who reached the author —
+/// a direct chat shared.
+async function canWatchStories(env: Env, userId: string, authorId: string, audience: string): Promise<boolean> {
+  if (authorId === userId) return true;
+  const block = await env.DB.prepare(
+    `SELECT 1 FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)`
+  ).bind(userId, authorId, authorId, userId).first();
+  if (block) return false;
+  if (audience === "everyone") return true;
+  const peers = await directPeers(env, userId);
+  return peers.includes(authorId);
+}
+
+/// The story a request names, from its author's object, with the access rule
+/// applied: null when there is nothing this user may act on.
+async function watchableStory(env: Env, userId: string, authorId: string, storyId: string) {
+  const r = await storiesStub(env, authorId).fetch(`https://do/story?id=${encodeURIComponent(storyId)}`);
+  if (!r.ok) return null;
+  const j = (await r.json()) as { audience: string };
+  return (await canWatchStories(env, userId, authorId, j.audience)) ? j : null;
+}
 
 /// Everything this user may watch right now, newest author first, with their
 /// own stories among them.
 app.get("/api/stories", async (c) => {
   const { userId } = c.get("auth");
-  const now = Date.now();
+  // the list is the viewer's own peers', the author included, minus anyone
+  // with a block between them; every author's object is asked at once
   const peers = await directPeers(c.env, userId);
-  const ids = [...new Set([userId, ...peers])];
-  const placeholders = ids.map(() => "?").join(",");
-  const rows = await c.env.DB.prepare(
-    `SELECT s.*, u.username, u.display_name, u.avatar_id
-     FROM stories s JOIN users u ON u.id = s.author_id
-     WHERE s.taken_down = 0 AND s.expires_at > ?
-       AND (s.author_id IN (${placeholders}) OR s.audience = 'everyone')
-     ORDER BY s.created_at`
-  ).bind(now, ...ids).all<StoryRow & { username: string; display_name: string; avatar_id: string | null }>();
-  const seen = await c.env.DB.prepare(
-    "SELECT story_id FROM story_views WHERE viewer_id = ?"
-  ).bind(userId).all<{ story_id: string }>();
-  const watched = new Set(seen.results.map((r) => r.story_id));
-  const hearts = await c.env.DB.prepare(
-    "SELECT story_id FROM story_likes WHERE user_id = ?"
-  ).bind(userId).all<{ story_id: string }>();
-  const liked = new Set(hearts.results.map((r) => r.story_id));
-  // the counts are the author's: a viewer is told nothing about the others
-  const own = rows.results.filter((r) => r.author_id === userId).map((r) => r.id);
-  const views = new Map<string, number>();
-  const likes = new Map<string, number>();
-  if (own.length) {
-    const marks = own.map(() => "?").join(",");
-    const v = await c.env.DB.prepare(
-      `SELECT story_id, COUNT(*) AS n FROM story_views WHERE story_id IN (${marks}) GROUP BY story_id`
-    ).bind(...own).all<{ story_id: string; n: number }>();
-    for (const r of v.results) views.set(r.story_id, r.n);
-    const l = await c.env.DB.prepare(
-      `SELECT story_id, COUNT(*) AS n FROM story_likes WHERE story_id IN (${marks}) GROUP BY story_id`
-    ).bind(...own).all<{ story_id: string; n: number }>();
-    for (const r of l.results) likes.set(r.story_id, r.n);
-  }
   const blocked = await c.env.DB.prepare(
     "SELECT user_id, blocked_id FROM blocks WHERE user_id = ? OR blocked_id = ?"
   ).bind(userId, userId).all<{ user_id: string; blocked_id: string }>();
   const hidden = new Set(blocked.results.flatMap((r) => [r.user_id, r.blocked_id]));
-  const stories = rows.results
-    .filter((r) => !hidden.has(r.author_id) || r.author_id === userId)
-    .map((r) => ({
-      id: r.id, authorId: r.author_id, username: r.username, displayName: r.display_name,
-      avatarId: r.avatar_id, createdAt: r.created_at, expiresAt: r.expires_at,
-      frames: JSON.parse(r.frames), audience: r.audience,
-      link: r.link_code && !r.link_revoked ? `${publicOrigin(c)}/s/${r.link_code}` : null,
-      seen: watched.has(r.id),
-      liked: liked.has(r.id),
-      views: r.author_id === userId ? views.get(r.id) ?? 0 : null,
-      likes: r.author_id === userId ? likes.get(r.id) ?? 0 : null,
+  const authors = [...new Set([userId, ...peers])].filter((id) => id === userId || !hidden.has(id));
+  const perAuthor = await Promise.all(authors.map((a) => liveStories(c.env, a, userId)));
+  const withStories = authors.filter((_, i) => perAuthor[i].length > 0);
+  const cards = new Map<string, { username: string; display_name: string; avatar_id: string | null }>();
+  if (withStories.length) {
+    const marks = withStories.map(() => "?").join(",");
+    const users = await c.env.DB.prepare(
+      `SELECT id, username, display_name, avatar_id FROM users WHERE id IN (${marks})`
+    ).bind(...withStories).all<{ id: string; username: string; display_name: string; avatar_id: string | null }>();
+    for (const u of users.results) cards.set(u.id, u);
+  }
+  const stories = authors.flatMap((authorId, i) => {
+    const card = cards.get(authorId);
+    if (!card) return [];
+    return perAuthor[i].map((s) => ({
+      id: s.id, authorId, username: card.username, displayName: card.display_name,
+      avatarId: card.avatar_id, createdAt: s.createdAt, expiresAt: s.expiresAt,
+      frames: s.frames, audience: s.audience,
+      link: s.code ? `${publicOrigin(c)}/s/${s.code}` : null,
+      seen: s.seen, liked: s.liked, views: s.views, likes: s.likes,
     }));
+  }).sort((a, b) => a.createdAt - b.createdAt);
   return json({ ok: true, stories });
 });
 
-/// Whether this user may watch the story right now: it is live, and either
-/// it is open to everyone or the two share a direct chat, with no block
-/// between them. The author is a watcher of their own.
-async function canWatchStory(env: Env, userId: string, story: StoryRow): Promise<boolean> {
-  if (story.taken_down || story.expires_at <= Date.now()) return false;
-  if (story.author_id === userId) return true;
-  const block = await env.DB.prepare(
-    `SELECT 1 FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)`
-  ).bind(userId, story.author_id, story.author_id, userId).first();
-  if (block) return false;
-  if (story.audience === "everyone") return true;
-  const peers = await directPeers(env, userId);
-  return peers.includes(story.author_id);
-}
-
 app.post("/api/stories/:id/seen", async (c) => {
   const { userId } = c.get("auth");
+  const id = c.req.param("id");
+  const authorId = authorOf(id);
+  if (!authorId) return err("not_found", 404);
   // the author looking at their own story is not a viewer
-  const own = await c.env.DB.prepare(
-    "SELECT 1 FROM stories WHERE id = ? AND author_id = ?"
-  ).bind(c.req.param("id"), userId).first();
-  if (own) return json({ ok: true });
-  await c.env.DB.prepare(
-    `INSERT INTO story_views (story_id, viewer_id, seen_at) VALUES (?,?,?)
-     ON CONFLICT(story_id, viewer_id) DO NOTHING`
-  ).bind(c.req.param("id"), userId, Date.now()).run();
+  if (authorId === userId) return json({ ok: true });
+  if (!(await watchableStory(c.env, userId, authorId, id))) return err("not_found", 404);
+  await storiesStub(c.env, authorId).fetch("https://do/seen", {
+    method: "POST", body: JSON.stringify({ storyId: id, viewer: userId }),
+  });
   return json({ ok: true });
 });
 
@@ -1798,47 +1798,41 @@ app.post("/api/stories/:id/like", async (c) => {
   const { userId } = c.get("auth");
   const id = c.req.param("id");
   const b = await c.req.json<{ on?: boolean }>();
-  const story = await c.env.DB.prepare("SELECT * FROM stories WHERE id = ?")
-    .bind(id).first<StoryRow>();
-  if (!story) return err("not_found", 404);
-  if (story.author_id === userId) return err("own_story");
-  if (!(await canWatchStory(c.env, userId, story))) return err("not_found", 404);
-  const now = Date.now();
-  if (b.on === false) {
-    await c.env.DB.prepare("DELETE FROM story_likes WHERE story_id = ? AND user_id = ?")
-      .bind(id, userId).run();
-  } else {
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        `INSERT INTO story_views (story_id, viewer_id, seen_at) VALUES (?,?,?)
-         ON CONFLICT(story_id, viewer_id) DO NOTHING`
-      ).bind(id, userId, now),
-      c.env.DB.prepare(
-        `INSERT INTO story_likes (story_id, user_id, liked_at) VALUES (?,?,?)
-         ON CONFLICT(story_id, user_id) DO NOTHING`
-      ).bind(id, userId, now),
-    ]);
-  }
-  return json({ ok: true, liked: b.on !== false });
+  const authorId = authorOf(id);
+  if (!authorId) return err("not_found", 404);
+  if (authorId === userId) return err("own_story");
+  if (!(await watchableStory(c.env, userId, authorId, id))) return err("not_found", 404);
+  const r = await storiesStub(c.env, authorId).fetch("https://do/like", {
+    method: "POST", body: JSON.stringify({ storyId: id, user: userId, on: b.on !== false }),
+  });
+  return new Response(r.body, r);
 });
 
 /// Who watched, and who of them left a heart. The creator's alone: nobody
 /// else is told, and the public page is not counted at all.
 app.get("/api/stories/:id/viewers", async (c) => {
   const { userId } = c.get("auth");
-  const story = await c.env.DB.prepare(
-    "SELECT author_id FROM stories WHERE id = ?"
-  ).bind(c.req.param("id")).first<{ author_id: string }>();
-  if (!story) return err("not_found", 404);
-  if (story.author_id !== userId) return err("not_author", 403);
-  const rows = await c.env.DB.prepare(
-    `SELECT v.viewer_id, v.seen_at, u.username, u.display_name, u.avatar_id,
-            l.user_id IS NOT NULL AS liked
-     FROM story_views v JOIN users u ON u.id = v.viewer_id
-     LEFT JOIN story_likes l ON l.story_id = v.story_id AND l.user_id = v.viewer_id
-     WHERE v.story_id = ? ORDER BY liked DESC, v.seen_at DESC`
-  ).bind(c.req.param("id")).all<{ liked: number }>();
-  return json({ ok: true, viewers: rows.results.map((r) => ({ ...r, liked: r.liked === 1 })) });
+  const id = c.req.param("id");
+  const authorId = authorOf(id);
+  if (!authorId) return err("not_found", 404);
+  if (authorId !== userId) return err("not_author", 403);
+  const r = await storiesStub(c.env, userId).fetch(`https://do/viewers?storyId=${encodeURIComponent(id)}`);
+  if (!r.ok) return new Response(r.body, r);
+  const j = (await r.json()) as { viewers: Array<{ viewer_id: string; seen_at: number; liked: boolean }> };
+  const cards = new Map<string, { username: string; display_name: string; avatar_id: string | null }>();
+  if (j.viewers.length) {
+    const marks = j.viewers.map(() => "?").join(",");
+    const users = await c.env.DB.prepare(
+      `SELECT id, username, display_name, avatar_id FROM users WHERE id IN (${marks})`
+    ).bind(...j.viewers.map((v) => v.viewer_id))
+      .all<{ id: string; username: string; display_name: string; avatar_id: string | null }>();
+    for (const u of users.results) cards.set(u.id, u);
+  }
+  const viewers = j.viewers.flatMap((v) => {
+    const card = cards.get(v.viewer_id);
+    return card ? [{ ...v, username: card.username, display_name: card.display_name, avatar_id: card.avatar_id }] : [];
+  });
+  return json({ ok: true, viewers });
 });
 
 /// Taking it down, and minting or revoking its public link.
@@ -1846,30 +1840,17 @@ app.post("/api/stories/:id", async (c) => {
   const { userId } = c.get("auth");
   const id = c.req.param("id");
   const b = await c.req.json<{ takeDown?: boolean; link?: boolean }>();
-  const story = await c.env.DB.prepare(
-    "SELECT * FROM stories WHERE id = ?"
-  ).bind(id).first<StoryRow>();
-  if (!story) return err("not_found", 404);
-  if (story.author_id !== userId) return err("not_author", 403);
-  if (b.takeDown) {
-    await c.env.DB.prepare("UPDATE stories SET taken_down = 1 WHERE id = ?").bind(id).run();
-    return json({ ok: true });
-  }
-  if (b.link === true) {
-    // a revoked link is never handed out again: a new one is a new code
-    const code = story.link_code && !story.link_revoked
-      ? story.link_code
-      : b64url(crypto.getRandomValues(new Uint8Array(9)));
-    await c.env.DB.prepare(
-      "UPDATE stories SET link_code = ?, link_revoked = 0 WHERE id = ?"
-    ).bind(code, id).run();
-    return json({ ok: true, link: `${publicOrigin(c)}/s/${code}` });
-  }
-  if (b.link === false) {
-    await c.env.DB.prepare("UPDATE stories SET link_revoked = 1 WHERE id = ?").bind(id).run();
-    return json({ ok: true, link: null });
-  }
-  return err("nothing_to_do");
+  const authorId = authorOf(id);
+  if (!authorId) return err("not_found", 404);
+  if (authorId !== userId) return err("not_author", 403);
+  const r = await storiesStub(c.env, userId).fetch("https://do/update", {
+    method: "POST",
+    body: JSON.stringify({ authorId: userId, storyId: id, takeDown: b.takeDown, link: b.link }),
+  });
+  if (!r.ok) return new Response(r.body, r);
+  const j = (await r.json()) as { code?: string | null };
+  if (b.takeDown) return json({ ok: true });
+  return json({ ok: true, link: j.code ? `${publicOrigin(c)}/s/${j.code}` : null });
 });
 
 export default {

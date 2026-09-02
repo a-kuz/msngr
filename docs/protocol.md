@@ -132,12 +132,22 @@ POST /api/stories                 {frames:[{mediaId, type:"photo"|"video", w?, h
                                   "contacts"|"everyone", hours?≤168, link?} → {storyId, link}
                                   a story is plaintext: the frames are ordinary media
                                   uploads and who may see it is a rule, not a key. `tx`/`ty`
-                                  are the text's centre as a fraction of the frame
-GET  /api/stories                 what the caller may watch now, own stories included:
-                                  [{id, authorId, displayName, avatarId, createdAt,
-                                  expiresAt, frames, audience, link, seen, liked,
-                                  views, likes}]; `views` and `likes` are counts on the
-                                  caller's own stories and null on everyone else's
+                                  are the text's centre as a fraction of the frame.
+                                  Stories live in the author's StoriesDO (the story, who
+                                  watched, who liked, the link codes); `storyId` starts with
+                                  the author's id and a `~`, which is how every request
+                                  finds the object. A link code is random — the public page
+                                  must not name the author — and an object of the same
+                                  class named by the code points at the author. `audience` is who may
+                                  act on a story once they reached the author: `contacts`
+                                  needs a shared direct chat, `everyone` needs nothing;
+                                  neither is a feed of the whole service
+GET  /api/stories                 the caller's peers' live stories, own included, each
+                                  author's object asked at once: [{id, authorId,
+                                  displayName, avatarId, createdAt, expiresAt, frames,
+                                  audience, link, seen, liked, views, likes}]; `views` and
+                                  `likes` are counts on the caller's own stories and null
+                                  on everyone else's
 POST /api/stories/:id/seen        remembers the watch; the author's own is not counted
 POST /api/stories/:id/like        {on?:bool} puts a heart on (default) or takes it off;
                                   a heart counts as a view too. `own_story` for the
