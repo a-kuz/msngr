@@ -89,7 +89,7 @@ def app_group_id():
         for line in entitlements.read_text().splitlines():
             if "application-groups" in line and "[" in line:
                 return line.split("[", 1)[1].split("]")[0].split(",")[0].strip()
-    return "group.msngr.msngr"
+    return "group.com.msngr.msngr"
 
 
 def app_quiet_for(udid):

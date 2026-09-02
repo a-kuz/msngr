@@ -46,20 +46,14 @@ uitest:
 	MSNGR_SERVER=$(MSNGR_SERVER) $(XCODE) -scheme Msngr $(DEST) test -only-testing:MsngrUITests 2>&1 | tail -5 | grep -q "TEST SUCCEEDED"
 
 # Build and install on a physical iPhone. Signed with the team and bundle id
-# from local.mk (TEAM, DEVICE_APP_ID), with every capability stripped so the
-# portal gains two bare App IDs and the device registration, nothing else.
-# Storage falls back from the app group container to Application Support by
-# itself; pushes and the NSE are dead on a device build anyway until an APNs
-# key exists.
+# from local.mk (TEAM, DEVICE_APP_ID); automatic signing registers the App IDs
+# with push, the app group and Communication Notifications on the portal.
 #   make device [TEAM=…] [DEVICE=<udid>] [SERVER=…]
 DEVICE_APP := ios/build/device/Build/Products/Debug-iphoneos/Msngr.app
 device:
 	@test -n "$(TEAM)" || (echo "TEAM is not set: put TEAM and DEVICE_APP_ID into local.mk"; exit 1)
 	cd ios && MSNGR_APP_ID=$(or $(DEVICE_APP_ID),$(MSNGR_APP_ID)) \
 	  MSNGR_DEVICE_SERVER="$(or $(SERVER),https://msngr.a-kuz.online)" xcodegen
-	plutil -remove "com\.apple\.developer\.usernotifications\.communication" ios/Msngr/Msngr.entitlements || true
-	plutil -remove "com\.apple\.security\.application-groups" ios/Msngr/Msngr.entitlements || true
-	plutil -remove "com\.apple\.security\.application-groups" ios/NotificationService/NotificationService.entitlements || true
 	$(SLOT) xcodebuild -project ios/Msngr.xcodeproj -scheme Msngr \
 	  -destination 'generic/platform=iOS' -derivedDataPath ios/build/device \
 	  -allowProvisioningUpdates -allowProvisioningDeviceRegistration \

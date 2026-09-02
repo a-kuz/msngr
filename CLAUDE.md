@@ -110,10 +110,14 @@ own user, and the fixtures they need are on the stand, not on the device.
   rsync `server/` there after a server-side change.
 - The dev APNs mock `node server/tools/apns-mock.mjs` listens on :9871 and
   delivers pushes to the simulator through `simctl push` — it works only
-  against a stand on this machine. The shared stand's `APNS_HOST` points at
-  its own localhost where nothing listens, so pushes from the shared stand
-  reach no simulator: a scenario that checks push delivery needs a local
-  stand. `node test/smoke.mjs` brings up its own receiver on the mock's port,
+  against a stand on this machine. The shared stand sends real pushes: its
+  `APNS_HOST` points at `server/tools/apns-relay.mjs` (`msngr-apns-relay.service`
+  on adad, :9872), which forwards to Apple's sandbox over HTTP/2 and signs the
+  provider token itself — APNs is HTTP/2 only and workerd's fetch is HTTP/1.1,
+  so a Worker never reaches Apple directly. The topic is `com.msngr.msngr`, the
+  device bundle id; simulator tokens get 400 BadDeviceToken there, so a
+  scenario that checks push delivery on a simulator needs a local stand.
+  `node test/smoke.mjs` brings up its own receiver on the mock's port,
   so a running mock has to be stopped before the smoke test. On your own stand
   the ports separate:
   `wrangler dev --port 8803 --var APNS_HOST:http://localhost:9873` (this

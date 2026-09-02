@@ -36,9 +36,12 @@ targets:
     entitlements:
       path: Msngr/Msngr.entitlements
       properties:
-        com.apple.security.application-groups: [group.msngr.msngr]
+        com.apple.security.application-groups: [group.com.msngr.msngr]
         # sender avatar and name in the banner (Communication Notifications)
         com.apple.developer.usernotifications.communication: true
+        # the APNs environment of a development build; Xcode swaps it for
+        # production when it exports for distribution
+        aps-environment: development
     dependencies:
       - package: MsngrKit
         product: MsngrCrypto
@@ -130,6 +133,8 @@ targets:
     sources: [NotificationService]
     entitlements:
       path: NotificationService/NotificationService.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.msngr.msngr]
     dependencies:
       - package: MsngrKit
         product: MsngrCrypto
@@ -159,7 +164,7 @@ targets:
     entitlements:
       path: ShareExtension/ShareExtension.entitlements
       properties:
-        com.apple.security.application-groups: [group.msngr.msngr]
+        com.apple.security.application-groups: [group.com.msngr.msngr]
     dependencies:
       - package: MsngrKit
         product: MsngrCrypto

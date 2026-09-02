@@ -37,7 +37,7 @@ KIT = ROOT / "ios" / "MsngrKit"
 GRANT_BLOB = ROOT / "scripts" / "assets" / "notification-grant.bplist"
 
 BUNDLE_ID = os.environ.get("MSNGR_APP_ID", "msngr.msngr")
-GROUP_ID = "group.msngr.msngr"
+GROUP_ID = "group.com.msngr.msngr"
 NAMES = ["alfa", "bravo", "charlie"]
 # the shader showcase's accounts (docs/demo/shaders-showcase.md), built by
 # `msngrfixture showcase`
