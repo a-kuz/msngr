@@ -359,6 +359,12 @@ check("avatar blob needs a token",
 const avatarBytes = await fetch(BASE + "/api/avatar/" + upload.avatarId,
   { headers: { authorization: `Bearer ${alice.token}` } });
 check("peer reads the avatar blob with theirs", avatarBytes.status === 200);
+// the chat list carries the peer's photo, not only their name: the names come
+// from the chat's roster copies and the photo from what the peer pushed here
+const listWithAvatar = await api("/api/chats", { token: alice.token });
+check("the chat list carries a peer's avatar",
+  listWithAvatar.users.find((u) => u.id === bob.userId)?.avatar_id === upload.avatarId,
+  JSON.stringify(listWithAvatar.users));
 
 // 7b. Renaming the handle: the new one is taken and the old one freed by the
 // same statement, under the index that already guards registration
@@ -1208,6 +1214,26 @@ ch.ws.close(); ci.ws.close(); ci2.ws.close();
   const restored = await api(`/api/users/${priya.userId}`, { token: milo.token });
   check("last seen visible again after restoring", restored.ok && restored.presence !== null,
     JSON.stringify(restored));
+
+  // the contacts tier of last seen: the source reads the viewer's current
+  // phone hash from the viewer's own object, so a number synced later opens it
+  // with nothing to propagate
+  const miloHash = "hash_milo_" + suffix;
+  await api("/api/phone", { token: milo.token, body: { phoneHash: miloHash } });
+  check("lastSeen by contacts", (await api("/api/privacy", { token: priya.token,
+    body: { lastSeen: "contacts" } })).ok);
+  const seenByStranger = await api(`/api/users/${priya.userId}`, { token: milo.token });
+  check("contacts-tier last seen hidden from someone not in the book",
+    seenByStranger.ok && seenByStranger.presence === null, JSON.stringify(seenByStranger));
+  await api("/api/contacts/discover", { token: priya.token, body: { hashes: [miloHash] } });
+  const clMarkBook = cl.mark();
+  ck.send({ t: "fg" });
+  check("contacts-tier presence frame reaches a contact",
+    !!(await cl.waitAfter(clMarkBook, (f) => f.t === "presence" && f.userId === priya.userId)));
+  const seenByContact = await api(`/api/users/${priya.userId}`, { token: milo.token });
+  check("contacts-tier last seen shows to a contact",
+    seenByContact.ok && seenByContact.presence !== null, JSON.stringify(seenByContact));
+  await api("/api/privacy", { token: priya.token, body: { lastSeen: "everyone" } });
 
   // -- avatar and bio --
   const avUpload = await (await fetch(BASE + "/api/avatar", {

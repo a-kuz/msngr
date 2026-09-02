@@ -823,7 +823,7 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   - ✅ the badge from the server's unread cache, recounted after a read (smoke `push badge=1/2/after read`)
   - ✅ collapse-id = msgId, thread-id = chatId, the alert with no plaintext (smoke)
   - ✅ the dev path through the mock and `simctl push` without an Apple account (apns-mock, smoke `dev push unsigned`)
-  - ✅ a 410 from APNs deletes the device token from the DO and D1 (smoke `dead token: dropped from d1`,
+  - ✅ a 410 from APNs deletes the device token (smoke `dead token: dropped from d1`,
     `dead token: no push after drop`)
   - ✅ 429/5xx are retried with backoff, a failure on one token does not cancel the rest
     (smoke `429 retried once and succeeded`)
@@ -1203,7 +1203,7 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   (qa/runs/2026-08-27-language)
 - ✅ exporting and deleting the account: the backup file in «Данные» is the
   full export; «Удалить аккаунт» in the settings leaves every group, wipes the
-  UserDO and the D1 rows, frees the username and returns the app to
+  UserDO, frees the username and returns the app to
   registration (qa/runs/2026-09-01-delete-account.md, smoke delete-account
   block)
 
@@ -1392,8 +1392,24 @@ Decided in `docs/research/2026-08-19-per-user-do.md`; the queue orders the steps
   delta on every flip, and the subscriber's copy answers the profile and a fresh
   socket (smoke: the whole presence chain plus the snapshot on connect;
   `runs/2026-09-02-presence-subscriptions.md`)
-- ⬜ what is left in D1 follows into the user's object; the leftover tables are
-  dropped with the schema version bumped
+- ✅ what is left in D1 follows into the user's object; the leftover tables are
+  dropped (`0022_d1_leftovers_in_objects.sql`). A bearer token is
+  `<userId>.<secret>`, so the check lives in the object that owns the device
+  list; the profile, the sessions, the blocks, the privacy tiers with their
+  exceptions and the filed reports are that object too; the phone-hash index
+  joins the people index in `DirectoryDO`; provisioning and restore sessions
+  and invite codes are objects addressed by the code (`LookupDO`); a user
+  avatar names its owner in its id. The `DB` binding is out of `Env`, so the
+  count is zero by construction, not by measurement (run-d1-leftovers,
+  `runs/2026-09-02-d1-leftovers-run.md`):
+
+  | what                       | D1 before | after |
+  |----------------------------|-----------|-------|
+  | `POST /api/register`       | 3         | 0     |
+  | socket connect (worker)    | 2         | 0     |
+  | socket connect (`UserDO`)  | up to 4   | 0     |
+  | a direct message (`ConversationDO`) | up to 2 | 0 |
+  | its fanout (`/events`)     | 1         | 0     |
 
 ## Versioning and compatibility
 
@@ -1423,11 +1439,9 @@ still not closed:
    at all. Data Protection on a locked screen rides along.
 2. Calls v2 by `CALLS-ROADMAP.md`: the SFU path, E2EE over insertable streams,
    video; the VoIP push stays blocked on the device signing certificate.
-3. The per-user DO rework's tail: `HandleDO`, subscriptions between objects,
-   the last D1 tables moving into the user's object.
-4. Channels, stories, bots — the three plaintext surfaces not yet started.
-5. Translating the Russian that remains in older documentation by separate
+3. Channels, stories, bots — the three plaintext surfaces not yet started.
+4. Translating the Russian that remains in older documentation by separate
    passes; new content is English already, the interface strings live in the
    catalog.
-6. Working through the remaining audit items in order: crashes and data loss →
+5. Working through the remaining audit items in order: crashes and data loss →
    offline reliability → E2EE edge cases → UI.

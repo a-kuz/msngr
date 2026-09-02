@@ -36,6 +36,15 @@ export class DirectoryDO implements DurableObject {
         bot_owner TEXT,
         bot_commands TEXT
       )`);
+    // Discovery by a phone number's hash is a lookup by an exact value, so it
+    // needs an index of its own too. It is sharded by the hash rather than by
+    // the user id: a discovery call arrives with thousands of hashes and each
+    // shard is asked only for its own.
+    this.state.storage.sql.exec(`
+      CREATE TABLE IF NOT EXISTS phones (
+        hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL
+      )`);
   }
 
   async fetch(req: Request): Promise<Response> {
@@ -68,6 +77,35 @@ export class DirectoryDO implements DurableObject {
         return json({ ok: true });
       }
 
+      /// {hash, userId} claims the hash, or {hash} alone frees it. A number
+      /// that changed hands answers for whoever holds it now.
+      case "/phone-put": {
+        const b = (await req.json()) as { hash: string; userId?: string };
+        if (b.userId) {
+          sql.exec(
+            `INSERT INTO phones (hash, user_id) VALUES (?,?)
+             ON CONFLICT(hash) DO UPDATE SET user_id = excluded.user_id`,
+            b.hash, b.userId);
+        } else {
+          sql.exec("DELETE FROM phones WHERE hash = ?", b.hash);
+        }
+        return json({ ok: true });
+      }
+
+      /// {hashes} → the ones that are registered, as hash/userId pairs.
+      case "/phone-find": {
+        const b = (await req.json()) as { hashes: string[] };
+        const found: Array<{ hash: string; user_id: string }> = [];
+        for (let i = 0; i < b.hashes.length; i += 200) {
+          const part = b.hashes.slice(i, i + 200);
+          const marks = part.map(() => "?").join(",");
+          found.push(...(sql.exec(
+            `SELECT hash, user_id FROM phones WHERE hash IN (${marks})`, ...part,
+          ).toArray() as unknown as Array<{ hash: string; user_id: string }>));
+        }
+        return json({ ok: true, found });
+      }
+
       /// ?q= folded by the caller. Exact handle matches come first, then by
       /// handle; the caller merges the shards by the same rule.
       case "/search": {
@@ -90,11 +128,12 @@ export class DirectoryDO implements DurableObject {
   }
 }
 
-function shardOf(userId: string): number {
-  // FNV-1a over the id: stable across isolates, cheap, spreads ULIDs evenly
+function shardOf(key: string): number {
+  // FNV-1a over the key: stable across isolates, cheap, spreads ULIDs and
+  // hex digests evenly alike
   let h = 0x811c9dc5;
-  for (let i = 0; i < userId.length; i++) {
-    h ^= userId.charCodeAt(i);
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
     h = Math.imul(h, 0x01000193) >>> 0;
   }
   return h % DIRECTORY_SHARDS;
@@ -114,6 +153,37 @@ export async function directoryRemove(env: Env, userId: string): Promise<void> {
   await shardStub(env, shardOf(userId)).fetch("https://do/remove", {
     method: "POST", body: JSON.stringify({ id: userId }),
   });
+}
+
+/// Puts a phone hash on the account that publishes it, or takes it off the
+/// index when `userId` is null.
+export async function phoneIndexPut(
+  env: Env, hash: string, userId: string | null,
+): Promise<void> {
+  await shardStub(env, shardOf(hash)).fetch("https://do/phone-put", {
+    method: "POST", body: JSON.stringify({ hash, userId: userId ?? undefined }),
+  });
+}
+
+/// The accounts behind the hashes that are registered: hash to user id. Every
+/// shard is asked only for the hashes that belong to it.
+export async function phoneIndexFind(
+  env: Env, hashes: string[],
+): Promise<Map<string, string>> {
+  const byShard = new Map<number, string[]>();
+  for (const h of hashes) {
+    const s = shardOf(h);
+    (byShard.get(s) ?? byShard.set(s, []).get(s)!).push(h);
+  }
+  const out = new Map<string, string>();
+  await Promise.all([...byShard].map(async ([shard, part]) => {
+    const r = await shardStub(env, shard).fetch("https://do/phone-find", {
+      method: "POST", body: JSON.stringify({ hashes: part }),
+    });
+    const j = (await r.json()) as { found: Array<{ hash: string; user_id: string }> };
+    for (const row of j.found) out.set(row.hash, row.user_id);
+  }));
+  return out;
 }
 
 /// A substring search over every shard, merged: exact handle first, then by

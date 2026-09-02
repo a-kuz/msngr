@@ -13,14 +13,18 @@ The source of truth is the code: `server/src/index.ts` (the router),
   `v` is the client's protocol version, read before auth: below the server's
   floor the upgrade answers `426 client_too_old` with both numbers, and the
   client stops reconnecting instead of retrying into silence.
-- Auth: a device token (`Authorization: Bearer <token>` or `?token=`), stored in
-  D1 as the SHA-256 of the token. Signing in on a new device is not a password
-  but the consent of a device that is already in the account:
-  `/api/provision/*` (the "Signing in on a new device" section). Provisioning
-  session keys travel in the `x-provision-token` header — a new device has no
-  device token yet.
-- Token revocation: `devices.revoked_at`. It is checked in the authorization
-  middleware, so a revoked token gives 401 both on `/api/*` and on the `/ws`
+- Auth: a device token (`Authorization: Bearer <token>` or `?token=`), shaped
+  `<userId>.<secret>`. The account part names the object that owns the device
+  list, and that object holds the SHA-256 of the whole token under
+  `tok:<hash>`, so the check runs where the answer lives and nothing global is
+  read. The hash covers the account id too: a secret lifted from one account
+  proves nothing on another. Signing in on a new device is not a password but
+  the consent of a device that is already in the account: `/api/provision/*`
+  (the "Signing in on a new device" section). Provisioning session keys travel
+  in the `x-provision-token` header — a new device has no device token yet.
+- Token revocation: the session record and its `tok:` entry are deleted, so the
+  token stops resolving. It is checked in the authorization middleware, so a
+  revoked token gives 401 both on `/api/*` and on the `/ws`
   upgrade. Revocation cuts that device's live sockets (close code 4401), erases
   its APNs token, deletes its identity record and one-time prekeys from the
   user's `UserDO` and broadcasts a `devices` frame: peers drop their cached
@@ -351,14 +355,20 @@ Every chat (of at most `PRESENCE_GROUP_MAX` = 100 members) makes its members
 watch one another: when a roster changes, `ConversationDO` tells each member's
 object who its peers in that chat are, and the object records both directions —
 `sub:<S>` (S watches me, through which chats) and `watch:<T>` (I watch T). The
-source decides what a subscriber may see, in a handful of D1 statements for
-the whole subscriber list: a direct request it has not yet accepted withholds
+source decides what a subscriber may see, out of its own storage: a direct
+request it has not yet accepted withholds
 its presence from the sender, blocks in either direction hide it, then the
-last-seen tier with its named exceptions, and a subscriber who hid their own
-last seen sees nobody's. Whoever passes is pushed the presence — a snapshot
+last-seen tier with its named exceptions. The other half of that rule — hiding
+your own last seen blinds you to everyone else's — is enforced at the
+subscriber, which refuses a copy while its own tier is «nobody» and drops the
+ones it holds when the tier is set: one storage read instead of a fan over the
+whole subscriber list. Whoever passes is pushed the presence — a snapshot
 when the relation starts or the request is accepted, a delta on every flip — and
 keeps it as `peer:<T>`; a change that can take a presence away (a tighter tier,
-a block) tells the subscriber to drop the copy. `GET /api/users/:id` answers
+a block) tells the subscriber to drop the copy. The same road carries the
+card: `pcard:<T>` is the subscriber's copy of T's name, handle and — as far as
+T's avatar rule lets that one subscriber see it — photo and bio, which is what
+answers the chat list without asking anyone. `GET /api/users/:id` answers
 presence from the viewer's own copy, and a socket that has just connected is
 handed every copy its object holds as `presence` frames, so the client's
 picture of who is online is full before anyone flips. Deleting an account tells
@@ -400,11 +410,13 @@ Tombstones are skipped as `msg` frames in a page and arrive as `deleted`.
 
 ## Blocks in detail
 
-The block list is the `blocks` table in D1, directed: a row `(user_id,
-blocked_id)` means "user_id has blocked blocked_id". The `ConversationDO` of a
-direct chat reads the pair lazily and holds it in memory; `POST /api/block`
-drops that cache with a `/block-changed` frame (the chat may not exist yet at
-that point). Blocks are not checked in groups.
+A block is directed and lives in both objects: `blk:<peerId>` in the blocker's
+says "I blocked them", `blkby:<peerId>` in the blocked one's is the mirror the
+blocker writes. Either side therefore answers for the pair in one read, which
+is what `/block-pair` serves. The `ConversationDO` of a direct chat asks once
+and holds the pair in memory; `POST /api/block` drops that cache with a
+`/block-changed` frame (the chat may not exist yet at that point). Blocks are
+not checked in groups.
 
 The behaviour inside an existing direct chat is the one messengers have settled
 on: from the server's answers, a blocked user cannot tell a block from a peer who
@@ -711,8 +723,8 @@ overtook it: a smaller number does not reach the icon (`BadgeStore`).
 
 The APNs answer is parsed:
 
-- `410` — the device token is dead: the record is deleted both from
-  `UserDO` storage and from `devices.apns_token` in D1;
+- `410` — the device token is dead: the record is deleted from `UserDO`
+  storage, and the device stays a session with no push address;
 - `429` and `5xx` — up to two retries, after 500 ms and 1500 ms;
 - `403 ExpiredProviderToken` — a forced JWT re-issue and one more attempt;
 - `400` and everything else — the code and `reason` go to the log, no retry.
@@ -742,11 +754,33 @@ defaults to `com.msngr.msngr`. A limit of that channel: `simctl push` does not
 launch the Notification Service Extension — see
 `docs/research/nse-simulator-experiment.md`.
 
-## D1 schema and migrations
+## Where the server keeps things
 
-The schema lives in `server/migrations/` as numbered files (`0001_init.sql`,
+Everything the server holds lives in a Durable Object, addressed by what the
+question is about. There is no shared table left, and no read on any path
+reaches D1: the binding is not in `Env`.
+
+| object | addressed by | holds |
+|--------|--------------|-------|
+| `UserDO` | user id | sockets, chat list, presence, the push queue; the identity and prekeys; the card, the sessions with their token hashes, the blocks, the privacy tiers and exceptions, the address book, the bots this account runs, the reports it filed |
+| `ConversationDO` | chat id | the journal, the roster, the marks, the fanout outbox, and a copy of each member's public card |
+| `HandleDO` | folded handle | who owns it, and the quarantine after a rename |
+| `DirectoryDO` | `shard:<0..3>` | the people-search index, and the phone-hash index sharded by the hash |
+| `StoriesDO` | author id | the stories, the watches, the hearts, the links |
+| `LookupDO` | `<kind>:<code>` | provisioning and restore sessions, invite codes — the three things a caller names before it has an account |
+| `ApnsTokenDO` | singleton | the APNs provider JWT |
+
+A user avatar's blob id carries its owner (`avatar-<userId>-<ulid>`), so the
+bytes route applies that person's own rule without an index from a blob back to
+an account; a chat avatar has no owner part.
+
+## D1 migrations
+
+The migrations live in `server/migrations/` as numbered files (`0001_init.sql`,
 `0002_…`), applied by wrangler's own runner; the directory and the journal table
 are set in `wrangler.jsonc` (`migrations_dir`, `migrations_table: d1_migrations`).
+`0022` drops the last of the tables; the binding stays so a stand that still
+has them can be brought to that state.
 
 ```
 npm run migrate:local     # the local wrangler dev database

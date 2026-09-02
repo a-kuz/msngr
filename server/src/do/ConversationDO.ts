@@ -1,9 +1,14 @@
 import type { Env, ChatState, ChatKind, ChatMember, ChatPolicy, StoredMsg, ServerFrame, PublicUser } from "../types";
 import { json, err, seqKey, SEQ_PAD, nowSec, shouldArmAlarm, readPrivacy } from "../util";
 import { PRESENCE_GROUP_MAX } from "../presence";
+
+/// The chat's copy of one member's public card.
+function cardKey(userId: string): string {
+  return "card:" + userId;
+}
 import { removeParticipant } from "../calls/livekit";
 import {
-  newCounters, snapshot, diff, logPerf, wrapState, wrapDB, wrapStub, type PerfCounters,
+  newCounters, snapshot, diff, logPerf, wrapState, wrapStub, type PerfCounters,
 } from "../perf";
 
 /// Fanout queue. A frame is never delivered on the sender's critical path: it
@@ -222,7 +227,6 @@ export class ConversationDO implements DurableObject {
     if (env.PERF_LOG) {
       this.perf = newCounters();
       this.state = wrapState(state, this.perf);
-      this.env = { ...env, DB: wrapDB(env.DB, this.perf) };
     }
   }
 
@@ -341,10 +345,14 @@ export class ConversationDO implements DurableObject {
     const peer = [...members.keys()].find((u) => u !== me);
     if (!peer) return null;
     if (!this.blockers) {
-      const rows = await this.env.DB.prepare(
-        "SELECT user_id FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)"
-      ).bind(me, peer, peer, me).all<{ user_id: string }>();
-      this.blockers = new Set(rows.results.map((r) => r.user_id));
+      // either side answers for the pair: a block is written in the blocker's
+      // object and mirrored into the blocked one's
+      const r = await this.userStub(me).fetch(
+        `https://do/block-pair?peer=${encodeURIComponent(peer)}`);
+      const j = (await r.json()) as { byMe: boolean; byPeer: boolean };
+      this.blockers = new Set([
+        ...(j.byMe ? [me] : []), ...(j.byPeer ? [peer] : []),
+      ]);
     }
     return { peer, byMe: this.blockers.has(me), byPeer: this.blockers.has(peer) };
   }
@@ -364,7 +372,7 @@ export class ConversationDO implements DurableObject {
     userIds: string[], flag: "readReceipts" | "typing"
   ): Promise<string[]> {
     const settings = await Promise.all(
-      userIds.map((u) => readPrivacy(this.env.DB, u).then((p) => ({ u, on: p[flag] })))
+      userIds.map((u) => readPrivacy(this.env, u).then((p) => ({ u, on: p[flag] })))
     );
     return settings.filter((s) => !s.on).map((s) => s.u);
   }
@@ -734,29 +742,17 @@ export class ConversationDO implements DurableObject {
   /// Members of a direct chat a message is not delivered to because of a block,
   /// whichever side set it.
   private async blockedPeers(from: string): Promise<string[]> {
-    const meta = (await this.loadMeta())!;
-    if (meta.kind !== "direct") return [];
-    const members = await this.loadMembers();
-    const peers = [...members.keys()].filter((u) => u !== from);
-    const out: string[] = [];
-    for (const peer of peers) {
-      const row = await this.env.DB.prepare(
-        "SELECT 1 FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)"
-      ).bind(from, peer, peer, from).first();
-      if (row) out.push(peer);
-    }
-    return out;
+    const b = await this.blockCheck(from);
+    return b && (b.byMe || b.byPeer) ? [b.peer] : [];
   }
 
   /// Whether any of these accounts is a bot. Asked when the roster changes and
-  /// stored on the meta, never on the send path.
+  /// stored on the meta, never on the send path; the cards the chat already
+  /// holds for its roster say it.
   private async anyBot(ids: string[]): Promise<boolean> {
     if (!ids.length) return false;
-    const placeholders = ids.map(() => "?").join(",");
-    const row = await this.env.DB.prepare(
-      `SELECT 1 FROM users WHERE bot_owner IS NOT NULL AND id IN (${placeholders}) LIMIT 1`
-    ).bind(...ids).first();
-    return !!row;
+    const cards = await this.cards(ids);
+    return ids.some((id) => cards.get(id)?.bot_owner);
   }
 
   private async chatState(): Promise<ChatState> {
@@ -794,13 +790,47 @@ export class ConversationDO implements DurableObject {
   /// and avatar are per-viewer private, and this frame goes to every member.
   private async memberCards(state: { members: Array<{ userId: string }> }) {
     const ids = state.members.map((m) => m.userId);
-    if (!ids.length) return [];
-    const placeholders = ids.map(() => "?").join(",");
-    const rows = await this.env.DB.prepare(
-      `SELECT id, username, display_name, bot_owner, bot_commands
-       FROM users WHERE id IN (${placeholders})`
-    ).bind(...ids).all<{ id: string; username: string; display_name: string }>();
-    return rows.results.map((u) => ({ ...u, bio: null, avatar_id: null }));
+    const cards = await this.cards(ids);
+    return ids.flatMap((id) => (cards.has(id) ? [cards.get(id)!] : []));
+  }
+
+  /// The roster's public cards, held as copies under `card:<userId>`: a member
+  /// list costs no call to anyone's object, and a card that changes arrives
+  /// here as the `/profile` frame its owner's object fans out. A member the
+  /// chat has no copy of yet is asked once and written down.
+  private async cards(ids: string[]): Promise<Map<string, PublicUser>> {
+    const out = new Map<string, PublicUser>();
+    if (!ids.length) return out;
+    const missing: string[] = [];
+    for (let i = 0; i < ids.length; i += 128) {
+      const part = ids.slice(i, i + 128);
+      const got = await this.state.storage.get<PublicUser>(part.map(cardKey));
+      for (const id of part) {
+        const card = got.get(cardKey(id));
+        if (card) out.set(id, card);
+        else missing.push(id);
+      }
+    }
+    if (missing.length) {
+      const fetched = await Promise.all(missing.map(async (id) => {
+        try {
+          const r = await this.userStub(id).fetch("https://do/card-public");
+          if (!r.ok) return null;
+          return ((await r.json()) as { user: PublicUser }).user;
+        } catch (e) {
+          console.warn(`card of ${id} failed: ${e}`);
+          return null;
+        }
+      }));
+      const puts: Record<string, PublicUser> = {};
+      for (const card of fetched) {
+        if (!card) continue;
+        out.set(card.id, card);
+        puts[cardKey(card.id)] = card;
+      }
+      if (Object.keys(puts).length) await this.state.storage.put(puts);
+    }
+    return out;
   }
 
   /// Tells the user objects about a roster change: the users in `userIds`
@@ -809,6 +839,12 @@ export class ConversationDO implements DurableObject {
   /// are what presence subscriptions are built from, so a chat above
   /// PRESENCE_GROUP_MAX names none.
   private async notifyUserDOsChatList(userIds: string[], removed = false) {
+    // a card is kept for the roster, so it goes when its owner does
+    if (removed && userIds.length) {
+      for (let i = 0; i < userIds.length; i += 128) {
+        await this.state.storage.delete(userIds.slice(i, i + 128).map(cardKey));
+      }
+    }
     const meta = (await this.loadMeta())!;
     const members = await this.loadMembers();
     const staying = [...members.keys()].filter((u) => !userIds.includes(u));
@@ -1128,7 +1164,7 @@ export class ConversationDO implements DurableObject {
           await this.state.storage.put(this.markKey("dlvr", b.userId), upTo);
           // the mark above is the reader's own cursor and always moves; whether the
           // peer learns about it is the readReceipts setting, reciprocal on both sides
-          if ((await readPrivacy(this.env.DB, b.userId)).readReceipts) {
+          if ((await readPrivacy(this.env, b.userId)).readReceipts) {
             const skip = await this.membersWithFlagOff([...members.keys()], "readReceipts");
             await this.fanout(
               { t: "receipt", chatId: meta.chatId, kind: "delivered", upToSeq: upTo, by: b.userId },
@@ -1171,7 +1207,7 @@ export class ConversationDO implements DurableObject {
           });
           // the marks above are the reader's own cursor and always move; whether the
           // peer sees the receipt is the readReceipts setting, reciprocal on both sides
-          if ((await readPrivacy(this.env.DB, b.userId)).readReceipts) {
+          if ((await readPrivacy(this.env, b.userId)).readReceipts) {
             const skip = await this.membersWithFlagOff([...members.keys()], "readReceipts");
             await this.fanout(
               { t: "receipt", chatId: meta.chatId, kind: "read", upToSeq: b.upToSeq, by: b.userId },
@@ -1190,7 +1226,7 @@ export class ConversationDO implements DurableObject {
         if (!members.get(b.userId)!.accepted) return json({ ok: true });
         if (await this.blockedEitherWay(b.userId)) return json({ ok: true });
         // the typing setting is reciprocal: off means neither sending nor receiving it
-        if (!(await readPrivacy(this.env.DB, b.userId)).typing) return json({ ok: true });
+        if (!(await readPrivacy(this.env, b.userId)).typing) return json({ ok: true });
         const typingOff = await this.membersWithFlagOff([...members.keys()], "typing");
         await this.fanout(
           { t: "typing", chatId: meta.chatId, from: b.userId, kind: b.kind },
@@ -1461,6 +1497,9 @@ export class ConversationDO implements DurableObject {
         const b = (await req.json()) as { userId: string; user: PublicUser };
         const members = await this.loadMembers();
         if (!members.has(b.userId)) return json({ ok: true });
+        // the chat's own copy of the card moves with the frame
+        await this.state.storage.put(cardKey(b.userId),
+          { ...b.user, bio: null, avatar_id: null });
         await this.fanout(
           { t: "profile", user: b.user },
           { except: b.userId, skip: await this.blockedPeers(b.userId) }

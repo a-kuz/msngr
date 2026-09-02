@@ -1,5 +1,5 @@
 import { verifyAsync as ed25519VerifyAsync } from "@noble/ed25519";
-import type { PrivacySettings, LastSeenVisibility } from "./types";
+import type { PrivacySettings, PublicUser } from "./types";
 
 const ULID_CHARS = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
@@ -35,8 +35,20 @@ export async function sha256hex(input: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export function newToken(): string {
-  return b64url(crypto.getRandomValues(new Uint8Array(32)));
+/// A bearer token: the account it belongs to, a dot, and the secret. Nothing
+/// outside a user's own object knows which devices exist, so the token has to
+/// name the object that can answer for it; the secret is what the answer is
+/// checked against, and the stored hash covers the whole token, so a secret
+/// lifted from one account proves nothing on another.
+export function newToken(userId: string): string {
+  return userId + "." + b64url(crypto.getRandomValues(new Uint8Array(32)));
+}
+
+/// The account a token names, or null when it is not one of ours.
+export function tokenOwner(token: string): string | null {
+  const dot = token.indexOf(".");
+  if (dot <= 0 || dot === token.length - 1) return null;
+  return token.slice(0, dot);
 }
 
 /// Code a device being linked shows for its owner to type on a device that is
@@ -106,97 +118,87 @@ export function shouldArmAlarm(pending: number | null, at: number, now: number):
   return !(pending > now && pending <= at);
 }
 
-/// A user's privacy row, or the defaults if they never set one. Shared by the
-/// worker (for the REST endpoint and presence visibility) and ConversationDO
-/// (for gating receipts, typing and presence fanout).
-export async function readPrivacy(db: D1Database, userId: string): Promise<PrivacySettings> {
-  const row = await db.prepare(
-    `SELECT last_seen, avatar_visibility, phone_discovery, group_invites, call_privacy,
-       read_receipts, typing
-     FROM privacy_settings WHERE user_id = ?`
-  ).bind(userId).first<{
-    last_seen: string; avatar_visibility: string; phone_discovery: string;
-    group_invites: string; call_privacy: string; read_receipts: number; typing: number;
-  }>();
-  if (!row) {
-    return { lastSeen: "everyone", avatar: "everyone", phoneDiscovery: "everyone",
-             groupInvites: "everyone", callPrivacy: "everyone", readReceipts: true, typing: true };
-  }
-  return {
-    lastSeen: row.last_seen as PrivacySettings["lastSeen"],
-    avatar: row.avatar_visibility as PrivacySettings["avatar"],
-    phoneDiscovery: row.phone_discovery as PrivacySettings["phoneDiscovery"],
-    groupInvites: row.group_invites as PrivacySettings["groupInvites"],
-    callPrivacy: row.call_privacy as PrivacySettings["callPrivacy"],
-    readReceipts: row.read_receipts === 1,
-    typing: row.typing === 1,
-  };
+/// The defaults a user who never opened the privacy screen is read with.
+export const PRIVACY_DEFAULTS: PrivacySettings = {
+  lastSeen: "everyone", avatar: "everyone", phoneDiscovery: "everyone",
+  groupInvites: "everyone", callPrivacy: "everyone", readReceipts: true, typing: true,
+};
+
+/// Every read that goes to another person's object needs only the namespace.
+type Objects = { USER_DO: DurableObjectNamespace };
+
+export function userStub(env: Objects, userId: string) {
+  return env.USER_DO.get(env.USER_DO.idFromName(userId));
 }
 
-/// Whether `viewerId` is in `ownerId`'s address book. The book is a set of
-/// phone hashes in the owner's object; the viewer's current hash is read
-/// here, so a number registering or changing hands needs no propagation.
-export async function isContactOf(
-  env: { DB: D1Database; USER_DO: DurableObjectNamespace },
-  ownerId: string, viewerId: string
-): Promise<boolean> {
-  const row = await env.DB.prepare("SELECT phone_hash FROM users WHERE id = ?")
-    .bind(viewerId).first<{ phone_hash: string | null }>();
-  if (!row?.phone_hash) return false;
-  const stub = env.USER_DO.get(env.USER_DO.idFromName(ownerId));
-  const res = await stub.fetch(
-    `https://do/contact-of?hash=${encodeURIComponent(row.phone_hash)}`);
-  const r = (await res.json()) as { contact: boolean };
-  return r.contact;
+/// The settings a privacy question can be asked about.
+export type PrivacySetting =
+  "last_seen" | "avatar" | "phone_discovery" | "group_invites" | "call";
+
+/// A user's privacy settings, from their own object. Shared by the worker (for
+/// the REST endpoint) and ConversationDO (for gating receipts and typing).
+export async function readPrivacy(env: Objects, userId: string): Promise<PrivacySettings> {
+  const r = await userStub(env, userId).fetch("https://do/privacy-read");
+  const j = (await r.json()) as { privacy?: PrivacySettings };
+  return j.privacy ?? PRIVACY_DEFAULTS;
 }
 
 /// One question every tier answers: may `viewerId` see `ownerId`'s `setting`?
-/// A named exception decides first — an allow row opens it whatever the tier
-/// says, a deny row closes it the same way — and only then the tier itself:
-/// everyone, contacts (the owner's synced book), nobody.
+/// The owner's object decides — the tier, the named exceptions and the address
+/// book that "contacts" means are all its own storage — so the whole judgement
+/// is one call, whoever asks.
 export async function privacyAllows(
-  env: { DB: D1Database; USER_DO: DurableObjectNamespace },
-  ownerId: string, viewerId: string,
-  setting: "last_seen" | "avatar" | "phone_discovery" | "group_invites" | "call",
-  tier: LastSeenVisibility
+  env: Objects, ownerId: string, viewerId: string, setting: PrivacySetting,
 ): Promise<boolean> {
   if (ownerId === viewerId) return true;
-  const exception = await env.DB.prepare(
-    "SELECT allow FROM privacy_exceptions WHERE user_id = ? AND setting = ? AND peer_id = ?"
-  ).bind(ownerId, setting, viewerId).first<{ allow: number }>();
-  if (exception) return exception.allow === 1;
-  if (tier === "everyone") return true;
-  if (tier === "nobody") return false;
-  return isContactOf(env, ownerId, viewerId);
+  return (await privacyChecks(env, ownerId, viewerId, [setting]))[setting];
 }
 
-/// The user ids among `ids` whose profile photo and bio are hidden from this
-/// viewer: "nobody" hides from everyone, "contacts" from whoever the owner
-/// does not hold in their own address book, either way overridden by the
-/// owner's named exceptions.
-export async function hiddenAvatarOwners(
-  env: { DB: D1Database; USER_DO: DurableObjectNamespace },
-  viewerId: string, ids: string[]
-): Promise<Set<string>> {
-  const hidden = new Set<string>();
-  if (!ids.length) return hidden;
-  const placeholders = ids.map(() => "?").join(",");
-  const restricted = await env.DB.prepare(
-    `SELECT user_id, avatar_visibility FROM privacy_settings
-     WHERE avatar_visibility != 'everyone' AND user_id IN (${placeholders})`
-  ).bind(...ids).all<{ user_id: string; avatar_visibility: string }>();
-  const denied = await env.DB.prepare(
-    `SELECT user_id FROM privacy_exceptions
-     WHERE setting = 'avatar' AND allow = 0 AND peer_id = ? AND user_id IN (${placeholders})`
-  ).bind(viewerId, ...ids).all<{ user_id: string }>();
-  const candidates = new Map(restricted.results.map((r) => [r.user_id, r.avatar_visibility]));
-  for (const row of denied.results) candidates.set(row.user_id, "nobody-exception");
-  for (const [ownerId, tierRaw] of candidates) {
-    if (ownerId === viewerId) continue;
-    const tier = (tierRaw === "nobody-exception" ? "nobody" : tierRaw) as LastSeenVisibility;
-    if (!(await privacyAllows(env, ownerId, viewerId, "avatar", tier))) hidden.add(ownerId);
-  }
-  return hidden;
+/// Several of the same owner's settings in one call: a user card wants the
+/// photo rule and the call rule together.
+export async function privacyChecks(
+  env: Objects, ownerId: string, viewerId: string, settings: PrivacySetting[],
+): Promise<Record<string, boolean>> {
+  if (ownerId === viewerId) return Object.fromEntries(settings.map((s) => [s, true]));
+  const r = await userStub(env, ownerId).fetch("https://do/privacy-check", {
+    method: "POST", body: JSON.stringify({ viewerId, settings }),
+  });
+  const j = (await r.json()) as { allow?: Record<string, boolean> };
+  return j.allow ?? Object.fromEntries(settings.map((s) => [s, false]));
+}
+
+/// One person's card as `viewerId` may see it: the owner's object blanks the
+/// photo and the bio when its own rule closes them to this viewer.
+export async function cardFor(
+  env: Objects, viewerId: string, targetId: string,
+): Promise<PublicUser | null> {
+  const r = await userStub(env, targetId).fetch(
+    `https://do/card?viewer=${encodeURIComponent(viewerId)}`);
+  if (!r.ok) return null;
+  const j = (await r.json()) as { user: PublicUser | null };
+  return j.user;
+}
+
+/// A user avatar's id carries its owner: the bytes route has to apply that
+/// person's own rule to whoever asks for them, and there is no index from a
+/// blob back to an account. A chat avatar has no owner part.
+export function userAvatarId(userId: string): string {
+  return `avatar-${userId}-${ulid()}`;
+}
+
+export function avatarOwner(mediaId: string): string | null {
+  const m = /^avatar-([0-9A-HJKMNP-TV-Z]{26})-/.exec(mediaId);
+  return m ? m[1] : null;
+}
+
+/// The same for a list of people, asked of every object at once.
+export async function cardsFor(
+  env: Objects, viewerId: string, ids: string[],
+): Promise<Map<string, PublicUser>> {
+  const out = new Map<string, PublicUser>();
+  const cards = await Promise.all(ids.map((id) => cardFor(env, viewerId, id)));
+  for (const card of cards) if (card) out.set(card.id, card);
+  return out;
 }
 
 export const SEQ_PAD = 10;

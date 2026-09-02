@@ -9,7 +9,8 @@
       { "name": "APNS_DO", "class_name": "ApnsTokenDO" },
       { "name": "HANDLE_DO", "class_name": "HandleDO" },
       { "name": "DIRECTORY_DO", "class_name": "DirectoryDO" },
-      { "name": "STORIES_DO", "class_name": "StoriesDO" }
+      { "name": "STORIES_DO", "class_name": "StoriesDO" },
+      { "name": "LOOKUP_DO", "class_name": "LookupDO" }
     ]
   },
   "migrations": [
@@ -17,8 +18,12 @@
     { "tag": "v2", "new_sqlite_classes": ["ApnsTokenDO"] },
     { "tag": "v3", "renamed_classes": [{ "from": "UserSessionDO", "to": "UserDO" }] },
     { "tag": "v4", "new_sqlite_classes": ["HandleDO", "DirectoryDO"] },
-    { "tag": "v5", "new_sqlite_classes": ["StoriesDO"] }
+    { "tag": "v5", "new_sqlite_classes": ["StoriesDO"] },
+    { "tag": "v6", "new_sqlite_classes": ["LookupDO"] }
   ],
+  // The database holds nothing: every table the server ever kept has followed
+  // its owner into a Durable Object. The binding stays so the migration that
+  // drops the last of them can be applied where a stand still has them.
   "d1_databases": [
     {
       "binding": "DB",
