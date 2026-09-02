@@ -3098,6 +3098,27 @@ public actor SyncEngine {
     struct DeleteActionPayload: Codable { var seqs: [Int]; var forAll: Bool }
     struct BlockActionPayload: Codable { var userId: String; var blocked: Bool }
     struct PinActionPayload: Codable { var seq: Int?; var pinned: Bool? }
+    struct MuteActionPayload: Codable { var muted: Bool; var mutedUntil: Double? }
+
+    /// Mutes or unmutes a chat: the local row right away (the list and the
+    /// banner decision read it), the server through the action queue. The queue
+    /// is what keeps a snapshot fetched before the request landed from putting
+    /// the old flag back, and what carries the decision across being offline.
+    public func setMuted(chatId: String, muted: Bool, until: Double? = nil) async throws {
+        let payload = String(data: try JSONEncoder().encode(
+            MuteActionPayload(muted: muted, mutedUntil: until)), encoding: .utf8)!
+        try await db.write { dbc in
+            try dbc.execute(sql: "UPDATE chat SET muted = ?, mutedUntil = ? WHERE id = ?",
+                            arguments: [muted, until, chatId])
+            try dbc.execute(
+                sql: """
+                INSERT INTO pendingAction (id, type, chatId, payload, createdAt) VALUES (?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, attempts = 0
+                """,
+                arguments: ["mute:\(chatId)", "mute", chatId, payload, Date().timeIntervalSince1970])
+        }
+        actionWakeup.continuation.yield()
+    }
 
     /// Read actions collapse per chat: one row per chatId, the larger upToSeq wins.
     static func upsertReadAction(_ dbc: GRDB.Database, chatId: String, upToSeq: Int) throws {
@@ -3152,6 +3173,9 @@ public actor SyncEngine {
                 case "pin":
                     let p = try JSONDecoder().decode(PinActionPayload.self, from: Data(a.payload.utf8))
                     try await api.pinMessage(a.chatId ?? "", seq: p.seq, pinned: p.pinned ?? true)
+                case "mute":
+                    let p = try JSONDecoder().decode(MuteActionPayload.self, from: Data(a.payload.utf8))
+                    try await api.setChatFlags(a.chatId ?? "", muted: p.muted, mutedUntil: p.mutedUntil)
                 case "deferCancel":
                     // recall the deferred envelope the server holds for this send
                     let p = try JSONDecoder().decode(DeferCancelPayload.self, from: Data(a.payload.utf8))
@@ -3468,9 +3492,21 @@ public actor SyncEngine {
                         max(0, s.lastSeq - max(myRead, resume)),
                         s.plaintext ?? (s.kind == ChatKind.channel.rawValue)])
         if let flags {
+            // a mute this device set and the server has not confirmed yet is
+            // kept the same way as a pin: the snapshot was built before the
+            // request landed and still carries the previous flag
             try dbc.execute(
-                sql: "UPDATE chat SET pinned = ?, muted = ?, mutedUntil = ?, archived = ? WHERE id = ?",
-                arguments: [flags.pinned, flags.muted, flags.mutedUntil, flags.archived, s.chatId])
+                sql: """
+                UPDATE chat SET pinned = ?, archived = ?,
+                  muted = CASE
+                    WHEN EXISTS(SELECT 1 FROM pendingAction WHERE type = 'mute' AND chatId = chat.id)
+                    THEN chat.muted ELSE ? END,
+                  mutedUntil = CASE
+                    WHEN EXISTS(SELECT 1 FROM pendingAction WHERE type = 'mute' AND chatId = chat.id)
+                    THEN chat.mutedUntil ELSE ? END
+                WHERE id = ?
+                """,
+                arguments: [flags.pinned, flags.archived, flags.muted, flags.mutedUntil, s.chatId])
         }
         try dbc.execute(sql: "DELETE FROM member WHERE chatId = ?", arguments: [s.chatId])
         for m in s.members {

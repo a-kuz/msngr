@@ -15,6 +15,10 @@ public struct NotificationContent: Equatable, Sendable {
     /// every member of a group chat; the system tells a group conversation by
     /// the number of recipients
     public var groupMembers: [NotificationContentBuilder.SenderInfo] = []
+    /// The picture the banner shows next to the text: the photo itself, a
+    /// video's preview frame, the first photo of an album. Nil when the
+    /// message has no picture or the privacy setting hides content.
+    public var previewMedia: MediaInfo?
 
     public init(title: String, subtitle: String?, body: String, threadIdentifier: String,
                 sender: NotificationContentBuilder.SenderInfo? = nil,
@@ -90,13 +94,40 @@ public enum NotificationContentBuilder {
         let groupTitle = chat.title?.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = name.isEmpty
             ? (chat.isGroup ? (groupTitle ?? CoreStrings.string("Group")) : "Msngr") : name
-        return NotificationContent(
+        var content = NotificationContent(
             title: title,
             subtitle: chat.isGroup
                 ? (groupTitle?.isEmpty == false ? groupTitle : CoreStrings.string("Group")) : nil,
             body: showsMessageText ? preview(payload) : hiddenTextBody,
             threadIdentifier: chat.chatId,
             sender: sender, chat: chat)
+        if showsMessageText { content.previewMedia = previewMedia(payload) }
+        return content
+    }
+
+    /// Largest picture a banner downloads for its thumbnail. The extension
+    /// runs in a few tens of megabytes and has seconds, not minutes.
+    public static let previewMediaSizeLimit = 8 * 1024 * 1024
+
+    /// The picture of a message, as the blob the banner can fetch and decrypt
+    /// on its own: a photo, a video's preview frame or an album's first photo.
+    public static func previewMedia(_ payload: ContentPayload) -> MediaInfo? {
+        switch payload.kind {
+        case "photo":
+            guard let media = payload.media, !media.mediaId.isEmpty,
+                  media.size <= previewMediaSizeLimit else { return nil }
+            return media
+        case "video":
+            guard let media = payload.media, let id = media.thumbMediaId, !id.isEmpty,
+                  let key = media.thumbKey, let hash = media.thumbHash else { return nil }
+            return MediaInfo(type: "photo", mediaId: id, key: key, hash: hash, size: 0, mime: "image/jpeg")
+        case "album":
+            guard let first = payload.album?.first(where: { $0.type == "photo" && !$0.mediaId.isEmpty }),
+                  first.size <= previewMediaSizeLimit else { return nil }
+            return first
+        default:
+            return nil
+        }
     }
 
     /// A peer reacted to your message: the sender's name in the title, the

@@ -83,6 +83,18 @@ private let receiptAPI: APIClient? = {
     return APIClient(baseURL: base, token: session.token)
 }()
 
+/// Downloads the picture a banner shows: the blob is decrypted with the key
+/// from the message, and the cache is the extension's own.
+private let bannerMedia: MediaManager? = receiptAPI.map {
+    MediaManager(api: $0,
+                 cacheDir: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                     .appendingPathComponent("media"))
+}
+
+/// How long a banner waits for its picture. The extension has about thirty
+/// seconds in all, and the text is worth more than the thumbnail.
+private let bannerMediaTimeout: TimeInterval = 12
+
 /// Answers for the messages this burst put on the device, and for anything an
 /// earlier extension queued and was killed before sending. The send is not
 /// waited for: the banner does not owe the network anything, and a receipt that
@@ -222,8 +234,25 @@ private final class PushAnswer: @unchecked Sendable {
             let avatar = CommunicationNotification.cachedAvatarFile(built.sender?.avatarId)
             let groupAvatar = built.chat?.isGroup == true
                 ? CommunicationNotification.cachedAvatarFile(built.chat?.avatarId) : nil
-            handler(CommunicationNotification.apply(to: content, built: built, ownUserId: ownUserId,
-                                                    avatarFile: avatar, groupAvatarFile: groupAvatar))
+            guard let media = built.previewMedia, let bannerMedia else {
+                handler(CommunicationNotification.apply(to: content, built: built, ownUserId: ownUserId,
+                                                        avatarFile: avatar, groupAvatarFile: groupAvatar))
+                return
+            }
+            // the picture is fetched with a deadline: past it the banner goes
+            // out with the text alone, and a download that finishes later
+            // only fills the cache the app will read from
+            let content = self.content
+            Task {
+                let file = await Self.firstToFinish(timeout: bannerMediaTimeout) {
+                    try? await bannerMedia.notificationAttachmentCopy(media)
+                }
+                journal?.record(.answered, chatId: step.item.chatId, seq: step.item.seq,
+                                detail: file == nil ? "preview:none" : "preview:attached")
+                handler(CommunicationNotification.apply(to: content, built: built, ownUserId: ownUserId,
+                                                        avatarFile: avatar, groupAvatarFile: groupAvatar,
+                                                        attachmentFile: file))
+            }
         case .skip(let reason):
             journal?.record(.answered, chatId: step.item.chatId, seq: step.item.seq,
                             detail: "skip:" + reason.rawValue)
@@ -234,6 +263,21 @@ private final class PushAnswer: @unchecked Sendable {
             let silent = UNMutableNotificationContent()
             silent.badge = content.badge
             handler(silent)
+        }
+    }
+
+    /// The operation's value, or nil once `timeout` has passed without it.
+    private static func firstToFinish<T: Sendable>(timeout: TimeInterval,
+                                                  _ operation: @escaping @Sendable () async -> T?) async -> T? {
+        await withTaskGroup(of: T?.self) { group in
+            group.addTask { await operation() }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
         }
     }
 }

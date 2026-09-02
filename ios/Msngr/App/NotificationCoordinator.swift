@@ -121,11 +121,18 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
                 : nil
             var shaped = content
             shaped.groupMembers = info.groupMembers
+            // the message's picture as the banner's thumbnail; the copy is the
+            // system's to move, the cached original stays for the feed
+            var attachment: URL?
+            if let media = content.previewMedia, let manager = AppState.shared.media {
+                attachment = try? await manager.notificationAttachmentCopy(media)
+            }
             let built = CommunicationNotification.content(
                 shaped,
                 ownUserId: AppState.shared.session?.userId ?? "",
                 avatarFile: avatar,
                 groupAvatarFile: groupAvatar,
+                attachmentFile: attachment,
                 userInfo: ["chatId": chatId, "seq": seq])
             try? await UNUserNotificationCenter.current().add(
                 UNNotificationRequest(identifier: Message.feedId(chatId: chatId, seq: seq),
@@ -398,15 +405,11 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         try? await engine.enqueue(content: content, chatId: chatId)
     }
 
-    /// Mute from the banner: the local row first (the list and the decision
-    /// logic read it), then the server flag for pushes.
+    /// Mute from the banner: the same queued path as the list's swipe, so the
+    /// flag survives the snapshot the background launch is fetching alongside.
     private func muteChat(_ chatId: String) async {
-        guard await engineWhenReady() != nil, let db = self.db ?? AppState.shared.db else { return }
-        try? await db.write { dbc in
-            try dbc.execute(sql: "UPDATE chat SET muted = 1, mutedUntil = NULL WHERE id = ?",
-                            arguments: [chatId])
-        }
-        try? await AppState.shared.api?.setChatFlags(chatId, muted: true)
+        guard let engine = await engineWhenReady() else { return }
+        try? await engine.setMuted(chatId: chatId, muted: true)
     }
 }
 

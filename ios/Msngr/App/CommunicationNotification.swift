@@ -29,12 +29,14 @@ enum CommunicationNotification {
                         ownUserId: String,
                         avatarFile: URL?,
                         groupAvatarFile: URL? = nil,
+                        attachmentFile: URL? = nil,
                         userInfo: [String: Any]) -> UNNotificationContent {
         let content = UNMutableNotificationContent()
         content.sound = .default
         content.userInfo = userInfo
         return apply(to: content, built: built, ownUserId: ownUserId,
-                     avatarFile: avatarFile, groupAvatarFile: groupAvatarFile)
+                     avatarFile: avatarFile, groupAvatarFile: groupAvatarFile,
+                     attachmentFile: attachmentFile)
     }
 
     /// Writes the text into `content` and shapes it as a conversation from the
@@ -42,16 +44,23 @@ enum CommunicationNotification {
     /// - Parameters:
     ///   - avatarFile: sender avatar file; nil gives a banner without a picture.
     ///   - groupAvatarFile: group avatar; the banner shows the sender's avatar instead.
+    ///   - attachmentFile: the message's picture, shown as the banner's
+    ///     thumbnail; the system moves the file, so it has to be a copy.
     static func apply(to content: UNMutableNotificationContent,
                       built: NotificationContent,
                       ownUserId: String,
                       avatarFile: URL?,
-                      groupAvatarFile: URL? = nil) -> UNNotificationContent {
+                      groupAvatarFile: URL? = nil,
+                      attachmentFile: URL? = nil) -> UNNotificationContent {
         content.title = built.title
         content.subtitle = built.subtitle ?? ""
         content.body = built.body
         content.threadIdentifier = built.threadIdentifier
         content.categoryIdentifier = NotificationCategory.message
+        if let attachmentFile,
+           let attachment = try? UNNotificationAttachment(identifier: "preview", url: attachmentFile) {
+            content.attachments = [attachment]
+        }
 
         let isGroup = built.chat?.isGroup ?? false
         let senderId = built.sender?.userId ?? ""

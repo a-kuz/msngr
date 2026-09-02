@@ -692,12 +692,8 @@ struct ChatInfoView: View {
     /// nil unmutes; anything else mutes for the option's duration.
     private func applyMute(_ option: MuteOption?) {
         let until = option?.until()
-        Task {
-            try? await app.db.write { [id = model.chatId] dbc in
-                try dbc.execute(sql: "UPDATE chat SET muted = ?, mutedUntil = ? WHERE id = ?",
-                                arguments: [option != nil, until, id])
-            }
-            try? await app.api.setChatFlags(model.chatId, muted: option != nil, mutedUntil: until)
+        Task { [id = model.chatId] in
+            try? await app.engine?.setMuted(chatId: id, muted: option != nil, until: until)
         }
     }
 

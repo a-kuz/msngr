@@ -258,6 +258,26 @@ that changes the title's length; not diagnosed.
 
 ## Closed
 
+### A mute from the push banner was lost until the next relaunch — fixed
+Found 2026-09-02 in the live run of the extension on the simulator
+(qa/runs/2026-09-02-nse-simulator-run). «Без звука» on the banner of a killed
+app: the flags POST reached the server, but the background launch had fetched
+the chat snapshot a second earlier and `upsertChatState` wrote the old `false`
+over the local `1`; the list showed the chat unmuted until a relaunch. The mute
+now goes through the action queue (`SyncEngine.setMuted`), and the snapshot
+keeps a mute that is still in the queue, the way it keeps a queued pin.
+`MuteActionTests`; the re-run held the flag through the same race.
+
+### The fixture's notification grant kept the push topic non-waking — fixed
+Found 2026-09-02 while chasing pushes that reached a killed app only when it
+was foregrounded. `scripts/assets/notification-grant.bplist` still named
+`ai.enface.Msngr` as the section id inside the archive while the store key was
+`com.msngr.msngr`; SpringBoard treated the section as somebody else's and put
+our topic in NonWaking on every background. The id inside the blob is
+`com.msngr.msngr` now; the topic goes Opportunistic like a hand-granted one.
+A tool defect, not the product: a user who grants through the system alert
+never saw it.
+
 ### A delivered message vanished from an open chat once its ack arrived
 Found 2026-09-02 on the alfa home in the chat with bravo: a sent message
 kept its clock in the feed while the chat list already showed it delivered,

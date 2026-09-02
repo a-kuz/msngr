@@ -869,16 +869,24 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     simulator: the extension's banner, opened through the Notification Center's
     swipe → «Смотреть», «Ответить» typed with the app killed, the reply landed
     on the peer's side as the next seq — qa/runs/2026-09-02-nse-simulator-run)
-  - 🟡 mute the chat straight from the push (same category; the live run found
-    the flag lost to the snapshot the background launch fetches alongside, so
-    the mute now goes through the action queue like a pin — MuteActionTests;
-    the re-run is pending)
+  - ✅ mute the chat straight from the push (same category; the first live run
+    found the flag lost to the snapshot the background launch fetches alongside,
+    so the mute goes through the action queue like a pin and the snapshot keeps
+    a mute still in the queue — MuteActionTests; re-run 2026-09-02: the flag
+    held locally through the snapshot and reached the server —
+    qa/runs/2026-09-02-nse-simulator-run)
   - 🟡 a banner when someone reacts to your message («Реакция 👍 на «🖼 Альбом»»,
     live run 2026-08-28 on the WS path, NotificationContentTests for the body;
     the reaction frame is service on the wire — with the app killed there is no
     push for it yet, that part needs the server to raise a targeted push and
     the NSE to render it, device-gated)
-  - ⬜ a photo preview as an image in the notification
+  - ✅ a photo preview as an image in the notification: the extension fetches
+    and decrypts the photo (a video's preview frame, an album's first photo)
+    with a deadline and attaches it; the app's local banner does the same from
+    its cache (NotificationContentTests for the choice of picture; live
+    2026-09-02 on the simulator with the app killed, `preview:attached` in the
+    journal, the picture in the expanded banner —
+    qa/runs/2026-09-02-nse-simulator-run)
 - Sounds and exceptions
   - ✅ a sound of its own for one chat, overriding the default: a flag on the
     receiver's object, resolved when the push is sent; three bundled chimes

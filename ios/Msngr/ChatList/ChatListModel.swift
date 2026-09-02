@@ -359,11 +359,7 @@ final class ChatListModel: ObservableObject {
     func toggleMute(_ item: ChatListItem) {
         let muted = !MuteState.isMuted(muted: item.chat.muted, mutedUntil: item.chat.mutedUntil)
         Task {
-            try? await app.db.write { dbc in
-                try dbc.execute(sql: "UPDATE chat SET muted = ?, mutedUntil = NULL WHERE id = ?",
-                                arguments: [muted, item.chat.id])
-            }
-            try? await app.api.setChatFlags(item.chat.id, muted: muted)
+            try? await app.engine?.setMuted(chatId: item.chat.id, muted: muted)
         }
     }
 

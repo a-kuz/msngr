@@ -130,10 +130,22 @@ own user, and the fixtures they need are on the stand, not on the device.
   which `--var` does not reach, and «cmid swept behind the sender's ack» is red
   without them.
 - `simctl push` does not launch the NSE in any state of the app (the control
-  experiment is in `docs/research/nse-simulator-experiment.md`). On the simulator
-  you only see what the system does with the raw payload: the badge arrives, the
-  text stays unprocessed, the avatar is not filled in. Everything that goes
-  through the extension is verified on a device.
+  experiment is in `docs/research/nse-simulator-experiment.md`): with it you
+  only see what the system does with the raw payload. A real push from the
+  shared stand does launch the extension on the simulator, app killed or not,
+  and the whole extension family is verified there
+  (`docs/qa/runs/2026-09-02-nse-simulator-run.md`). Two things get in the way:
+  a push topic SpringBoard keeps «non-waking» waits at Apple until the app is
+  foregrounded — that is what a notification grant with the wrong section id
+  looked like — and stale PlugInKit registrations of the extension from old
+  bundle ids on a long-lived simulator make SpringBoard answer «can be
+  modified: 0» and skip the extension (`pluginkit -m -v -p
+  com.apple.usernotifications.service` lists them, `pluginkit -r <path>`
+  removes one). The extension's journal is `nse-journal.log` in the group
+  container; in `log show` its process is found by `processImagePath CONTAINS
+  "NotificationService.appex"`. Apple delivers to a backgrounded simulator
+  with a delay of seconds to minutes; the order in the journal is the truth,
+  not the clock.
 - "Offline" in the scenarios means a stopped stand (`systemctl stop
   msngr-wrangler` on the shared one, a killed `wrangler dev` on your own), not
   a disabled network.

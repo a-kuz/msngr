@@ -60,6 +60,60 @@ final class NotificationContentTests: XCTestCase {
 
     // MARK: - 1:1
 
+    // MARK: - The banner's picture
+
+    private func photo(_ id: String, size: Int = 1000) -> MediaInfo {
+        MediaInfo(type: "photo", mediaId: id, key: "k", hash: "h", size: size, mime: "image/jpeg")
+    }
+
+    func testPhotoIsTheBannerPicture() {
+        var p = payload("photo", text: "look")
+        p.media = photo("m1")
+        XCTAssertEqual(build(p)?.previewMedia?.mediaId, "m1")
+    }
+
+    func testVideoPreviewFrameIsTheBannerPicture() {
+        var p = payload("video")
+        var m = MediaInfo(type: "video", mediaId: "v1", key: "k", hash: "h", size: 5_000_000, mime: "video/mp4")
+        m.thumbMediaId = "t1"; m.thumbKey = "tk"; m.thumbHash = "th"
+        p.media = m
+        let preview = build(p)?.previewMedia
+        XCTAssertEqual(preview?.mediaId, "t1")
+        XCTAssertEqual(preview?.key, "tk")
+        XCTAssertEqual(preview?.mime, "image/jpeg")
+    }
+
+    func testVideoWithoutPreviewFrameHasNoPicture() {
+        var p = payload("video")
+        p.media = MediaInfo(type: "video", mediaId: "v1", key: "k", hash: "h", size: 10, mime: "video/mp4")
+        XCTAssertNil(build(p)?.previewMedia)
+    }
+
+    func testAlbumShowsItsFirstPhoto() {
+        var p = payload("album")
+        var clip = MediaInfo(type: "video", mediaId: "v1", key: "k", hash: "h", size: 10, mime: "video/mp4")
+        clip.thumbMediaId = "t1"
+        p.album = [clip, photo("m2"), photo("m3")]
+        XCTAssertEqual(build(p)?.previewMedia?.mediaId, "m2")
+    }
+
+    func testOversizedPhotoIsNotDownloadedForTheBanner() {
+        var p = payload("photo")
+        p.media = photo("big", size: NotificationContentBuilder.previewMediaSizeLimit + 1)
+        XCTAssertNil(build(p)?.previewMedia)
+    }
+
+    func testHiddenTextHidesThePictureToo() {
+        var p = payload("photo")
+        p.media = photo("m1")
+        XCTAssertNil(build(p, showsText: false)?.previewMedia)
+    }
+
+    func testTextAndFileHaveNoBannerPicture() {
+        XCTAssertNil(build(payload("text", text: "hi"))?.previewMedia)
+        XCTAssertNil(build(payload("file", fileName: "a.pdf"))?.previewMedia)
+    }
+
     func testDirectTextUsesSenderNameAndText() {
         let c = build(payload("text", text: "hello"))
         XCTAssertEqual(c?.title, "Anna")

@@ -159,6 +159,18 @@ public final class MediaManager: @unchecked Sendable {
         return try await task.value
     }
 
+    /// The picture for a notification banner, as a file of its own: the system
+    /// takes ownership of an attachment's file and moves it away, so the
+    /// cached copy stays where it is and a fresh copy goes to the banner.
+    public func notificationAttachmentCopy(_ media: MediaInfo) async throws -> URL {
+        let source = try await fetch(media)
+        let copy = FileManager.default.temporaryDirectory
+            .appendingPathComponent("banner-" + UUID().uuidString)
+            .appendingPathExtension(Self.fileExtension(forMime: media.mime))
+        try FileManager.default.copyItem(at: source, to: copy)
+        return copy
+    }
+
     /// A blob that was never encrypted: a story's frame. A story is an access
     /// rule rather than a key, so its bytes lie on the server as they are and
     /// come back needing nothing but a cache entry.
