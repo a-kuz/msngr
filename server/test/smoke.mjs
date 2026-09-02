@@ -1215,6 +1215,26 @@ ch.ws.close(); ci.ws.close(); ci2.ws.close();
   check("last seen visible again after restoring", restored.ok && restored.presence !== null,
     JSON.stringify(restored));
 
+  // the contacts tier of last seen: the source reads the viewer's current
+  // phone hash from the viewer's own object, so a number synced later opens it
+  // with nothing to propagate
+  const miloHash = "hash_milo_" + suffix;
+  await api("/api/phone", { token: milo.token, body: { phoneHash: miloHash } });
+  check("lastSeen by contacts", (await api("/api/privacy", { token: priya.token,
+    body: { lastSeen: "contacts" } })).ok);
+  const seenByStranger = await api(`/api/users/${priya.userId}`, { token: milo.token });
+  check("contacts-tier last seen hidden from someone not in the book",
+    seenByStranger.ok && seenByStranger.presence === null, JSON.stringify(seenByStranger));
+  await api("/api/contacts/discover", { token: priya.token, body: { hashes: [miloHash] } });
+  const clMarkBook = cl.mark();
+  ck.send({ t: "fg" });
+  check("contacts-tier presence frame reaches a contact",
+    !!(await cl.waitAfter(clMarkBook, (f) => f.t === "presence" && f.userId === priya.userId)));
+  const seenByContact = await api(`/api/users/${priya.userId}`, { token: milo.token });
+  check("contacts-tier last seen shows to a contact",
+    seenByContact.ok && seenByContact.presence !== null, JSON.stringify(seenByContact));
+  await api("/api/privacy", { token: priya.token, body: { lastSeen: "everyone" } });
+
   // -- avatar and bio --
   const avUpload = await (await fetch(BASE + "/api/avatar", {
     method: "POST",

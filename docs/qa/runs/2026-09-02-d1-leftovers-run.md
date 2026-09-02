@@ -121,13 +121,18 @@ count.
 ## Verified
 
 - `node test/smoke.mjs` against the own stand (`wrangler dev --port 8811`,
-  `--persist-to .wrangler-d1lo`): **ALL PASS**, 460 checks, including the
+  `--persist-to .wrangler-d1lo`): **ALL PASS**, 463 checks, including the
   provisioning and restore sessions, bots and their token rotation, the
   contacts tier of discovery and of the profile card, allow and deny
   exceptions, blocks, the avatar bytes of a hidden photo, invite links and the
-  whole stories block. One check is new — «the chat list carries a peer's
-  avatar» — because the path that answers it was rewritten and the smoke only
-  pinned the blanked case.
+  whole stories block. Four checks are new, each pinning a mechanism this
+  change replaced: «the chat list carries a peer's avatar» (the smoke pinned
+  only the blanked case, and serving the list from copies could have blanked
+  every photo silently), and the contacts tier of last seen in three steps —
+  hidden from someone not in the book, the presence frame arriving once the
+  number is synced, and the card showing it. That last one is the only place
+  where deciding a privacy question reaches out of the object, and nothing
+  covered it before.
 - `npm run typecheck`: clean.
 - `grep -rn 'env.DB\|D1Database' server/src`: nothing.
 - Live run on two simulators (`d1lo-a`, `d1lo-b`, iPhone 17) against the own
