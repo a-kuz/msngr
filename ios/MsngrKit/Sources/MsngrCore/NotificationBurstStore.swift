@@ -57,21 +57,25 @@ public enum NotificationBurstStore {
             // is unread — is read from the database, and this is what puts them
             // there. One transaction covers the ratchet step and the row it
             // produced, so an extension the system kills leaves neither behind.
+            // what each envelope turned out to hold: a reaction has no row of
+            // its own, so its banner is built from the payload
+            var applied: [String: ContentPayload] = [:]
             if let writer, !envelopes.isEmpty {
                 for item in items.sorted(by: { $0.seq < $1.seq }) {
                     guard let envelope = envelopes[item.key] else { continue }
-                    var outcome = writer.write(dbc, item: item, envelope: envelope, now: now)
+                    var written = writer.writeApplied(dbc, item: item, envelope: envelope, now: now)
                     // the first message of a request: the chat is not on this
                     // device yet, and the push names its author, so the chat is
                     // written as the request it is and the message goes into it
-                    if outcome == .unknownChat, let name = envelope.fromName,
+                    if written.outcome == .unknownChat, let name = envelope.fromName,
                        try adoptRequestChat(dbc, chatId: item.chatId, from: envelope.fromUserId,
                                             fromName: name, ownUserId: writer.ownUserId,
                                             sentAt: item.sentAt) {
-                        outcome = writer.write(dbc, item: item, envelope: envelope, now: now)
+                        written = writer.writeApplied(dbc, item: item, envelope: envelope, now: now)
                     }
+                    if let payload = written.applied { applied[item.key] = payload }
                     journal?.record(.stored, chatId: item.chatId, seq: item.seq,
-                                    detail: outcome.rawValue)
+                                    detail: written.outcome.rawValue)
                 }
                 for chatId in Set(items.map(\.chatId)) {
                     try PushMessageWriter.extendSyncedPrefix(dbc, chatId: chatId)
@@ -133,7 +137,10 @@ public enum NotificationBurstStore {
                     continue
                 }
                 switch try content(dbc, item: item, chat: chats[item.chatId],
-                                   showsMessageText: showsMessageText) {
+                                   showsMessageText: showsMessageText,
+                                   applied: applied[item.key],
+                                   appliedFrom: envelopes[item.key]?.fromUserId,
+                                   ownUserId: writer?.ownUserId) {
                 case .built(let built): plan.steps[i].content = built
                 case .fromPush: break
                 case .silent: plan.steps[i].outcome = .skip(.silent)
@@ -157,9 +164,20 @@ public enum NotificationBurstStore {
         case silent
     }
 
+    /// - Parameters:
+    ///   - applied: what the push's envelope held, when the burst wrote it; a
+    ///     reaction leaves no row and is announced from this alone.
+    ///   - appliedFrom: the author of that envelope.
+    ///   - ownUserId: this user, who is the only one a reaction is announced to.
     static func content(_ dbc: GRDB.Database, item: BurstItem, chat: Chat?,
-                        showsMessageText: Bool) throws -> BurstContent {
+                        showsMessageText: Bool,
+                        applied: ContentPayload? = nil, appliedFrom: String? = nil,
+                        ownUserId: String? = nil) throws -> BurstContent {
         guard let chat else { return .fromPush }
+        if let applied, applied.kind == "reaction" {
+            return try reactionContent(dbc, applied, from: appliedFrom, chat: chat,
+                                       ownUserId: ownUserId, showsMessageText: showsMessageText)
+        }
         let message = try Message.fetchOne(dbc, sql: "SELECT * FROM message WHERE chatId = ? AND seq = ?",
                                            arguments: [item.chatId, item.seq])
         let senderId = message?.fromUserId
@@ -180,6 +198,30 @@ public enum NotificationBurstStore {
         guard var built = NotificationContentBuilder.build(
             message: message, chat: chatInfo, sender: senderInfo,
             showsMessageText: showsMessageText) else { return .silent }
+        if chatInfo.isGroup { built.groupMembers = try groupMembers(dbc, chatId: chat.id) }
+        return .built(built)
+    }
+
+    /// The banner of a reaction that arrived by push: only for a reaction set
+    /// (not cleared) on a message this user wrote, and only while the chat
+    /// shows its content. Anything else is silent.
+    static func reactionContent(_ dbc: GRDB.Database, _ payload: ContentPayload, from: String?,
+                                chat: Chat, ownUserId: String?,
+                                showsMessageText: Bool) throws -> BurstContent {
+        guard let emoji = payload.emoji, let targetSeq = payload.targetSeq,
+              let from, let ownUserId, !ChatPrivacy.hidesContent(chat) else { return .silent }
+        guard let target = try Row.fetchOne(dbc, sql: """
+                  SELECT fromUserId, text, kind FROM message WHERE chatId = ? AND seq = ?
+                  """, arguments: [chat.id, targetSeq]),
+              target["fromUserId"] as String == ownUserId else { return .silent }
+        let sender = try User.fetchOne(dbc, key: from).map { try ContactBookName.applied(dbc, to: $0) }
+        let senderInfo = NotificationContentBuilder.SenderInfo(
+            userId: from, displayName: sender?.displayName ?? "", avatarId: sender?.avatarId)
+        let chatInfo = NotificationContentBuilder.ChatInfo(
+            chatId: chat.id, isGroup: chat.kind == .group, title: chat.title, avatarId: chat.avatarId)
+        var built = NotificationContentBuilder.reactionContent(
+            emoji: emoji, targetText: target["text"], targetKind: target["kind"],
+            chat: chatInfo, sender: senderInfo, showsMessageText: showsMessageText)
         if chatInfo.isGroup { built.groupMembers = try groupMembers(dbc, chatId: chat.id) }
         return .built(built)
     }

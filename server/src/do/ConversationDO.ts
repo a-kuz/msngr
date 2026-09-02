@@ -528,7 +528,7 @@ export class ConversationDO implements DurableObject {
   private async journal(
     meta: Meta,
     b: { from: string; fromDevice: string; clientMsgId: string; sentAt: number;
-         body: unknown; service?: boolean; notify?: boolean },
+         body: unknown; service?: boolean; notify?: boolean; notifyUser?: string },
     blockedFor: string | null,
     ackToSender = false
   ): Promise<{ seq: number; ts: number }> {
@@ -564,6 +564,8 @@ export class ConversationDO implements DurableObject {
       // a service frame that still raises a push (a missed-call record):
       // live delivery only, the journal replays it silent
       ...(b.service && b.notify ? { notify: true } : {}),
+      // a reaction pushes to the author of the message it landed on alone
+      ...(b.service && b.notifyUser ? { notifyUser: b.notifyUser } : {}),
     };
     // Under a block the send still succeeds and the sender sees "sent", but nothing
     // reaches the other side, over the socket or by push. The blocker's read mark
@@ -1038,6 +1040,7 @@ export class ConversationDO implements DurableObject {
         const b = (await req.json()) as {
           from: string; fromDevice: string; clientMsgId: string;
           sentAt: number; body: unknown; service?: boolean; notify?: boolean;
+          notifyUser?: string;
         };
         const members = await this.loadMembers();
         const sender = members.get(b.from);

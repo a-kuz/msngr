@@ -507,14 +507,16 @@ export class UserDO implements DurableObject {
           if (!muted && !isOwnEcho) {
             await this.enqueuePush(frame);
           }
-        } else if (frame.t === "msg" && frame.service && frame.notify) {
-          // a service frame that still notifies (a missed-call record): the
-          // push goes out, but the chat is not relisted and unread stays put
+        } else if (frame.t === "msg" && frame.service && (frame.notify || frame.notifyUser)) {
+          // a service frame that still notifies — a missed-call record for
+          // everyone, a reaction for the author of the message it landed on:
+          // the push goes out, but the chat is not relisted and unread stays put
           const flags = await this.clearExpiredMute(frame.chatId);
           const muted = muteActive(flags, nowSec());
           const userId = await this.getUserId();
           const isOwnEcho = userId !== null && frame.from === userId;
-          if (!muted && !isOwnEcho) {
+          const addressed = frame.notify || frame.notifyUser === userId;
+          if (!muted && !isOwnEcho && addressed) {
             await this.enqueuePush(frame);
           }
         }
@@ -1456,6 +1458,7 @@ export class UserDO implements DurableObject {
             clientMsgId: frame.clientMsgId, sentAt: frame.sentAt, body: frame.body,
             service: frame.service ?? false,
             ...(frame.notify ? { notify: true } : {}),
+            ...(frame.notifyUser ? { notifyUser: frame.notifyUser } : {}),
           }),
         });
         const r = (await res.json()) as { ok: boolean; seq?: number; ts?: number; error?: string };

@@ -1594,6 +1594,17 @@ check("notify service frame keeps the badge", push4n?.body.aps.badge === 1,
 check("notify frame travels service on ws", !!(await ce.waitFor((f) =>
   f.t === "msg" && f.seq === p4n.seq && f.service === true)));
 
+// (c0b) a service frame addressed to one member (a reaction, to the author of
+// the message it lands on) pushes to that member alone
+ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p4u", sentAt: Date.now(),
+  service: true, notifyUser: eve.userId, body: { v: 1, mode: "pw", msgs: {} } });
+const p4u = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p4u");
+check("service frame addressed to a member pushes to them", !!(await waitPush(pushFor(`eve-sim-${suffix}`, p4u))));
+ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p4v", sentAt: Date.now(),
+  service: true, notifyUser: alice.userId, body: { v: 1, mode: "pw", msgs: {} } });
+const p4v = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p4v");
+check("service frame addressed elsewhere does not push", !(await waitPush(pushFor(`eve-sim-${suffix}`, p4v), 1200)));
+
 // (c1) A service frame takes a seq but does not grow the badge: in a read chat the read
 // mark absorbs it, exactly the way the client moves the cursor. The server counts the
 // badge, so these two counts must not diverge.

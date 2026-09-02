@@ -85,6 +85,22 @@ public struct PushMessageWriter: Sendable {
 
     public func write(_ dbc: GRDB.Database, item: BurstItem, envelope: PushEnvelope,
                       now: Double = Date().timeIntervalSince1970) -> PushStoreOutcome {
+        writeApplied(dbc, item: item, envelope: envelope, now: now).outcome
+    }
+
+    /// The same write, handing back what the envelope turned out to hold when
+    /// it was applied: the banner of a reaction is built from the payload,
+    /// there being no message row of its own to read it from.
+    public func writeApplied(_ dbc: GRDB.Database, item: BurstItem, envelope: PushEnvelope,
+                             now: Double = Date().timeIntervalSince1970)
+        -> (outcome: PushStoreOutcome, applied: ContentPayload?) {
+        var applied: ContentPayload?
+        let outcome = write(dbc, item: item, envelope: envelope, now: now, applied: &applied)
+        return (outcome, applied)
+    }
+
+    private func write(_ dbc: GRDB.Database, item: BurstItem, envelope: PushEnvelope,
+                       now: Double, applied: inout ContentPayload?) -> PushStoreOutcome {
         guard let chat = try? Chat.fetchOne(dbc, key: item.chatId) else { return .unknownChat }
         let known = (try? Bool.fetchOne(
             dbc, sql: "SELECT EXISTS(SELECT 1 FROM message WHERE chatId = ? AND seq = ?)",
@@ -106,6 +122,7 @@ public struct PushMessageWriter: Sendable {
             case .content(let payload):
                 guard !Self.outOfReach.contains(payload.kind) else { return .rollback }
                 try apply(dbc, payload, item: item, envelope: envelope, chat: chat)
+                applied = payload
                 outcome = .stored
                 return .commit
             case .undecryptable(let reason):

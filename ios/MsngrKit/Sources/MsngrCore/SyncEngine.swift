@@ -2925,6 +2925,17 @@ public actor SyncEngine {
         // service frame that still raises a push, without growing unread
         let notify = content.kind == CallLog.kind
             && CallLog.decode(content.text)?.outcome == .missed
+        // a reaction reaches the author of the message it lands on even with
+        // their app closed: the frame names them, and the server pushes to
+        // them alone. Removing a reaction announces nothing.
+        var notifyUser: String?
+        if content.kind == "reaction", content.emoji != nil, let targetSeq = content.targetSeq {
+            let author = try? await db.read { dbc in
+                try String.fetchOne(dbc, sql: "SELECT fromUserId FROM message WHERE chatId = ? AND seq = ?",
+                                    arguments: [item.chatId, targetSeq])
+            }
+            if let author, author != ownUserId { notifyUser = author }
+        }
         // a send whose time has not come leaves now as a deferred envelope:
         // encrypted the same way, journaled by the server at its moment
         let deferUntil = item.scheduledFor.flatMap { $0 > Date().timeIntervalSince1970 ? $0 : nil }
@@ -2936,7 +2947,7 @@ public actor SyncEngine {
             } else {
                 try await ws.send(.send(chatId: item.chatId, clientMsgId: item.clientMsgId,
                                         sentAt: item.createdAt, body: env, service: service,
-                                        notify: notify))
+                                        notify: notify, notifyUser: notifyUser))
             }
         }
         if info.plaintext {
