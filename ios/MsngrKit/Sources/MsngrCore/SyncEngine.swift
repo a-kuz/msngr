@@ -3076,13 +3076,15 @@ public actor SyncEngine {
         if let name = info.localPath {
             let progress = MediaProgress.shared
             let start = progress.fraction(clientMsgId, index: index) ?? 0
-            let up = try await media.uploadPending(localName: name, mime: info.mime) { sent in
+            let up = try await media.uploadPending(localName: name, mime: info.mime,
+                                                   format: .blocks) { sent in
                 progress.set(clientMsgId, index: index, fraction: start + (1 - start) * sent)
             }
             info.mediaId = up.mediaId
             info.key = up.key
             info.hash = up.hash
             info.size = up.size
+            info.v = up.v
             info.localPath = nil
             obsolete.append(name)
         }

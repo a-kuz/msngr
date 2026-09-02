@@ -276,14 +276,16 @@ struct MediaViewerView: View {
 private struct MediaPage: View {
     let media: MediaInfo
     @State private var localURL: URL?
+    @State private var videoItem: AVPlayerItem?
+    @State private var streamedId: String?
     @State private var scale: CGFloat = 1
     @State private var lastScale: CGFloat = 1
 
     var body: some View {
         Group {
             if media.type == "video" {
-                if let url = localURL {
-                    VideoPlayerPage(url: url)
+                if let item = videoItem {
+                    VideoPlayerPage(item: item, mediaId: media.mediaId)
                 } else {
                     ProgressView().tint(.white)
                 }
@@ -321,8 +323,40 @@ private struct MediaPage: View {
             }
         }
         .task {
-            localURL = try? await AppState.shared.media?.fetch(media)
+            guard media.type == "video" else {
+                localURL = try? await AppState.shared.media?.fetch(media)
+                return
+            }
+            await openVideo()
         }
+        .onDisappear {
+            if let id = streamedId { AppState.shared.media?.releaseStream(id) }
+        }
+    }
+
+    /// A video plays from the cache when it is there and is streamed block by
+    /// block when it is not, so the first seconds start without the rest of the
+    /// file. The download continues behind the playback and leaves the whole
+    /// plaintext in the cache.
+    private func openVideo() async {
+        guard let mm = AppState.shared.media else { return }
+        if let url = mm.cachedURL(for: media.mediaId, mime: media.mime) ?? localOriginalURL(mm) {
+            videoItem = AVPlayerItem(url: url)
+            return
+        }
+        if let stream = mm.stream(for: media) {
+            stream.startBackgroundFill()
+            streamedId = media.mediaId
+            videoItem = AVPlayerItem(asset: stream.makeAsset())
+            return
+        }
+        if let url = try? await mm.fetch(media) {
+            videoItem = AVPlayerItem(url: url)
+        }
+    }
+
+    private func localOriginalURL(_ mm: MediaManager) -> URL? {
+        media.mediaId.isEmpty ? media.localPath.flatMap { mm.pendingURL(for: $0) } : nil
     }
 
     private var blurPlaceholder: some View {
@@ -370,24 +404,51 @@ private struct GIFPage: UIViewRepresentable {
     }
 }
 
-/// Video: the decrypted file is played from the media cache.
+/// Video: a file from the media cache, or a stream that fetches its blocks as
+/// the player asks for them.
 /// The system player without picture-in-picture: its PiP glyph sits in the
 /// top-left corner, exactly under the viewer's close button, and took the tap.
 private struct VideoPlayerPage: UIViewControllerRepresentable {
-    let url: URL
+    let item: AVPlayerItem
+    let mediaId: String
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let vc = AVPlayerViewController()
-        vc.player = AVPlayer(url: url)
+        let player = AVPlayer(playerItem: item)
+        vc.player = player
         vc.allowsPictureInPicturePlayback = false
         vc.view.backgroundColor = .clear
-        vc.player?.play()
+        context.coordinator.watchFirstFrame(player, mediaId: mediaId)
+        player.play()
         return vc
     }
 
     func updateUIViewController(_ vc: AVPlayerViewController, context: Context) {}
 
-    static func dismantleUIViewController(_ vc: AVPlayerViewController, coordinator: ()) {
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    static func dismantleUIViewController(_ vc: AVPlayerViewController, coordinator: Coordinator) {
+        coordinator.stop(vc.player)
         vc.player?.pause()
+    }
+
+    /// The moment the picture starts moving goes to the log next to the moment
+    /// the download finished: on a streamed video the first is the earlier one.
+    final class Coordinator {
+        private var observer: Any?
+
+        func watchFirstFrame(_ player: AVPlayer, mediaId: String) {
+            observer = player.addPeriodicTimeObserver(
+                forInterval: CMTime(value: 1, timescale: 10), queue: .main) { [weak self, weak player] time in
+                guard time.seconds > 0 else { return }
+                MsngrLog.media.info("stream \(mediaId, privacy: .public): first frame on screen")
+                self?.stop(player)
+            }
+        }
+
+        func stop(_ player: AVPlayer?) {
+            if let observer { player?.removeTimeObserver(observer) }
+            observer = nil
+        }
     }
 }

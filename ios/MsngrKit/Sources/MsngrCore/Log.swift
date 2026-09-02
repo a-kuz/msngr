@@ -22,4 +22,7 @@ public enum MsngrLog {
     public static let transcript = Logger(subsystem: subsystem, category: "transcript")
     /// calls: how a call ended, why a room could not be joined
     public static let call = Logger(subsystem: subsystem, category: "call")
+    /// media: streamed blocks, when playback could start and when the file was
+    /// complete in the cache
+    public static let media = Logger(subsystem: subsystem, category: "media")
 }

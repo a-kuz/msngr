@@ -284,11 +284,14 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ sending: export to 1280×720 mp4 faststart, a preview frame, the duration (media-run, case 26)
   - ✅ playing a received video and your own: the player position runs
     0.33 → 0.87 and the duration is 0:02 instead of the previous `--:--` (media-close-out)
-  - ⬜ streaming over range requests instead of a full download. It runs into the
-    format: the blob is sealed in a single ChaChaPoly box and integrity is
-    checked by SHA-256 over the whole ciphertext, so a range cannot be decrypted
-    and cannot be verified. It needs block-wise encryption and an
-    `AVAssetResourceLoaderDelegate`
+  - ✅ streaming over range requests instead of a full download: media format 2
+    (256 KiB blocks, each with its own nonce and tag, a manifest of block hashes
+    rooted in `MediaInfo.hash`) and an `AVAssetResourceLoaderDelegate` that asks
+    the server for the ranges the player needs, opens the blocks and fills the
+    rest behind the playback, leaving the same plaintext file in the cache
+    (qa/runs/2026-09-02-video-streaming-run: a 48 MB video plays 9 s before its
+    download ends, and a seek forward takes only the blocks it lands on;
+    ChunkedMediaTests, MediaStreamTests units)
   - ✅ muted autoplay in the feed: a video whose file is on the device loops
     in place without sound and without stopping the user's music; one that
     would need a download keeps the preview and the glyph

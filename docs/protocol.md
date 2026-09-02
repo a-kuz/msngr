@@ -174,7 +174,8 @@ GET  /api/chats/:id/fanout        fanout queue of the chat →
 POST /api/chats/:id/invite        → {code, link:"msngr://join/<code>"}
 POST /api/join/:code              → {chatId}
 POST /api/media                   raw body (ciphertext) → {mediaId, size}
-GET  /api/media/:id               streams the blob, supports Range (206)
+GET  /api/media/:id               streams the blob, supports Range (206). A block-format
+                                  blob (below) is read this way while it plays
 POST /api/push-token              {apnsToken, env}
 POST /api/phone                   {phoneHash|null}
 POST /api/contacts/discover       {hashes[], remove?[]} → {matches[]}  (up to 5000 hashes).
@@ -528,8 +529,10 @@ asked for it.
   and renders it on its GPU; the server never sees the code. The whole
   document stays under 64 KB of code: a message is one value of the
   conversation's Durable Object storage, whose ceiling is 128 KiB;
-- `media` / `album` — `MediaInfo`: `type, mediaId, key, hash, size, mime, name?,
+- `media` / `album` — `MediaInfo`: `type, v?, mediaId, key, hash, size, mime, name?,
   w?, h?, dur?, waveform?, blurhash?, thumbMediaId?, thumbKey?, thumbHash?`;
+  `v` is the blob's format (see «Media formats»): 2 for the attachment itself,
+  absent for a video's preview frame;
 - `replyTo` — `{msgId, authorId, text, kind}`, `fwd` — `{fromUserId, fromName}`;
 - `story` — `StoryRef`: `{storyId, authorId, mediaId, type, w?, h?, expiresAt}`,
   the story a `text` answers. Both sides draw the frame from `mediaId` (a story's
@@ -630,6 +633,42 @@ It runs on its own, with no user involved, over service frames (`service: true`)
 The `localPath`/`thumbLocalPath` fields in `MediaInfo` exist locally only (the
 attachment's source, not yet uploaded to the server) and never reach the
 envelope.
+
+## Media formats
+
+A blob in R2 is opaque to the server; the key and the hash that opens and
+checks it travel inside the E2E message. `MediaInfo.v` says how the bytes are
+laid out.
+
+**Format 1** (`v` absent or 1) is one ChaChaPoly box over the whole file, and
+`hash` is the SHA-256 of the whole ciphertext: it is checked, and the file is
+opened, only once every byte is there. A video's preview frame stays in this
+format — it is small and always read whole, and its `MediaInfo` slot carries no
+size of its own.
+
+**Format 2** (`v: 2`) is what every attachment of a message is uploaded in, and
+what a player reads while it plays. The plaintext is cut into 256 KiB blocks;
+block `i` is sealed with ChaChaPoly under the file key with the nonce
+`0x00000000 || i` (big-endian, eight bytes), giving `256 KiB + 16` bytes of
+ciphertext and tag. The blob is the sealed blocks back to back, followed by the
+manifest: the SHA-256 of every sealed block, in order, 32 bytes each.
+
+Nothing else is stored, because nothing else is needed: with the plaintext size
+from `MediaInfo.size`, block `i` starts at `i * (256 KiB + 16)` and the manifest
+starts right after the last block, so a reader finds any block with one Range
+request and no header round trip. `MediaInfo.hash` is the manifest's root:
+`SHA-256("msngrm2" || size (8, BE) || blockSize (4, BE) || every block hash)`.
+
+A reader takes the manifest first and checks it against the root, then for each
+block it needs checks the block's hash and opens the seal. A block is therefore
+verified on its own, a block moved to another index stops opening (its nonce no
+longer matches), and a truncated or extended file fails at the root before a
+single block is decrypted. The key is fresh per file, so no nonce repeats.
+
+The client keeps the blocks it has opened in a partial file at the plaintext's
+own offsets and fills the gaps behind the playback; when every block is in, the
+file becomes the ordinary plaintext cache entry, the same one a whole download
+would have left.
 
 ## Delivery and order
 

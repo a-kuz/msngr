@@ -56,6 +56,7 @@ final class Person {
     var meta: Meta
     var e2ee: E2EEManager!
     var engine: SyncEngine!
+    var media: MediaManager!
 
     init(display: String, home: URL, db: DatabaseQueue, store: IdentityStore,
          api: APIClient, meta: Meta) {
@@ -159,7 +160,8 @@ func sealHome(_ p: Person) async throws {
 
 func startEngine(_ p: Person, base: URL) async {
     p.e2ee = E2EEManager(store: p.store, api: p.api, ownUserId: p.userId, ownDeviceId: p.meta.deviceId)
-    p.engine = SyncEngine(db: p.db, api: p.api, e2ee: p.e2ee,
+    p.media = MediaManager(api: p.api, cacheDir: p.home.appendingPathComponent("media"))
+    p.engine = SyncEngine(db: p.db, api: p.api, e2ee: p.e2ee, media: p.media,
                           wsURL: wsURL(base: base, token: p.meta.token),
                           ownUserId: p.userId, ownDeviceId: p.meta.deviceId)
     await p.engine.start()
@@ -325,7 +327,8 @@ func answer(dir: URL, base: URL, name: String, text: String, seconds: Double) as
 /// `shader` (a file: Shadertoy GLSL or a JSON export) the message carries
 /// that document instead, as `kind` — "shader" or "sticker".
 func send(dir: URL, base: URL, name: String, peer: String, text: String, repeatCount: Int = 1,
-          shader: URL? = nil, kind: String = "shader") async throws {
+          shader: URL? = nil, kind: String = "shader", video: URL? = nil,
+          poster: URL? = nil, photo: URL? = nil) async throws {
     // a seeded account, or one `knock` registered under the same directory
     let display = cast.first(where: { $0.name == name })?.display ?? name
     guard FileManager.default.fileExists(atPath: dir.appendingPathComponent(name).appendingPathComponent("meta.json").path) else {
@@ -369,7 +372,33 @@ func send(dir: URL, base: URL, name: String, peer: String, text: String, repeatC
     let document = try shader.map { try ShaderDocument.parse(String(contentsOf: $0, encoding: .utf8)) }
     for i in 1...max(1, repeatCount) {
         var content: ContentPayload
-        if let document {
+        if let photo {
+            let bytes = try Data(contentsOf: photo)
+            let local = try p.media!.stash(bytes, mime: "image/jpeg")
+            var info = MediaInfo(type: "photo", mediaId: "", key: "", hash: "",
+                                 size: bytes.count, mime: "image/jpeg")
+            info.localPath = local
+            content = ContentPayload(kind: "photo")
+            content.media = info
+            content.text = text
+        } else if let video {
+            // the sender's real path: the original is stashed and the outbox
+            // encrypts and uploads it, so the blob is in the current format
+            let bytes = try Data(contentsOf: video)
+            let local = try p.media!.stash(bytes, mime: "video/mp4")
+            var info = MediaInfo(type: "video", mediaId: "", key: "", hash: "",
+                                 size: bytes.count, mime: "video/mp4")
+            info.localPath = local
+            info.w = 1280
+            info.h = 720
+            if let poster {
+                info.thumbLocalPath = try p.media!.stash(try Data(contentsOf: poster),
+                                                         mime: "image/jpeg")
+            }
+            content = ContentPayload(kind: "video")
+            content.media = info
+            content.text = text
+        } else if let document {
             content = ContentPayload(kind: kind)
             content.shader = document
         } else {
@@ -385,7 +414,8 @@ func send(dir: URL, base: URL, name: String, peer: String, text: String, repeatC
         } == 0
     }
     await p.engine.stop()
-    print("· sent \(document == nil ? "«\(text)»" : "a \(kind)") ×\(max(1, repeatCount)) to \(peer) in \(chatId)")
+    let what = photo != nil ? "a photo" : video != nil ? "a video" : (document == nil ? "«\(text)»" : "a \(kind)")
+    print("· sent \(what) ×\(max(1, repeatCount)) to \(peer) in \(chatId)")
 }
 
 /// Reacts to the peer's latest message in their direct chat.
@@ -884,7 +914,10 @@ do {
             text: try arg("text", default: "Checking in."),
             repeatCount: Int(try arg("repeat", default: "1")) ?? 1,
             shader: (try? arg("shader")).map { URL(fileURLWithPath: $0) },
-            kind: try arg("kind", default: "shader"))
+            kind: try arg("kind", default: "shader"),
+            video: (try? arg("video")).map { URL(fileURLWithPath: $0) },
+            poster: (try? arg("poster")).map { URL(fileURLWithPath: $0) },
+            photo: (try? arg("photo")).map { URL(fileURLWithPath: $0) })
     case "react":
         try await react(
             dir: URL(fileURLWithPath: try arg("dir")),
@@ -935,6 +968,7 @@ do {
           msngrfixture showcase --dir <fixtures> --to <handle> [--base …]   nova dresses an existing account (a phone)
           msngrfixture send --dir <fixtures> [--as bravo] [--to alfa | --to <group title>] [--base …] [--text …]
           msngrfixture send --dir <fixtures> --shader <file.glsl|export.json> [--kind shader|sticker] [--as bravo] [--to alfa]
+          msngrfixture send --dir <fixtures> --video <file.mp4> [--poster <frame.jpg>] [--as bravo] [--to alfa]
           msngrfixture knock --dir <fixtures> [--as delta] [--name "Delta Service"] [--to alfa] [--base …] [--text …]
           msngrfixture typing --dir <fixtures> [--as charlie] [--to alfa] [--base …] [--seconds 10]
           msngrfixture answer --dir <fixtures> [--as alfa] [--base …] [--text …] [--timeout 180]

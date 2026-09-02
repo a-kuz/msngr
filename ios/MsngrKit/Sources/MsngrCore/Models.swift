@@ -260,6 +260,9 @@ public struct PollInfo: Codable, Equatable {
 
 public struct MediaInfo: Codable, Equatable {
     public var type: String        // photo|video|file|voice
+    /// The blob's format: absent or 1 is one ChaChaPoly box over the whole
+    /// file, 2 is the block format streaming reads (MediaCrypto format 2).
+    public var v: Int?
     public var mediaId: String
     public var key: String         // b64 key
     public var hash: String        // b64 sha256 ciphertext
