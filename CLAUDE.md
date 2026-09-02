@@ -17,9 +17,12 @@ ios/NotificationService/   the NSE
 ios/project.yml            the project description for xcodegen
 ```
 
-Documentation: `docs/protocol.md` (frames and API), `docs/crypto-flows.md`,
-`docs/ui-spec.md`, `docs/PROCESS.md` (the process and the gate),
-`docs/localization-catalog.md`, `docs/audits/`, `docs/qa/`, `docs/research/`.
+Documentation: `docs/PROCESS.md` (how work runs: a worktree per session, the
+one backlog, the gate job), `docs/BACKLOG.md` (the only list of open work),
+`ROADMAP.md` (product status), `docs/protocol.md` (frames and API),
+`docs/crypto-flows.md`, `docs/ui-spec.md`, `docs/localization-catalog.md`,
+`docs/audits/` (the reasoning behind backlog lines), `docs/qa/runs/` (the
+evidence), `docs/research/`.
 
 ## Building and testing
 
@@ -57,25 +60,25 @@ Delivery is closed by the check of the layer the change touched, and that one
 is waited for: `swift test` for MsngrKit, `node test/smoke.mjs` for the server,
 MsngrTests for the app — plus the live run of the scenario.
 
-The full gate — `make check` at the root: `xcodegen` → build → `swift test` →
-MsngrTests → the server smoke test → collecting fresh simulator crashes —
-runs in the background after the merge and does not hold the work (the owner's
-call, 2026-08-19: its reds had been the host, not the code, every time).
-Write its log to `.claude/gates/<branch>.log`; the dispatcher reads the tail on
-its tick, and a red there is a defect report to be fixed forward, not a reason
-to have waited. The smoke test needs `wrangler dev` running.
+The full gate — `make check`: `xcodegen` → build → `swift test` → MsngrTests →
+the server smoke test on a throwaway stand → collecting fresh simulator
+crashes — is run by a launchd job, not by hand: `scripts/gate-watch.py` sees a
+new commit on `main`, checks it out into `.claude/gate-wt` and runs the gate
+there on gate-runner, appending one line to `.claude/gates/status.tsv` (sha,
+time, green or red, the log). Nobody waits for it before merging (the owner's
+call, 2026-08-19: its reds had been the host, not the code, every time); a red
+line is a defect report against that commit, fixed forward. Do not run `make
+check` in a checkout somebody is editing — it measures nothing; `scripts/
+gate-watch.py --once` gates main's head now if you want it sooner.
 
 The UI smoke — `make uicheck DEV_UDID=<yours>` — is not part of the process:
 no change requires it (the owner's call, 2026-08-31: in its whole history every
 red was the test or the host, never the product). Run it only when explicitly
 asked, on your own simulator.
 
-The Makefile builds on the owner's simulator by default, so an agent runs the
-gate with its own:
-
-```bash
-make check DEV_UDID=14C70E21-A23A-4492-8E6A-113AE0BC6B6D   # gate-runner
-```
+The Makefile builds on the owner's simulator by default; the gate job passes
+`DEV_UDID=14C70E21-A23A-4492-8E6A-113AE0BC6B6D` (gate-runner), and a layer
+check you run yourself takes your own simulator's id the same way.
 
 Uninstall the app from the simulator before `make uicheck`
 (`xcrun simctl uninstall <udid> com.msngr.msngr`). The device keeps the
@@ -373,18 +376,22 @@ version, `migrations` in `wrangler.jsonc`. The details are in `docs/PROCESS.md`.
 
 ## How work is delivered
 
-- The task you are on lives in `.claude/tasks.tsv` (name, start, one
-  sentence, tab-separated): add your line when you take it, remove it when
-  you deliver. `scripts/progress.py` shows the owner these lines.
+- Work in a worktree of your own (`EnterWorktree`); nobody edits the `main`
+  checkout directly and no two sessions share a tree. You take the topmost
+  free line of `docs/BACKLOG.md`, write your name in its `who`, and add your
+  line to `.claude/tasks.tsv` (name, start, one sentence, tab-separated);
+  both go when you deliver. `scripts/progress.py` shows the owner these.
 - Micro-scope: one behaviour per change, commits incremental. A live run of the
-  affected scenario on the simulator, then `make check`.
+  affected scenario on the simulator, the check of the layer you touched, then
+  merge into `main` yourself; the gate job gates the merge on its own
+  (`scripts/gate-watch.py`, status in `.claude/gates/status.tsv`).
 - A red check on a product number or behaviour is a defect report until proven
   otherwise. It is never answered from the test's side — moving a cursor,
   widening an expectation, adding a sleep — before the product is shown right,
   in writing. Noticing that a number "counts one too many" and absorbing it
   into the fixture buries a live defect: that exact move hid the inflated
   group unread until the owner reported it from the outside. A symptom found
-  in passing goes into `docs/qa/defects.md` and into the report, even when the
+  in passing goes into `docs/BACKLOG.md` and into the report, even when the
   test is already green.
 - A defect reported by the owner is never answered with "that was out of
   scope" or "nobody logged it". Scope divides the work, not the

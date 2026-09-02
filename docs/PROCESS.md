@@ -1,90 +1,88 @@
 # How msngr is built
 
-The bar is Telegram or Signal. There is no production and no hurry, so nothing
-ships without going through the pipeline below.
+The bar is Telegram or Signal. There is no production, there are no users,
+and the owner's time is the scarce resource: everything below is arranged so
+that the work runs without the owner in the loop, and the owner reads one
+status line and takes product decisions.
 
-Backward compatibility is not maintained while the only users are the owner and
-the development work itself. Losing every conversation is acceptable, and so is
-breaking older builds: the database can be wiped and the user re-registered,
-frames and REST change freely, keys and sessions may be dropped. No compat
-layers, no recovery code.
+Backward compatibility is not maintained: the database can be wiped and the
+user re-registered, frames and REST change freely, keys and sessions may be
+dropped. Versioning is wired in ahead of time (protocol version in the
+handshake, schema version, `migrations` in `wrangler.jsonc`, a version on the
+E2EE envelope) so there is a place to write the compatibility once there are
+users to break. The one exception that has bitten: the shared stand keeps the
+test users' state, so a schema change there needs either a wipe or a numbered
+migration — which one is an open owner decision (`docs/BACKLOG.md`, B59).
 
-Versioning is still wired in ahead of time, because it costs almost nothing: a
-protocol version in the handshake (the client states its own, the server knows
-the lowest it supports and answers with a legible "update the app" instead of a
-silent disconnect), a database schema version (today a mismatch means wipe and
-re-register, but the hook for a real migration stays), numbered D1 migrations
-under `server/migrations/`, and a version on the E2EE envelope format. The
-"support the old thing" branches are empty. What matters is having the place to
-write them once there are users to break.
+## Three files
 
-## Source of truth for the product
+- `ROADMAP.md` — what the product is and what state each feature is in
+  (✅ confirmed by a live run, 🟡 built but not watched, ⬜ planned). Updated
+  in the same commit as the code; a ✅ comes with a link to the evidence.
+- `docs/BACKLOG.md` — the one queue of open work: defects, architecture
+  lines, features, owner decisions. A session takes the topmost free line,
+  writes its name in `who`, closes it with the commit and the evidence. There
+  is no other list of open work anywhere in the repository.
+- `.claude/gates/status.tsv` — one line per gated commit on main: sha, time,
+  green or red, the log. Written by the gate job, read by the owner and by
+  `scripts/progress.py`.
 
-`ROADMAP.md` at the root is the only one: a tree of product features with
-statuses (✅ done and confirmed by a live run, 🟡 partial or unverified live,
-⬜ planned). Whoever closes a feature updates its status in the same commit, and
-"done" needs evidence — a run under `docs/qa/runs` or a screenshot. The task
-list inside a session is a working board for the current wave; it does not
-outlive the session and is not a product plan. The technical backlog of defects
-lives in `docs/audits`.
+Everything else is evidence or reasoning: `docs/qa/runs/` (run reports with
+numbers and screenshots), `docs/audits/` (why a backlog line exists),
+`docs/qa/test-cases.md`, `docs/protocol.md`, `docs/crypto-flows.md`,
+`docs/ui-spec.md`. A closed defect's story lives in its run report and in
+git; nothing is copied into a second place.
 
-## Roles
+## A session's cycle
 
-The main context orchestrates: it assembles task packages, runs worktree agents
-in parallel, merges their branches, resolves conflicts, runs the gate, and keeps
-the backlog and the reports. The agents do the work — code, fixes, runs. Every
-agent prompt carries its file boundaries, the requirement to build and test, and
-the shape of the report: done, verified, not done. The shared stand (`wrangler
-dev` on :8787, two simulators) is not restarted and its state is not wiped.
+1. Start in a worktree of your own: `EnterWorktree` (or `git worktree add
+   .claude/worktrees/<name> -b <name>`). Nobody edits `main`'s checkout
+   directly, and nobody shares a checkout: two sessions in one tree cost a
+   hollow commit and half an hour of a broken stand on 2026-09-03.
+2. Take a line from `docs/BACKLOG.md`, put your name in `who`, and add your
+   line to `.claude/tasks.tsv` (name, start, one sentence) so
+   `scripts/progress.py` shows what is in work. Your own simulator, your own
+   stand on its own port; the shared stand is neither restarted nor wiped.
+3. One behaviour per change, commits incremental. Delivery is closed by the
+   check of the layer you touched — `swift test` for MsngrKit, `node
+   test/smoke.mjs` for the server, MsngrTests for the app — plus a live run of
+   the scenario on your simulator, watched, not just built. A red check on a
+   product number is a defect until proven otherwise and is never answered
+   from the test's side.
+4. Merge into `main` yourself (fast-forward or a merge commit; resolve
+   conflicts in your worktree). A server change is then rsynced to the shared
+   stand (`server/` on adad; `wrangler dev` there reloads on its own), a
+   migration applied there by hand. Close the backlog line and the tasks.tsv
+   line, update ROADMAP if a feature moved.
+5. Report: what was done, what was verified and with which command or run,
+   what was not done and why. A defect found in passing becomes a backlog
+   line in the same commit.
+6. Remove the worktree and your simulator.
 
-A simulator belongs to exactly one agent or to the owner at any moment. Agents
-running UI scenarios in parallel create their own (`xcrun simctl create <name>
-"iPhone 17"` → boot → install → register a fresh user) and delete them
-afterwards (`shutdown` + `delete`). The owner's pair (dev 44CE2242, Pro Max
-0E0CF155) goes to an agent only on an exclusive reservation, when the owner is
-not testing on it. Slow Animations in Simulator.app is a global switch: turn it
-off when you are done.
+Product decisions (section 5 of the backlog) are not taken by a session; the
+line waits for the owner.
 
-## The quality pipeline
+## The gate, without anybody waiting for it
 
-### The `make check` gate, before every commit
+`scripts/gate-watch.py` runs from launchd every two minutes
+(`scripts/launchd/com.msngr.msngr.gate.plist`). When `main` has a commit it has
+not gated, it checks that commit out into `.claude/gate-wt`, runs `make check`
+there on the gate-runner simulator (xcodegen → build → `swift test` →
+MsngrTests → the server smoke on a throwaway stand → fresh crash logs), and
+appends one line to `.claude/gates/status.tsv`; the full log is
+`.claude/gates/<sha>.log`. A red line is a defect report against that commit:
+whoever sees it first opens a backlog line, and the fix goes forward on main.
+Nobody waits for the gate before merging (the owner's call, 2026-08-19: its
+reds had been the host, not the code, every time), and nobody runs it by hand
+in a shared checkout — a build over files somebody is editing measures
+nothing.
 
-1. `xcodegen` and an iOS app build.
-2. Core unit tests (`swift test` in MsngrKit) — crypto, sync, outbox, storage
-   migration, BlurHash, mosaic.
-3. App unit tests (MsngrTests) — BubbleLayout, feed and grouping, the unread
-   marker, notification decisions, registration validation.
-4. Server smoke (`node server/test/smoke.mjs`) — checks over the API, the DOs
-   and pushes. The dev APNs mock has to be stopped for the duration: the
-   smoke takes the same port, :9871. A stand of your own on another port runs
-   as `wrangler dev --port <port> --var APNS_HOST:http://localhost:<sink port>`
-   plus `BASE_URL=… PUSH_PORT=<sink port> node test/smoke.mjs`; `--var`
-   overrides `.dev.vars` and the owner's mock is left alone.
-5. Simulator crash logs (DiagnosticReports) — a fresh crash fails the gate.
+The UI smoke (`make uicheck`) is outside the process: run it only when asked,
+on your own simulator (the owner's call, 2026-08-31).
 
-The Makefile builds on the owner's simulator by default, so an agent runs the
-gate on its own: `make check DEV_UDID=14C70E21-A23A-4492-8E6A-113AE0BC6B6D`
-(gate-runner).
+## The state matrix
 
-The UI smoke (MsngrUITests — launch, registration, sending text, drafts, the
-long-press menu, the attach menu) is its own target, `make uicheck
-DEV_UDID=<yours>`, and is not part of the process: no change requires it.
-In its whole history every red has been the test or the host — a stale
-database on a shared device, a starved runner, locators tied to one locale,
-a missing fixture user — never the product (the owner's call, 2026-08-31).
-Run it only when explicitly asked, on the agent's own simulator.
-
-### One change at a time
-
-- Micro-scope: one behaviour per change.
-- Then a live run of the affected scenario on a simulator, watched, not just
-  built.
-- Then a full `make check`.
-- A regression found after delivery gets a reproducing test before the fix.
-
-### The state matrix
-
-Every feature is run along a row of the matrix rather than down the happy path:
+A feature is run along a row of the matrix rather than down the happy path:
 
 | Axis | Values |
 |------|--------|
@@ -94,42 +92,18 @@ Every feature is run along a row of the matrix rather than down the happy path:
 | Lifecycle | active / background→foreground / killed mid-operation |
 | Chat state | new (message request) / accepted / group |
 
-### The agent cycle, once per iteration, in batches
+## Audits, QA, runs
 
-1. An auditor agent reads the code and writes the potential bugs into
-   `docs/audits/`.
-2. A QA agent writes test cases into `docs/qa/test-cases.md`.
-3. A runner agent executes them on two simulators (a coordinate grid over a
-   screenshot gives it precise taps) and reports into `docs/qa/runs/`.
-4. The reports are worked through: every confirmed bug gets a reproducing test,
-   then a fix, then a line in the regression suite.
+The audit → test cases → run → fix cycle is run by sessions off the backlog
+like any other line, not by the owner: an audit's findings become backlog
+lines in the audit's own commit, a run report closes the lines it verified,
+a crash (`scripts/collect-crashes.sh`) is a backlog line until it is
+understood.
 
-### The task register
+## Stands and simulators
 
-An agent that takes a task adds one line to `.claude/tasks.tsv` — its name,
-the start time and the task in one sentence, tab-separated — and takes the
-line out when the work is delivered. `scripts/progress.py` prints these lines
-under its table, so the owner sees what is in work right now without asking;
-a line whose agent is missing from `.claude/agents.tsv` is flagged as likely
-stale.
-
-### Crash triage
-
-- After every run, by hand or by agent, `scripts/collect-crashes.sh` picks up
-  fresh `.ips` files for the Msngr process from `~/Library/Logs/DiagnosticReports`,
-  puts them in `docs/qa/crashes/` and symbolicates them.
-- A crash is not closed until it is understood.
-
-## Backlog
-
-- `docs/audits/2026-08-12-code-audit.md` — 37 items, each open, confirmed, fixed
-  or rejected.
-- Order of work: crashes and data loss, then offline reliability, then E2EE edge
-  cases, then UI.
-
-## Stands
-
-- Simulators: iPhone 17 dev `44CE2242-...` (bobby11), iPhone 17 Pro Max
-  `0E0CF155-...` (445566).
-- Server: `wrangler dev` on :8787. "Offline" means killing it.
-- External runner: `~/ws/tetser-3` (ios-ai-tester), still being evaluated.
+The shared stand and the simulators are described in `CLAUDE.md` («The
+stand», «Simulators»). In short: the shared stand is on adad behind
+`msngr.a-kuz.online` and is never restarted or wiped without being asked; the
+owner's two simulators are not touched; `14C70E21-…` (gate-runner) belongs to
+the gate job; every session creates and deletes its own.

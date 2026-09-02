@@ -46,11 +46,23 @@ def roadmap(sha):
 
 
 def defects(sha):
-    """Defect entries by section of docs/qa/defects.md: still open vs fixed."""
-    text = run(["show", f"{sha}:docs/qa/defects.md"])
-    open_part, _, closed_part = text.partition("## Closed")
-    return {"defects_open": open_part.count("\n### "),
-            "defects_fixed": closed_part.count("\n### ")}
+    """Backlog lines at that commit: open (no `closed` cell) vs closed. Before
+    docs/BACKLOG.md existed the counts come from the defect log's sections."""
+    text = run(["show", f"{sha}:docs/BACKLOG.md"])
+    if not text:
+        text = run(["show", f"{sha}:docs/qa/defects.md"])
+        open_part, _, closed_part = text.partition("## Closed")
+        return {"defects_open": open_part.count("\n### "),
+                "defects_fixed": closed_part.count("\n### ")}
+    open_count = closed = 0
+    for line in text.splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) == 5 and cells[0].startswith("B") and cells[0][1:].isdigit():
+            if cells[4]:
+                closed += 1
+            else:
+                open_count += 1
+    return {"defects_open": open_count, "defects_fixed": closed}
 
 
 def rows():
@@ -150,6 +162,24 @@ def print_tasks(colored):
         print(f"  {agent:<10} {started:<17} {task}{mark}")
 
 
+def print_gate(colored):
+    """The last line the gate job wrote: which commit, when, green or red."""
+    try:
+        with open(".claude/gates/status.tsv") as fh:
+            lines = [line.rstrip("\n").split("\t") for line in fh if line.strip()]
+    except OSError:
+        return
+    if not lines:
+        return
+    sha, started, verdict, seconds, log = lines[-1][:5]
+    head = run(["rev-parse", "main"]).strip()
+    behind = "" if head == sha else paint("  (main has moved on since)", "yellow", colored)
+    color = "green" if verdict == "green" else "red"
+    print()
+    print(paint("gate", "bold", colored) + f"  {sha[:12]}  {started}  "
+          + paint(verdict, color, colored) + f"  {seconds}s  {log}{behind}")
+
+
 def main():
     data = rows()
     if not data:
@@ -160,6 +190,7 @@ def main():
     else:
         table(data)
         print_tasks(sys.stdout.isatty())
+        print_gate(sys.stdout.isatty())
 
 
 if __name__ == "__main__":
