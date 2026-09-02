@@ -209,7 +209,7 @@ final class FeedWindowTests: XCTestCase {
             XCTAssertEqual(msgs.count, FeedWindow.anchorCapacity)
             XCTAssertEqual(msgs.last?.seq, 440)
             XCTAssertTrue(msgs.contains { $0.seq == 500 })
-            XCTAssertTrue(try HistoryWindow.hasNewer(dbc, chatId: "c", topSeq: msgs.first?.seq),
+            XCTAssertTrue(try HistoryWindow.hasNewer(dbc, chatId: "c", topOrder: msgs.first?.feedOrder),
                           "the window stops short of the end of the chat")
         }
     }
