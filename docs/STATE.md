@@ -58,6 +58,15 @@ signed into a simulator), the GIF picker (a provider key), and history
 transfer to a new device (touches the provisioning tables the D1 branch moves,
 so it waits for that merge).
 
+After the merge: the history moves to a linked device (`38f0922`, ROADMAP 49
+✅, `docs/qa/runs/2026-09-02-history-transfer-run.md`): the approving device
+packs the backup payload, uploads it encrypted as an attachment and puts the
+pointer into the sealed provisioning bundle; a third simulator linked as bravo
+came up with every chat and message and sent a fresh-session message charlie's
+extension opened. The streaming helper stopped on an account 429 and was
+resumed with `claude -r`; its branch holds four commits (media format 2 in
+blocks, the stream serving ranges, the viewer playing from it).
+
 Also closed live the same evening: 773 (a request's push names its author and
 the extension writes the request chat), 853 (group avatar in the banner), 859
 (a reaction reaches the target's author with the app closed, `notifyUser`),
