@@ -42,6 +42,11 @@ interface DeferredSend {
 /// itself; the platform ceiling is 1000 per invocation and the next alarm gets
 /// a fresh budget, so audience size is not capped by it.
 const FANOUT_BUDGET = 800;
+/// Seqs one `/delete` call takes: each is a storage read, and the tombstones
+/// are written in batches; the caller splits a longer selection into calls.
+export const DELETE_SEQS_PER_CALL = 256;
+/// Keys one storage `put`/`delete` takes.
+const STORAGE_BATCH = 128;
 /// Pause before the next pass over a failed record, by the number of passes
 /// already failed; the last value repeats until the recipient answers. The
 /// ceiling is what a recovered recipient waits for their backlog at worst,
@@ -205,7 +210,7 @@ export class ConversationDO implements DurableObject {
   /// Recipients whose delivery chain is running (in-memory; the persisted
   /// records are the truth). Checked and set synchronously, so a recipient
   /// never has two chains at once — which is what keeps their frames in order.
-  private pumping = new Set<string>();
+  private pumping = new Map<string, { left: number }>();
   /// Recipients whose queue grew while their chain was ending: the chain takes
   /// one more look instead of leaving the record to the watchdog.
   private kicked = new Set<string>();
@@ -395,25 +400,32 @@ export class ConversationDO implements DurableObject {
     const record: DeliveryRecord = { frame, queuedAt: now, attempt: 0, nextAt: now };
     const entries: Record<string, DeliveryRecord | number> = { fqNext: id + 1 };
     for (const u of targets) entries[deliveryKey(u, id)] = record;
-    // one storage write takes at most 128 pairs
-    const keys = Object.keys(entries);
-    for (let i = 0; i < keys.length; i += 128) {
-      const chunk: Record<string, DeliveryRecord | number> = {};
-      for (const k of keys.slice(i, i + 128)) chunk[k] = entries[k];
-      await this.state.storage.put(chunk);
-    }
+    await this.putBatched(entries);
     // the watchdog alarm re-pumps from storage if the isolate dies mid-delivery
     await this.scheduleFanout(FANOUT_WATCHDOG_MS);
     this.kickPumps(targets);
   }
 
+  /// storage.put in chunks of the batch limit.
+  private async putBatched(entries: Record<string, unknown>) {
+    const keys = Object.keys(entries);
+    for (let i = 0; i < keys.length; i += STORAGE_BATCH) {
+      const chunk: Record<string, unknown> = {};
+      for (const k of keys.slice(i, i + STORAGE_BATCH)) chunk[k] = entries[k];
+      await this.state.storage.put(chunk);
+    }
+  }
+
   /// Starts a delivery chain per recipient, off the caller's critical path: the
   /// enqueueing request answers while the chains run. A chain that ends on a
   /// backoff arms the alarm for its deadline; a chain that dies with the
-  /// isolate is re-run from storage by the watchdog.
+  /// isolate is re-run from storage by the watchdog. The chains share one
+  /// budget: they all run in the invocation that enqueued, and the alarm they
+  /// arm on exhausting it carries on with a fresh one.
   private kickPumps(users: string[]) {
+    const budget = { left: FANOUT_BUDGET };
     for (const u of users) {
-      void this.pumpUser(u, { left: FANOUT_BUDGET })
+      void this.pumpUser(u, budget)
         .then((at) =>
           at !== undefined ? this.scheduleFanout(at - Date.now()) : undefined
         )
@@ -463,12 +475,17 @@ export class ConversationDO implements DurableObject {
     user: string,
     budget: { left: number }
   ): Promise<number | undefined> {
-    if (this.pumping.has(user)) {
-      // a chain is already on it; make sure it looks again before it ends
+    const running = this.pumping.get(user);
+    if (running) {
+      // a chain is already on it; make sure it looks again before it ends.
+      // The kick is a new invocation with an allowance of its own, and the
+      // chain spends it: a burst of sends is otherwise a chain that empties
+      // one budget on its way and leaves the tail of the burst to the alarm
+      if (running.left < budget.left) running.left = budget.left;
       this.kicked.add(user);
       return undefined;
     }
-    this.pumping.add(user);
+    this.pumping.set(user, budget);
     const chatId = this.meta?.chatId ?? "";
     const latency = Number(this.env.DEV_WS_LATENCY_MS ?? 0);
     try {
@@ -1159,7 +1176,9 @@ export class ConversationDO implements DurableObject {
         // under a block the mark is not even stored: it would show up in the chat frame
         if (await this.blockedEitherWay(b.userId)) return json({ ok: true });
         const current = await this.markOf("dlvr", b.userId);
-        const upTo = Math.max(current, ...b.seqs);
+        // a loop, not a spread: the array is the client's and can be any length
+        let upTo = current;
+        for (const s of b.seqs) if (s > upTo) upTo = s;
         if (upTo > current) {
           await this.state.storage.put(this.markKey("dlvr", b.userId), upTo);
           // the mark above is the reader's own cursor and always moves; whether the
@@ -1254,16 +1273,25 @@ export class ConversationDO implements DurableObject {
 
       case "/delete": {
         const b = (await req.json()) as { userId: string; seqs: number[]; forAll: boolean };
-        if (b.forAll) {
+        const seqs = [...new Set(b.seqs)].filter((s) => Number.isInteger(s) && s > 0);
+        if (seqs.length > DELETE_SEQS_PER_CALL) return err("too_many_seqs");
+        if (b.forAll && seqs.length) {
           const members = await this.loadMembers();
           const actor = members.get(b.userId);
           if (!actor) return err("not_member", 403);
-          // tombstone the ciphertext: a seq is the storage key, one read each
+          // tombstone the ciphertext: a seq is the storage key, read in batches
+          const stored = new Map<string, StoredMsg>();
+          for (let i = 0; i < seqs.length; i += STORAGE_BATCH) {
+            const got = await this.state.storage.get<StoredMsg>(
+              seqs.slice(i, i + STORAGE_BATCH).map(seqKey)
+            );
+            for (const [k, m] of got) stored.set(k, m);
+          }
           const updates: Record<string, StoredMsg> = {};
           const marks: Record<string, Tombstone> = {};
           const tombstoned: number[] = [];
-          for (const seq of b.seqs) {
-            const m = await this.state.storage.get<StoredMsg>(seqKey(seq));
+          for (const seq of seqs) {
+            const m = stored.get(seqKey(seq));
             if (!m) continue;
             // only a group admin can remove someone else's message
             if (m.from !== b.userId && actor.role !== "admin") continue;
@@ -1275,8 +1303,8 @@ export class ConversationDO implements DurableObject {
             tombstoned.push(seq);
           }
           if (tombstoned.length) {
-            await this.state.storage.put(updates);
-            await this.state.storage.put(marks);
+            await this.putBatched(updates);
+            await this.putBatched(marks);
             // fan out only what was really removed: otherwise members would lose
             // messages locally that are still on the server
             await this.fanout({

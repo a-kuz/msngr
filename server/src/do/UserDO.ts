@@ -2,6 +2,7 @@ import type {
   Env, ClientFrame, ServerFrame, PublicUser, PrivacySettings, LastSeenVisibility, StoryItem,
 } from "../types";
 import type { StoryDelivery } from "./StoriesDO";
+import { DELETE_SEQS_PER_CALL } from "./ConversationDO";
 import {
   json, err, nowSec, shouldArmAlarm, ulid, PRIVACY_DEFAULTS, type PrivacySetting,
 } from "../util";
@@ -577,7 +578,11 @@ export class UserDO implements DurableObject {
         }
       }
       if (Object.keys(put).length) await this.state.storage.put(put);
-      if (del.length) await this.state.storage.delete(del);
+      // a peer losing its last link frees up to four keys, so `del` outgrows
+      // the batch limit before `part` does
+      for (let j = 0; j < del.length; j += STORAGE_BATCH) {
+        await this.state.storage.delete(del.slice(j, j + STORAGE_BATCH));
+      }
     }
   }
 
@@ -661,7 +666,7 @@ export class UserDO implements DurableObject {
           // a push names its author for a device that has no row for them yet
           const names: Record<string, string> = {};
           for (const u of frame.users) names[NAME_PREFIX + u.id] = u.display_name;
-          await this.state.storage.put(names);
+          await this.putBatched(names);
         }
         if (frame.t === "msg" && !frame.service) {
           // a chat this user deleted comes back on the next message written to
@@ -2085,12 +2090,20 @@ export class UserDO implements DurableObject {
         });
         return;
 
-      case "delete":
-        await this.convStub(frame.chatId).fetch("https://do/delete", {
-          method: "POST",
-          body: JSON.stringify({ userId, seqs: frame.seqs, forAll: frame.forAll }),
-        });
+      case "delete": {
+        // the chat takes a bounded slice per call; a long selection goes in
+        // as many calls, each tombstoned and fanned out on its own
+        const seqs = Array.isArray(frame.seqs) ? frame.seqs : [];
+        for (let i = 0; i < seqs.length; i += DELETE_SEQS_PER_CALL) {
+          await this.convStub(frame.chatId).fetch("https://do/delete", {
+            method: "POST",
+            body: JSON.stringify({
+              userId, seqs: seqs.slice(i, i + DELETE_SEQS_PER_CALL), forAll: frame.forAll,
+            }),
+          });
+        }
         return;
+      }
 
       case "sync":
       case "catchup": {

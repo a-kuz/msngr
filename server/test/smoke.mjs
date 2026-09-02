@@ -2708,6 +2708,100 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
   sa.ws.close(); sb.ws.close();
 }
 
+// 32. Storage batch limits: a `put`/`delete` takes 128 keys at most, and the
+// places that write one key per member or per seq have to chunk.
+{
+  const many = async (n, tag) => {
+    const out = [];
+    for (let i = 0; i < n; i += 10) {
+      const part = [];
+      for (let j = i; j < Math.min(n, i + 10); j++) {
+        part.push(api("/api/register", { body: {
+          username: `${tag}${j}_${suffix}`, displayName: `${tag} ${j}`, ...fakeKeys(`${tag}${j}`),
+        } }));
+      }
+      out.push(...await Promise.all(part));
+    }
+    return out;
+  };
+
+  // a roster of 130: the chat frame names every member, and a recipient's object
+  // writes one name per member on receiving it
+  const crowd = await many(129, "crowd");
+  check("129 members registered", crowd.every((u) => u.ok), JSON.stringify(crowd.find((u) => !u.ok)));
+  const cw = new Client("crowd-0", crowd[0].token);
+  await cw.connect();
+  const mCw = cw.mark();
+  const big = await api("/api/chats", { token: alice.token,
+    body: { kind: "group", memberIds: crowd.map((u) => u.userId), title: "Crowd" } });
+  check("a group of 130 opens", big.ok, JSON.stringify(big));
+  const bigFrame = await cw.waitAfter(mCw, (f) => f.t === "chat" && f.chatId === big.chatId, 15000);
+  check("a member gets the 130-name roster", bigFrame?.users?.length === 130,
+    JSON.stringify(bigFrame?.users?.length));
+  let bigQueue = null;
+  for (let i = 0; i < 120; i++) {
+    bigQueue = await api(`/api/chats/${big.chatId}/fanout`, { token: alice.token });
+    if (bigQueue.ok && bigQueue.pending === 0) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  check("the roster lands for all 130 and the queue drains", bigQueue?.pending === 0,
+    JSON.stringify(bigQueue));
+  cw.ws.close();
+
+  // 129 messages deleted for all in one frame: read in batches, tombstoned in
+  // batches, one `deleted` frame per call
+  const cbD = new Client("bob-del", bob.token);
+  await cbD.connect();
+  const mDel = cbD.mark();
+  const bulkSeqs = [];
+  for (let i = 0; i < 129; i++) {
+    ca.send({ t: "send", chatId: chat.chatId, clientMsgId: `cm-bulk${i}`, sentAt: Date.now(),
+      body: { v: 1, mode: "pw", msgs: {} } });
+    const ack = await ca.waitFor((f) => f.t === "sent" && f.clientMsgId === `cm-bulk${i}`);
+    bulkSeqs.push(ack.seq);
+  }
+  ca.send({ t: "delete", chatId: chat.chatId, seqs: bulkSeqs, forAll: true });
+  const bulkDel = await cbD.waitAfter(mDel, (f) => f.t === "deleted" && f.chatId === chat.chatId
+    && f.seqs.length === 129, 10000);
+  check("129 messages deleted for all in one frame", !!bulkDel,
+    JSON.stringify(cbD.frames.slice(mDel).filter((f) => f.t === "deleted").map((f) => f.seqs.length)));
+  // a history page is one storage batch, so 129 rows take two pages
+  const bulkHist = [];
+  for (const from of [bulkSeqs[0] - 1, bulkSeqs[99]]) {
+    const page = await api(`/api/chats/${chat.chatId}/history?fromSeq=${from}&limit=100`,
+      { token: bob.token });
+    bulkHist.push(...(page.msgs ?? []));
+  }
+  const bulkTombs = bulkHist.filter((m) => bulkSeqs.includes(m.seq) && m.deleted === true);
+  check("all 129 tombstoned on the server", bulkTombs.length === 129, String(bulkTombs.length));
+  cbD.ws.close();
+
+  // leaving a group of 40 where every peer was met only there: the leaver's
+  // object frees four keys per peer at once and its presence copies of them go
+  const forty = await many(39, "forty");
+  check("39 peers registered", forty.every((u) => u.ok), JSON.stringify(forty.find((u) => !u.ok)));
+  const fortyChat = await api("/api/chats", { token: alice.token,
+    body: { kind: "group", memberIds: forty.map((u) => u.userId), title: "Forty" } });
+  check("a group of 40 opens", fortyChat.ok, JSON.stringify(fortyChat));
+  const fortyIds = new Set(forty.map((u) => u.userId));
+  const caF1 = new Client("alice-forty-1", alice.token);
+  await caF1.connect();
+  const metFirst = await caF1.waitFor((f) => f.t === "presence" && fortyIds.has(f.userId), 8000);
+  check("alice holds a presence copy of a peer met in the group", !!metFirst, JSON.stringify(metFirst));
+  caF1.ws.close();
+  const left = await api(`/api/chats/${fortyChat.chatId}/delete`, { token: alice.token, body: {} });
+  check("alice leaves the group of 40", left.ok, JSON.stringify(left));
+  // the leaver's object is told off the leave's critical path: give it a moment
+  await new Promise((r) => setTimeout(r, 1500));
+  const caF2 = new Client("alice-forty-2", alice.token);
+  await caF2.connect();
+  await new Promise((r) => setTimeout(r, 1000));
+  const leftovers = caF2.frames.filter((f) => f.t === "presence" && fortyIds.has(f.userId));
+  check("no presence copy of the 39 survives the leave", leftovers.length === 0,
+    JSON.stringify(leftovers.length));
+  caF2.ws.close();
+}
+
 cmal.ws.close(); ctre.ws.close();
 ca.ws.close(); cb2.ws.close(); cb3.ws.close(); cb4.ws.close(); ca2.ws.close(); ce.ws.close();
 cf.ws.close(); cg.ws.close();

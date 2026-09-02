@@ -6,7 +6,22 @@ with the commit that closed it.
 
 ## Open
 
-### Ten defects from the event-driven and limits audit — open
+### A socket that connects mid-fan-out gets a message twice: live and in the catch-up — open
+Found 2026-09-03 while landing T10 of the limits audit, as the smoke check
+«catch-up backfills the whole backlog» counting 222–223 `msg` frames for 210
+messages. The catch-up reads the journal whole while the fan-out queue is
+still delivering the tail of the burst to the same socket; the live path
+deduplicates against `in:<chatId>`, which only `/event` moves, and the
+catch-up neither reads nor sets it. The client absorbs the duplicate by
+`(chatId, seq)`, so nothing is shown twice; the frame is spent for nothing,
+and the check is red whenever the queue lags the sender's ack by a dozen
+records. The trigger that made it show — one send's pumps sharing a budget
+and leaving the tail of a burst to the alarm — is fixed with T10; the
+overlap itself stays. Shape: the catch-up's cursor per socket, and a live
+frame at or below it skipped for that socket alone (moving `in:` would also
+skip the push for the user's other devices).
+
+### Ten defects from the event-driven and limits audit — D1–D4 fixed, D5–D10 open
 Found 2026-09-03 by reading the code against the owner's rule (no polling,
 frames for every write, durable queues, Cloudflare's limits); the audit with
 the code lines is `docs/audits/2026-09-03-event-driven-and-limits.md`, the
@@ -14,7 +29,12 @@ defects are its D1–D10. In one line each: a roster of 129+ members never
 lands and its fan-out retries forever (an unchunked `put` in `/event`);
 losing the last shared chat with 32+ peers throws in `unrelate`; deleting
 129+ messages for all fails whole; a send in a group of ~1000 exceeds the
-subrequest cap in one invocation; a lost `devices` bump keeps peers
+subrequest cap in one invocation (those four fixed 2026-09-03: the names and
+the tombstones are written in batches of 128, `unrelate` deletes in batches,
+a `delete` frame goes to the chat in slices of 256 seqs, and the pumps one
+send starts share one budget, the alarm carrying on with a fresh one; the
+smoke opens a group of 130, deletes 129 messages in one frame and leaves a
+group of 40); a lost `devices` bump keeps peers
 encrypting to a revoked device with only a log line; a member added to a chat
 can be missing from their chat list for good while the chat shows on screen;
 pin/mute/archive/sound, privacy, block and a direct chat's deletion do not
