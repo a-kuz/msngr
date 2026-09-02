@@ -6,6 +6,24 @@ with the commit that closed it.
 
 ## Open
 
+### Ten defects from the event-driven and limits audit — open
+Found 2026-09-03 by reading the code against the owner's rule (no polling,
+frames for every write, durable queues, Cloudflare's limits); the audit with
+the code lines is `docs/audits/2026-09-03-event-driven-and-limits.md`, the
+defects are its D1–D10. In one line each: a roster of 129+ members never
+lands and its fan-out retries forever (an unchunked `put` in `/event`);
+losing the last shared chat with 32+ peers throws in `unrelate`; deleting
+129+ messages for all fails whole; a send in a group of ~1000 exceeds the
+subrequest cap in one invocation; a lost `devices` bump keeps peers
+encrypting to a revoked device with only a log line; a member added to a chat
+can be missing from their chat list for good while the chat shows on screen;
+pin/mute/archive/sound, privacy, block and a direct chat's deletion do not
+reach the user's other devices; a roster frame over 1 MiB is dropped inside
+an empty `catch`; the device-link countdown runs a third fast; the chat
+gallery does not observe and misses attachments arriving while open. None
+was seen live; each is a reachable input read off the code, and each needs
+its reproducing test first.
+
 ### The extension's coalescing window delays every banner when pushes arrive one at a time
 Found 2026-09-02 in the burst run on the simulator
 (qa/runs/2026-09-02-nse-simulator-run). Five pushes left the relay within one
