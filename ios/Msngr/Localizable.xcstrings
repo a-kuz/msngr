@@ -1739,6 +1739,17 @@
         }
       }
     },
+    "Compare from a photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сравнить по фото"
+          }
+        }
+      }
+    },
     "Compiling…" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1970,6 +1981,28 @@
         }
       }
     },
+    "Could not reach iCloud" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось связаться с iCloud"
+          }
+        }
+      }
+    },
+    "Could not reach iCloud right now; the next run will try again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сейчас iCloud недоступен; следующий запуск попробует снова."
+          }
+        }
+      }
+    },
     "Could not reach the server" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -2086,237 +2119,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Звуки по умолчанию"
-          }
-        }
-      }
-    },
-    "QR code with the login code" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "QR-код с кодом входа"
-          }
-        }
-      }
-    },
-    "Scan the code from a photo" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Считать код с фото"
-          }
-        }
-      }
-    },
-    "No login code in that picture" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "На этом снимке нет кода входа"
-          }
-        }
-      }
-    },
-    "QR code with the safety number" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "QR-код с номером безопасности"
-          }
-        }
-      }
-    },
-    "Compare from a photo" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сравнить по фото"
-          }
-        }
-      }
-    },
-    "The numbers match" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Номера совпадают"
-          }
-        }
-      }
-    },
-    "The numbers differ" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Номера не совпадают"
-          }
-        }
-      }
-    },
-    "The device gets access to the account and can read and send new messages. Your chats and their history move to it; the conversations start fresh there." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Устройство получит доступ к аккаунту и сможет читать и отправлять новые сообщения. Чаты и их история переедут на него; беседы там начнутся заново."
-          }
-        }
-      }
-    },
-    "Preparing the history…" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Готовим историю…"
-          }
-        }
-      }
-    },
-    "Moving the history to this device…" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Переносим историю на это устройство…"
-          }
-        }
-      }
-    },
-    "Your chats and their history move to this device once the login is confirmed." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Чаты и их история переедут на это устройство после подтверждения входа."
-          }
-        }
-      }
-    },
-    "iCloud, on its own" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "iCloud, автоматически"
-          }
-        }
-      }
-    },
-    "iCloud is not available on this device." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "iCloud недоступен на этом устройстве."
-          }
-        }
-      }
-    },
-    "Last iCloud backup" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Последняя копия в iCloud"
-          }
-        }
-      }
-    },
-    "Runs once a day while the device charges on a network. Sealed under a key kept in your iCloud Keychain, so a new device signed into the same Apple ID restores it without a code." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выполняется раз в день, пока устройство на зарядке и в сети. Запечатана ключом из вашей Связки ключей iCloud, поэтому новое устройство с тем же Apple ID восстановит её без кода."
-          }
-        }
-      }
-    },
-    "Could not reach iCloud right now; the next run will try again." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сейчас iCloud недоступен; следующий запуск попробует снова."
-          }
-        }
-      }
-    },
-    "Restore from iCloud" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Восстановить из iCloud"
-          }
-        }
-      }
-    },
-    "No iCloud backup for this Apple ID." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Для этого Apple ID нет копии в iCloud."
-          }
-        }
-      }
-    },
-    "The key to this backup has not reached this device's iCloud Keychain yet." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ключ от этой копии ещё не пришёл в Связку ключей iCloud на этом устройстве."
-          }
-        }
-      }
-    },
-    "Could not reach iCloud" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось связаться с iCloud"
-          }
-        }
-      }
-    },
-    "Sound: mentions and replies" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Звук: упоминания и ответы"
           }
         }
       }
@@ -3073,6 +2875,28 @@
         }
       }
     },
+    "iCloud is not available on this device." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud недоступен на этом устройстве."
+          }
+        }
+      }
+    },
+    "iCloud, on its own" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud, автоматически"
+          }
+        }
+      }
+    },
     "If this is not your account, cancel the login." : {
       "localizations" : {
         "ru" : {
@@ -3222,6 +3046,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Последняя копия"
+          }
+        }
+      }
+    },
+    "Last iCloud backup" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Последняя копия в iCloud"
           }
         }
       }
@@ -3697,6 +3532,17 @@
         }
       }
     },
+    "Moving the history to this device…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переносим историю на это устройство…"
+          }
+        }
+      }
+    },
     "Msngr" : {
       "comment" : "The name of the app.",
       "isCommentAutoGenerated" : true
@@ -3976,6 +3822,17 @@
         }
       }
     },
+    "No iCloud backup for this Apple ID." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для этого Apple ID нет копии в iCloud."
+          }
+        }
+      }
+    },
     "No limit" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -3983,6 +3840,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Без лимита"
+          }
+        }
+      }
+    },
+    "No login code in that picture" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На этом снимке нет кода входа"
           }
         }
       }
@@ -4667,6 +4535,17 @@
         }
       }
     },
+    "Preparing the history…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Готовим историю…"
+          }
+        }
+      }
+    },
     "Previous chat" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -4718,6 +4597,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Опубликовать"
+          }
+        }
+      }
+    },
+    "QR code with the login code" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "QR-код с кодом входа"
+          }
+        }
+      }
+    },
+    "QR code with the safety number" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "QR-код с номером безопасности"
           }
         }
       }
@@ -4959,6 +4860,17 @@
         }
       }
     },
+    "Restore from iCloud" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановить из iCloud"
+          }
+        }
+      }
+    },
     "Restoring your account…" : {
       "comment" : "A message that appears when the user is restoring their account.",
       "isCommentAutoGenerated" : true,
@@ -5044,6 +4956,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Округлый"
+          }
+        }
+      }
+    },
+    "Runs once a day while the device charges on a network. Sealed under a key kept in your iCloud Keychain, so a new device signed into the same Apple ID restores it without a code." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выполняется раз в день, пока устройство на зарядке и в сети. Запечатана ключом из вашей Связки ключей iCloud, поэтому новое устройство с тем же Apple ID восстановит её без кода."
           }
         }
       }
@@ -5143,6 +5066,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Мошенничество"
+          }
+        }
+      }
+    },
+    "Scan the code from a photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Считать код с фото"
           }
         }
       }
@@ -5630,6 +5564,17 @@
         }
       }
     },
+    "Sound: mentions and replies" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звук: упоминания и ответы"
+          }
+        }
+      }
+    },
     "Source" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5937,6 +5882,17 @@
         }
       }
     },
+    "The device gets access to the account and can read and send new messages. Your chats and their history move to it; the conversations start fresh there." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Устройство получит доступ к аккаунту и сможет читать и отправлять новые сообщения. Чаты и их история переедут на него; беседы там начнутся заново."
+          }
+        }
+      }
+    },
     "The folder “%@” is empty" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5948,12 +5904,13 @@
         }
       }
     },
-    "The history does not move to this device: older messages stay only where you read them." : {
+    "The key to this backup has not reached this device's iCloud Keychain yet." : {
+      "extractionState" : "manual",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "История переписки на это устройство не переносится: старые сообщения останутся только там, где вы их читали."
+            "value" : "Ключ от этой копии ещё не пришёл в Связку ключей iCloud на этом устройстве."
           }
         }
       }
@@ -5965,6 +5922,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Переписка и ключи, которые хранились на этом устройстве, будут удалены."
+          }
+        }
+      }
+    },
+    "The numbers differ" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Номера не совпадают"
+          }
+        }
+      }
+    },
+    "The numbers match" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Номера совпадают"
           }
         }
       }
@@ -6956,6 +6935,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Посты канала перестанут приходить, а те, что есть, будут удалены с этого устройства."
+          }
+        }
+      }
+    },
+    "Your chats and their history move to this device once the login is confirmed." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чаты и их история переедут на это устройство после подтверждения входа."
           }
         }
       }
