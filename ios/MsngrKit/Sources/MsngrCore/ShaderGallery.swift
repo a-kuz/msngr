@@ -773,8 +773,9 @@ public enum ShaderGallery {
 
             vec2 g = gazeAngles(t, iMouse, R);
             vec2 gLid = gazeAngles(t - 0.06, iMouse, R);      // lids trail the saccade
+            // no start-up squint: a tile that holds its first frame has to
+            // show the eye open
             float b = max(blinkAmt(t), drowsy(t));
-            b = max(b, 0.75*smoothstep(2.5, 0.4, t));         // wake up from a squint
             // asleep: the lids rest shut (a tap lowers pClosed for a peek)
             b = max(b, pClosed);
 
