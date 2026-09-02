@@ -95,6 +95,10 @@ struct ChatListView: View {
                         }
                         .background(Color(.systemBackground))
                     }
+                    // the list now stands right under the bottom search bar, and
+                    // the soft edge the system gives a scroll view there fades a
+                    // tall band of rows; the bar keeps to a strip with a hard edge
+                    .scrollEdgeEffectStyle(.hard, for: .bottom)
                 } else {
                     ChatSearchResults(list: model, search: search,
                                       ownUserId: app.session?.userId ?? "",
