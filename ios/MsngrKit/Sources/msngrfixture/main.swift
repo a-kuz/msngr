@@ -694,15 +694,12 @@ func showcase(dir: URL, base: URL) async throws {
         hello.text = "Every one of these is a tiny program. Tap them."
         try await deliver(hello, from: nova, in: novaChat, to: [demo])
         let captions = [
-            "Pond": "Drop a finger in.",
-            "Fireworks": "Tap where the next one should go.",
-            "Eye": "It follows your finger. Tap to make it blink.",
+            "Eye": "It follows your finger. Tap and it perks up.",
             "Tired": "The same eye, worn out.",
             "Tender": "Melting.",
-            "Asleep": "Shh. Hold a finger on it and it peeks.",
+            "Asleep": "Shh. Tap and it peeks for a second.",
             "Angry": "Don't.",
             "Scared": "What was that.",
-            "Ink": "Stir it.",
             "Clock": "This one knows the time.",
         ]
         for doc in ShaderGallery.stickers {
@@ -736,9 +733,9 @@ func showcase(dir: URL, base: URL) async throws {
         var welcome = ContentPayload(kind: "text")
         welcome.text = "Opened this one for the three of us."
         try await deliver(welcome, from: iris, in: groupId, to: [demo, nova])
-        var burst = ContentPayload(kind: "sticker")
-        burst.shader = ShaderGallery.fireworks
-        try await deliver(burst, from: nova, in: groupId, to: [demo, iris])
+        var wink = ContentPayload(kind: "sticker")
+        wink.shader = ShaderGallery.eyeTender
+        try await deliver(wink, from: nova, in: groupId, to: [demo, iris])
     }
 
     // the peers' avatars land in demo's home with the snapshot
@@ -812,15 +809,12 @@ func showcaseGuest(dir: URL, base: URL, handle: String) async throws {
         hello.text = "Every one of these is a tiny program. Tap them."
         try await nova.engine.enqueue(content: hello, chatId: chatId)
         let captions = [
-            "Pond": "Drop a finger in.",
-            "Fireworks": "Tap where the next one should go.",
-            "Eye": "It follows your finger. Tap to make it blink.",
+            "Eye": "It follows your finger. Tap and it perks up.",
             "Tired": "The same eye, worn out.",
             "Tender": "Melting.",
-            "Asleep": "Shh. Hold a finger on it and it peeks.",
+            "Asleep": "Shh. Tap and it peeks for a second.",
             "Angry": "Don't.",
             "Scared": "What was that.",
-            "Ink": "Stir it.",
             "Clock": "This one knows the time.",
         ]
         for doc in ShaderGallery.stickers {

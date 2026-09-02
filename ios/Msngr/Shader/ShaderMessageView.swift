@@ -31,6 +31,10 @@ final class ShaderCanvas: UIView {
     var deviceInputs = false
     var priority: Priority = .feed
     var onState: ((ShaderProgram.State) -> Void)?
+    /// A tap on the canvas, called after the shader has been fed the touch: a
+    /// single finger down and up within a moment, without wandering.
+    var onTap: (() -> Void)?
+    private var tapStart: (time: TimeInterval, point: CGPoint)?
     /// The owner asked for frames; the budget decides whether they come.
     private(set) var wantsLive = false
     private(set) var isLive = false
@@ -226,6 +230,11 @@ final class ShaderCanvas: UIView {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard acceptsTouches else { return super.touchesBegan(touches, with: event) }
+        if fingers.isEmpty, touches.count == 1, let t = touches.first {
+            tapStart = (t.timestamp, t.location(in: self))
+        } else {
+            tapStart = nil
+        }
         for t in touches where !fingers.contains(t) { fingers.append(t) }
         if let t = fingers.first {
             renderer?.touch(t.location(in: self), in: bounds.size, scale: metalView.contentScaleFactor, began: touches.contains(t))
@@ -243,7 +252,15 @@ final class ShaderCanvas: UIView {
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard acceptsTouches else { return super.touchesEnded(touches, with: event) }
+        let tap: Bool
+        if let start = tapStart, fingers.count == 1, let t = touches.first, fingers.first == t {
+            let moved = hypot(t.location(in: self).x - start.point.x, t.location(in: self).y - start.point.y)
+            tap = t.timestamp - start.time < 0.35 && moved < 12
+        } else {
+            tap = false
+        }
         lift(touches)
+        if tap { onTap?() }
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -257,6 +274,7 @@ final class ShaderCanvas: UIView {
         if liftedFirst || fingers.isEmpty {
             renderer?.touch(nil, in: bounds.size, scale: metalView.contentScaleFactor, began: false)
         }
+        if fingers.isEmpty { tapStart = nil }
         feedTouches()
     }
 
@@ -296,6 +314,11 @@ final class ShaderMessageView: UIView {
     private let nameLabel = UILabel()
     private var active = false
     private var failed = false
+    /// A tap on the canvas of a sticker, after the shader has had the touch.
+    var onTap: (() -> Void)? {
+        get { canvas.onTap }
+        set { canvas.onTap = newValue }
+    }
 
     /// A transparent view is a sticker: no black behind the shader, and the
     /// state label reads over the chat instead of over black.

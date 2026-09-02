@@ -45,6 +45,9 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     /// The message the chat holds pinned, so the context menu of that one offers
     /// to take the pin off instead of putting it on again.
     var pinnedSeqs: Set<Int> = []
+    /// Stickers opened to the width of the chat by a tap; a second tap folds
+    /// one back. The set is what `BubbleLayout.plan` reads as `expanded`.
+    private var expandedStickers: Set<String> = []
     var onTapMedia: ((Message, Int, UIView) -> Void)?
     var onTapShader: ((Message) -> Void)?
     /// Tap on the quote inside a reply bubble, which jumps to the original.
@@ -554,6 +557,22 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         }
     }
 
+    /// A tap on a sticker opens it to the width of the chat, and a tap on an
+    /// open one folds it back. The cell resizes in place under the same spring
+    /// a reaction uses, so the neighbours slide apart instead of jumping.
+    private func toggleSticker(_ msg: Message) {
+        if expandedStickers.contains(msg.id) { expandedStickers.remove(msg.id) } else { expandedStickers.insert(msg.id) }
+        guard let index = items.firstIndex(where: {
+            if case .message(let m, _, _, _, _, _, _) = $0 { return m.id == msg.id }
+            return false
+        }) else { return }
+        if collectionView.cellForItem(at: IndexPath(item: index, section: 0)) != nil {
+            refreshItem(at: index, item: items[index])
+        } else {
+            collectionView.collectionViewLayout.invalidateLayout()
+        }
+    }
+
     /// Refreshes a position that already stands in the feed and whose content changed.
     /// A reload recreates the cell and instantly cuts off a running appearance animation
     /// (the pending→sent ack lands in the first milliseconds of the flight), so a visible
@@ -570,7 +589,8 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
             if let cell = collectionView.cellForItem(at: indexPath) as? MessageCell {
                 let plan = BubbleLayout.plan(for: msg, width: collectionView.bounds.width, tightGap: tightGap,
                                              showTail: showTail, showName: showName, authorName: authorName,
-                                             replyAuthorName: replyAuthorName, avatarInset: avatar != nil)
+                                             replyAuthorName: replyAuthorName, avatarInset: avatar != nil,
+                                             expanded: expandedStickers.contains(msg.id))
                 // an inline reaction changes only the width, so the spring wraps every
                 // reconfigure; the batch update joins in only when the height moved. It
                 // re-reads sizeForItemAt, which serves the new plan from the cache;
@@ -621,6 +641,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         cell.onContextAction = { [weak self] action in self?.onContextAction?(msg, action) }
         cell.onTapMedia = { [weak self] index, view in self?.onTapMedia?(msg, index, view) }
         cell.onTapShader = { [weak self] in self?.onTapShader?(msg) }
+        cell.onTapSticker = { [weak self] in self?.toggleSticker(msg) }
         cell.onTapLink = { [weak self] url in self?.open(url) }
         cell.onTapReplyQuote = { [weak self] in self?.onTapReplyQuote?(msg) }
         cell.onToggleSelection = { [weak self] in self?.onToggleSelection?(msg) }
@@ -1042,7 +1063,8 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "msg", for: indexPath) as! MessageCell
             let plan = BubbleLayout.plan(for: msg, width: cv.bounds.width, tightGap: tightGap,
                                          showTail: showTail, showName: showName, authorName: authorName,
-                                         replyAuthorName: replyAuthorName, avatarInset: avatar != nil)
+                                         replyAuthorName: replyAuthorName, avatarInset: avatar != nil,
+                                         expanded: expandedStickers.contains(msg.id))
             configureMessageCell(cell, msg: msg, plan: plan, avatar: avatar)
             // the original's cell is created while the scroll to it is under way, and the flash was waiting
             if let id = pendingHighlightId, id == msg.id {
@@ -1078,7 +1100,8 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             }
             let plan = BubbleLayout.plan(for: msg, width: cv.bounds.width, tightGap: tightGap,
                                          showTail: showTail, showName: showName, authorName: authorName,
-                                         replyAuthorName: replyAuthorName, avatarInset: avatar != nil)
+                                         replyAuthorName: replyAuthorName, avatarInset: avatar != nil,
+                                         expanded: expandedStickers.contains(msg.id))
             return CGSize(width: cv.bounds.width, height: plan.cellHeight)
         }
     }

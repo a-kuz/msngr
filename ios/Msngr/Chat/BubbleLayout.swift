@@ -144,22 +144,23 @@ enum BubbleLayout {
     }
 
     static func cacheKey(_ msg: Message, width: CGFloat, tightGap: Bool, showTail: Bool,
-                         showName: Bool, avatarInset: Bool, ownId: String) -> NSString {
+                         showName: Bool, avatarInset: Bool, expanded: Bool = false, ownId: String) -> NSString {
         let reactions = msg.reactions.map { "\($0.key)\($0.value.count)\($0.value.contains(ownId) ? "*" : "")" }.sorted().joined()
         let ver = "\(msg.text ?? "")|\(msg.status.rawValue)|\(msg.edited)|\(reactions)|\(msg.deletedForAll)|\(msg.linkPreview?.url ?? "")|\(msg.linkPreview?.image?.mediaId ?? (msg.linkPreview?.image != nil ? "local" : ""))|\(msg.transcriptShown ? msg.transcript ?? "" : "")|\(msg.story.map { $0.expiresAt / 1000 > Date().timeIntervalSince1970 } ?? false)"
-        return "\(msg.id)|\(Int(width))|\(TypeScale.category.rawValue)|\(tightGap)|\(showTail)|\(showName)|\(avatarInset)|\(ver.hashValue)" as NSString
+        return "\(msg.id)|\(Int(width))|\(TypeScale.category.rawValue)|\(tightGap)|\(showTail)|\(showName)|\(avatarInset)|\(expanded)|\(ver.hashValue)" as NSString
     }
 
+    /// `expanded` is a sticker opened to the width of the chat by a tap.
     static func plan(for msg: Message, width: CGFloat, tightGap: Bool, showTail: Bool,
                      showName: Bool, authorName: String?, replyAuthorName: String? = nil,
-                     avatarInset: Bool = false) -> BubbleLayoutPlan {
+                     avatarInset: Bool = false, expanded: Bool = false) -> BubbleLayoutPlan {
         let key = cacheKey(msg, width: width, tightGap: tightGap, showTail: showTail,
-                           showName: showName, avatarInset: avatarInset, ownId: OwnUser.id)
+                           showName: showName, avatarInset: avatarInset, expanded: expanded, ownId: OwnUser.id)
         if let boxed = cache.object(forKey: key) { return boxed.plan }
         let p = PerfTrace.shared.measure("bubble.measure") {
             compute(for: msg, width: width, tightGap: tightGap, showTail: showTail,
                     showName: showName, authorName: authorName, replyAuthorName: replyAuthorName,
-                    avatarInset: avatarInset)
+                    avatarInset: avatarInset, expanded: expanded)
         }
         cache.setObject(Box(p), forKey: key)
         return p
@@ -171,7 +172,7 @@ enum BubbleLayout {
 
     private static func compute(for msg: Message, width: CGFloat, tightGap: Bool, showTail: Bool,
                                 showName: Bool, authorName: String?,
-                                replyAuthorName: String?, avatarInset: Bool) -> BubbleLayoutPlan {
+                                replyAuthorName: String?, avatarInset: Bool, expanded: Bool) -> BubbleLayoutPlan {
         // guards against a collection width reported too small or too large: a bubble is
         // never wider than the screen
         let safeWidth = min(width, UIScreen.main.bounds.width)
@@ -333,8 +334,10 @@ enum BubbleLayout {
             statusOnMedia = true
         case .sticker:
             // a sticker is a square with no bubble behind it: the shader's own
-            // alpha decides what shows; the time sits in its capsule as on a photo
-            let side = min(stickerSide, maxBubbleWidth)
+            // alpha decides what shows; the time sits in its capsule as on a photo.
+            // Opened by a tap it takes the whole width the bubbles have
+            let side = expanded ? floor(safeWidth) - 2 * sideMargin - (inset ? avatarSpan : 0)
+                                : min(stickerSide, maxBubbleWidth)
             let bare = authorNameFrame == nil && forwardFrame == nil && replyFrame == nil
             shaderFrame = CGRect(x: 0, y: bare ? 0 : y, width: side, height: side)
             mediaFrame = shaderFrame

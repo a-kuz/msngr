@@ -13,13 +13,10 @@ transpiler and the Metal compiler.
 
 | Surface | Shader | What it does in the hand |
 |---|---|---|
-| Sticker | Pond | a round pond; a finger is a drop, rain falls on its own |
-| Sticker | Fireworks | a tap launches a rocket toward the finger; one goes up by itself every few seconds |
-| Sticker | Eye | follows the finger, the pupil widens under it, a tap makes it blink |
-| Sticker | Tired, Tender, Asleep, Angry, Scared | the same eye program with the lids, brow, gaze and skin set to a mood; the asleep one peeks while a finger holds it |
-| Sticker | Ink | ink in water, stirred by the finger; a thread rises by itself; the ink is the accent colour |
+| Sticker | Eye | follows the finger; a tap makes it perk up for a moment |
+| Sticker | Tired, Tender, Asleep, Angry, Scared | the same eye program with the lids, brow, gaze and skin set to a mood; a tap deepens the mood for a moment (the sleeper peeks) |
 | Sticker | Clock | the real time from the phone's clock; face and marks in the theme's colours |
-| Sticker | Heart, Sparkle | the bundled pair: a raymarched heart that beats and hums on a tap, the sparkle plate that orbits under the finger |
+| Sticker | Sparkle | the bundled one: the sparkle plate that orbits under the finger |
 | Background | Aurora | night sky over mountains; leans with the phone's tilt; a pale dawn in the light theme |
 | Bubble | Foil | holographic foil behind a text; the bands shift as the bubble moves up the screen |
 | Bubble | Ember | slow fire behind a text, sparks rising |
@@ -88,21 +85,18 @@ stand has never been seeded: the avatars and the group are its work.
    right: the sky leans. Switch the appearance in Control Centre and come
    back: the same shader is a dawn in the light theme.
 3. **The stickers.** Scroll to the top of the conversation and go down:
-   - Pond: touch the water, hold and drag; watch the rain when you let go.
-   - Fireworks: tap twice in different places.
-   - Eye: move a finger around it, then tap.
+   - Eye: move a finger around it, then tap: it perks up, and the sticker
+     opens to the width of the chat. Tap again to fold it back.
    - The five moods after it are that one program with other values in its
-     dials; hold a finger on the sleeping one.
-   - Ink: stir with a finger; note it is the app's accent colour, and that a
-     different accent gives a different ink.
+     dials; a tap deepens each one for a moment. Tap the sleeping one.
    - Clock: it is the real time.
    Say: a sticker travels inline in the message, encrypted with it; the
    receiver's phone compiles and runs it. No server ever sees it.
 4. **The bubbles.** Scroll the two foil and ember texts up and down: the foil
    tilts with the bubble's place on the screen.
-5. **Send one back.** The sticker button opens the pack; tap the heart. It
-   lands in the feed and beats when tapped; on a phone the beat is in the
-   haptics. The send itself fires the burst out of the button.
+5. **Send one back.** The sticker button opens the pack; tap the sparkle. It
+   lands in the feed and orbits under the finger. The send itself fires the
+   burst out of the button.
 6. **React.** Long-press the foil text: the lifted bubble keeps its shader
    running (the overlay lays a live canvas over the snapshot). Pick a
    reaction: confetti out of the bubble.
@@ -114,7 +108,7 @@ stand has never been seeded: the avatars and the group are its work.
 ## What needs a phone
 
 The simulator has no tilt, no haptics and no real sensors: the aurora stands
-still, the heart's beat is silent. Everything else in the script is seen on a
+still. Everything else in the script is seen on a
 simulator. Fast on the simulator proves nothing about the frame cost; a phone
 does.
 

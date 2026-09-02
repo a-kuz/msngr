@@ -8,7 +8,7 @@ import Foundation
 /// puts the whole set onto the stand's service accounts.
 public enum ShaderGallery {
     public static let stickers: [ShaderDocument] = [
-        pond, fireworks, eye, eyeTired, eyeTender, eyeAsleep, eyeAngry, eyeScared, smoke, clock,
+        eye, eyeTired, eyeTender, eyeAsleep, eyeAngry, eyeScared, clock,
     ]
     public static let backgrounds: [ShaderDocument] = [aurora, dusk, paper]
     public static let bubbles: [ShaderDocument] = [foil, ember]
@@ -25,179 +25,6 @@ public enum ShaderGallery {
 
     // MARK: - Stickers
 
-    /// A round pond. Buffer A is a height field stepping the wave equation;
-    /// a finger is a drop where it lands, and a drop of rain falls on its own
-    /// every couple of seconds so the water is never still.
-    public static let pond = ShaderDocument(name: "Pond", passes: [
-        ShaderPass(id: "A", kind: .buffer, code: """
-        float hash(float n) { return fract(sin(n) * 43758.5453); }
-        void mainImage(out vec4 O, in vec2 F) {
-            ivec2 p = ivec2(F);
-            vec4 s = texelFetch(iChannel3, p, 0);
-            float h = s.x, hp = s.y;
-            float l = texelFetch(iChannel3, p + ivec2(1, 0), 0).x + texelFetch(iChannel3, p - ivec2(1, 0), 0).x
-                    + texelFetch(iChannel3, p + ivec2(0, 1), 0).x + texelFetch(iChannel3, p - ivec2(0, 1), 0).x;
-            if (s.w < 1.5) { h = 0.0; hp = 0.0; l = 0.0; }
-            float nh = (2.0 * h - hp + 0.4 * (l - 4.0 * h)) * 0.985;
-            float r = 0.025 * iResolution.y;
-            if (iMouse.z > 0.0) {
-                vec2 d = F - iMouse.xy;
-                nh -= 0.4 * exp(-dot(d, d) / (r * r));
-            }
-            // a drop of rain: one frame every 1.7 s, somewhere inside the pond
-            float k = floor(iTime / 1.7);
-            if (fract(iTime / 1.7) * 1.7 < clamp(iTimeDelta, 0.008, 0.05)) {
-                vec2 c = 0.5 * iResolution.xy + (vec2(hash(k * 3.1), hash(k * 7.7)) - 0.5) * 0.6 * iResolution.y;
-                vec2 d = F - c;
-                nh -= 0.6 * exp(-dot(d, d) / (r * r * 0.5));
-            }
-            O = vec4(clamp(nh, -1.2, 1.2), h, 0.0, 2.0);
-        }
-        """, inputs: [stateInput("A")]),
-        ShaderPass(id: ShaderPass.imageId, kind: .image, code: """
-        float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-        float noise(vec2 p) {
-            vec2 i = floor(p), f = fract(p);
-            f = f * f * (3.0 - 2.0 * f);
-            return mix(mix(hash2(i), hash2(i + vec2(1.0, 0.0)), f.x),
-                       mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0, 1.0)), f.x), f.y);
-        }
-        void mainImage(out vec4 O, in vec2 F) {
-            vec2 uv = (F - 0.5 * iResolution.xy) / iResolution.y;
-            float px = 1.5 / iResolution.y;
-            float rad = 0.42;
-            float dist = length(uv) - rad;
-            ivec2 p = ivec2(F);
-            float h = texelFetch(iChannel0, p, 0).x;
-            float hx = texelFetch(iChannel0, p + ivec2(1, 0), 0).x - texelFetch(iChannel0, p - ivec2(1, 0), 0).x;
-            float hy = texelFetch(iChannel0, p + ivec2(0, 1), 0).x - texelFetch(iChannel0, p - ivec2(0, 1), 0).x;
-            vec3 n = normalize(vec3(-hx * 3.0, -hy * 3.0, 1.0));
-            // the bottom seen through the water, nudged by the surface
-            vec2 q = uv + n.xy * 0.05;
-            float rr = length(q) / rad;
-            // sand at the rim, deep teal toward the middle; the dark theme
-            // dims the sand so the pond stays water, not a moon
-            float sand = noise(q * 24.0) * 0.55 + noise(q * 52.0 + 3.7) * 0.45;
-            vec3 bottom = vec3(0.78, 0.68, 0.50) * (0.8 + 0.3 * sand) * mix(1.0, 0.55, iDark);
-            float depth = smoothstep(1.02, 0.3, rr);
-            vec3 water = mix(vec3(0.05, 0.33, 0.45), vec3(0.02, 0.17, 0.28), iDark);
-            vec3 col = mix(bottom, water, 0.25 + 0.65 * depth);
-            // the rings: a lit crest, a shaded trough
-            col += vec3(0.7, 0.95, 0.9) * clamp(h * 2.2, 0.0, 0.8);
-            col -= vec3(0.10, 0.18, 0.20) * clamp(-h * 2.0, 0.0, 0.6);
-            vec3 L = normalize(vec3(-0.5, 0.7, 0.6));
-            vec3 V = vec3(0.0, 0.0, 1.0);
-            float spec = pow(max(dot(reflect(-L, n), V), 0.0), 60.0);
-            col += vec3(1.0) * spec * 0.5;
-            // the rim of the pond
-            float rim = smoothstep(0.0, -0.035, dist);
-            col = mix(vec3(0.35, 0.3, 0.25) * (0.8 + 0.4 * (1.0 - smoothstep(-0.04, 0.0, dist))), col, rim);
-            float a = smoothstep(px, -px, dist);
-            // the shadow under it
-            vec2 sh = (uv - vec2(0.0, -0.44)) * vec2(1.0, 3.5);
-            float shadow = smoothstep(0.42, 0.1, length(sh)) * 0.3 * (1.0 - a);
-            col = mix(col, vec3(0.0), (1.0 - a) * shadow / max(shadow, 1e-4) * shadow);
-            a = max(a, shadow);
-            O = vec4(col * a, a);
-        }
-        """, inputs: [readInput("A", filter: "nearest")]),
-    ])
-
-    /// Fireworks. Buffer A holds four rockets in four texels: a tap launches
-    /// the next one toward the finger, and one goes up on its own when nobody
-    /// has tapped for a while. The image draws each rocket's climb, then its
-    /// burst of sparks under gravity.
-    public static let fireworks = ShaderDocument(name: "Fireworks", passes: [
-        ShaderPass(id: "common", kind: .common, code: """
-        float hash(float n) { return fract(sin(n) * 43758.5453); }
-        const float CLIMB = 0.8;
-        const float LIFE = 3.4;
-        const float AUTO = 2.6;
-        """, inputs: []),
-        ShaderPass(id: "A", kind: .buffer, code: """
-        void mainImage(out vec4 O, in vec2 F) {
-            ivec2 p = ivec2(F);
-            if (p.y > 0 || p.x > 4) { O = vec4(0.0); return; }
-            vec4 s = texelFetch(iChannel3, p, 0);
-            vec4 meta = texelFetch(iChannel3, ivec2(4, 0), 0);
-            // meta: last launch time, the written mark, the next slot
-            if (meta.y < 1.5) { s = vec4(0.0, 0.0, -100.0, 0.0); meta = vec4(-100.0, 2.0, 0.0, 0.0); }
-            bool launch = false;
-            vec2 target = vec2(0.0);
-            if (iMouse.w > 0.0) {
-                launch = true;
-                target = iMouse.xy;
-            } else if (iTime - meta.x > AUTO) {
-                launch = true;
-                float k = floor(iTime * 10.0);
-                target = iResolution.xy * vec2(0.2 + 0.6 * hash(k * 1.3), 0.5 + 0.35 * hash(k * 2.9));
-            }
-            int slot = int(meta.z + 0.5);
-            if (p.x == 4) {
-                if (launch) { meta.x = iTime; meta.z = mod(meta.z + 1.0, 4.0); }
-                O = meta;
-                return;
-            }
-            if (launch && p.x == slot) s = vec4(target, iTime, hash(iTime * 17.0 + float(slot)));
-            O = s;
-        }
-        """, inputs: [stateInput("A")]),
-        ShaderPass(id: ShaderPass.imageId, kind: .image, code: """
-        vec3 pal(float h) { return 0.55 + 0.45 * cos(6.2831 * (h + vec3(0.0, 0.33, 0.67))); }
-        void mainImage(out vec4 O, in vec2 F) {
-            vec2 uv = F / iResolution.y;
-            vec3 col = vec3(0.0);
-            float a = 0.0;
-            for (int i = 0; i < 4; i++) {
-                vec4 s = texelFetch(iChannel0, ivec2(i, 0), 0);
-                float age = iTime - s.z;
-                if (age < 0.0 || age > LIFE) continue;
-                vec2 target = s.xy / iResolution.y;
-                vec3 tint = pal(s.w);
-                if (age < CLIMB) {
-                    // the climb: a bright head with a trail of embers
-                    float k = age / CLIMB;
-                    vec2 start = vec2(target.x + 0.08 * (s.w - 0.5), 0.0);
-                    for (int j = 0; j < 8; j++) {
-                        float kk = k - float(j) * 0.02;
-                        if (kk < 0.0) continue;
-                        vec2 pos = mix(start, target, 1.0 - (1.0 - kk) * (1.0 - kk));
-                        pos.x += 0.01 * sin(kk * 40.0 + s.w * 10.0);
-                        float d = length(uv - pos);
-                        float g = 0.0035 / (d + 1e-4);
-                        g = g * g * (j == 0 ? 1.0 : 0.25 / (1.0 + float(j)));
-                        col += mix(vec3(1.0, 0.9, 0.7), tint, 0.4) * g;
-                        a += g;
-                    }
-                } else {
-                    float t = age - CLIMB;
-                    float fade = smoothstep(LIFE - CLIMB, 0.5, t);
-                    float flash = exp(-t * 12.0);
-                    float d0 = length(uv - target);
-                    col += vec3(1.0) * flash * 0.02 / (d0 + 0.01);
-                    a += flash * 0.02 / (d0 + 0.01);
-                    for (int j = 0; j < 44; j++) {
-                        float fj = float(j) + s.w * 100.0;
-                        float ang = hash(fj * 7.1) * 6.2831;
-                        float spd = 0.22 + 0.16 * hash(fj * 3.3);
-                        vec2 dir = vec2(cos(ang), sin(ang));
-                        vec2 pos = target + dir * spd * (1.0 - exp(-1.6 * t)) / 1.6 * 1.6;
-                        pos.y -= 0.10 * t * t;
-                        float d = length(uv - pos);
-                        float r = 0.0028 + 0.0015 * hash(fj * 5.7);
-                        float g = r / (d + 1e-4);
-                        float twinkle = 0.6 + 0.4 * sin(t * 18.0 + fj);
-                        g = g * g * fade * twinkle;
-                        col += mix(tint, vec3(1.0), smoothstep(0.3, 0.0, t)) * g;
-                        a += g;
-                    }
-                }
-            }
-            O = vec4(min(col, vec3(1.0)), clamp(a, 0.0, 1.0));
-        }
-        """, inputs: [readInput("A", filter: "nearest")]),
-    ])
-
     /// A human eye, procedural and photoreal: orthographic rays against the
     /// eyeball and the corneal sphere, refracted through the cornea onto the
     /// iris plane, with vessels in the sclera, bump-mapped skin, two rows of
@@ -209,10 +36,9 @@ public enum ShaderGallery {
     /// The eye has moods: every expression is the one program with another set
     /// of tuning values, so it lives in the posture of the lids, the brow, the
     /// gaze and the skin rather than in separate drawings. A sticker is the eye
-    /// resting in one mood; a tap sends it into another one, morphing the
-    /// tuning over a moment, and a few seconds later it comes back to its own.
-    /// Buffer S holds the mood it came from, the one it is in, when it
-    /// switched and how many taps it has had.
+    /// resting in one mood; a tap deepens that mood for a moment (the values in
+    /// `eyeMoodTaps`) and it eases back. Buffer S holds when the last tap
+    /// landed and how many there were.
     public static let eye = eyeDocument(0)
     /// Heavy lids that keep sagging, a downcast slow gaze, dark swollen
     /// under-eyes, a bloodshot sclera.
@@ -221,7 +47,7 @@ public enum ShaderGallery {
     /// eye is wet and bright, the head tilts, the gaze rests a little upward.
     public static let eyeTender = eyeDocument(2)
     /// Shut lids that rise and fall with the breath, the cornea moving under
-    /// them in REM; a finger held on it makes it peek for as long as it stays.
+    /// them in REM; a tap makes it peek for a second and doze off again.
     public static let eyeAsleep = eyeDocument(3)
     /// The brow pressed down onto a lid slanting toward the nose, a pinpoint
     /// pupil, a fixed stare that barely blinks, flushed skin, the sclera red.
@@ -236,7 +62,7 @@ public enum ShaderGallery {
         ("Eye", [:]),
         ("Tired", [
             "pLidDroop": 0.50, "pDrowsyAmp": 1.2, "pBlinkT": 5.5, "pBlinkSlow": 2.4,
-            "pSaccT": 4.8, "pSaccAmp": 0.55, "pGazeY": -0.16,
+            "pSaccT": 4.8, "pSaccAmp": 0.55, "pSaccEase": 3.0, "pGazeY": -0.16,
             "pVein": 5.5, "pBloodshot": 0.45, "pScleraWarm": 2.6, "pSkinRed": 0.5,
             "pShadow": 3.0, "pPuff": 1.0, "pIrisBright": 0.17, "pOily": 1.3,
             "pKey": 0.16, "pIdle": 0.5,
@@ -244,24 +70,24 @@ public enum ShaderGallery {
         ("Tender", [
             "pCheekLift": 0.55, "pLidDroop": 0.12, "pPupil": 0.20, "pWet": 1.0,
             "pIrisBright": 0.26, "pBlinkT": 5.0, "pBlinkSlow": 1.5,
-            "pSaccT": 4.0, "pSaccAmp": 0.45, "pGazeY": 0.10, "pTilt": 3.2,
+            "pSaccT": 4.0, "pSaccAmp": 0.45, "pSaccEase": 3.0, "pGazeY": 0.10, "pTilt": 3.2,
             "pSSS": 0.11, "pSkinRed": 0.4, "pVein": 1.6, "pBloodshot": 0.12,
             "pLashLen": 1.6, "pLashLenLo": 0.85, "pCurlUp": 2.1,
         ]),
         ("Asleep", [
             "pClosed": 1.0, "pBreath": 1.0, "pDrowsyAmp": 0.0,
-            "pSaccT": 2.2, "pSaccAmp": 0.8, "pIdle": 0.35, "pTilt": 2.0,
+            "pSaccT": 3.0, "pSaccAmp": 0.8, "pSaccEase": 6.0, "pIdle": 0.35, "pTilt": 2.0,
             "pKey": 0.14, "pShadow": 1.4,
         ]),
         ("Angry", [
             "pBrowDrop": 1.0, "pLidDroop": 0.08, "pPupil": 0.09, "pDrowsyAmp": 0.0,
-            "pSaccT": 6.0, "pSaccAmp": 0.18, "pBlinkT": 7.5, "pTremor": 0.5,
+            "pSaccT": 6.0, "pSaccAmp": 0.18, "pSaccEase": 2.0, "pBlinkT": 7.5, "pTremor": 0.5,
             "pVein": 6.5, "pBloodshot": 0.65, "pScleraWarm": 2.8, "pSkinRed": 1.4,
             "pKey": 0.30, "pOily": 2.8, "pTilt": 0.0,
         ]),
         ("Scared", [
             "pLidLift": 1.0, "pPupil": 0.23, "pDrowsyAmp": 0.0,
-            "pSaccT": 0.75, "pSaccAmp": 1.7, "pTremor": 1.6,
+            "pSaccT": 1.3, "pSaccAmp": 1.7, "pSaccEase": 1.8, "pTremor": 1.6,
             "pBlinkT": 6.5, "pBlinkSlow": 0.7, "pPale": 1.0, "pOily": 4.5,
             "pVein": 4.0, "pBloodshot": 0.25, "pKey": 0.24, "pWet": 0.4, "pIdle": 1.6,
             "pRim": 0.80, "pZoom": 1.12,
@@ -275,6 +101,7 @@ public enum ShaderGallery {
         ("pBlinkSlow",   1.0,   "blink duration"),
         ("pSaccT",       3.14,  "seconds between saccades"),
         ("pSaccAmp",     1.0,   "saccade spread"),
+        ("pSaccEase",    1.0,   "how long a saccade takes to land"),
         ("pGazeY",       0.0,   "resting gaze, vertical"),
         ("pTremor",      0.0,   "gaze and lid tremble"),
         ("pDrowsyAmp",   0.22,  "tired half-closure amount"),
@@ -325,57 +152,52 @@ public enum ShaderGallery {
         ("pBG",          0.385, "backdrop brightness (Shadertoy fill; unused with ALPHA_OUT)"),
     ]
 
-    /// Seconds a tapped-in mood holds before the eye comes back to its own.
-    static let eyeMoodHold = 7.0
+    /// What a tap does to each mood, index-aligned with `eyeMoods`: the values
+    /// the eye moves to for the moment after the tap, over the mood's own.
+    /// The neutral eye perks up; the tired one sinks further; the tender one
+    /// melts; the sleeper peeks for a second; anger flares; fear jolts wider.
+    static let eyeMoodTaps: [[String: Double]] = [
+        ["pPupil": 0.085, "pLidLift": 0.30, "pSaccAmp": 0.3],
+        ["pLidDroop": 0.80, "pGazeY": -0.30, "pShadow": 3.4],
+        ["pCheekLift": 0.85, "pPupil": 0.26, "pWet": 2.0, "pTilt": 5.0, "pLidDroop": 0.25, "pIrisBright": 0.30],
+        ["pClosed": 0.45, "pBreath": 0.3, "pSaccAmp": 0.3, "pLidDroop": 0.30],
+        ["pBrowDrop": 1.4, "pLidDroop": 0.20, "pPupil": 0.07, "pTremor": 1.2, "pBloodshot": 0.9, "pVein": 8.0, "pSkinRed": 2.0],
+        ["pLidLift": 1.5, "pPupil": 0.27, "pTremor": 2.5, "pSaccAmp": 2.2, "pPale": 1.3, "pZoom": 1.2, "pRim": 0.85],
+    ]
 
-    /// The eye resting in mood `base`. The image pass carries every tuning
-    /// value as a variable set to the neutral one, `moodValue` picks a mood's
-    /// value by index, and `applyMoods` blends the two moods the state buffer
-    /// names; a value no mood touches stays a plain constant.
+    /// The eye in mood `base`. The mood's values are written into the program
+    /// as constants; the ones its tap moves become variables that `applyTap`
+    /// blends toward the tap values by the envelope the image pass computes
+    /// from the state buffer.
     static func eyeDocument(_ base: Int) -> ShaderDocument {
-        let moods = eyeMoods
+        let mood = eyeMoods[base].1
+        let tap = eyeMoodTaps[base]
         let tuning: String = eyeTuning.map { name, value, what -> String in
-            let touched = moods.contains { $0.1[name] != nil }
-            return "\(touched ? "PV" : "P")(\(name), \(value)) // \(what)"
+            "\(tap[name] != nil ? "PV" : "P")(\(name), \(mood[name] ?? value)) // \(what)"
         }.joined(separator: "\n")
-        let blends = eyeTuning.compactMap { name, value, _ -> String? in
-            guard moods.contains(where: { $0.1[name] != nil }) else { return nil }
-            let list = moods.map { "\($0.1[name] ?? value)" }.joined(separator: ", ")
-            return "    \(name) = mix(moodValue(prev, \(list)), moodValue(cur, \(list)), w);"
+        let blends: String = eyeTuning.compactMap { name, value, _ -> String? in
+            guard let to = tap[name] else { return nil }
+            return "    \(name) = mix(\(mood[name] ?? value), \(to), k);"
         }.joined(separator: "\n")
-        let pick = (0..<moods.count).map { "m == \($0) ? v\($0) :" }.joined(separator: " ")
-        let params = (0..<moods.count).map { "float v\($0)" }.joined(separator: ", ")
-        let moodCode: String = """
-        #define BASE_MOOD \(base)
-        float moodValue(int m, \(params)){ return \(pick) v0; }
-        void applyMoods(int prev, int cur, float w){
+        let tapCode: String = """
+        void applyTap(float k){
         \(blends)
         }
 
         """
         let state: String = """
-        // Buffer S, one texel: x the mood the eye came from, y the one it is
-        // in, z when it switched, w the tap count + 2 (below 1.5 is unwritten).
-        // A tap picks another mood than the current one; a mood not the eye's
-        // own lets go after a hold and the eye comes back to its own.
-        float hash11(float p){ p = fract(p*0.1031); p *= p+33.33; return fract(p*(p+p)); }
+        // Buffer S, one texel: x the tap count, z when the last tap landed,
+        // w = 2 once written. The image pass shapes the moment after a tap
+        // from z.
         void mainImage(out vec4 O, in vec2 F){
             vec4 s = texelFetch(iChannel3, ivec2(0), 0);
-            if(s.w < 1.5) s = vec4(\(base).0, \(base).0, -10.0, 2.0);
-            if(iMouse.w > 0.0){
-                float taps = s.w - 2.0;
-                float h = hash11(taps*7.3 + 1.7);
-                int cur = int(s.y + 0.5);
-                int next = int(mod(float(cur) + 1.0 + floor(h*\(moods.count - 1).0), \(moods.count).0));
-                s = vec4(s.y, float(next), iTime, s.w + 1.0);
-            } else if(int(s.y + 0.5) != \(base) && iTime - s.z > \(eyeMoodHold)){
-                s = vec4(s.y, \(base).0, iTime, s.w);
-            }
+            if(s.w < 1.5) s = vec4(0.0, 0.0, -10.0, 2.0);
+            if(iMouse.w > 0.0) s = vec4(s.x + 1.0, 0.0, iTime, 2.0);
             O = s;
         }
         """
-        let image: String = [eyeHead, tuning, "\n", moodCode, eyeBody].joined()
-        return ShaderDocument(name: moods[base].0, passes: [
+        let image: String = [eyeHead, tuning, "\n", tapCode, eyeBody].joined()
+        return ShaderDocument(name: eyeMoods[base].0, passes: [
             ShaderPass(id: "S", kind: .buffer, code: state, inputs: [stateInput("S")]),
             ShaderPass(id: ShaderPass.imageId, kind: .image, code: image,
                        inputs: [readInput("S", filter: "nearest")]),
@@ -518,12 +340,12 @@ public enum ShaderGallery {
                 float dur = 0.55 + 0.6*hash11(id*3.7);           // some fixations longer
                 vec2 g0 = (hash21(id)     - 0.5) * vec2(0.62, 0.34) * pSaccAmp;
                 vec2 g1 = (hash21(id+1.0) - 0.5) * vec2(0.62, 0.34) * pSaccAmp;
-                float k = smoothstep(0.0, 0.09*dur+0.05, ft);
+                float k = smoothstep(0.0, (0.09*dur+0.05)*pSaccEase, ft);
                 g = mix(g0, g1, k);
                 g += 0.012*vec2(fbm(vec2(t*1.3, 4.7)), fbm(vec2(t*1.1, 9.3))) - 0.006;
                 g.y += pGazeY;
-                // tremble: fast, small, never settling
-                g += pTremor*0.010*vec2(sin(t*37.0) + sin(t*23.0), cos(t*31.0));
+                // tremble: small and continuous, a wander rather than a rattle
+                g += pTremor*0.012*(vec2(fbm(vec2(t*3.1, 12.3)), fbm(vec2(t*2.7, 21.7))) - 0.5);
             }
             return g;
         }
@@ -577,8 +399,8 @@ public enum ShaderGallery {
             // the brow pressed down lands on the lid, hardest at the nasal side:
             // the margin straightens and slants down toward the nose
             yu -= pBrowDrop*pu*(0.10 + 0.30*(1.0 - s));
-            // a trembling lid
-            yu += pTremor*0.004*sin(iTime*29.0 + x*3.0)*pu;
+            // a trembling lid: a soft continuous quiver along the margin
+            yu += pTremor*0.006*(noise2(vec2(iTime*4.5, x*1.5 + 3.0)) - 0.5)*pu;
             // the cornea pushes the lower lid around where the eye points,
             // and a slow micro-ripple keeps the margin alive; corners stay pinned
             float push = exp(-(x - g.x*1.35)*(x - g.x*1.35)*4.5);
@@ -930,11 +752,11 @@ public enum ShaderGallery {
         }
 
         void mainImage(out vec4 fragColor, in vec2 fragCoord){
-            // the mood: the state buffer names the two it is between and when
-            // it left the first; before its first write the eye is in its own
+            // the moment after a tap: the state buffer says when it landed; the
+            // expression deepens over a third of a second, holds, and eases back
             vec4 S = texelFetch(iChannel0, ivec2(0), 0);
-            if(S.w > 1.5) applyMoods(int(S.x + 0.5), int(S.y + 0.5), smoothstep(0.0, 0.9, iTime - S.z));
-            else applyMoods(BASE_MOOD, BASE_MOOD, 1.0);
+            float sinceTap = S.w > 1.5 ? iTime - S.z : 100.0;
+            applyTap(smoothstep(0.0, 0.35, sinceTap)*(1.0 - smoothstep(1.4, 2.8, sinceTap)));
             vec3 R = iResolution;
             float scale = VIEW*pZoom;
             vec2 uv = (fragCoord - 0.5*R.xy)/R.y * scale;
@@ -953,10 +775,8 @@ public enum ShaderGallery {
             vec2 gLid = gazeAngles(t - 0.06, iMouse, R);      // lids trail the saccade
             float b = max(blinkAmt(t), drowsy(t));
             b = max(b, 0.75*smoothstep(2.5, 0.4, t));         // wake up from a squint
-            // asleep: the lids stay shut; a finger on the sticker lifts them to a
-            // drowsy peek for as long as it stays, and it looks at the finger
-            float peek = iMouse.z > 0.0 ? 0.42 + 0.04*sin(t*7.0) : 1.0;
-            b = max(b, pClosed*peek);
+            // asleep: the lids rest shut (a tap lowers pClosed for a peek)
+            b = max(b, pClosed);
 
             // lid inertia: lashes lag the moving lid a touch and settle with one
             // soft overshoot — smooth differences of the lid curve itself, so the
@@ -1141,60 +961,6 @@ public enum ShaderGallery {
         #endif
         }
         """
-
-    /// Ink in water. Buffer A carries a velocity field and the dye through
-    /// itself frame to frame; a finger pushes and stains, and a thin thread
-    /// rises from the bottom on its own. The ink takes the accent colour.
-    public static let smoke = ShaderDocument(name: "Ink", passes: [
-        ShaderPass(id: "A", kind: .buffer, code: """
-        void mainImage(out vec4 O, in vec2 F) {
-            vec2 R = iResolution.xy;
-            vec2 uv = F / R;
-            float dt = clamp(iTimeDelta, 0.004, 0.033);
-            float mult = dt * 60.0;
-            vec4 here = texture(iChannel3, uv);
-            vec4 back = texture(iChannel3, uv - here.xy * dt);
-            vec2 v = back.xy;
-            float d = back.z;
-            if (here.w < 0.5) { v = vec2(0.0); d = 0.0; }
-            v.y += d * 0.3 * dt;
-            v += 0.06 * dt * vec2(sin(uv.y * 9.0 + iTime * 0.8), cos(uv.x * 7.0 - iTime * 0.6));
-            v *= 0.986;
-            d *= 0.990;
-            if (iMouse.z > 0.0) {
-                vec2 q = uv - iMouse.xy / R;
-                float g = exp(-dot(q, q) * 400.0);
-                v += q / (length(q) + 1e-3) * g * 0.05 * mult;
-                d += g * 1.0 * mult;
-            }
-            vec2 src = vec2(0.5 + 0.05 * sin(iTime * 0.9), 0.08);
-            vec2 qs = uv - src;
-            float g0 = exp(-dot(qs, qs) * 700.0);
-            d += g0 * 0.9 * mult * (0.7 + 0.3 * sin(iTime * 3.0));
-            v.y += g0 * 0.035 * mult;
-            v.x += g0 * 0.02 * sin(iTime * 1.7) * mult;
-            float edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
-            d *= smoothstep(0.0, 0.06, edge);
-            O = vec4(v, min(d, 2.5), 1.0);
-        }
-        """, inputs: [stateInput("A", filter: "linear")]),
-        ShaderPass(id: ShaderPass.imageId, kind: .image, code: """
-        void mainImage(out vec4 O, in vec2 F) {
-            vec2 uv = F / iResolution.xy;
-            vec2 px = 1.0 / iResolution.xy;
-            float d = texture(iChannel0, uv).z;
-            float dx = texture(iChannel0, uv + vec2(px.x, 0.0)).z - texture(iChannel0, uv - vec2(px.x, 0.0)).z;
-            float dy = texture(iChannel0, uv + vec2(0.0, px.y)).z - texture(iChannel0, uv - vec2(0.0, px.y)).z;
-            vec3 ink = iAccent.rgb;
-            vec3 deep = ink * 0.3;
-            vec3 col = mix(deep, ink, clamp(d * 1.4, 0.0, 1.0));
-            col = mix(col, vec3(1.0), smoothstep(0.9, 2.2, d) * 0.7);
-            col += (dx * 3.0 - dy * 2.0) * 0.5 * vec3(1.0);
-            float a = clamp(d * 2.2, 0.0, 1.0);
-            O = vec4(clamp(col, 0.0, 1.0) * a, a);
-        }
-        """, inputs: [readInput("A")]),
-    ])
 
     /// A clock that keeps the real time: `iDate` is the phone's clock, the
     /// face and the marks take the theme's colours, the second hand the accent.

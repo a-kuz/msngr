@@ -20,6 +20,9 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     var isPinned: (() -> Bool)?
     var onTapMedia: ((Int, UIView) -> Void)?
     var onTapShader: (() -> Void)?
+    /// A tap on a sticker, after the shader has had it: the feed opens the
+    /// sticker to the chat's width or folds it back.
+    var onTapSticker: (() -> Void)?
     var onTapLink: ((URL) -> Void)?
     var onTapReplyQuote: (() -> Void)?
     var onToggleSelection: (() -> Void)?
@@ -188,8 +191,10 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         bubbleView.insertSubview(shaderView, belowSubview: statusBackdrop)
         stickerView.isHidden = true
         // a sticker keeps its touches: a tap is the shader's to react to, and
-        // the full screen is in the context menu
+        // the same tap opens the sticker to the chat's width; the full screen
+        // is in the context menu
         stickerView.isUserInteractionEnabled = true
+        stickerView.onTap = { [weak self] in self?.onTapSticker?() }
         bubbleView.insertSubview(stickerView, belowSubview: statusBackdrop)
         // the rings follow the sender's progress store rather than polling it
         progressCancellable = MediaProgress.shared.$fractions
