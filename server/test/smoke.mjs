@@ -447,6 +447,32 @@ ca.send({ t: "send", chatId: grp.chatId, clientMsgId: "cm-g1", sentAt: Date.now(
 const gmsg = await cb2.waitFor((f) => f.t === "msg" && f.chatId === grp.chatId);
 check("group message delivered", !!gmsg);
 
+// 9a. The room ticket for a group call: a member gets a token naming them and
+// the call's room; an outsider is refused. The stand needs LIVEKIT_* in
+// .dev.vars for the ticket to be minted at all.
+{
+  const ticketRes = await apiRaw("/api/calls/room", { token: bob.token,
+    body: { callId: "call-smoke-0001", chatId: grp.chatId } });
+  const ticket = await ticketRes.json();
+  if (ticketRes.status === 503 && ticket.error === "sfu_unavailable") {
+    console.log("  (room ticket: no LIVEKIT_* on this stand, skipped)");
+  } else {
+    check("room ticket for a member", ticket.ok && typeof ticket.token === "string"
+      && typeof ticket.url === "string", JSON.stringify(ticket));
+    const claims = ticket.ok
+      ? JSON.parse(Buffer.from(ticket.token.split(".")[1], "base64url").toString()) : {};
+    check("room ticket names the caller and the room",
+      claims.sub === bob.userId && claims.video?.room === "call-smoke-0001"
+      && claims.video?.roomJoin === true && claims.exp > claims.nbf, JSON.stringify(claims));
+    const dora = await api("/api/register", { body: {
+      username: "dora_" + suffix, displayName: "Dora", ...fakeKeys("d") } });
+    const stranger = await api("/api/calls/room", { token: dora.token,
+      body: { callId: "call-smoke-0001", chatId: grp.chatId } });
+    check("room ticket refused to a non-member", !stranger.ok && stranger.error === "not_member",
+      JSON.stringify(stranger));
+  }
+}
+
 // 10. Chats snapshot
 const snap = await api("/api/chats", { token: bob.token });
 check("chats snapshot", snap.ok && snap.chats.length === 2 && snap.users.length >= 3);

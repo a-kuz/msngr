@@ -858,6 +858,11 @@ export class ConversationDO implements DurableObject {
     const url = new URL(req.url);
     const path = url.pathname;
 
+    if (path === "/is-member") {
+      const members = await this.loadMembers();
+      return json({ ok: true, member: members.has(url.searchParams.get("userId") ?? "") });
+    }
+
     if (path === "/create" && req.method === "POST") {
       const b = (await req.json()) as {
         chatId: string; kind: ChatKind; title: string | null;

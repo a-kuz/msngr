@@ -13,6 +13,7 @@ import { newCounters, wrapDB } from "./perf";
 import { claimHandle, releaseHandle, resolveHandle } from "./do/HandleDO";
 import { directoryPut, directoryRemove, directorySearch, type DirectoryCard } from "./do/DirectoryDO";
 import { PRESENCE_GROUP_MAX } from "./presence";
+import { roomToken, sfuConfigured, ROOM_TOKEN_TTL_SEC } from "./calls/livekit";
 
 export { UserDO } from "./do/UserDO";
 export { ConversationDO } from "./do/ConversationDO";
@@ -652,6 +653,24 @@ app.get("/api/privacy/may-call/:peerId", async (c) => {
   const peerId = c.req.param("peerId");
   const tier = (await readPrivacy(c.env.DB, userId)).callPrivacy;
   return json({ ok: true, allow: await privacyAllows(c.env, userId, peerId, "call", tier) });
+});
+
+// The ticket into a group call's room on the SFU: the caller must be a
+// member of the chat the call belongs to, and the room is the call's id.
+// The frame key is not here — it travels inside the E2EE `room` invite and
+// the live card — so the ticket only gates who may load the SFU at all.
+app.post("/api/calls/room", async (c) => {
+  const { userId } = c.get("auth");
+  const b = await c.req.json<{ callId?: string; chatId?: string }>();
+  if (!b.callId || !/^[A-Za-z0-9_-]{8,64}$/.test(b.callId) || !b.chatId) return err("bad_request");
+  if (!sfuConfigured(c.env)) return err("sfu_unavailable", 503);
+  const r = await convStub(c.env, b.chatId).fetch(`https://do/is-member?userId=${encodeURIComponent(userId)}`);
+  const m = (await r.json()) as { member?: boolean };
+  if (!m.member) return err("not_member", 403);
+  const me = await c.env.DB.prepare("SELECT display_name FROM users WHERE id = ?")
+    .bind(userId).first<{ display_name: string }>();
+  const token = await roomToken(c.env, { userId, name: me?.display_name ?? "", room: b.callId });
+  return json({ ok: true, url: c.env.LIVEKIT_URL, token, ttl: ROOM_TOKEN_TTL_SEC });
 });
 
 // Devices and identity keys for a list of users (?ids=uid1,uid2). Consumes nothing,

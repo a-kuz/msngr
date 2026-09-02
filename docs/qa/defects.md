@@ -230,6 +230,16 @@ than Telegram across the app. Umbrella item; closes on the owner's judgement,
 not on a single fix. Measured so far (bubbleanim run, merged d4f58f5): no
 frame over 36 ms in the reaction windows, `feed.ui.apply` ≤ 3 ms.
 
+### The add button on a full conference call does nothing
+Found 2026-09-02 while reading the mesh for the group-calls design. The mesh
+takes two extra legs (`extras.count < 2` in `CallManager.invite` and in the
+acceptance of a same-callId offer), so with four people in the call the add
+button still opens the picker, the pick is sent to `invite`, and the guard
+drops it without a word: no fifth leg, no message, the picker just closes.
+An action button that changes nothing. Goes away with the room-based group
+call (`docs/plans/2026-09-02-group-calls-design.md`), where the invite has
+no client-side cap.
+
 ## Closed
 
 ### Accepting a request ends with no animation

@@ -24,6 +24,12 @@ export interface Env {
   APNS_KEY_ID?: string;
   APNS_TEAM_ID?: string;
   APNS_TOPIC?: string;
+  /// The SFU for group calls: the signaling URL handed to clients
+  /// (wss://…), and the API key pair the room ticket is signed with.
+  /// Unset means no SFU: the ticket endpoint answers `sfu_unavailable`.
+  LIVEKIT_URL?: string;
+  LIVEKIT_API_KEY?: string;
+  LIVEKIT_API_SECRET?: string;
 }
 
 // --- WS frames: client -> server ---
