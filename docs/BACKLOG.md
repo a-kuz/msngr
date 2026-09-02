@@ -20,8 +20,6 @@ does not take those on its own.
 
 | id | line | src | who | closed |
 |---|---|---|---|---|
-| B1 | Phone-hash lookup binds 200 parameters per `IN`; the backend allows 100 | do D1 | msngr-5e (RPC pass) | |
-| B2 | People search puts the query uncut into `LIKE`; the pattern cap is 50 bytes | do D2 | msngr-5e (RPC pass) | |
 | B3 | Push drain deletes the job after APNs answered; a second alarm shows the banner twice | do D3 | | |
 | B4 | Marks migration flag is set before the migration runs; a mark read meanwhile is 0 — move it into the constructor under `blockConcurrencyWhile` | do D4 | | |
 | B5 | `this.blockers` caches another object's block list in a field until eviction | do D5, ev T20 | | |
@@ -71,7 +69,6 @@ does not take those on its own.
 | B39 | Chunk every remaining `put`/`delete`, cap `seqs`, `memberIds`/`add`, discover matches, story recipients; `limit` on every `list`; budgets for `visibleSubscribers`, `cards()`, `/search` (with a cursor), `sync`'s per-chat `/state`, `/account-wipe`, `/dev/relink` | ev T10 | partly landed as c0c614b | |
 | B40 | The roster out of the `chat` frame: a paged roster endpoint, the frame carries a delta; a cap on channel size until then | ev T11 | | |
 | B41 | Ping as `setWebSocketAutoResponse("ping","pong")`, freshness from `getWebSocketAutoResponseTimestamp`, `lastPing` out of the attachment; the client sends the literal `ping` | do C8 | | |
-| B42 | `stub.fetch` → RPC methods with one wrapper classifying `overloaded` and `retryable` | do C10 | msngr-5e | |
 | B43 | The wanted next alarm written to storage before a drain in `UserDO` and `StoriesDO`; `alarmInfo.retryCount` read | do C7 | | |
 | B44 | `this.meta` re-read inside the gate window before `journal()` writes; `this.userId` field gone | do | | |
 | B45 | A `_sql_schema_migrations` table in `StoriesDO` and `DirectoryDO` in place of `ALTER TABLE` in `try/catch`; an index on `deliveries(next_at)` | do C3 | | |
