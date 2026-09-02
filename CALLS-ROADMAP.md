@@ -69,11 +69,13 @@ on adad behind `sfu.a-kuz.online`, the Worker's room ticket, the `room`
 invite with the frame key, the group chat's call buttons, the tile grid with
 speaking and mute, the 1:1 call moving into a room when a third person is
 pulled in, the card kept by the lowest userId and closed by the last one
-out. What remains: key rotation when someone leaves (today the one key of a
-call lives for the call; a left participant who kept it and a valid ticket
-could rejoin within the ticket's hour), the device check with a real camera
-and a real network, and the SFU's capacity ceiling measured rather than
-assumed.
+out, a member removed from the chat mid-call taken out of the room by the
+Worker. The one frame key of a call lives for the call, and that is by
+design rather than a gap: anyone who leaves is still a member of the chat,
+the card in that chat carries the key, and rejoining from it is the
+feature — while nobody gets media from the SFU without being in the roster.
+What remains: the device check with a real camera and a real network, and
+the SFU's capacity ceiling measured rather than assumed.
 
 ## Polish
 

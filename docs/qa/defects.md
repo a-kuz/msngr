@@ -138,6 +138,23 @@ frames in that path at all, and every chat's cursor sits at `lastSeq`.
 Left over: whether a re-registered fixture peer should present as an identity
 change at all, since the homes are meant to be handed around.
 
+Walked again 2026-09-02 with both homes on their own simulators, after the
+group-calls run had bravo miss a room invite over this pair. A message alfa
+wrote reached the server and sat on bravo as `no_session` — alfa encrypts
+into a session bravo does not hold — with its repair never asked for: bravo
+held 9749 deferred envelopes, the sweep walks them two hundred at a time
+every thirty seconds, and the envelope at the chat's newest seq was reached
+once in about twenty minutes. Fixed in 432dfdb: every pass takes the envelope
+standing at each chat's `lastSeq` ahead of its window. On the same homes the
+request left on the first sweep, alfa answered over a rebuilt session, the
+message opened thirty seconds after it was sent, and the next ones both ways
+opened directly. Found on the way and fixed (15645ea): the six hundred
+«identity_changed» lines in alfa's chat sorted above every numbered message
+and filled the feed window, so a delivered message dropped out of view the
+moment its ack gave it a seq; a system line now carries the seq it was
+written after. The pair exchanges readable messages and rings 1:1 calls
+again; the 6256 envelopes of old debt stay as history holes.
+
 ### A held swipe on a chat row stutters
 Reported by the owner 2026-08-27: swiping a row sideways in the chat list
 with the finger kept on the screen, the row's motion is badly jerky. The list
@@ -240,6 +257,51 @@ during the run. Most likely the row's reconfigure-in-place after an edit
 that changes the title's length; not diagnosed.
 
 ## Closed
+
+### A delivered message vanished from an open chat once its ack arrived
+Found 2026-09-02 on the alfa home in the chat with bravo: a sent message
+kept its clock in the feed while the chat list already showed it delivered,
+and after leaving and reopening the chat it was not in the feed at all,
+only rows of «Код безопасности собеседника изменился» down to the input.
+The feed orders by seq and gives a row without one the value above every
+seq — right for an own send waiting for its ack, wrong for the system line
+this device writes for itself, which has no seq either. Six hundred such
+lines (the duplicate-writing defect above, already closed) filled the whole
+feed window, and a message acked into a seq sorted below them, past the
+window's floor. Fixed in 15645ea: a system line takes the seq it was written
+after (`anchorSeq`), the feed's order expression and both indexes carry it,
+the migration anchors the lines already written and collapses identical
+ones standing at the same place. `HistoryWindowTests` holds the ordering.
+
+### A message over a broken session waited twenty minutes before anyone asked
+Found 2026-09-02 on the bravo home, see the severed-pair entry above for the
+measurement: the repair request for the newest envelope is written by the
+sweep, and the sweep's window came round to it once in about twenty minutes
+on a pile of ten thousand. Fixed in 432dfdb; `MessageRepairTests` holds
+that the newest envelope is asked for on the first pass over a pile deeper
+than the window.
+
+### A member removed from a group mid-call stayed in its room
+Found 2026-09-02 reading the room ticket: it lived an hour and nothing
+revoked it, so someone removed from the group during a call kept the SFU
+room (and could come back into it) until the hour ran out. Fixed in
+fcd278f: the chat records who it ticketed into which room, a removal or a
+leave takes them out through the SFU's RemoveParticipant, and the ticket
+lasts ten minutes. Verified live on the shared stand with a throwaway group:
+the removed member's client reported the room closed in the same second as
+the API call, and the SFU logged `SERVICE_REQUEST_REMOVE_PARTICIPANT`.
+
+### The mute control read live while no microphone track was up
+Found 2026-09-02 on the second simulator of a group call: the audio engine
+refused the input (`-4010`), the call joined without a microphone track, and
+the mute button still showed the microphone on while the others saw the
+participant muted. Fixed in 0125f25: the room reports whether the microphone
+went up, the call shows muted when it did not, and the unmute tap asks the
+room for the input again. The refusal itself is the simulator host: with
+the first simulator's app running, the second one's audio unit reports
+`input HW: 2 ch, 0 Hz`; with that app killed the same simulator gets
+`1 ch, 44100 Hz` and publishes. One simulator at a time holds the host's
+microphone, which is not a product condition.
 
 ### The add button on a full conference call does nothing
 Found 2026-09-02 while reading the mesh for the group-calls design: the mesh

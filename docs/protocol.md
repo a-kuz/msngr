@@ -551,7 +551,13 @@ asked for it.
   place. A room invite is accepted by joining the room — a ticket from
   `POST /api/calls/room` for the chat the invite came over, the room named
   by the callId — and the bare `answer` (no `sdp`) that goes back is for the
-  acceptor's other devices, which stop ringing on it. Inside a room the SFU
+  acceptor's other devices, which stop ringing on it. The ticket is minted
+  for a chat member and lives ten minutes: long enough to connect, and the
+  SFU keeps a connected client's token fresh on its own. The chat remembers
+  who it ticketed into which room for that long, and a member removed from
+  the chat (or leaving it) while the call goes on is taken out of the room
+  by the Worker through the SFU's API, rather than staying until the ticket
+  runs out. Inside a room the SFU
   owns the roster: a decline or a busy from someone invited changes nothing
   for the others, and leaving sends nothing. It is a service frame with no
   feed row; delivery on the receiver is in-memory only, straight to the
