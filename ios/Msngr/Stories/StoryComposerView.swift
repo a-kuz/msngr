@@ -225,7 +225,7 @@ struct StoryComposerView: View {
                     ), axis: .vertical)
                         .font(Font(font as CTFont))
                         .multilineTextAlignment(alignment)
-                        .foregroundStyle(Color(hex: layer.color))
+                        .foregroundStyle(Color(uiColor: layer.plate.ink(for: layer.color)))
                         .focused($textFocused)
                         .submitLabel(.done)
                         .onSubmit { finishTyping() }
@@ -234,10 +234,16 @@ struct StoryComposerView: View {
                         .onAppear { textFocused = true }
                         .accessibilityIdentifier("story.textField")
                 }
-                .padding(.horizontal, font.pointSize * 0.42)
-                .padding(.vertical, font.pointSize * 0.22)
-                .background(layer.plate.uiColor.map { Color(uiColor: $0) } ?? .clear,
-                            in: RoundedRectangle(cornerRadius: font.pointSize * 0.3, style: .continuous))
+                .padding(.horizontal, font.pointSize * StoryRenderer.platePadX)
+                .padding(.vertical, font.pointSize * StoryRenderer.platePadY)
+                // the plate under the field is the one the baked layer gets:
+                // the same lines, laid out the same way
+                .background {
+                    if let fill = layer.plate.fill(for: layer.color), !layer.text.isEmpty {
+                        StoryPlateShape(layer: layer, canvasWidth: canvasSize.width)
+                            .fill(Color(uiColor: fill))
+                    }
+                }
                 .frame(maxWidth: canvasSize.width * 0.86 * layer.scale)
                 .scaleEffect(editorShown ? 1 : 0.7)
                 .opacity(editorShown ? 1 : 0)
@@ -246,6 +252,29 @@ struct StoryComposerView: View {
                     .offset(y: editorShown ? 0 : 40)
                     .opacity(editorShown ? 1 : 0)
             }
+        }
+    }
+
+    /// The plate under the words being typed, from the layout the baked layer
+    /// will be drawn with; `rect` is the field with its padding around it.
+    private struct StoryPlateShape: Shape {
+        let layer: StoryLayer
+        let canvasWidth: CGFloat
+
+        func path(in rect: CGRect) -> Path {
+            let layout = StoryRenderer.layout(for: layer, canvasWidth: canvasWidth)
+            let fontSize = layout.font.pointSize
+            let padX = fontSize * StoryRenderer.platePadX
+            let padY = fontSize * StoryRenderer.platePadY
+            let plate = layout.platePath(padX: padX, padY: padY, radius: fontSize * 0.32)
+            let dx: CGFloat
+            switch layer.alignment {
+            case .left: dx = rect.minX + padX - layout.bounds.minX
+            case .right: dx = rect.maxX - padX - layout.bounds.maxX
+            default: dx = rect.midX - layout.bounds.midX
+            }
+            let dy = rect.minY + padY - layout.bounds.minY
+            return Path(plate).applying(CGAffineTransform(translationX: dx, y: dy))
         }
     }
 
@@ -268,9 +297,9 @@ struct StoryComposerView: View {
                 } label: {
                     Image(systemName: "character.textbox")
                         .font(.title3)
-                        .foregroundStyle(layer.plate == .light ? .black : .white)
+                        .foregroundStyle(Color(uiColor: layer.plate == .none ? .white : layer.plate.ink(for: layer.color)))
                         .frame(width: 36, height: 36)
-                        .background(layer.plate.uiColor.map { Color(uiColor: $0) } ?? .white.opacity(0.18),
+                        .background(layer.plate.fill(for: layer.color).map { Color(uiColor: $0) } ?? .white.opacity(0.18),
                                     in: RoundedRectangle(cornerRadius: 8))
                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.6), lineWidth: 1))
                 }
@@ -475,10 +504,6 @@ struct StoryComposerView: View {
     private var bottomBar: some View {
         VStack(spacing: 10) {
             HStack(spacing: 8) {
-                chip(audience == "contacts" ? "My contacts" : "Everyone",
-                     symbol: audience == "contacts" ? "person.2" : "globe", id: "story.audience") {
-                    audience = audience == "contacts" ? "everyone" : "contacts"
-                }
                 chip(hoursText, symbol: "clock", id: "story.hours") {
                     hours = hours == 6 ? 24 : hours == 24 ? 168 : 6
                 }
@@ -704,7 +729,8 @@ struct StoryComposerView: View {
         }
         Haptics.success()
         for frame in frames { if let url = frame.videoURL { try? FileManager.default.removeItem(at: url) } }
-        await StoriesModel.shared.load()
+        // the story reaches this device's own list the way it reaches
+        // everyone else's: as a frame from the author's object
         onPosted(posted.link)
         dismiss()
     }

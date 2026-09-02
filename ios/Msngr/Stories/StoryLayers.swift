@@ -116,23 +116,35 @@ enum StoryFont: CaseIterable, Equatable {
     }
 }
 
-/// The plate behind a text layer; the button cycles through the three.
+/// The plate behind a text layer, the way Instagram sets it: the button
+/// cycles none → solid → tinted. A plate takes the layer's colour for itself
+/// and the words turn black or white over it, whichever reads; tinted is the
+/// same colour let half through.
 enum StoryPlate: CaseIterable, Equatable {
-    case none, dark, light
+    case none, solid, tinted
 
     var next: StoryPlate {
         switch self {
-        case .none: return .dark
-        case .dark: return .light
-        case .light: return .none
+        case .none: return .solid
+        case .solid: return .tinted
+        case .tinted: return .none
         }
     }
 
-    var uiColor: UIColor? {
+    /// The plate's colour for a layer set in `hex`.
+    func fill(for hex: String) -> UIColor? {
         switch self {
         case .none: return nil
-        case .dark: return UIColor.black.withAlphaComponent(0.4)
-        case .light: return UIColor.white.withAlphaComponent(0.7)
+        case .solid: return UIColor(hex: hex)
+        case .tinted: return UIColor(hex: hex).withAlphaComponent(0.55)
+        }
+    }
+
+    /// The colour the words take over the plate.
+    func ink(for hex: String) -> UIColor {
+        switch self {
+        case .none: return UIColor(hex: hex)
+        case .solid, .tinted: return UIColor(hex: hex).isLight ? .black : .white
         }
     }
 }
@@ -242,49 +254,115 @@ enum StoryRenderer {
 
     // MARK: - Layers
 
-    /// A layer as a picture, at `scale` points per canvas fraction: the same
-    /// call sets the on-screen view and the exported pixels.
-    static func image(for layer: StoryLayer, canvasWidth: CGFloat) -> UIImage {
+    /// How the plate stands off the words, as fractions of the font size.
+    static let platePadX: CGFloat = 0.36
+    static let platePadY: CGFloat = 0.16
+
+    /// The words of a text layer laid out for `canvasWidth`: the line
+    /// fragments are what the plate is drawn from, and what the words are
+    /// drawn with, so the two never drift apart.
+    struct TextLayout {
+        let storage: NSTextStorage
+        let manager: NSLayoutManager
+        let container: NSTextContainer
+        let font: UIFont
+        /// The used rect of every line, in the container's coordinates.
+        let lines: [CGRect]
+        /// The bounds of all the lines together.
+        let bounds: CGRect
+
+        init(text: String, font: UIFont, color: UIColor, alignment: NSTextAlignment,
+             maxWidth: CGFloat, shadow: NSShadow?) {
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.alignment = alignment
+            paragraph.lineBreakMode = .byWordWrapping
+            var attrs: [NSAttributedString.Key: Any] = [
+                .font: font, .paragraphStyle: paragraph, .foregroundColor: color,
+            ]
+            if let shadow { attrs[.shadow] = shadow }
+            storage = NSTextStorage(string: text, attributes: attrs)
+            manager = NSLayoutManager()
+            container = NSTextContainer(size: CGSize(width: maxWidth, height: .greatestFiniteMagnitude))
+            container.lineFragmentPadding = 0
+            manager.addTextContainer(container)
+            storage.addLayoutManager(manager)
+            manager.ensureLayout(for: container)
+            var lines: [CGRect] = []
+            manager.enumerateLineFragments(forGlyphRange: manager.glyphRange(for: container)) { _, used, _, _, _ in
+                lines.append(used)
+            }
+            self.font = font
+            self.lines = lines
+            bounds = lines.reduce(CGRect.null) { $0.union($1) }
+        }
+
+        /// The plate as one shape: a rounded rect around every line, the
+        /// lines overlapping so a single fill leaves no seams and a tinted
+        /// plate doubles nowhere.
+        func platePath(padX: CGFloat, padY: CGFloat, radius: CGFloat) -> CGPath {
+            let path = CGMutablePath()
+            for (i, line) in lines.enumerated() {
+                // neighbours overlap by the padding, so the shape is continuous
+                // and a rounder line's corners sit inside the wider one
+                let top = i > 0 ? (lines[i - 1].maxY + line.minY) / 2 - padY : line.minY - padY
+                let bottom = i + 1 < lines.count ? (line.maxY + lines[i + 1].minY) / 2 + padY : line.maxY + padY
+                let rect = CGRect(x: line.minX - padX, y: top, width: line.width + padX * 2, height: bottom - top)
+                let r = min(radius, rect.height / 2, rect.width / 2)
+                path.addRoundedRect(in: rect, cornerWidth: r, cornerHeight: r)
+            }
+            return path
+        }
+
+        func draw(at origin: CGPoint) {
+            let range = manager.glyphRange(for: container)
+            manager.drawBackground(forGlyphRange: range, at: origin)
+            manager.drawGlyphs(forGlyphRange: range, at: origin)
+        }
+    }
+
+    static func layout(for layer: StoryLayer, canvasWidth: CGFloat) -> TextLayout {
         let base = layer.isEmoji ? emojiBase : textBase
         let fontSize = base * canvasWidth * layer.scale
         let font = layer.isEmoji ? UIFont.systemFont(ofSize: fontSize) : layer.font.uiFont(size: fontSize)
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = layer.alignment
-        paragraph.lineBreakMode = .byWordWrapping
-        var attrs: [NSAttributedString.Key: Any] = [
-            .font: font, .paragraphStyle: paragraph,
-            .foregroundColor: layer.isEmoji ? UIColor.white : UIColor(hex: layer.color),
-        ]
+        var shadow: NSShadow?
         if !layer.isEmoji && layer.plate == .none {
             // text over a picture with nothing behind it keeps a soft shadow, so
             // white stays readable over white
-            let shadow = NSShadow()
-            shadow.shadowColor = UIColor.black.withAlphaComponent(0.35)
-            shadow.shadowBlurRadius = fontSize * 0.08
-            shadow.shadowOffset = CGSize(width: 0, height: fontSize * 0.03)
-            attrs[.shadow] = shadow
+            shadow = NSShadow()
+            shadow?.shadowColor = UIColor.black.withAlphaComponent(0.35)
+            shadow?.shadowBlurRadius = fontSize * 0.08
+            shadow?.shadowOffset = CGSize(width: 0, height: fontSize * 0.03)
         }
-        let text = NSAttributedString(string: layer.text, attributes: attrs)
-        let maxWidth = canvasWidth * 0.86 * layer.scale
-        var bounds = text.boundingRect(with: CGSize(width: maxWidth, height: .greatestFiniteMagnitude),
-                                       options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
-        bounds.size.width = ceil(bounds.width)
-        bounds.size.height = ceil(bounds.height)
-        let padX = layer.isEmoji ? 0 : fontSize * 0.42
-        let padY = layer.isEmoji ? 0 : fontSize * 0.22
-        let size = CGSize(width: bounds.width + padX * 2 + 2, height: bounds.height + padY * 2 + 2)
+        return TextLayout(text: layer.text, font: font,
+                          color: layer.isEmoji ? .white : layer.plate.ink(for: layer.color),
+                          alignment: layer.alignment,
+                          maxWidth: canvasWidth * 0.86 * layer.scale, shadow: shadow)
+    }
+
+    /// A layer as a picture, at `scale` points per canvas fraction: the same
+    /// call sets the on-screen view and the exported pixels.
+    static func image(for layer: StoryLayer, canvasWidth: CGFloat) -> UIImage {
+        let layout = layout(for: layer, canvasWidth: canvasWidth)
+        let fontSize = layout.font.pointSize
+        let padX = layer.isEmoji ? 0 : fontSize * platePadX
+        let padY = layer.isEmoji ? 0 : fontSize * platePadY
+        let size = CGSize(width: ceil(layout.bounds.width + padX * 2 + 2),
+                          height: ceil(layout.bounds.height + padY * 2 + 2))
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = false
         return UIGraphicsImageRenderer(size: size, format: format).image { ctx in
-            if let plate = layer.plate.uiColor, !layer.isEmoji {
-                plate.setFill()
-                UIBezierPath(roundedRect: CGRect(origin: .zero, size: size),
-                             cornerRadius: fontSize * 0.3).fill()
+            let origin = CGPoint(x: padX + 1 - layout.bounds.minX, y: padY + 1 - layout.bounds.minY)
+            if let fill = layer.plate.fill(for: layer.color), !layer.isEmoji {
+                let cg = ctx.cgContext
+                cg.saveGState()
+                cg.translateBy(x: origin.x, y: origin.y)
+                cg.addPath(layout.platePath(padX: padX, padY: padY, radius: fontSize * 0.32))
+                cg.setFillColor(fill.cgColor)
+                cg.fillPath()
+                cg.restoreGState()
             }
-            text.draw(with: CGRect(x: padX + 1, y: padY + 1, width: bounds.width, height: bounds.height),
-                      options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
-            _ = ctx
+            layout.draw(at: origin)
         }
     }
 
@@ -426,6 +504,13 @@ enum StoryRenderer {
 }
 
 extension UIColor {
+    /// Whether black reads better over this colour than white.
+    var isLight: Bool {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        getRed(&r, green: &g, blue: &b, alpha: &a)
+        return 0.299 * r + 0.587 * g + 0.114 * b > 0.6
+    }
+
     /// "#rrggbb", the way a story layer carries its colour.
     convenience init(hex: String) {
         let cleaned = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
