@@ -1049,7 +1049,13 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   stores the book names (`contactBookName`), and the chat list, the chat
   header, the call screen and notification banners show them over the
   profile name (live run 2026-09-01)
-- ⬜ a group call
+- ✅ a group call: a room on a self-hosted LiveKit SFU (adad, behind
+  `sfu.a-kuz.online`), frames encrypted under a key that travels only inside
+  the E2EE `room` invite and the live card, the Worker's room ticket gated by
+  chat membership, the group chat's call buttons, the stage that shares the
+  screen equally with the self view floating, a room found empty closing the
+  call and its card (CallManagerTests room tests, server smoke;
+  qa/runs/2026-09-02-group-calls.md, a three-simulator run)
 - ⬜ CallKit and PushKit
 - ✅ ringback while dialing, and the callee's ringtone (CallSounds, the merge
   of worktree-calls 2026-09-01)
