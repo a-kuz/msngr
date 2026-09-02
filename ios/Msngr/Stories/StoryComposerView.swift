@@ -4,10 +4,11 @@ import AVFoundation
 import UniformTypeIdentifiers
 import MsngrCore
 
-/// Composing a story the way every story editor works: the picked frame fills
-/// the screen, the tools lie over it, the text is typed and dragged straight
-/// onto the picture, and the frames the story is made of run as a filmstrip
-/// along the bottom. The picker opens by itself when the screen comes up empty.
+/// Composing a story the way every story editor works: the screen opens on the
+/// front camera with a shutter and the library a tap away; the shot or picked
+/// frame then fills the screen, the tools lie over it, the text is typed and
+/// dragged straight onto the picture, and the frames the story is made of run
+/// as a filmstrip along the bottom. Every step is one undo away.
 ///
 /// The screen says plainly what a story costs before it goes out: a story is
 /// not encrypted, and who may see it is an access rule the server keeps rather
@@ -27,13 +28,21 @@ struct StoryComposerView: View {
     @State private var posting = false
     @State private var failed = false
     @State private var showPicker = false
-    @State private var showCamera = false
+    /// The camera is up over a story that already has frames: another take.
+    @State private var capturing = false
     @State private var markup = false
+    /// The story as it stood before each step, newest last; undo pops one.
+    @State private var history: [Snapshot] = []
     /// The text tool is open: the keyboard is up and the words go onto the frame.
     @State private var typing = false
     @FocusState private var textFocused: Bool
     /// Where the text was before the finger moved it, so the drag adds to it.
     @State private var dragStart: CGPoint?
+
+    struct Snapshot: Equatable {
+        var frames: [Frame]
+        var current: Int
+    }
 
     struct Frame: Identifiable, Equatable {
         let id = UUID()
@@ -72,26 +81,30 @@ struct StoryComposerView: View {
     }
 
     private static let textColors = ["#ffffff", "#000000", "#ffd60a", "#ff453a", "#30d158", "#0a84ff", "#bf5af2"]
-    /// The simulator answers yes to the source and then has no device behind
-    /// it, so both are asked before the button is drawn.
-    private static let cameraAvailable = UIImagePickerController.isSourceTypeAvailable(.camera)
-        && AVCaptureDevice.default(for: .video) != nil
-        && (UIImagePickerController.availableMediaTypes(for: .camera) ?? []).contains(UTType.movie.identifier)
+    /// The simulator has no camera: the take tool is not drawn there.
+    private static let cameraAvailable = AVCaptureDevice.default(for: .video) != nil
+    private var showingCamera: Bool { frames.isEmpty || capturing }
 
     private var frame: Frame? { current < frames.count ? frames[current] : nil }
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            if frames.isEmpty {
-                emptyState
+            if showingCamera {
+                StoryCaptureView { image in
+                    addPhoto(image)
+                } onVideo: { url in
+                    Task { await addVideo(at: url) }
+                } onLibrary: {
+                    showPicker = true
+                }
             } else {
                 canvas
             }
             VStack(spacing: 0) {
                 topBar
                 Spacer()
-                if !frames.isEmpty && !typing { bottomBar }
+                if !showingCamera && !typing { bottomBar }
             }
         }
         .statusBarHidden()
@@ -101,15 +114,11 @@ struct StoryComposerView: View {
             guard !items.isEmpty else { return }
             Task { await load(items) }
         }
-        .onAppear {
-            // the screen comes up straight into the library, the way a story
-            // starts everywhere: there is nothing to do here before a frame is in
-            if frames.isEmpty { showPicker = true }
-        }
         .fullScreenCover(isPresented: $markup) {
             if let frame {
                 MarkupEditorScreen(image: frame.image) { edited in
                     if let jpeg = edited.jpegData(compressionQuality: 0.85) {
+                        remember()
                         frames[current].image = edited
                         frames[current].data = jpeg
                     }
@@ -119,14 +128,6 @@ struct StoryComposerView: View {
                 }
                 .ignoresSafeArea()
             }
-        }
-        .fullScreenCover(isPresented: $showCamera) {
-            StoryCamera { url in
-                showCamera = false
-                guard let url else { return }
-                Task { await addVideo(at: url) }
-            }
-            .ignoresSafeArea()
         }
     }
 
@@ -166,7 +167,7 @@ struct StoryComposerView: View {
                         textLabel(frame)
                             .position(x: frame.tx * geo.size.width, y: frame.ty * geo.size.height)
                             .gesture(dragText(in: geo.size))
-                            .onTapGesture { typing = true; textFocused = true }
+                            .onTapGesture { startTyping() }
                     }
                 }
             }
@@ -201,6 +202,7 @@ struct StoryComposerView: View {
             .onChanged { value in
                 guard frame != nil else { return }
                 if dragStart == nil {
+                    remember()
                     dragStart = CGPoint(x: frames[current].tx, y: frames[current].ty)
                 }
                 let start = dragStart ?? CGPoint(x: 0.5, y: 0.5)
@@ -234,7 +236,9 @@ struct StoryComposerView: View {
             Spacer()
             HStack(spacing: 12) {
                 Button {
-                    if frame != nil { frames[current].plate = frames[current].plate.next }
+                    guard frame != nil else { return }
+                    remember()
+                    frames[current].plate = frames[current].plate.next
                 } label: {
                     Image(systemName: "character.textbox")
                         .font(.title3)
@@ -253,7 +257,11 @@ struct StoryComposerView: View {
                                 .overlay {
                                     Circle().stroke(.white, lineWidth: frame?.textColor == hex ? 3 : 1)
                                 }
-                                .onTapGesture { if frame != nil { frames[current].textColor = hex } }
+                                .onTapGesture {
+                                    guard frame != nil, frames[current].textColor != hex else { return }
+                                    remember()
+                                    frames[current].textColor = hex
+                                }
                                 .accessibilityIdentifier("story.color.\(hex.dropFirst())")
                         }
                     }
@@ -266,12 +274,40 @@ struct StoryComposerView: View {
         .padding(.top, 60)
     }
 
+    /// The words as they stood when the tool opened, so the whole typing lands
+    /// as one step.
+    private func startTyping() {
+        remember()
+        typing = true
+        textFocused = true
+    }
+
     private func finishTyping() {
         textFocused = false
         typing = false
         if frame != nil {
             frames[current].text = frames[current].text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
+        // a tool opened and closed with nothing changed is not a step
+        if let last = history.last, last == Snapshot(frames: frames, current: current) {
+            history.removeLast()
+        }
+    }
+
+    // MARK: - Undo
+
+    /// Keeps the story as it stands, to be brought back by the undo button.
+    private func remember() {
+        let now = Snapshot(frames: frames, current: current)
+        if history.last != now { history.append(now) }
+    }
+
+    private func undo() {
+        guard let previous = history.popLast() else { return }
+        if typing { textFocused = false; typing = false }
+        frames = previous.frames
+        current = min(previous.current, max(frames.count - 1, 0))
+        capturing = false
     }
 
     // MARK: - Chrome
@@ -279,7 +315,13 @@ struct StoryComposerView: View {
     private var topBar: some View {
         HStack(alignment: .top) {
             Button {
-                if typing { finishTyping() } else { dismiss() }
+                if typing {
+                    finishTyping()
+                } else if capturing && !frames.isEmpty {
+                    capturing = false
+                } else {
+                    dismiss()
+                }
             } label: {
                 Image(systemName: typing ? "checkmark" : "xmark")
                     .font(.title3.weight(.semibold))
@@ -289,19 +331,20 @@ struct StoryComposerView: View {
             }
             .accessibilityIdentifier(typing ? "story.textDone" : "story.close")
             Spacer()
-            if !frames.isEmpty && !typing {
+            if !history.isEmpty && !showingCamera {
+                tool("arrow.uturn.backward", id: "story.undo") { undo() }
+                    .padding(.trailing, 14)
+            }
+            if !showingCamera && !typing {
                 VStack(spacing: 14) {
-                    tool("textformat", id: "story.addText") {
-                        typing = true
-                        textFocused = true
-                    }
+                    tool("textformat", id: "story.addText") { startTyping() }
                     if frame?.isVideo == false {
                         // the same tools a picture gets before it is sent, so
                         // there is one set and not two
                         tool("pencil.tip.crop.circle", id: "story.edit") { markup = true }
                     }
                     if Self.cameraAvailable {
-                        tool("camera", id: "story.camera") { showCamera = true }
+                        tool("camera", id: "story.camera") { capturing = true }
                     }
                     tool("trash", id: "story.removeFrame") { removeCurrent() }
                 }
@@ -441,40 +484,11 @@ struct StoryComposerView: View {
         }
     }
 
-    private var emptyState: some View {
-        VStack(spacing: 18) {
-            Spacer()
-            if importing > 0 {
-                ProgressView().tint(.white)
-            } else {
-                Image(systemName: "photo.on.rectangle.angled")
-                    .font(.system(size: 52))
-                    .foregroundStyle(.white.opacity(0.6))
-                Button { showPicker = true } label: {
-                    Text("Pick photos and videos")
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.black)
-                        .padding(.horizontal, 22)
-                        .padding(.vertical, 12)
-                        .background(.white, in: Capsule())
-                }
-                .accessibilityIdentifier("story.pick")
-                if Self.cameraAvailable {
-                    Button { showCamera = true } label: {
-                        Label("Shoot a video", systemImage: "camera")
-                            .foregroundStyle(.white)
-                    }
-                    .accessibilityIdentifier("story.camera")
-                }
-            }
-            Spacer()
-        }
-    }
-
     // MARK: - Frames in and out
 
     private func removeCurrent() {
         guard frame != nil else { return }
+        remember()
         frames.remove(at: current)
         current = min(current, max(frames.count - 1, 0))
     }
@@ -505,9 +519,19 @@ struct StoryComposerView: View {
         append(Frame(image: ready.poster, data: ready.data, isVideo: true, duration: ready.duration))
     }
 
+    /// A picture from the camera, cut down the way a picked one is.
+    private func addPhoto(_ image: UIImage) {
+        guard let jpeg = image.jpegData(compressionQuality: 0.9),
+              let prepared = ImageProcessor.prepareForSending(jpeg, maxDimension: 1280),
+              let ready = UIImage(data: prepared.data) else { return }
+        append(Frame(image: ready, data: prepared.data, isVideo: false))
+    }
+
     private func append(_ frame: Frame) {
+        remember()
         frames.append(frame)
         current = frames.count - 1
+        capturing = false
     }
 
     private func publish() async {
@@ -572,41 +596,6 @@ enum StoryVideo {
         defer { try? FileManager.default.removeItem(at: out) }
         guard export.status == .completed, let data = try? Data(contentsOf: out) else { return nil }
         return Ready(data: data, poster: poster, duration: duration)
-    }
-}
-
-/// The system camera, set to shoot a clip: the story never leaves the composer
-/// for it. Hands back the recording's file, or nil when nothing was shot.
-struct StoryCamera: UIViewControllerRepresentable {
-    let onDone: (URL?) -> Void
-
-    func makeUIViewController(context: Context) -> UIImagePickerController {
-        let picker = UIImagePickerController()
-        picker.sourceType = .camera
-        picker.mediaTypes = [UTType.movie.identifier]
-        picker.cameraCaptureMode = .video
-        picker.videoQuality = .typeHigh
-        picker.videoMaximumDuration = 60
-        picker.delegate = context.coordinator
-        return picker
-    }
-
-    func updateUIViewController(_ vc: UIImagePickerController, context: Context) {}
-
-    func makeCoordinator() -> Coordinator { Coordinator(onDone: onDone) }
-
-    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let onDone: (URL?) -> Void
-        init(onDone: @escaping (URL?) -> Void) { self.onDone = onDone }
-
-        func imagePickerController(_ picker: UIImagePickerController,
-                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            onDone(info[.mediaURL] as? URL)
-        }
-
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            onDone(nil)
-        }
     }
 }
 
