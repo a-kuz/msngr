@@ -68,8 +68,8 @@ export type ClientFrame =
 
 export type LastSeenVisibility = "everyone" | "contacts" | "nobody";
 
-/// A user's privacy settings. A user with no row in `privacy_settings` gets
-/// these defaults.
+/// A user's privacy settings, kept in their own object. A user who never
+/// opened the screen is read with `PRIVACY_DEFAULTS`.
 export interface PrivacySettings {
   lastSeen: LastSeenVisibility;
   /// Who sees the profile photo and bio; the display name is always visible.
@@ -86,7 +86,7 @@ export interface PrivacySettings {
   typing: boolean;
 }
 
-/// A user card as everyone may see it: the columns GET /api/users/:id serves.
+/// A user card as everyone may see it: what GET /api/users/:id serves.
 export interface PublicUser {
   id: string;
   username: string;
@@ -100,10 +100,6 @@ export interface PublicUser {
   /// them after «/».
   bot_commands?: string | null;
 }
-
-/// The columns every user card is read with.
-export const USER_CARD_COLUMNS =
-  "id, username, display_name, bio, avatar_id, bot_owner, bot_commands";
 
 // --- WS frames: server -> client ---
 export type ServerFrame =
