@@ -104,13 +104,17 @@ own user, and the fixtures they need are on the stand, not on the device.
 - CLI tools that default to `http://localhost:8787` (`scripts/fixture.py`,
   `msngrfixture`) need `--base https://msngr.a-kuz.online` (or `MSNGR_SERVER`)
   to talk to the shared stand.
-- A branch that lands a migration in `server/migrations/` needs it applied on
-  the shared stand after the merge: `ssh adad "cd /root/msngr/server &&
-  ./node_modules/.bin/wrangler d1 migrations apply msngr --local"`, then
-  restart `msngr-wrangler`. The gate never catches this — its smoke runs on a
-  throwaway stand — and the stale schema answers 500 to the first request that
-  touches the new table. The code on the server is a copy, not a checkout:
-  rsync `server/` there after a server-side change.
+- A change to what an object stores — a table, a column, a key's shape — is
+  not migrated: the shared stand is wiped and the trio reseeded (the owner's
+  call, 2026-09-03). After the merge: `ssh adad systemctl stop msngr-wrangler`,
+  remove `/root/msngr/server/.wrangler/state`, start it again, then
+  `scripts/fixture.py seed --reset --base https://msngr.a-kuz.online` and
+  reinstall the homes on the simulators that hold them. No `ALTER TABLE` in a
+  `try/catch`, no lazy conversion of old records, no schema-version table: a
+  stand running the new code over old state is the thing being avoided, and
+  the gate never sees it (its smoke runs on a throwaway stand). The code on
+  the server is a copy, not a checkout: rsync `server/` there after a
+  server-side change; `wrangler dev` there reloads on its own.
 - The dev APNs mock `node server/tools/apns-mock.mjs` listens on :9871 and
   delivers pushes to the simulator through `simctl push` — it works only
   against a stand on this machine. The shared stand sends real pushes: its

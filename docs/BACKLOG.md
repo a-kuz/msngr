@@ -74,7 +74,7 @@ does not take those on its own.
 | B42 | `stub.fetch` → RPC methods with one wrapper classifying `overloaded` and `retryable` | do C10 | msngr-5e | |
 | B43 | The wanted next alarm written to storage before a drain in `UserDO` and `StoriesDO`; `alarmInfo.retryCount` read | do C7 | | |
 | B44 | `this.meta` re-read inside the gate window before `journal()` writes; `this.userId` field gone | do | | |
-| B45 | A `_sql_schema_migrations` table in `StoriesDO` and `DirectoryDO` in place of `ALTER TABLE` in `try/catch`; an index on `deliveries(next_at)` | do C3 | | |
+| B45 | The `ALTER TABLE` in `try/catch` out of `StoriesDO` and the lazy marks conversion out of `ConversationDO` (a schema change wipes the stand, B59); an index on `deliveries(next_at)` | do C3, B59 | | |
 | B46 | A length cap before `JSON.parse` on socket frames; `send` failures logged and the socket closed; `GET` checked on the upgrade; frames batched per catch-up portion | do C9 | | |
 | B47 | `DirectoryDO` shard count in config with a resharding plan, an FTS index; location hints for `UserDO` at registration | ev T13, do C11 | | |
 | B48 | `docs/protocol.md`: hibernation, auto-response, the presence trade-off; the docs check repeated after B41 and B42 | do C12 | | |
@@ -98,4 +98,4 @@ does not take those on its own.
 | B56 | Push delivery as a Go service on `sideshow/apns2`: HTTP/2 pools, one JWT per process, APNs backoff, 410 reported back; the `UserDO` queue stays the source, the relay acks on intake | do C13 | yes, 2026-09-03 — becomes a line in section 2 when a session takes it |
 | B57 | Stories: whether a new direct chat after publishing hands the new peer the live stories (today the recipients are fixed at publishing, as Instagram does) | ev T22 | open |
 | B58 | `compatibility_date` forward to ≥ 2026-04-07 (auto reply to close, `deleteAll` deletes the alarm) — other consequences unread | do | open |
-| B59 | Schema changes on the shared stand: either the stand may be wiped on a schema change, or numbered migrations — the two rules conflict today | do | open |
+| B59 | Schema changes on the shared stand: either the stand may be wiped on a schema change, or numbered migrations | do | yes, 2026-09-03 — wiped; the rule is in `CLAUDE.md` («The stand»), B45 follows it |

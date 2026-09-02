@@ -56,6 +56,13 @@ def checkout(sha):
                        capture_output=True)
     subprocess.run(["git", "worktree", "prune"], cwd=ROOT, capture_output=True)
     git("worktree", "add", "--detach", WORKTREE, sha)
+    # the gitignored pieces a build needs: the server's node_modules (the
+    # smoke imports `ws`), and the local signing config when it exists
+    for rel in ("server/node_modules", "ios/Config/Signing.xcconfig", "local.mk"):
+        src = os.path.join(ROOT, rel)
+        dst = os.path.join(WORKTREE, rel)
+        if os.path.exists(src) and not os.path.exists(dst):
+            os.symlink(src, dst)
 
 
 def run_gate(sha):

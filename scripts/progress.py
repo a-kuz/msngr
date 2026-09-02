@@ -77,7 +77,7 @@ def rows():
 def paint(text, color, enabled):
     if not enabled:
         return text
-    codes = {"green": 32, "yellow": 33, "dim": 2, "bold": 1}
+    codes = {"green": 32, "yellow": 33, "red": 31, "dim": 2, "bold": 1}
     return f"\033[{codes[color]}m{text}\033[0m"
 
 
