@@ -863,7 +863,10 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     the shared container (commit 6f2a0ef; live banner with the sender's avatar
     on the iPhone 17 dev simulator, real APNs through the stand's relay,
     2026-09-02)
-  - ⬜ a group avatar in the notification
+  - ✅ a group avatar in the notification: the intent carries the group's
+    picture from the shared avatar cache next to the sender (live 2026-09-02
+    on the simulator with the app killed — the Design group's picture on the
+    banner, «Bravo Service / Design» over it; qa/runs/2026-09-02-nse-simulator-run)
   - ✅ quick reply straight from the push (category, action routing and the
     reply handler — NotificationActionRouteTests; live 2026-09-02 on the
     simulator: the extension's banner, opened through the Notification Center's

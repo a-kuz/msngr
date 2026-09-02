@@ -60,7 +60,16 @@ public enum NotificationBurstStore {
             if let writer, !envelopes.isEmpty {
                 for item in items.sorted(by: { $0.seq < $1.seq }) {
                     guard let envelope = envelopes[item.key] else { continue }
-                    let outcome = writer.write(dbc, item: item, envelope: envelope, now: now)
+                    var outcome = writer.write(dbc, item: item, envelope: envelope, now: now)
+                    // the first message of a request: the chat is not on this
+                    // device yet, and the push names its author, so the chat is
+                    // written as the request it is and the message goes into it
+                    if outcome == .unknownChat, let name = envelope.fromName,
+                       try adoptRequestChat(dbc, chatId: item.chatId, from: envelope.fromUserId,
+                                            fromName: name, ownUserId: writer.ownUserId,
+                                            sentAt: item.sentAt) {
+                        outcome = writer.write(dbc, item: item, envelope: envelope, now: now)
+                    }
                     journal?.record(.stored, chatId: item.chatId, seq: item.seq,
                                     detail: outcome.rawValue)
                 }
@@ -173,6 +182,38 @@ public enum NotificationBurstStore {
             showsMessageText: showsMessageText) else { return .silent }
         if chatInfo.isGroup { built.groupMembers = try groupMembers(dbc, chatId: chat.id) }
         return .built(built)
+    }
+
+    /// Writes a direct chat this device has never seen as the request it is:
+    /// the author, named as the push named them, and this user as the member
+    /// who has not accepted yet. The chat's state proper arrives with the app's
+    /// next connection and lands on top of this row. False when the chat is not
+    /// a direct chat between this user and the author, in which case nothing is
+    /// written.
+    @discardableResult
+    public static func adoptRequestChat(_ dbc: GRDB.Database, chatId: String, from: String,
+                                        fromName: String, ownUserId: String,
+                                        sentAt: Double) throws -> Bool {
+        let parts = chatId.split(separator: ":").map(String.init)
+        guard parts.count == 3, parts[0] == ChatKind.direct.rawValue,
+              Set(parts[1...]) == [from, ownUserId], from != ownUserId else { return false }
+        try dbc.execute(
+            sql: """
+            INSERT INTO user (id, username, displayName, bio, avatarId, botOwner, botCommands)
+            VALUES (?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO NOTHING
+            """,
+            arguments: [from, "", fromName, nil, nil, nil, nil])
+        let createdAt = sentAt > 0 ? sentAt / 1000 : Date().timeIntervalSince1970
+        let state = ChatStateDTO(
+            chatId: chatId, kind: ChatKind.direct.rawValue, title: nil, avatarId: nil,
+            description: nil, sendPolicy: nil, invitePolicy: nil, createdBy: from,
+            createdAt: createdAt, plaintext: nil,
+            members: [.init(userId: from, role: "member", joinedAt: createdAt, accepted: true),
+                      .init(userId: ownUserId, role: "member", joinedAt: createdAt, accepted: false)],
+            pinnedSeqs: nil, lastSeq: 0, readMarks: [:], deliveredMarks: [:])
+        try SyncEngine.upsertChatState(dbc, state, ownUserId: ownUserId, flags: nil)
+        return true
     }
 
     /// Every member of a group with their name: the recipients of a

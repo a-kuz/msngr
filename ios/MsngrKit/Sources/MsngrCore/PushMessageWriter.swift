@@ -13,12 +13,17 @@ public struct PushEnvelope: Sendable {
     public var fromDeviceId: String
     /// Server clock of the message; the feed orders by it.
     public var ts: Double
+    /// The author's public name as the push carried it: what a banner says
+    /// about a person this device has no row for yet.
+    public var fromName: String?
 
-    public init(body: JSONValue, fromUserId: String, fromDeviceId: String, ts: Double) {
+    public init(body: JSONValue, fromUserId: String, fromDeviceId: String, ts: Double,
+                fromName: String? = nil) {
         self.body = body
         self.fromUserId = fromUserId
         self.fromDeviceId = fromDeviceId
         self.ts = ts
+        self.fromName = fromName
     }
 
     /// Reads what the extension needs out of an APNs payload. A push without an
@@ -31,7 +36,9 @@ public struct PushEnvelope: Sendable {
               let body = try? JSONDecoder().decode(JSONValue.self, from: Data(raw.utf8))
         else { return nil }
         let ts = (userInfo["ts"] as? Double) ?? (userInfo["sentAt"] as? Double) ?? 0
-        return PushEnvelope(body: body, fromUserId: from, fromDeviceId: fromDevice, ts: ts)
+        let name = (userInfo["fromName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return PushEnvelope(body: body, fromUserId: from, fromDeviceId: fromDevice, ts: ts,
+                            fromName: name?.isEmpty == false ? name : nil)
     }
 }
 

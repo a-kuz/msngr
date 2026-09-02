@@ -20,6 +20,9 @@ import { presenceViewers } from "../presence";
 const SUB_PREFIX = "sub:";
 const WATCH_PREFIX = "watch:";
 const PEER_PREFIX = "peer:";
+/// `name:<userId>`: the public display name of somebody this user shares a
+/// chat with, as the roster frame carried it; a push names its author by it.
+const NAME_PREFIX = "name:";
 const ACC_PREFIX = "acc:";
 /// Chats through which one user watches another, keyed by chat id.
 type Reasons = Record<string, true>;
@@ -482,6 +485,13 @@ export class UserDO implements DurableObject {
           if (frame.seq <= applied) return json({ ok: true, dupe: true });
         }
         for (const ws of this.sockets()) this.send(ws, frame);
+        if (frame.t === "chat" && frame.users?.length) {
+          // the roster's public names, kept for the pushes of these people:
+          // a push names its author for a device that has no row for them yet
+          const names: Record<string, string> = {};
+          for (const u of frame.users) names[NAME_PREFIX + u.id] = u.display_name;
+          await this.state.storage.put(names);
+        }
         if (frame.t === "msg" && !frame.service) {
           // a chat this user deleted comes back on the next message written to
           // it; a service frame does not bring it back, having nothing to show
@@ -1230,6 +1240,8 @@ export class UserDO implements DurableObject {
       ? await this.state.storage.get<string>(`usnd:${frame.from}`) : undefined;
     const defaults = (await this.state.storage.get<NotifySounds>("notifySounds")) ?? {};
     const sound = flags?.sound ?? personal ?? defaults[chatShape(frame.chatId)];
+    const fromName = frame.from
+      ? await this.state.storage.get<string>(NAME_PREFIX + frame.from) : undefined;
     // Every device is handled independently: one failure neither cancels the
     // others nor fails the frame delivery that already went over the socket.
     const results = await Promise.all(
@@ -1240,7 +1252,7 @@ export class UserDO implements DurableObject {
             res: await sendPush(this.env, t.token, t.env, {
               chatId: frame.chatId, seq: frame.seq, sound,
               sentAt: frame.sentAt, badge, badgeStamp,
-              from: frame.from, fromDevice: frame.fromDevice, ts: frame.ts,
+              from: frame.from, fromDevice: frame.fromDevice, fromName, ts: frame.ts,
               env: envelopeForDevice(frame.body, `${userId ?? ""}/${deviceId}`),
             }),
           };

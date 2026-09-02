@@ -57,6 +57,10 @@ export interface PushPayload {
   /// the envelope and to step the right session.
   from?: string;
   fromDevice?: string;
+  /// The author's public display name, for a device that does not know them
+  /// yet: the first message of a request reaches a killed app as a push, and
+  /// the banner names the person without a row to read the name from.
+  fromName?: string;
   /// Server clock of the message, as the socket carries it.
   ts?: number;
   /// The E2E envelope, addressed to this one device, as compact JSON. The
@@ -128,6 +132,7 @@ export function pushBody(payload: PushPayload): string {
       badgeStamp: payload.badgeStamp,
       from: payload.from,
       fromDevice: payload.fromDevice,
+      ...(payload.fromName ? { fromName: payload.fromName } : {}),
       ts: payload.ts,
       env,
     });

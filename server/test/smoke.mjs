@@ -1526,6 +1526,10 @@ if (push1) {
   // the display order of a burst is built from seq, so seq travels in the push
   check("push carries seq", push1.body.seq === p1.seq, `seq=${push1.body.seq}`);
   check("push carries sentAt", typeof push1.body.sentAt === "number");
+  // the first message of a request reaches a killed app as a push, and the
+  // device has no row to read the author's name from: the push names them
+  check("push carries the sender's name", push1.body.fromName === "Alice",
+        `fromName=${push1.body.fromName}`);
   // the chat is still a request: the counter does not reveal how much has been written
   check("push badge=0 before accept", push1.body.aps.badge === 0, `badge=${push1.body.aps.badge}`);
   check("push alert w/o plaintext", push1.body.aps.alert.body === "Новое сообщение"
