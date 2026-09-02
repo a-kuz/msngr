@@ -54,7 +54,7 @@ def defects(sha):
         open_part, _, closed_part = text.partition("## Closed")
         return {"defects_open": open_part.count("\n### "),
                 "defects_fixed": closed_part.count("\n### ")}
-    open_count = closed = 0
+    open_count, closed = 0, legacy_closed()
     for line in text.splitlines():
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
         if len(cells) == 5 and cells[0].startswith("B") and cells[0][1:].isdigit():
@@ -63,6 +63,21 @@ def defects(sha):
             else:
                 open_count += 1
     return {"defects_open": open_count, "defects_fixed": closed}
+
+
+_LEGACY_CLOSED = None
+
+
+def legacy_closed():
+    """Defects closed in docs/qa/defects.md before it was folded into the
+    backlog: read once from its last version, so the ✔ column keeps its
+    history instead of restarting at zero."""
+    global _LEGACY_CLOSED
+    if _LEGACY_CLOSED is None:
+        deleting = run(["log", "--format=%H", "--diff-filter=D", "--", "docs/qa/defects.md"]).split()
+        text = run(["show", f"{deleting[0]}^:docs/qa/defects.md"]) if deleting else ""
+        _LEGACY_CLOSED = text.partition("## Closed")[2].count("\n### ")
+    return _LEGACY_CLOSED
 
 
 def rows():
