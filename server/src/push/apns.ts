@@ -61,6 +61,9 @@ export interface PushPayload {
   /// yet: the first message of a request reaches a killed app as a push, and
   /// the banner names the person without a row to read the name from.
   fromName?: string;
+  /// The chat is muted for this user: the push is silent and says so, and the
+  /// extension shows the message only when it speaks to them.
+  muted?: boolean;
   /// Server clock of the message, as the socket carries it.
   ts?: number;
   /// The E2E envelope, addressed to this one device, as compact JSON. The
@@ -133,6 +136,7 @@ export function pushBody(payload: PushPayload): string {
       from: payload.from,
       fromDevice: payload.fromDevice,
       ...(payload.fromName ? { fromName: payload.fromName } : {}),
+      ...(payload.muted ? { muted: 1 } : {}),
       ts: payload.ts,
       env,
     });

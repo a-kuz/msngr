@@ -1780,29 +1780,42 @@ const push9 = await waitPush(pushFor(`eve-sim-${suffix}`, p9));
 check("oversized envelope is dropped from the push",
   !!push9 && push9.body.env === undefined);
 
-// (d) a muted chat produces no push
+// (d) a muted chat's push travels silent and flagged: the server cannot see a
+// mention or a reply in the encrypted text, so the extension decides what a
+// muted chat still shows, and swallows the rest
 await api(`/api/chats/${echat.chatId}/flags`, { token: eve.token, body: { muted: true } });
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p5", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const p5 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p5");
-check("no push for muted chat", !(await waitPush(pushFor(`eve-sim-${suffix}`, p5), 1200)));
+const push5 = await waitPush(pushFor(`eve-sim-${suffix}`, p5));
+check("muted chat still pushes", !!push5);
+check("muted chat push is silent", push5 && push5.body.aps.sound === undefined,
+  `sound=${push5?.body.aps.sound}`);
+check("muted chat push is flagged", push5?.body.muted === 1, `muted=${push5?.body.muted}`);
+check("muted chat push keeps the extension's alert", push5?.body.aps["mutable-content"] === 1);
 
-// (e) mute with an expiry: no push while it has not expired
+// (e) mute with an expiry: silent and flagged while it has not expired
 const nowS = Math.floor(Date.now() / 1000);
 await api(`/api/chats/${echat.chatId}/flags`, { token: eve.token,
   body: { muted: true, mutedUntil: nowS + 3600 } });
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p6", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const p6 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p6");
-check("no push while mute not expired", !(await waitPush(pushFor(`eve-sim-${suffix}`, p6), 1200)));
+const push6 = await waitPush(pushFor(`eve-sim-${suffix}`, p6));
+check("push while mute not expired is silent and flagged",
+  !!push6 && push6.body.aps.sound === undefined && push6.body.muted === 1);
 
-// (f) once it has expired the push goes out and the flag clears itself
+// (f) once it has expired the push sounds again and the flag clears itself
 await api(`/api/chats/${echat.chatId}/flags`, { token: eve.token,
   body: { muted: true, mutedUntil: nowS - 1 } });
 ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-p7", sentAt: Date.now(),
   body: { v: 1, mode: "pw", msgs: {} } });
 const p7 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-p7");
-check("push after mute expired", !!(await waitPush(pushFor(`eve-sim-${suffix}`, p7))));
+const push7 = await waitPush(pushFor(`eve-sim-${suffix}`, p7));
+check("push after mute expired", !!push7);
+check("push after mute expired sounds and is not flagged",
+  !!push7 && push7.body.aps.sound !== undefined && push7.body.muted === undefined,
+  `sound=${push7?.body.aps.sound} muted=${push7?.body.muted}`);
 const eveChats = await api("/api/chats", { token: eve.token });
 const eveEntry = eveChats.chats.find((e) => e.state.chatId === echat.chatId);
 check("expired mute cleared in flags",

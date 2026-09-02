@@ -168,6 +168,9 @@ interface PushJob {
   nextAt?: number;
   /// devices whose push already landed; a retry skips them
   pushed?: string[];
+  /// the chat was muted when the frame arrived: the push travels silent and
+  /// says so, and the device decides what a mention or a reply still shows
+  muted?: boolean;
 }
 
 // One object per user: the sockets of all their devices, the chat list, presence, pushes.
@@ -503,9 +506,12 @@ export class UserDO implements DurableObject {
           const userId = await this.getUserId();
           const isOwnEcho = userId !== null && frame.from === userId;
           // the push leaves through the object's own queue: this delivery is
-          // acknowledged now, and APNs' latency paces no chat
-          if (!muted && !isOwnEcho) {
-            await this.enqueuePush(frame);
+          // acknowledged now, and APNs' latency paces no chat. A muted chat
+          // pushes too, silent and flagged: the server cannot see a mention
+          // or a reply in the encrypted text, so the extension is the one
+          // that lets those through and swallows the rest
+          if (!isOwnEcho) {
+            await this.enqueuePush({ ...frame, muted });
           }
         } else if (frame.t === "msg" && frame.service && (frame.notify || frame.notifyUser)) {
           // a service frame that still notifies — a missed-call record for
@@ -1150,6 +1156,7 @@ export class UserDO implements DurableObject {
     const job: PushJob = {
       chatId: frame.chatId, seq: frame.seq, sentAt: frame.sentAt,
       from: frame.from, fromDevice: frame.fromDevice, ts: frame.ts, body: frame.body,
+      ...(frame.muted ? { muted: true } : {}),
     };
     await this.state.storage.put({ [pushKey(id)]: job, pqNext: id + 1 });
     await this.armAlarm(Date.now());
@@ -1252,7 +1259,11 @@ export class UserDO implements DurableObject {
           return {
             deviceId,
             res: await sendPush(this.env, t.token, t.env, {
-              chatId: frame.chatId, seq: frame.seq, sound,
+              chatId: frame.chatId, seq: frame.seq,
+              // a muted chat's push makes no sound of its own; the device
+              // gives a mention or a reply its sound when it opens the envelope
+              sound: frame.muted ? "none" : sound,
+              muted: frame.muted,
               sentAt: frame.sentAt, badge, badgeStamp,
               from: frame.from, fromDevice: frame.fromDevice, fromName, ts: frame.ts,
               env: envelopeForDevice(frame.body, `${userId ?? ""}/${deviceId}`),
