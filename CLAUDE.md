@@ -116,11 +116,10 @@ own user, and the fixtures they need are on the stand, not on the device.
   provider token itself — APNs is HTTP/2 only and workerd's fetch is HTTP/1.1,
   so a Worker never reaches Apple directly. The topic is `com.msngr.msngr`, the
   one bundle id of every build. A simulator on Apple silicon holds a real
-  sandbox token, so the shared stand's pushes reach it: the banner arrives
-  with the neutral text, because the NSE does not run there. The app falls
-  back to registering its UDID (env `dev-sim`, what the mock pushes by) only
-  when APNs hands out no token, so a scenario on the mock needs a simulator
-  that gets no real token, or the token replaced by hand.
+  sandbox token, so the shared stand's pushes reach it, and the extension
+  runs there: run the NotificationService scheme from Xcode to sit in it
+  with the debugger. The app falls back to registering its UDID (env
+  `dev-sim`, what the mock pushes by) only when APNs hands out no token.
   `node test/smoke.mjs` brings up its own receiver on the mock's port,
   so a running mock has to be stopped before the smoke test. On your own stand
   the ports separate:

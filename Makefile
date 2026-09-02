@@ -56,7 +56,7 @@ device:
 	  -destination 'generic/platform=iOS' -derivedDataPath ios/build/device \
 	  -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
 	  CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=$(TEAM) build
-	xcrun devicectl device install app --device "$(or $(DEVICE),$$(xcrun devicectl list devices --hide-headers 2>/dev/null | awk '/connected/{for(i=1;i<=NF;i++) if ($$i ~ /^[0-9A-F-]{36}$$/) {print $$i; exit}}'))" "$(CURDIR)/$(DEVICE_APP)"
+	xcrun devicectl device install app --device "$(or $(DEVICE),$$(xcrun devicectl list devices --hide-headers 2>/dev/null | awk '/connected|available/{for(i=1;i<=NF;i++) if ($$i ~ /^[0-9A-F-]{36}$$/) {print $$i; exit}}'))" "$(CURDIR)/$(DEVICE_APP)"
 	cd ios && xcodegen
 
 server-smoke:
