@@ -98,6 +98,9 @@ struct ChatListView: View {
                             }
                         }
                         .background(Color(.systemBackground))
+                        // folded, the tray scrolls out under the bar with the
+                        // top row, and the tabs move up behind it
+                        .offset(y: -tray.hidden)
                     }
                     // the list now stands right under the bottom search bar, and
                     // the soft edge the system gives a scroll view there fades a
@@ -370,7 +373,8 @@ struct ChatListView: View {
                                   onWillEndDragging: { tray.willEndDragging($0, velocity: $1, target: $2) },
                                   topInset: StoriesTray.foldedHeight
                                       + (tray.expanded ? StoriesTray.unfoldDelta : 0)
-                                      + (model.folders.isEmpty ? 0 : folderBarHeight))
+                                      + (model.folders.isEmpty ? 0 : folderBarHeight),
+                                  startScrolled: tray.hidden)
         .overlay {
             if model.loaded, let folder, items.isEmpty {
                 folderEmptyState(folder)

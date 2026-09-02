@@ -27,6 +27,10 @@ struct ChatListCollection: UIViewRepresentable {
     /// resting size plus the folder tabs. The follower moves it directly while
     /// a gesture is under way; this value is what a new page starts from.
     var topInset: CGFloat = 0
+    /// How far the header over the list is raised when this page opens: the
+    /// page starts scrolled by as much, so its rows stand right under the
+    /// header the way the previous page's did. Read once, when the view is made.
+    var startScrolled: CGFloat = 0
 
     enum Row: Hashable {
         case request(String)
@@ -75,7 +79,7 @@ struct ChatListCollection: UIViewRepresentable {
         Self.applyInset(topInset, to: collection)
         coordinator.apply(animated: false)
         // a page opens with its rows under the header, at rest
-        collection.contentOffset.y = -collection.adjustedContentInset.top
+        collection.contentOffset.y = -collection.adjustedContentInset.top + startScrolled
         return collection
     }
 

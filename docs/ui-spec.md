@@ -534,16 +534,21 @@ in the feed as a group event once the server has accepted it.
 ## The chat list
 
 The title «Чаты» is inline in the bar, the same bar the calls list has. Under
-it runs the stories tray: folded, a 42 pt row of 30 pt rings with nothing
-else; unfolded, 48 pt taller, with 56 pt pictures and their names. The tray
-and the folder tabs are drawn over the list inside its top content inset, so
-the list's frame never changes under a finger and its own bounce carries the
-motion: a pull past the top grows the tray one for one with the finger, a
-release past half the delta moves the inset down and the bounce settles the
-rows on the open tray, a shorter pull springs it shut. Unfolded, a scroll up
-folds the tray at the scroll's own speed, like a first row; a release midway
-lands on the nearer state, and once folded whole the inset gives the delta
-back with nothing on screen moving (`StoriesTrayFollower`).
+it runs the stories tray: folded, a 42 pt strip where 30 pt rings lie in a
+stack, each over a third of the one before it, your own on top and at most
+three others showing; unfolded, 48 pt taller, with 56 pt pictures standing
+apart and their names under them. The tray and the folder tabs are drawn over
+the list inside its top content inset, so the list's frame never changes
+under a finger and its own bounce carries the motion: a pull past the top
+grows the tray one for one with the finger, a release past half the delta
+moves the inset down and the bounce settles the rows on the open tray, a
+shorter pull springs it shut. Unfolded, a scroll up folds the tray at the
+scroll's own speed, like a first row; a release midway lands on the nearer
+state, and once folded whole the inset gives the delta back with nothing on
+screen moving. Folded, the tray is the first thing in the list: scrolling on
+carries it out under the bar with the top row, the tabs move up behind it and
+stay under the bar, and a scroll back brings it down again
+(`StoriesTrayFollower`).
 
 A row holds a 54×54 avatar with an online dot, the title (the peer's name for a
 direct chat), the mute icon, the ticks of the last message (only when it is
