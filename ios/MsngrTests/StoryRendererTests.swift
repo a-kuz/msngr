@@ -81,8 +81,10 @@ final class StoryRendererTests: XCTestCase {
         frame.strokes = [StoryStroke(brush: .pen, color: "#00ff00", width: 0.05,
                                      points: [CGPoint(x: 0.1, y: 0.8), CGPoint(x: 0.9, y: 0.8)])]
         var layer = StoryLayer(kind: .text("Hello"))
-        layer.color = "#ff0000"
-        layer.plate = .light
+        // a solid plate takes the layer's colour: white words become a white
+        // plate with black words on it
+        layer.color = "#ffffff"
+        layer.plate = .solid
         layer.center = CGPoint(x: 0.5, y: 0.3)
         frame.layers = [layer]
         let out = StoryRenderer.renderPhoto(frame, canvas: canvas)
@@ -90,7 +92,7 @@ final class StoryRendererTests: XCTestCase {
         XCTAssertGreaterThan(Int(onStroke.g), 200, "the stroke should be green, got \(onStroke)")
         let acrossPlate = row(out, y: out.size.height * 0.3)
         XCTAssertGreaterThan(acrossPlate.brightest, 450,
-                             "the light plate should lift the black, got \(acrossPlate)")
+                             "the white plate should lift the black, got \(acrossPlate)")
     }
 
     func testALayerImageIsNeverEmptyAndScalesWithTheLayer() {
