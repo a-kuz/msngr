@@ -19,6 +19,9 @@ struct CallsListView: View {
     @EnvironmentObject private var app: AppState
     @State private var items: [CallsListItem] = []
     @State private var observation: AnyCancellable?
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    private var avatarSide: CGFloat { typeSize.scaled(54, relativeTo: .subheadline, max: 74) }
 
     var body: some View {
         Group {
@@ -47,9 +50,10 @@ struct CallsListView: View {
         let missedIncoming = !item.outgoing && item.log.map {
             $0.outcome == .missed || $0.outcome == .declined
         } ?? false
-        return HStack(spacing: 12) {
+        // the same row metrics as the chat list, so the two lists read as one set
+        return HStack(spacing: 10) {
             AvatarView(name: item.peer?.displayName ?? "", avatarId: item.peer?.avatarId)
-                .frame(width: 44, height: 44)
+                .frame(width: avatarSide, height: avatarSide)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.peer?.displayName ?? "…")
                     .textRole(Theme.Text.rowTitle)

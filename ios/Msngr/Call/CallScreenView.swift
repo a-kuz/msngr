@@ -78,11 +78,7 @@ struct CallScreenView: View {
                 Button {
                     app.callMinimized = true
                 } label: {
-                    Image(systemName: "chevron.down")
-                        .font(Theme.glyph(17, max: 22))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
+                    topGlyph("chevron.down")
                 }
                 .padding(.leading, 8)
                 .accessibilityIdentifier("call.minimize")
@@ -95,11 +91,7 @@ struct CallScreenView: View {
                 Button {
                     invitePickerShown = true
                 } label: {
-                    Image(systemName: "person.badge.plus")
-                        .font(Theme.glyph(17, max: 22))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
+                    topGlyph("person.badge.plus")
                 }
                 .padding(.trailing, 8)
                 .accessibilityIdentifier("call.invite")
@@ -297,6 +289,18 @@ struct CallScreenView: View {
             }
         }
         .animation(nil, value: state.phase)
+    }
+
+    /// A corner button of the call screen: a white glyph on a dark disc, so it
+    /// stands on the gradient and on a video frame alike.
+    private func topGlyph(_ name: String) -> some View {
+        Image(systemName: name)
+            .font(Theme.glyph(17, max: 22))
+            .foregroundStyle(.white)
+            .frame(width: 38, height: 38)
+            .background(Circle().fill(.black.opacity(0.35)))
+            .padding(3)
+            .contentShape(Rectangle())
     }
 
     private func control(glyph: String, color: Color, label: String, id: String,

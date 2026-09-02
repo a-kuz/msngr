@@ -3,8 +3,11 @@ import MsngrCore
 
 /// The row of stories over the chat list: your own first, with the plus that
 /// starts a new one, then everyone with something live, the unwatched ones
-/// ahead. A ring around a picture means there is something to watch.
+/// ahead. A ring around a picture means there is something to watch. Folded,
+/// the row is small rings and nothing else; unfolded, the pictures grow and
+/// take their names.
 struct StoriesTray: View {
+    var expanded: Bool
     var onCompose: () -> Void
     var onOpen: (StoriesModel.Author) -> Void
 
@@ -17,9 +20,12 @@ struct StoriesTray: View {
     private var mine: StoriesModel.Author? { stories.authors.first { $0.id == ownId } }
     private var others: [StoriesModel.Author] { stories.authors.filter { $0.id != ownId } }
 
+    /// The picture's side in the two states of the row.
+    private var side: CGFloat { expanded ? 56 : 30 }
+
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .top, spacing: 14) {
+            HStack(alignment: .top, spacing: expanded ? 14 : 10) {
                 ownCell
                 ForEach(others) { author in
                     Button { onOpen(author) } label: {
@@ -31,8 +37,9 @@ struct StoriesTray: View {
                 }
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.vertical, expanded ? 8 : 6)
         }
+        .scrollDisabled(!expanded && others.count < 8)
         .accessibilityIdentifier("stories.tray")
         .task(id: app.ready) { await loadMe() }
         // the list is read again whenever the app comes to the front, and
@@ -65,13 +72,13 @@ struct StoriesTray: View {
         .overlay(alignment: .topTrailing) {
             Button(action: onCompose) {
                 Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: expanded ? 11 : 8, weight: .bold))
                     .foregroundStyle(.white)
-                    .frame(width: 20, height: 20)
+                    .frame(width: expanded ? 20 : 14, height: expanded ? 20 : 14)
                     .background(Theme.accent, in: Circle())
-                    .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
+                    .overlay(Circle().stroke(Color(.systemBackground), lineWidth: expanded ? 2 : 1.5))
             }
-            .offset(x: 2, y: 40)
+            .offset(x: expanded ? 2 : 3, y: expanded ? 40 : 18)
             .accessibilityIdentifier("chatlist.newStory")
         }
     }
@@ -80,19 +87,22 @@ struct StoriesTray: View {
                       ring: Bool, unseen: Bool) -> some View {
         VStack(spacing: 5) {
             AvatarView(name: name, avatarId: avatarId)
-                .frame(width: 56, height: 56)
+                .frame(width: side, height: side)
                 .overlay {
                     if ring {
                         Circle()
-                            .strokeBorder(Theme.accent.opacity(unseen ? 1 : 0.3), lineWidth: 2.5)
-                            .padding(-4)
+                            .strokeBorder(Theme.accent.opacity(unseen ? 1 : 0.3),
+                                          lineWidth: expanded ? 2.5 : 2)
+                            .padding(expanded ? -4 : -3)
                     }
                 }
-            Text(title)
-                .font(.caption2)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-                .frame(width: 72)
+            if expanded {
+                Text(title)
+                    .font(.caption2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .frame(width: 72)
+            }
         }
     }
 
