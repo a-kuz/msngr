@@ -1,4 +1,5 @@
 import MsngrCore
+import PhotosUI
 import SwiftUI
 
 /// Letting another device onto the account from one that is already on it.
@@ -14,6 +15,8 @@ struct AddDeviceView: View {
     @State private var busy = false
     @State private var error: String?
     @State private var approved = false
+    /// A picture of the other device's screen: the QR code in it is the code.
+    @State private var qrPhoto: PhotosPickerItem?
 
     var body: some View {
         VStack(spacing: 24) {
@@ -56,7 +59,33 @@ struct AddDeviceView: View {
             .buttonStyle(.primaryAction)
             .disabled(busy || !codeValid)
             .accessibilityIdentifier("adddevice.next")
+            // the code as the other device shows it, read from a picture of
+            // that screen: the same lookup follows, nothing is trusted from
+            // the picture itself
+            PhotosPicker(selection: $qrPhoto, matching: .images) {
+                Label("Scan the code from a photo", systemImage: "qrcode.viewfinder")
+            }
+            .disabled(busy)
+            .accessibilityIdentifier("adddevice.qr")
+            .onChange(of: qrPhoto) { _, item in
+                guard let item else { return }
+                Task { await readCode(from: item) }
+            }
         }
+    }
+
+    private func readCode(from item: PhotosPickerItem) async {
+        defer { qrPhoto = nil }
+        guard let data = try? await item.loadTransferable(type: Data.self),
+              let image = UIImage(data: data),
+              let payload = QRCode.read(image),
+              let scanned = QRCode.linkCode(from: payload) else {
+            error = String(localized: "No login code in that picture")
+            return
+        }
+        code = DeviceLink.formatCode(scanned)
+        error = nil
+        await lookup()
     }
 
     private func confirm(_ found: APIClient.ProvisionLookupResponse) -> some View {

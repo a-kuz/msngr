@@ -47,7 +47,14 @@ A ✅ goes in only together with a link to the evidence.
     belongs to the account, the safety number does not change
     (qa/runs/2026-08-16-second-device-run.md)
   - ⬜ moving the history to a new device (today it starts at the chat's current end)
-  - ⬜ a QR code instead of typing the code (the simulator has no camera)
+  - ✅ a QR code instead of typing the code: the device being added shows the
+    code as a QR under the digits, and the approving device reads it from a
+    picture («Считать код с фото», Vision with a Core Image fallback — the
+    simulator has no camera and no Vision barcode backing) and runs the same
+    lookup (live 2026-09-02: a third simulator's screen photographed into
+    bravo's library, «fable-link» found and approved from the picture,
+    «Войти как @bravo6?» on the new device — qa/runs/2026-09-02-qr-run)
+  - ⬜ reading the QR through the camera on a device (`DataScannerViewController`)
   - ✅ recovering an account when no device is left: restoring from the
     sealed backup during registration — the identity outlives its devices in
     `UserDO`, the claim proves possession of the identity key (the Backup
@@ -689,7 +696,11 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     released it (qa/runs/2026-08-27-key-change-run.md)
   - ✅ the 60-digit safety number in the chat info, matching the number an
     independent side computes for the same pair (qa/runs/2026-08-21-safety-number)
-  - ⬜ comparing by QR
+  - ✅ comparing by QR: the sixty digits as a QR under the number, and
+    «Сравнить по фото» reads the peer's QR from a picture of their screen,
+    says whether the numbers match and turns the verified mark on when they do
+    (live 2026-09-02 between bravo and charlie: «Номера совпадают», the toggle
+    on — qa/runs/2026-09-02-qr-run)
   - ✅ a "verified" mark after the comparison: the toggle under the unfolded
     safety number, a static seal while it is folded, kept in the local trust
     table and dropped by an accepted key change

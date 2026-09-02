@@ -2090,6 +2090,83 @@
         }
       }
     },
+    "QR code with the login code" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "QR-код с кодом входа"
+          }
+        }
+      }
+    },
+    "Scan the code from a photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Считать код с фото"
+          }
+        }
+      }
+    },
+    "No login code in that picture" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На этом снимке нет кода входа"
+          }
+        }
+      }
+    },
+    "QR code with the safety number" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "QR-код с номером безопасности"
+          }
+        }
+      }
+    },
+    "Compare from a photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сравнить по фото"
+          }
+        }
+      }
+    },
+    "The numbers match" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Номера совпадают"
+          }
+        }
+      }
+    },
+    "The numbers differ" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Номера не совпадают"
+          }
+        }
+      }
+    },
     "Sound: mentions and replies" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -63,6 +63,19 @@ struct LinkDeviceView: View {
                 .font(.system(size: 40, weight: .semibold, design: .monospaced))
                 .kerning(2)
                 .accessibilityIdentifier("link.code")
+            // the same code as a picture: the approving device reads it from
+            // its camera or from a photo instead of typing eight characters
+            if let code = pending?.code, let qr = QRCode.image(QRCode.linkPayload(code: code)) {
+                Image(uiImage: qr)
+                    .interpolation(.none)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 180, height: 180)
+                    .padding(8)
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 12))
+                    .accessibilityIdentifier("link.qr")
+                    .accessibilityLabel(Text("QR code with the login code"))
+            }
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text(secondsLeft > 0 ? "Waiting for confirmation · \(secondsLeft) s" : "Waiting for confirmation")

@@ -37,6 +37,10 @@ struct ChatInfoView: View {
     @State private var showAddMembers = false
     @State private var inviteLink: String?
     @State private var safetyNumber: String?
+    /// A picture of the peer's safety-number screen, compared to our own.
+    @State private var safetyPhoto: PhotosPickerItem?
+    /// What the last comparison from a picture said; nil until one was made.
+    @State private var safetyCompared: Bool?
     /// The mark set after comparing safety numbers; a key change clears it.
     @State private var peerVerified = false
     @State private var editTitle = ""
@@ -234,6 +238,37 @@ struct ChatInfoView: View {
                         Text(sn.chunked(5).joined(separator: "  "))
                             .font(.system(.footnote, design: .monospaced))
                             .foregroundStyle(.secondary)
+                        // the same number as a picture, for the other side to
+                        // compare against theirs without reading sixty digits
+                        if let qr = QRCode.image(QRCode.safetyPayload(number: sn)) {
+                            HStack {
+                                Spacer()
+                                Image(uiImage: qr)
+                                    .interpolation(.none)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(width: 160, height: 160)
+                                    .padding(6)
+                                    .background(Color.white, in: RoundedRectangle(cornerRadius: 10))
+                                    .accessibilityIdentifier("chatInfo.safetyQR")
+                                    .accessibilityLabel(Text("QR code with the safety number"))
+                                Spacer()
+                            }
+                        }
+                        PhotosPicker(selection: $safetyPhoto, matching: .images) {
+                            Label("Compare from a photo", systemImage: "qrcode.viewfinder")
+                        }
+                        .accessibilityIdentifier("chatInfo.safetyCompare")
+                        .onChange(of: safetyPhoto) { _, item in
+                            guard let item else { return }
+                            Task { await compareSafetyNumber(from: item, ours: sn, peer: peer) }
+                        }
+                        if let matched = safetyCompared {
+                            Label(matched ? "The numbers match" : "The numbers differ",
+                                  systemImage: matched ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                                .foregroundStyle(matched ? .green : .red)
+                                .accessibilityIdentifier("chatInfo.safetyResult")
+                        }
                         Toggle(isOn: $peerVerified) {
                             Label("Verified", systemImage: peerVerified ? "checkmark.seal.fill" : "checkmark.seal")
                         }
@@ -714,6 +749,25 @@ struct ChatInfoView: View {
         Task {
             let counts = (try? await db.read { dbc in try ChatGallery.counts(dbc, chatId: chatId) }) ?? [:]
             attachmentsCount = counts.values.reduce(0, +)
+        }
+    }
+
+    /// The peer's screen in a picture: its QR code carries their sixty digits,
+    /// and a match turns the verified mark on the way a reading by eye would.
+    private func compareSafetyNumber(from item: PhotosPickerItem, ours: String, peer: User) async {
+        defer { safetyPhoto = nil }
+        guard let data = try? await item.loadTransferable(type: Data.self),
+              let image = UIImage(data: data),
+              let payload = QRCode.read(image),
+              let theirs = QRCode.safetyNumber(from: payload) else {
+            safetyCompared = false
+            return
+        }
+        let matched = theirs == ours
+        safetyCompared = matched
+        if matched, !peerVerified {
+            peerVerified = true
+            try? app.e2ee?.setVerified(userId: peer.id, true)
         }
     }
 
