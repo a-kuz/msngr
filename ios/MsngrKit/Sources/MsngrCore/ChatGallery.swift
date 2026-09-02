@@ -78,8 +78,8 @@ public struct GalleryPage: Sendable {
 
 /// Reads a chat's attachments and links, newest first, one page at a time.
 ///
-/// The feed's ordering is reused (`COALESCE(seq, unsentOrder) DESC, sentAt
-/// DESC`), so an entry sits in the gallery where its message sits in the chat.
+/// The feed's ordering is reused (`HistoryWindow.order DESC, sentAt DESC`), so
+/// an entry sits in the gallery where its message sits in the chat.
 public enum ChatGallery {
     /// Messages one page carries. Three columns of a grid fill about seven rows
     /// with it, a screen and a bit ahead of the reader.
@@ -120,14 +120,14 @@ public enum ChatGallery {
 
     private static func messages(_ dbc: GRDB.Database, chatId: String, kind: MessageKind,
                                  after: GalleryCursor?, limit: Int) throws -> [Message] {
-        let bound = after == nil ? "" : "AND COALESCE(seq, \(HistoryWindow.unsentOrder)) <= ?"
+        let bound = after == nil ? "" : "AND \(HistoryWindow.order) <= ?"
         var arguments: [DatabaseValueConvertible] = [chatId, kind.rawValue]
         if let after { arguments.append(after.order) }
         arguments.append(limit)
         return try Message.fetchAll(dbc, sql: """
             SELECT * FROM message
             WHERE chatId = ? AND kind = ? AND deletedForAll = 0 \(bound)
-            ORDER BY COALESCE(seq, \(HistoryWindow.unsentOrder)) DESC, sentAt DESC
+            ORDER BY \(HistoryWindow.order) DESC, sentAt DESC
             LIMIT ?
             """, arguments: StatementArguments(arguments))
     }
@@ -208,7 +208,7 @@ public enum ChatGallery {
         }
     }
 
-    static func order(_ message: Message) -> Int { message.seq ?? HistoryWindow.unsentOrder }
+    static func order(_ message: Message) -> Int { message.feedOrder ?? HistoryWindow.unsentOrder }
 
     // MARK: - Counts
 

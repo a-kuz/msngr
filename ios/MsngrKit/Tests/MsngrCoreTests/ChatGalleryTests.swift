@@ -174,8 +174,8 @@ final class ChatGalleryTests: XCTestCase {
                 EXPLAIN QUERY PLAN
                 SELECT * FROM message
                 WHERE chatId = ? AND kind = ? AND deletedForAll = 0
-                  AND COALESCE(seq, \(HistoryWindow.unsentOrder)) <= ?
-                ORDER BY COALESCE(seq, \(HistoryWindow.unsentOrder)) DESC, sentAt DESC
+                  AND \(HistoryWindow.order) <= ?
+                ORDER BY \(HistoryWindow.order) DESC, sentAt DESC
                 LIMIT ?
                 """, arguments: ["c1", "photo", 40, 10])
                 .map { ($0["detail"] as String?) ?? "" }

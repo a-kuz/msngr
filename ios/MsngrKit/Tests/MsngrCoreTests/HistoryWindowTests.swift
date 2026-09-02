@@ -84,10 +84,36 @@ final class HistoryWindowTests: XCTestCase {
         try seedChat(db, lastSeq: 100, syncedSeq: 100)
         try seedMessages(db, seqs: Array(1...100))
         try db.read { dbc in
-            XCTAssertTrue(try HistoryWindow.hasNewer(dbc, chatId: "c1", topSeq: 60))
-            XCTAssertFalse(try HistoryWindow.hasNewer(dbc, chatId: "c1", topSeq: 100))
+            XCTAssertTrue(try HistoryWindow.hasNewer(dbc, chatId: "c1", topOrder: 60))
+            XCTAssertFalse(try HistoryWindow.hasNewer(dbc, chatId: "c1", topOrder: 100))
             // an own message still waiting for its seq sorts above everything numbered
-            XCTAssertFalse(try HistoryWindow.hasNewer(dbc, chatId: "c1", topSeq: nil))
+            XCTAssertFalse(try HistoryWindow.hasNewer(dbc, chatId: "c1", topOrder: nil))
+        }
+    }
+
+    /// A line the device wrote for itself (a peer's key change) sits in the feed
+    /// after the message it was written after, and the messages that arrive
+    /// later sort above it — it does not stay at the bottom of the chat.
+    func testSystemLineSortsWhereItWasWritten() throws {
+        let db = try AppDatabase.openInMemory()
+        try seedChat(db, lastSeq: 50, syncedSeq: 50)
+        try seedMessages(db, seqs: Array(1...50))
+        try db.write { dbc in
+            XCTAssertTrue(try SyncEngine.insertSystemLine(dbc, chatId: "c1", text: "identity_changed:peer"))
+        }
+        try seedMessages(db, seqs: [51, 52])
+
+        let page = try db.read { dbc in
+            try HistoryWindow.messages(dbc, chatId: "c1", floor: 49)
+        }
+        XCTAssertEqual(page.map { $0.seq ?? -1 }, [52, 51, -1, 50, 49])
+        XCTAssertEqual(page[2].kind, .system)
+        XCTAssertEqual(page[2].anchorSeq, 50)
+        // the window's top is the newest message, so nothing is newer than it
+        try db.read { dbc in
+            XCTAssertFalse(try HistoryWindow.hasNewer(dbc, chatId: "c1", topOrder: page.first?.feedOrder))
+            // a window topped by the system line has the two later messages above it
+            XCTAssertTrue(try HistoryWindow.hasNewer(dbc, chatId: "c1", topOrder: page[2].feedOrder))
         }
     }
 

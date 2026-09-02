@@ -58,19 +58,26 @@ public enum HistoryWindow {
 
     /// True when the chat stores a message newer than the top of the window, that
     /// is, when the capacity cut the window short of the end of the conversation.
-    /// A window whose top message carries no seq is at the end by construction:
-    /// unnumbered messages of our own sort above everything the server numbered.
-    public static func hasNewer(_ dbc: GRDB.Database, chatId: String, topSeq: Int?) throws -> Bool {
-        guard let topSeq else { return false }
+    /// A window whose top message has no feed order is at the end by
+    /// construction: unnumbered sends of our own sort above everything the
+    /// server numbered.
+    public static func hasNewer(_ dbc: GRDB.Database, chatId: String, topOrder: Int?) throws -> Bool {
+        guard let topOrder else { return false }
         return try Bool.fetchOne(dbc, sql: """
             SELECT EXISTS(SELECT 1 FROM message
-            WHERE chatId = ? AND COALESCE(seq, \(unsentOrder)) > ?)
-            """, arguments: [chatId, topSeq]) ?? false
+            WHERE chatId = ? AND \(order) > ?)
+            """, arguments: [chatId, topOrder]) ?? false
     }
 
     /// Value a message without a seq (own, not yet acknowledged) sorts by: above
     /// everything the server has numbered, so it belongs to the newest page.
     static let unsentOrder = 999_999_999
+
+    /// The feed's ordering key: the server's seq; for a line this device wrote
+    /// for itself, the seq it was written after; for an own send still waiting
+    /// for its ack, a value above every seq. `message_on_chat_feedOrder` is
+    /// built on this same expression.
+    public static let order = "COALESCE(seq, anchorSeq, \(unsentOrder))"
 
     /// Window contents, newest first (feed order). The bound is written over
     /// the same expression the ordering uses, so the whole window is one range
@@ -85,17 +92,17 @@ public enum HistoryWindow {
         guard let limit else {
             return try Message.fetchAll(dbc, sql: """
                 SELECT * FROM message
-                WHERE chatId = ? AND COALESCE(seq, \(unsentOrder)) >= ?
-                ORDER BY COALESCE(seq, \(unsentOrder)) DESC, sentAt DESC
+                WHERE chatId = ? AND \(order) >= ?
+                ORDER BY \(order) DESC, sentAt DESC
                 """, arguments: [chatId, floor ?? 0])
         }
         return try Message.fetchAll(dbc, sql: """
             SELECT * FROM (
               SELECT * FROM message
-              WHERE chatId = ? AND COALESCE(seq, \(unsentOrder)) >= ?
-              ORDER BY COALESCE(seq, \(unsentOrder)) ASC, sentAt ASC
+              WHERE chatId = ? AND \(order) >= ?
+              ORDER BY \(order) ASC, sentAt ASC
               LIMIT ?)
-            ORDER BY COALESCE(seq, \(unsentOrder)) DESC, sentAt DESC
+            ORDER BY \(order) DESC, sentAt DESC
             """, arguments: [chatId, floor ?? 0, limit])
     }
 
@@ -108,7 +115,7 @@ public enum HistoryWindow {
     public static func lastMessage(_ dbc: GRDB.Database, chatId: String) throws -> Message? {
         try Message.fetchOne(dbc, sql: """
             SELECT * FROM message WHERE chatId = ? AND kind != 'system'
-            ORDER BY COALESCE(seq, \(unsentOrder)) DESC, sentAt DESC LIMIT 1
+            ORDER BY \(order) DESC, sentAt DESC LIMIT 1
             """, arguments: [chatId])
     }
 

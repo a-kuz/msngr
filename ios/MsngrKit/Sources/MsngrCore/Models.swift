@@ -358,6 +358,9 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
     public var id: String
     public var chatId: String
     public var seq: Int?               // null until ack
+    /// A line this device wrote for itself (a peer's key change) has no seq;
+    /// it sorts in the feed as the numbered message it was written after.
+    public var anchorSeq: Int?
     public var clientMsgId: String?
     public var fromUserId: String
     public var sentAt: Double
@@ -431,9 +434,13 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
         self.isOutgoing = isOutgoing
     }
 
+    /// Where the message stands in feed order; nil for an own send still
+    /// waiting for its seq, which sorts above everything numbered.
+    public var feedOrder: Int? { seq ?? anchorSeq }
+
     // JSON columns
     enum CodingKeys: String, CodingKey {
-        case id, chatId, seq, clientMsgId, fromUserId, sentAt, serverTs,
+        case id, chatId, seq, anchorSeq, clientMsgId, fromUserId, sentAt, serverTs,
              kind, text, media, album, replyTo, forward, shader, bubbleShader, edited, editHistory,
              editedAt, deletedForAll, status, isOutgoing, reactions, expiresAt,
              failReason, scheduledFor, listenedAt, listenedBy, poll, pollVotes,

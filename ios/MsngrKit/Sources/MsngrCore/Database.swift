@@ -594,6 +594,38 @@ public enum AppDatabase {
                 t.add(column: "story", .text)
             }
         }
+        m.registerMigration("v37-systemLineAnchor") { db in
+            try db.alter(table: "message") { t in
+                // the seq a locally written system line sorts after
+                t.add(column: "anchorSeq", .integer)
+            }
+            // lines already written take the seq of the newest numbered
+            // message that preceded them in time
+            try db.execute(sql: """
+                UPDATE message SET anchorSeq = COALESCE((
+                    SELECT MAX(n.seq) FROM message n
+                    WHERE n.chatId = message.chatId AND n.seq IS NOT NULL AND n.sentAt <= message.sentAt
+                ), 0)
+                WHERE seq IS NULL AND kind = 'system'
+                """)
+            // identical lines standing at the same place say one thing once
+            try db.execute(sql: """
+                DELETE FROM message WHERE seq IS NULL AND kind = 'system' AND rowid NOT IN (
+                    SELECT MIN(rowid) FROM message WHERE seq IS NULL AND kind = 'system'
+                    GROUP BY chatId, text, anchorSeq)
+                """)
+            // both feed orderings now sort on the anchored expression
+            try db.execute(sql: "DROP INDEX message_on_chat_feedOrder")
+            try db.execute(sql: "DROP INDEX message_on_chat_kindOrder")
+            try db.execute(sql: """
+                CREATE INDEX message_on_chat_feedOrder
+                ON message(chatId, COALESCE(seq, anchorSeq, 999999999) DESC, sentAt DESC)
+                """)
+            try db.execute(sql: """
+                CREATE INDEX message_on_chat_kindOrder
+                ON message(chatId, kind, COALESCE(seq, anchorSeq, 999999999) DESC, sentAt DESC)
+                """)
+        }
         return m
     }
 }
@@ -616,6 +648,7 @@ extension Message {
         id = row["id"]
         chatId = row["chatId"]
         seq = row["seq"]
+        anchorSeq = row["anchorSeq"]
         clientMsgId = row["clientMsgId"]
         fromUserId = row["fromUserId"]
         sentAt = row["sentAt"]
@@ -661,6 +694,7 @@ extension Message {
         container["id"] = id
         container["chatId"] = chatId
         container["seq"] = seq
+        container["anchorSeq"] = anchorSeq
         container["clientMsgId"] = clientMsgId
         container["fromUserId"] = fromUserId
         container["sentAt"] = sentAt

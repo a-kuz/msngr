@@ -2231,6 +2231,11 @@ public actor SyncEngine {
                           sentAt: now, kind: .system,
                           text: text, status: .sent, isOutgoing: false)
         msg.serverTs = now
+        // the line takes its place after the newest numbered message: with no
+        // order of its own it would sort as an unsent send, above everything
+        // that arrives after it, and stay at the bottom of the chat for good
+        msg.anchorSeq = try Int.fetchOne(
+            dbc, sql: "SELECT MAX(seq) FROM message WHERE chatId = ?", arguments: [chatId]) ?? 0
         try msg.save(dbc)
         return true
     }

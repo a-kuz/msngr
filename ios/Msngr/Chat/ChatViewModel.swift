@@ -362,7 +362,7 @@ final class ChatViewModel: ObservableObject {
         // conversation; a shorter one took everything above the floor there was
         var atNewest = plan.recompute || msgs.count < plan.capacity
         if !atNewest {
-            atNewest = try !HistoryWindow.hasNewer(dbc, chatId: chatId, topSeq: msgs.first?.seq)
+            atNewest = try !HistoryWindow.hasNewer(dbc, chatId: chatId, topOrder: msgs.first?.feedOrder)
         }
         return Snapshot(
             msgs: msgs, users: users, myRole: myRole,
