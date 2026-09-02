@@ -30,6 +30,9 @@ export interface Env {
   /// (wss://…), and the API key pair the room ticket is signed with.
   /// Unset means no SFU: the ticket endpoint answers `sfu_unavailable`.
   LIVEKIT_URL?: string;
+  /// the SFU's HTTP API when it is not the signaling host over HTTPS
+  /// (the stand talks to its own SFU over localhost)
+  LIVEKIT_API_URL?: string;
   LIVEKIT_API_KEY?: string;
   LIVEKIT_API_SECRET?: string;
 }

@@ -665,7 +665,12 @@ app.post("/api/calls/room", async (c) => {
   const b = await c.req.json<{ callId?: string; chatId?: string }>();
   if (!b.callId || !/^[A-Za-z0-9_-]{8,64}$/.test(b.callId) || !b.chatId) return err("bad_request");
   if (!sfuConfigured(c.env)) return err("sfu_unavailable", 503);
-  const r = await convStub(c.env, b.chatId).fetch(`https://do/is-member?userId=${encodeURIComponent(userId)}`);
+  // the chat records who was ticketed into which room: a member removed
+  // while the call goes on is taken out of the room by the chat itself
+  const r = await convStub(c.env, b.chatId).fetch("https://do/room-ticket", {
+    method: "POST",
+    body: JSON.stringify({ userId, callId: b.callId, ttl: ROOM_TOKEN_TTL_SEC }),
+  });
   const m = (await r.json()) as { member?: boolean };
   if (!m.member) return err("not_member", 403);
   const me = await c.env.DB.prepare("SELECT display_name FROM users WHERE id = ?")

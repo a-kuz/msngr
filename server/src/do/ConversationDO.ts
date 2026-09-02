@@ -1,6 +1,7 @@
 import type { Env, ChatState, ChatKind, ChatMember, ChatPolicy, StoredMsg, ServerFrame, PublicUser } from "../types";
 import { json, err, seqKey, SEQ_PAD, nowSec, shouldArmAlarm, readPrivacy } from "../util";
 import { PRESENCE_GROUP_MAX } from "../presence";
+import { removeParticipant } from "../calls/livekit";
 import {
   newCounters, snapshot, diff, logPerf, wrapState, wrapDB, wrapStub, type PerfCounters,
 } from "../perf";
@@ -854,6 +855,40 @@ export class ConversationDO implements DurableObject {
     }
   }
 
+  // MARK: - Rooms on the SFU
+
+  /// Who was ticketed into which of this chat's call rooms, kept for as long
+  /// as the ticket lives: `roomTicket:<callId>:<userId>` → the moment the
+  /// ticket expires. The record is what lets the chat take a member who was
+  /// removed mid-call out of the room, rather than leaving them there until
+  /// the ticket runs out.
+  private async rememberRoomTicket(userId: string, callId: string, ttlSec: number): Promise<void> {
+    const now = nowSec();
+    const all = await this.state.storage.list<number>({ prefix: "roomTicket:" });
+    const expired = [...all].filter(([, exp]) => exp <= now).map(([k]) => k);
+    if (expired.length) await this.state.storage.delete(expired);
+    await this.state.storage.put(`roomTicket:${callId}:${userId}`, now + ttlSec + 60);
+  }
+
+  /// Takes people who are no longer members out of every room they hold a
+  /// live ticket for. A refusal by the SFU is logged and does not fail the
+  /// membership change: the ticket still runs out on its own.
+  private async leaveRooms(userIds: string[]): Promise<void> {
+    const now = nowSec();
+    const all = await this.state.storage.list<number>({ prefix: "roomTicket:" });
+    const jobs: Promise<unknown>[] = [];
+    const done: string[] = [];
+    for (const [key, exp] of all) {
+      const [, callId, userId] = key.split(":");
+      if (!userIds.includes(userId)) continue;
+      done.push(key);
+      if (exp <= now) continue;
+      jobs.push(removeParticipant(this.env, callId, userId));
+    }
+    if (done.length) await this.state.storage.delete(done);
+    await Promise.allSettled(jobs);
+  }
+
   private async handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const path = url.pathname;
@@ -861,6 +896,14 @@ export class ConversationDO implements DurableObject {
     if (path === "/is-member") {
       const members = await this.loadMembers();
       return json({ ok: true, member: members.has(url.searchParams.get("userId") ?? "") });
+    }
+
+    if (path === "/room-ticket" && req.method === "POST") {
+      const b = (await req.json()) as { userId: string; callId: string; ttl: number };
+      const members = await this.loadMembers();
+      if (!members.has(b.userId)) return json({ ok: true, member: false });
+      await this.rememberRoomTicket(b.userId, b.callId, b.ttl);
+      return json({ ok: true, member: true });
     }
 
     if (path === "/create" && req.method === "POST") {
@@ -1274,7 +1317,10 @@ export class ConversationDO implements DurableObject {
               body: JSON.stringify({ chatId: meta.chatId, title: "Msngr", body, userId: uid }),
             })));
         }
-        if (b.remove.length) await this.notifyUserDOsChatList(b.remove, true);
+        if (b.remove.length) {
+          await this.notifyUserDOsChatList(b.remove, true);
+          await this.leaveRooms(b.remove);
+        }
         await this.broadcastChat("members");
         if (b.remove.length) {
           // the removed member is told the final state too, so their client drops the chat
@@ -1293,6 +1339,7 @@ export class ConversationDO implements DurableObject {
         if (!members.delete(b.userId)) return err("not_member", 403);
         await this.state.storage.delete("member:" + b.userId);
         await this.notifyUserDOsChatList([b.userId], true);
+        await this.leaveRooms([b.userId]);
         await this.broadcastChat("members");
         return json({ ok: true });
       }
