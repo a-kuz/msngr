@@ -107,6 +107,13 @@ Every push was answered with the message written first; the rows were in
   `{"👍": [bravo]}` before the app opened; the banner reads «Bravo Service /
   Design / Реакция 👍 на «Same here.»» under the group's picture.
 
+- **The sound of a reply to you.** Bravo replied to charlie's «Same here.»
+  in Design with charlie's app killed. The journal answered `stored → show`,
+  and SpringBoard's store of delivered notifications
+  (`Library/UserNotifications/…/DeliveredNotifications.plist`) holds the
+  banner with sound `chime3.caf`, the default of the new «Sound: mentions and
+  replies» setting; the plain messages before it carry the push's own sound.
+
 ## Not run here
 
 - A burst through the extension (the coalescing window with several pushes

@@ -50,8 +50,10 @@ public enum NotificationBurstStore {
                                envelopes: [String: PushEnvelope] = [:],
                                writer: PushMessageWriter? = nil,
                                journal: NotificationJournal? = nil,
+                               ownUserId: String? = nil,
                                now: Double = Date().timeIntervalSince1970) throws -> BurstPlan {
-        try db.write { dbc -> BurstPlan in
+        let ownUserId = ownUserId ?? writer?.ownUserId
+        return try db.write { dbc -> BurstPlan in
             // The messages the pushes carry are written first: everything below
             // — the banner text, the seqs a chat is missing, the count of what
             // is unread — is read from the database, and this is what puts them
@@ -98,11 +100,15 @@ public enum NotificationBurstStore {
 
             for item in items {
                 let chat = chats[item.chatId]
+                // a message that speaks to this user gets through a muted chat
+                let toMe = try ownUserId.map {
+                    try addressedToMe(dbc, chatId: item.chatId, seq: item.seq, ownUserId: $0)
+                } ?? false
                 state[item.key] = BurstItemState(
                     alreadyShown: try isShown(dbc, chatId: item.chatId, seq: item.seq),
                     read: item.seq <= (chat?.myReadUpTo ?? 0),
-                    muted: MuteState.isMuted(muted: chat?.muted ?? false,
-                                             mutedUntil: chat?.mutedUntil, now: now))
+                    muted: !toMe && MuteState.isMuted(muted: chat?.muted ?? false,
+                                                      mutedUntil: chat?.mutedUntil, now: now))
             }
 
             var plan = NotificationBurstPlanner.plan(items: items, state: state, baseline: baseline)
@@ -140,7 +146,7 @@ public enum NotificationBurstStore {
                                    showsMessageText: showsMessageText,
                                    applied: applied[item.key],
                                    appliedFrom: envelopes[item.key]?.fromUserId,
-                                   ownUserId: writer?.ownUserId) {
+                                   ownUserId: ownUserId) {
                 case .built(let built): plan.steps[i].content = built
                 case .fromPush: break
                 case .silent: plan.steps[i].outcome = .skip(.silent)
@@ -199,7 +205,24 @@ public enum NotificationBurstStore {
             message: message, chat: chatInfo, sender: senderInfo,
             showsMessageText: showsMessageText) else { return .silent }
         if chatInfo.isGroup { built.groupMembers = try groupMembers(dbc, chatId: chat.id) }
+        if let ownUserId {
+            built.addressedToMe = message.replyTo?.authorId == ownUserId
+                || MessageMarkdown.mentionsUser(message.text ?? "", userId: ownUserId)
+        }
         return .built(built)
+    }
+
+    /// True when the stored message speaks to this user: a reply to a message
+    /// of theirs, or a mention of them in the text.
+    static func addressedToMe(_ dbc: GRDB.Database, chatId: String, seq: Int,
+                              ownUserId: String) throws -> Bool {
+        guard let row = try Row.fetchOne(dbc, sql: "SELECT replyTo, text FROM message WHERE chatId = ? AND seq = ?",
+                                         arguments: [chatId, seq]) else { return false }
+        let reply = (row["replyTo"] as String?).flatMap {
+            try? JSONDecoder().decode(ReplyPreview.self, from: Data($0.utf8))
+        }
+        return reply?.authorId == ownUserId
+            || MessageMarkdown.mentionsUser(row["text"] as String? ?? "", userId: ownUserId)
     }
 
     /// The banner of a reaction that arrived by push: only for a reaction set

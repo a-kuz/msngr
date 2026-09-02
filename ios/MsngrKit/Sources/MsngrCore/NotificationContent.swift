@@ -19,6 +19,9 @@ public struct NotificationContent: Equatable, Sendable {
     /// video's preview frame, the first photo of an album. Nil when the
     /// message has no picture or the privacy setting hides content.
     public var previewMedia: MediaInfo?
+    /// The message speaks to this user — a mention, or a reply to their
+    /// message: it sounds its own way and gets through a muted chat.
+    public var addressedToMe: Bool = false
 
     public init(title: String, subtitle: String?, body: String, threadIdentifier: String,
                 sender: NotificationContentBuilder.SenderInfo? = nil,
@@ -238,5 +241,22 @@ public enum NotificationPreferences {
 
     public static func setShowsMessageText(_ value: Bool, in defaults: UserDefaults) {
         defaults.set(value, forKey: showsMessageTextKey)
+    }
+
+    /// The sound of a message addressed to this user — a mention, or a reply
+    /// to their message. It is the extension's choice: the server cannot see
+    /// a mention, the text being encrypted, so the sound lives in the group
+    /// defaults where both processes read it. An APNs sound name: a caf file
+    /// bundled with the app, "default" for the system sound, "none" for no
+    /// override at all.
+    public static let mentionSoundKey = "notifications.mentionSound"
+    public static let defaultMentionSound = "chime3.caf"
+
+    public static func mentionSound(in defaults: UserDefaults) -> String {
+        defaults.string(forKey: mentionSoundKey) ?? defaultMentionSound
+    }
+
+    public static func setMentionSound(_ value: String, in defaults: UserDefaults) {
+        defaults.set(value, forKey: mentionSoundKey)
     }
 }

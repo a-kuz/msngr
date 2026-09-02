@@ -57,6 +57,15 @@ enum CommunicationNotification {
         content.body = built.body
         content.threadIdentifier = built.threadIdentifier
         content.categoryIdentifier = NotificationCategory.message
+        // a message that speaks to this user sounds its own way: the server
+        // cannot see a mention in the encrypted text, so the choice is made here
+        if built.addressedToMe {
+            switch NotificationPreferences.mentionSound(in: AppGroup.defaults) {
+            case "none": break
+            case "default": content.sound = .default
+            case let file: content.sound = UNNotificationSound(named: UNNotificationSoundName(file))
+            }
+        }
         if let attachmentFile,
            let attachment = try? UNNotificationAttachment(identifier: "preview", url: attachmentFile) {
             content.attachments = [attachment]

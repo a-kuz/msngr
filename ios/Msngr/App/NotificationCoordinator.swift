@@ -121,6 +121,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
                 : nil
             var shaped = content
             shaped.groupMembers = info.groupMembers
+            shaped.addressedToMe = info.repliesToMe
             // the message's picture as the banner's thumbnail; the copy is the
             // system's to move, the cached original stays for the feed
             var attachment: URL?

@@ -9,6 +9,8 @@ struct NotificationsView: View {
     @State private var showsMessageText = NotificationPreferences.showsMessageText(in: AppGroup.defaults)
     @State private var directSound: NotifySound = .standard
     @State private var groupSound: NotifySound = .standard
+    @State private var mentionSound: NotifySound =
+        NotifySound(rawValue: NotificationPreferences.mentionSound(in: AppGroup.defaults)) ?? .chime3
     @State private var soundsLoaded = false
     @State private var chatRows: [ExceptionRow] = []
     @State private var personRows: [ExceptionRow] = []
@@ -60,6 +62,20 @@ struct NotificationsView: View {
                     guard soundsLoaded else { return }
                     new.preview()
                     Task { try? await app.api.setNotifySounds(group: new.rawValue) }
+                }
+                // a mention or a reply to you: chosen on the device, the server
+                // cannot see either in the encrypted text
+                Picker(selection: $mentionSound) {
+                    ForEach(NotifySound.allCases) { option in
+                        Text(option.label).tag(option)
+                    }
+                } label: {
+                    Label("Sound: mentions and replies", systemImage: "at")
+                }
+                .accessibilityIdentifier("settings.sound.mention")
+                .onChange(of: mentionSound) { _, new in
+                    new.preview()
+                    NotificationPreferences.setMentionSound(new.rawValue, in: AppGroup.defaults)
                 }
             }
 

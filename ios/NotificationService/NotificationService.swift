@@ -119,7 +119,8 @@ private func burstPlan(_ items: [BurstItem]) async -> BurstPlan {
     guard let decryption, !carried.isEmpty else {
         return (try? NotificationBurstStore.resolve(db: db, items: items,
                                                     showsMessageText: showsText,
-                                                    journal: journal)) ?? BurstPlan()
+                                                    journal: journal,
+                                                    ownUserId: decryption?.ownUserId)) ?? BurstPlan()
     }
     let plan = try? decryption.gate.withLock { ticket -> BurstPlan in
         let writer = PushMessageWriter(decryptor: decryption.decryptor, store: decryption.store,
@@ -134,7 +135,8 @@ private func burstPlan(_ items: [BurstItem]) async -> BurstPlan {
     }
     return plan ?? (try? NotificationBurstStore.resolve(db: db, items: items,
                                                         showsMessageText: showsText,
-                                                        journal: journal)) ?? BurstPlan()
+                                                        journal: journal,
+                                                        ownUserId: decryption.ownUserId)) ?? BurstPlan()
 }
 
 /// The banner says what the message says: the push carries the message itself,

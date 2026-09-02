@@ -909,9 +909,19 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     the sender on the receiver's object, between the chat's explicit sound
     and the shape default; the picker on the direct chat's info screen
     (the person-sound cases in smoke; live pick 2026-09-01)
-  - 🟡 a sound of its own for a mention, louder than the chat's own: the server
-    cannot see a mention (the text is encrypted), so the choice belongs to the
-    extension, which does not run on the simulator — device work
+  - ✅ a sound of its own for a mention or a reply to you: the server cannot see
+    either in the encrypted text, so the extension (and the app's local banner)
+    flags the message and sets the sound from Settings → Notifications
+    («Sound: mentions and replies», Triad by default, kept in the group
+    defaults); a flagged message also gets through a muted chat in the
+    extension the way it already did in the app (MentionPushTests; live
+    2026-09-02 on the simulator with the app killed — the delivered banner of
+    a reply to charlie's message carries `chime3.caf` —
+    qa/runs/2026-09-02-nse-simulator-run)
+  - ⬜ a mention in a muted chat with the app closed: the server sends no push
+    for a muted chat at all, so the extension never gets to decide; needs the
+    push to travel silent and flagged for the extension to lift the mute on a
+    mention
   - ✅ a muted chat still notifying on a mention or a reply to you
     (qa/runs/2026-08-28-mute-reply; NotificationDecisionTests,
     MentionMarkdownTests `mentionsUser`; the mention live run in
