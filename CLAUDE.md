@@ -7,10 +7,10 @@ There is no production and there are no users.
 
 ```
 server/src/index.ts        HTTP API (hono) + the /ws upgrade
-server/src/do/             UserDO (sockets, presence, pushes), ConversationDO (the chat journal),
-                           ApnsTokenDO (the singleton owner of the APNs JWT)
+server/src/do/             every piece of server state; the map is in docs/protocol.md,
+                           «Where the server keeps things»
 server/src/push/apns.ts    APNs
-server/migrations/         D1 migrations (wrangler d1 migrations apply)
+server/migrations/         D1 migrations (wrangler d1 migrations apply); the database is empty
 ios/MsngrKit/              the core: MsngrCrypto (primitives), MsngrCore (database, WS, SyncEngine, E2EE)
 ios/Msngr/                 the iOS app
 ios/NotificationService/   the NSE
