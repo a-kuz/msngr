@@ -1,16 +1,24 @@
+import type { UserDO } from "./do/UserDO";
+import type { ConversationDO } from "./do/ConversationDO";
+import type { ApnsTokenDO } from "./do/ApnsTokenDO";
+import type { HandleDO } from "./do/HandleDO";
+import type { DirectoryDO } from "./do/DirectoryDO";
+import type { StoriesDO } from "./do/StoriesDO";
+import type { LookupDO } from "./do/LookupDO";
+
 export interface Env {
   MEDIA: R2Bucket;
-  USER_DO: DurableObjectNamespace;
-  CONV_DO: DurableObjectNamespace;
-  APNS_DO: DurableObjectNamespace;
+  USER_DO: DurableObjectNamespace<UserDO>;
+  CONV_DO: DurableObjectNamespace<ConversationDO>;
+  APNS_DO: DurableObjectNamespace<ApnsTokenDO>;
   /// One object per username: who holds it, and the quarantine after a rename.
-  HANDLE_DO: DurableObjectNamespace;
+  HANDLE_DO: DurableObjectNamespace<HandleDO>;
   /// The people-search index, sharded by user id.
-  DIRECTORY_DO: DurableObjectNamespace;
+  DIRECTORY_DO: DurableObjectNamespace<DirectoryDO>;
   /// One object per author: their stories, who watched, who liked, the links.
-  STORIES_DO: DurableObjectNamespace;
+  STORIES_DO: DurableObjectNamespace<StoriesDO>;
   /// One object per lookup key: provisioning and restore sessions, invite codes.
-  LOOKUP_DO: DurableObjectNamespace;
+  LOOKUP_DO: DurableObjectNamespace<LookupDO>;
   APNS_ENV: string;
   /// Overrides the APNs endpoint, e.g. the dev mock at http://localhost:9871.
   /// Unset means Apple's production or sandbox host, picked by the device's apns-env.

@@ -1,5 +1,7 @@
 import { verifyAsync as ed25519VerifyAsync } from "@noble/ed25519";
 import type { PrivacySettings, PublicUser } from "./types";
+import type { UserDO } from "./do/UserDO";
+import { wrapStub } from "./perf.ts";
 
 const ULID_CHARS = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
@@ -79,6 +81,54 @@ export function err(error: string, status = 400): Response {
   return json({ ok: false, error }, status);
 }
 
+/// What a Durable Object RPC method throws to refuse a call: the same
+/// (code, status) pair `err()` used to answer over `fetch`. The Worker route
+/// catches it and answers `err(e.error, e.status)`, so a refusal reads on the
+/// wire exactly as it did before the method calls were RPC.
+/// A DOError thrown inside one Durable Object and caught in the same realm
+/// keeps its class and its `error`/`status` fields; the same throw caught on
+/// the other side of an RPC call (another object, or the Worker) arrives as a
+/// plain `Error` — the platform tunnels the message across but not a custom
+/// class or its extra fields. So the pair travels inside the message itself,
+/// JSON-encoded, and `DOError.from` reads it back either way.
+export class DOError extends Error {
+  error: string;
+  status: number;
+  constructor(error: string, status = 400) {
+    super(JSON.stringify({ error, status }));
+    this.error = error;
+    this.status = status;
+  }
+
+  /// The (error, status) pair behind any thrown value, or null when it is
+  /// not one of ours.
+  static from(e: unknown): { error: string; status: number } | null {
+    if (e instanceof DOError) return { error: e.error, status: e.status };
+    if (e instanceof Error) {
+      try {
+        const j = JSON.parse(e.message) as { error?: unknown; status?: unknown };
+        if (typeof j.error === "string" && typeof j.status === "number") {
+          return { error: j.error, status: j.status };
+        }
+      } catch { /* not one of ours */ }
+    }
+    return null;
+  }
+}
+
+/// Races a call against a deadline: RPC methods take no `AbortSignal`, so a
+/// call that must not hang forever (a delivery to another object, off an
+/// alarm's fan-out queue) is raced against a timer instead. A timeout rejects
+/// with `DOError("timeout", 504)`, which every caller here treats as a failed
+/// delivery — worth the same retry a thrown error from the call itself gets.
+export function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new DOError("timeout", 504)), ms);
+    p.then((v) => { clearTimeout(timer); resolve(v); },
+           (e) => { clearTimeout(timer); reject(e); });
+  });
+}
+
 // A direct chat is addressed by its pair of userIds, so both sides land on the same object
 export function directChatName(a: string, b: string): string {
   return "direct:" + [a, b].sort().join(":");
@@ -125,10 +175,10 @@ export const PRIVACY_DEFAULTS: PrivacySettings = {
 };
 
 /// Every read that goes to another person's object needs only the namespace.
-type Objects = { USER_DO: DurableObjectNamespace };
+type Objects = { USER_DO: DurableObjectNamespace<UserDO> };
 
 export function userStub(env: Objects, userId: string) {
-  return env.USER_DO.get(env.USER_DO.idFromName(userId));
+  return wrapStub(env.USER_DO.get(env.USER_DO.idFromName(userId)));
 }
 
 /// The settings a privacy question can be asked about.
@@ -138,9 +188,7 @@ export type PrivacySetting =
 /// A user's privacy settings, from their own object. Shared by the worker (for
 /// the REST endpoint) and ConversationDO (for gating receipts and typing).
 export async function readPrivacy(env: Objects, userId: string): Promise<PrivacySettings> {
-  const r = await userStub(env, userId).fetch("https://do/privacy-read");
-  const j = (await r.json()) as { privacy?: PrivacySettings };
-  return j.privacy ?? PRIVACY_DEFAULTS;
+  return (await userStub(env, userId).privacyRead()).privacy ?? PRIVACY_DEFAULTS;
 }
 
 /// One question every tier answers: may `viewerId` see `ownerId`'s `setting`?
@@ -160,11 +208,8 @@ export async function privacyChecks(
   env: Objects, ownerId: string, viewerId: string, settings: PrivacySetting[],
 ): Promise<Record<string, boolean>> {
   if (ownerId === viewerId) return Object.fromEntries(settings.map((s) => [s, true]));
-  const r = await userStub(env, ownerId).fetch("https://do/privacy-check", {
-    method: "POST", body: JSON.stringify({ viewerId, settings }),
-  });
-  const j = (await r.json()) as { allow?: Record<string, boolean> };
-  return j.allow ?? Object.fromEntries(settings.map((s) => [s, false]));
+  const { allow } = await userStub(env, ownerId).privacyCheck(viewerId, settings);
+  return allow ?? Object.fromEntries(settings.map((s) => [s, false]));
 }
 
 /// One person's card as `viewerId` may see it: the owner's object blanks the
@@ -172,11 +217,11 @@ export async function privacyChecks(
 export async function cardFor(
   env: Objects, viewerId: string, targetId: string,
 ): Promise<PublicUser | null> {
-  const r = await userStub(env, targetId).fetch(
-    `https://do/card?viewer=${encodeURIComponent(viewerId)}`);
-  if (!r.ok) return null;
-  const j = (await r.json()) as { user: PublicUser | null };
-  return j.user;
+  try {
+    return (await userStub(env, targetId).card(viewerId)).user;
+  } catch {
+    return null;
+  }
 }
 
 /// A user avatar's id carries its owner: the bytes route has to apply that

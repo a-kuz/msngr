@@ -1,5 +1,7 @@
+import { DurableObject } from "cloudflare:workers";
 import type { Env, PublicUser } from "../types";
-import { json, err, ulid, b64url, shouldArmAlarm } from "../util";
+import { DOError, ulid, b64url, shouldArmAlarm, withTimeout } from "../util";
+import { wrapStub } from "../perf";
 
 /// One object per author, addressed by `idFromName(userId)`: their stories,
 /// who watched each, who left a heart, the public link codes, and the fan-out
@@ -59,27 +61,27 @@ function newLinkCode(): string {
 }
 
 export function storiesStub(env: Env, authorId: string) {
-  return env.STORIES_DO.get(env.STORIES_DO.idFromName(`author:${authorId}`));
+  return wrapStub(env.STORIES_DO.get(env.STORIES_DO.idFromName(`author:${authorId}`)));
 }
 
 function linkStub(env: Env, code: string) {
-  return env.STORIES_DO.get(env.STORIES_DO.idFromName(`link:${code}`));
+  return wrapStub(env.STORIES_DO.get(env.STORIES_DO.idFromName(`link:${code}`)));
 }
 
 /// Mints a code and makes it point at the author.
 async function mintLinkCode(env: Env, authorId: string): Promise<string> {
   const code = newLinkCode();
-  await linkStub(env, code).fetch("https://do/point", {
-    method: "POST", body: JSON.stringify({ author: authorId }),
-  });
+  await linkStub(env, code).point(authorId);
   return code;
 }
 
 /// Whose stories a public link's code belongs to, if it was ever minted.
 export async function authorOfLink(env: Env, code: string): Promise<string | null> {
-  const r = await linkStub(env, code).fetch("https://do/pointer");
-  if (!r.ok) return null;
-  return ((await r.json()) as { author: string }).author;
+  try {
+    return (await linkStub(env, code).pointer()).author;
+  } catch {
+    return null;
+  }
 }
 
 /// What a recipient's UserDO is handed: the story as the recipient will keep
@@ -96,12 +98,13 @@ export interface StoryDelivery {
   likes?: number;
 }
 
-export class StoriesDO implements DurableObject {
+export class StoriesDO extends DurableObject<Env> {
   private alarmRunning = false;
   private rearmDelay: number | undefined;
 
-  constructor(private state: DurableObjectState, private env: Env) {
-    const sql = this.state.storage.sql;
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    const sql = this.ctx.storage.sql;
     sql.exec(`
       CREATE TABLE IF NOT EXISTS stories (
         id TEXT PRIMARY KEY,
@@ -156,14 +159,14 @@ export class StoriesDO implements DurableObject {
   /// The story if it is still there to be watched: not taken down, its time
   /// not over.
   private live(id: string, now: number): StoryRecord | null {
-    const row = this.state.storage.sql.exec(
+    const row = this.ctx.storage.sql.exec(
       "SELECT * FROM stories WHERE id = ? AND taken_down = 0 AND expires_at > ?", id, now,
     ).toArray()[0] as unknown as StoryRecord | undefined;
     return row ?? null;
   }
 
   private counts(storyId: string): { views: number; likes: number } {
-    const sql = this.state.storage.sql;
+    const sql = this.ctx.storage.sql;
     const views = sql.exec("SELECT COUNT(*) AS n FROM views WHERE story_id = ?", storyId)
       .toArray()[0] as unknown as { n: number };
     const likes = sql.exec("SELECT COUNT(*) AS n FROM likes WHERE story_id = ?", storyId)
@@ -175,7 +178,7 @@ export class StoriesDO implements DurableObject {
 
   /// Queues one delivery per recipient and starts the pump behind the request.
   private async enqueue(storyId: string, users: string[], kind: Delivery["kind"]) {
-    const sql = this.state.storage.sql;
+    const sql = this.ctx.storage.sql;
     const now = Date.now();
     for (const u of users) {
       sql.exec(
@@ -195,14 +198,14 @@ export class StoriesDO implements DurableObject {
     }
     const now = Date.now();
     const at = now + Math.max(delayMs, 1);
-    const pending = await this.state.storage.getAlarm();
+    const pending = await this.ctx.storage.getAlarm();
     if (!shouldArmAlarm(pending, at, now)) return;
-    await this.state.storage.setAlarm(at);
+    await this.ctx.storage.setAlarm(at);
   }
 
   /// What one delivery carries, built from the story as it stands now.
   private payload(d: Delivery, authorId: string): StoryDelivery | null {
-    const sql = this.state.storage.sql;
+    const sql = this.ctx.storage.sql;
     if (d.kind === "removed") return { kind: "removed", storyId: d.story_id, authorId };
     const row = sql.exec("SELECT * FROM stories WHERE id = ?", d.story_id)
       .toArray()[0] as unknown as (StoryRecord & { author_card: string | null; origin: string | null }) | undefined;
@@ -225,24 +228,15 @@ export class StoriesDO implements DurableObject {
     const authorId = authorOf(d.story_id) ?? "";
     const body = this.payload(d, authorId);
     if (!body) return;
-    const abort = new AbortController();
-    const deadline = setTimeout(() => abort.abort(), DELIVERY_TIMEOUT_MS);
-    try {
-      const stub = this.env.USER_DO.get(this.env.USER_DO.idFromName(d.user_id));
-      const res = await stub.fetch("https://do/story-event", {
-        method: "POST", body: JSON.stringify(body), signal: abort.signal,
-      });
-      if (!res.ok) throw new Error(`status ${res.status}`);
-    } finally {
-      clearTimeout(deadline);
-    }
+    const stub = wrapStub(this.env.USER_DO.get(this.env.USER_DO.idFromName(d.user_id)));
+    await withTimeout(stub.storyEvent(body), DELIVERY_TIMEOUT_MS);
   }
 
   /// Sends what is due, oldest first; a failure keeps the row and moves its
   /// deadline out. Returns when to come back, or undefined when the queue is
   /// empty.
   private async pump(): Promise<number | undefined> {
-    const sql = this.state.storage.sql;
+    const sql = this.ctx.storage.sql;
     const now = Date.now();
     const due = sql.exec(
       "SELECT * FROM deliveries WHERE next_at <= ? ORDER BY id LIMIT ?", now, DRAIN,
@@ -278,178 +272,170 @@ export class StoriesDO implements DurableObject {
     if (delays.length) await this.arm(Math.min(...delays));
   }
 
-  async fetch(req: Request): Promise<Response> {
-    const url = new URL(req.url);
-    const sql = this.state.storage.sql;
+  /// {authorId, frames, audience, hours, link, recipients, author, origin} → {id, code}.
+  /// The story is kept and leaves for every recipient through the queue;
+  /// `origin` is what a public link is minted under.
+  async publish(b: {
+    authorId: string; frames: unknown[]; audience: string; hours: number; link: boolean;
+    recipients: string[]; author: PublicUser | null; origin: string;
+  }): Promise<{ id: string; code: string | null }> {
+    const sql = this.ctx.storage.sql;
     const now = Date.now();
-    switch (url.pathname) {
-      /// {authorId, frames, audience, hours, link, recipients, author, origin} → {id, code}.
-      /// The story is kept and leaves for every recipient through the queue;
-      /// `origin` is what a public link is minted under.
-      case "/publish": {
-        const b = (await req.json()) as {
-          authorId: string; frames: unknown[]; audience: string; hours: number; link: boolean;
-          recipients: string[]; author: PublicUser; origin: string;
-        };
-        const id = `${b.authorId}~${ulid(now)}`;
-        const code = b.link ? await mintLinkCode(this.env, b.authorId) : null;
-        sql.exec(
-          `INSERT INTO stories (id, created_at, expires_at, frames, audience, link_code, author_card, origin)
-           VALUES (?,?,?,?,?,?,?,?)`,
-          id, now, now + b.hours * 3600_000, JSON.stringify(b.frames), b.audience, code,
-          JSON.stringify(b.author), b.origin,
-        );
-        const users = [...new Set(b.recipients)];
-        for (const u of users) {
-          sql.exec("INSERT OR IGNORE INTO recipients (story_id, user_id) VALUES (?,?)", id, u);
-        }
-        await this.enqueue(id, users, "new");
-        return json({ ok: true, id, code });
-      }
-
-      /// ?id= → the live story's access facts, for the Worker to decide with.
-      case "/story": {
-        const story = this.live(url.searchParams.get("id") ?? "", now);
-        if (!story) return err("not_found", 404);
-        return json({ ok: true, audience: story.audience });
-      }
-
-      /// {storyId, viewer} → the watch is remembered once; a first watch sends
-      /// the author their new counts.
-      case "/seen": {
-        const b = (await req.json()) as { storyId: string; viewer: string };
-        if (!this.live(b.storyId, now)) return err("not_found", 404);
-        const before = this.counts(b.storyId).views;
-        sql.exec(
-          `INSERT INTO views (story_id, viewer_id, seen_at) VALUES (?,?,?)
-           ON CONFLICT(story_id, viewer_id) DO NOTHING`,
-          b.storyId, b.viewer, now,
-        );
-        if (this.counts(b.storyId).views !== before) {
-          await this.enqueue(b.storyId, [authorOf(b.storyId) ?? ""], "stats");
-        }
-        return json({ ok: true });
-      }
-
-      /// {storyId, user, on} → the heart goes on or comes off. A heart is a
-      /// watch too. The author hears the counts move.
-      case "/like": {
-        const b = (await req.json()) as { storyId: string; user: string; on: boolean };
-        if (!this.live(b.storyId, now)) return err("not_found", 404);
-        const before = this.counts(b.storyId);
-        if (b.on) {
-          sql.exec(
-            `INSERT INTO views (story_id, viewer_id, seen_at) VALUES (?,?,?)
-             ON CONFLICT(story_id, viewer_id) DO NOTHING`,
-            b.storyId, b.user, now,
-          );
-          sql.exec(
-            `INSERT INTO likes (story_id, user_id, liked_at) VALUES (?,?,?)
-             ON CONFLICT(story_id, user_id) DO NOTHING`,
-            b.storyId, b.user, now,
-          );
-        } else {
-          sql.exec("DELETE FROM likes WHERE story_id = ? AND user_id = ?", b.storyId, b.user);
-        }
-        const after = this.counts(b.storyId);
-        if (after.views !== before.views || after.likes !== before.likes) {
-          await this.enqueue(b.storyId, [authorOf(b.storyId) ?? ""], "stats");
-        }
-        return json({ ok: true, liked: b.on });
-      }
-
-      /// ?storyId= → who watched, hearts first; 404 for a story the author
-      /// never had.
-      case "/viewers": {
-        const storyId = url.searchParams.get("storyId") ?? "";
-        const exists = sql.exec("SELECT 1 FROM stories WHERE id = ?", storyId).toArray()[0];
-        if (!exists) return err("not_found", 404);
-        const rows = sql.exec(
-          `SELECT v.viewer_id, v.seen_at, l.user_id IS NOT NULL AS liked
-           FROM views v
-           LEFT JOIN likes l ON l.story_id = v.story_id AND l.user_id = v.viewer_id
-           WHERE v.story_id = ? ORDER BY liked DESC, v.seen_at DESC`,
-          storyId,
-        ).toArray() as unknown as Array<{ viewer_id: string; seen_at: number; liked: number }>;
-        return json({
-          ok: true,
-          viewers: rows.map((r) => ({ viewer_id: r.viewer_id, seen_at: r.seen_at, liked: r.liked === 1 })),
-        });
-      }
-
-      /// {authorId, storyId, takeDown?, link?} → the story taken down, or its
-      /// link minted or revoked. A revoked code is never handed out again. A
-      /// take-down leaves for everyone the story was delivered to.
-      case "/update": {
-        const b = (await req.json()) as {
-          authorId: string; storyId: string; takeDown?: boolean; link?: boolean;
-        };
-        const story = sql.exec("SELECT * FROM stories WHERE id = ?", b.storyId)
-          .toArray()[0] as unknown as StoryRecord | undefined;
-        if (!story) return err("not_found", 404);
-        if (b.takeDown) {
-          sql.exec("UPDATE stories SET taken_down = 1 WHERE id = ?", b.storyId);
-          const users = (sql.exec("SELECT user_id FROM recipients WHERE story_id = ?", b.storyId)
-            .toArray() as unknown as Array<{ user_id: string }>).map((r) => r.user_id);
-          await this.enqueue(b.storyId, users, "removed");
-          return json({ ok: true });
-        }
-        if (b.link === true) {
-          const code = story.link_code && !story.link_revoked
-            ? story.link_code : await mintLinkCode(this.env, b.authorId);
-          sql.exec("UPDATE stories SET link_code = ?, link_revoked = 0 WHERE id = ?", code, b.storyId);
-          return json({ ok: true, code });
-        }
-        if (b.link === false) {
-          sql.exec("UPDATE stories SET link_revoked = 1 WHERE id = ?", b.storyId);
-          return json({ ok: true, code: null });
-        }
-        return err("nothing_to_do");
-      }
-
-      /// ?code= → the frames behind a public link while it opens; a revoked
-      /// link, a story taken down and one whose day is over all answer 404.
-      case "/public": {
-        const code = url.searchParams.get("code") ?? "";
-        const row = sql.exec(
-          `SELECT frames FROM stories
-           WHERE link_code = ? AND link_revoked = 0 AND taken_down = 0 AND expires_at > ?`,
-          code, now,
-        ).toArray()[0] as unknown as { frames: string } | undefined;
-        if (!row) return err("not_found", 404);
-        return json({ ok: true, frames: JSON.parse(row.frames) });
-      }
-
-      /// An object named by a link code: {author} → it points at the author.
-      case "/point": {
-        const b = (await req.json()) as { author: string };
-        await this.state.storage.put("author", b.author);
-        return json({ ok: true });
-      }
-
-      case "/pointer": {
-        const author = await this.state.storage.get<string>("author");
-        return author ? json({ ok: true, author }) : err("not_found", 404);
-      }
-
-      /// How the queue stands, for the smoke test.
-      case "/queue": {
-        const n = sql.exec("SELECT COUNT(*) AS n FROM deliveries").toArray()[0] as unknown as { n: number };
-        return json({ ok: true, pending: n.n });
-      }
-
-      /// The account is gone: so is everything here.
-      case "/wipe": {
-        sql.exec("DELETE FROM likes");
-        sql.exec("DELETE FROM views");
-        sql.exec("DELETE FROM recipients");
-        sql.exec("DELETE FROM deliveries");
-        sql.exec("DELETE FROM stories");
-        return json({ ok: true });
-      }
-
-      default:
-        return err("not_found", 404);
+    const id = `${b.authorId}~${ulid(now)}`;
+    const code = b.link ? await mintLinkCode(this.env, b.authorId) : null;
+    sql.exec(
+      `INSERT INTO stories (id, created_at, expires_at, frames, audience, link_code, author_card, origin)
+       VALUES (?,?,?,?,?,?,?,?)`,
+      id, now, now + b.hours * 3600_000, JSON.stringify(b.frames), b.audience, code,
+      JSON.stringify(b.author), b.origin,
+    );
+    const users = [...new Set(b.recipients)];
+    for (const u of users) {
+      sql.exec("INSERT OR IGNORE INTO recipients (story_id, user_id) VALUES (?,?)", id, u);
     }
+    await this.enqueue(id, users, "new");
+    return { id, code };
+  }
+
+  /// The live story's access facts, for the Worker to decide with.
+  async story(id: string): Promise<{ audience: string }> {
+    const story = this.live(id, Date.now());
+    if (!story) throw new DOError("not_found", 404);
+    return { audience: story.audience };
+  }
+
+  /// The watch is remembered once; a first watch sends the author their new
+  /// counts.
+  async seen(storyId: string, viewer: string): Promise<void> {
+    const sql = this.ctx.storage.sql;
+    const now = Date.now();
+    if (!this.live(storyId, now)) throw new DOError("not_found", 404);
+    const before = this.counts(storyId).views;
+    sql.exec(
+      `INSERT INTO views (story_id, viewer_id, seen_at) VALUES (?,?,?)
+       ON CONFLICT(story_id, viewer_id) DO NOTHING`,
+      storyId, viewer, now,
+    );
+    if (this.counts(storyId).views !== before) {
+      await this.enqueue(storyId, [authorOf(storyId) ?? ""], "stats");
+    }
+  }
+
+  /// The heart goes on or comes off. A heart is a watch too. The author hears
+  /// the counts move.
+  async like(storyId: string, user: string, on: boolean): Promise<{ liked: boolean }> {
+    const sql = this.ctx.storage.sql;
+    const now = Date.now();
+    if (!this.live(storyId, now)) throw new DOError("not_found", 404);
+    const before = this.counts(storyId);
+    if (on) {
+      sql.exec(
+        `INSERT INTO views (story_id, viewer_id, seen_at) VALUES (?,?,?)
+         ON CONFLICT(story_id, viewer_id) DO NOTHING`,
+        storyId, user, now,
+      );
+      sql.exec(
+        `INSERT INTO likes (story_id, user_id, liked_at) VALUES (?,?,?)
+         ON CONFLICT(story_id, user_id) DO NOTHING`,
+        storyId, user, now,
+      );
+    } else {
+      sql.exec("DELETE FROM likes WHERE story_id = ? AND user_id = ?", storyId, user);
+    }
+    const after = this.counts(storyId);
+    if (after.views !== before.views || after.likes !== before.likes) {
+      await this.enqueue(storyId, [authorOf(storyId) ?? ""], "stats");
+    }
+    return { liked: on };
+  }
+
+  /// Who watched, hearts first; throws not_found for a story the author
+  /// never had.
+  async viewers(storyId: string): Promise<{
+    viewers: Array<{ viewer_id: string; seen_at: number; liked: boolean }>;
+  }> {
+    const sql = this.ctx.storage.sql;
+    const exists = sql.exec("SELECT 1 FROM stories WHERE id = ?", storyId).toArray()[0];
+    if (!exists) throw new DOError("not_found", 404);
+    const rows = sql.exec(
+      `SELECT v.viewer_id, v.seen_at, l.user_id IS NOT NULL AS liked
+       FROM views v
+       LEFT JOIN likes l ON l.story_id = v.story_id AND l.user_id = v.viewer_id
+       WHERE v.story_id = ? ORDER BY liked DESC, v.seen_at DESC`,
+      storyId,
+    ).toArray() as unknown as Array<{ viewer_id: string; seen_at: number; liked: number }>;
+    return {
+      viewers: rows.map((r) => ({ viewer_id: r.viewer_id, seen_at: r.seen_at, liked: r.liked === 1 })),
+    };
+  }
+
+  /// The story taken down, or its link minted or revoked. A revoked code is
+  /// never handed out again. A take-down leaves for everyone the story was
+  /// delivered to.
+  async update(b: {
+    authorId: string; storyId: string; takeDown?: boolean; link?: boolean;
+  }): Promise<{ code?: string | null }> {
+    const sql = this.ctx.storage.sql;
+    const story = sql.exec("SELECT * FROM stories WHERE id = ?", b.storyId)
+      .toArray()[0] as unknown as StoryRecord | undefined;
+    if (!story) throw new DOError("not_found", 404);
+    if (b.takeDown) {
+      sql.exec("UPDATE stories SET taken_down = 1 WHERE id = ?", b.storyId);
+      const users = (sql.exec("SELECT user_id FROM recipients WHERE story_id = ?", b.storyId)
+        .toArray() as unknown as Array<{ user_id: string }>).map((r) => r.user_id);
+      await this.enqueue(b.storyId, users, "removed");
+      return {};
+    }
+    if (b.link === true) {
+      const code = story.link_code && !story.link_revoked
+        ? story.link_code : await mintLinkCode(this.env, b.authorId);
+      sql.exec("UPDATE stories SET link_code = ?, link_revoked = 0 WHERE id = ?", code, b.storyId);
+      return { code };
+    }
+    if (b.link === false) {
+      sql.exec("UPDATE stories SET link_revoked = 1 WHERE id = ?", b.storyId);
+      return { code: null };
+    }
+    throw new DOError("nothing_to_do");
+  }
+
+  /// The frames behind a public link while it opens; a revoked link, a story
+  /// taken down and one whose day is over all throw not_found.
+  async publicFrames(code: string): Promise<{ frames: unknown[] }> {
+    const row = this.ctx.storage.sql.exec(
+      `SELECT frames FROM stories
+       WHERE link_code = ? AND link_revoked = 0 AND taken_down = 0 AND expires_at > ?`,
+      code, Date.now(),
+    ).toArray()[0] as unknown as { frames: string } | undefined;
+    if (!row) throw new DOError("not_found", 404);
+    return { frames: JSON.parse(row.frames) };
+  }
+
+  /// An object named by a link code: makes it point at the author.
+  async point(author: string): Promise<void> {
+    await this.ctx.storage.put("author", author);
+  }
+
+  async pointer(): Promise<{ author: string }> {
+    const author = await this.ctx.storage.get<string>("author");
+    if (!author) throw new DOError("not_found", 404);
+    return { author };
+  }
+
+  /// How the queue stands, for the smoke test.
+  async queue(): Promise<{ pending: number }> {
+    const n = this.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM deliveries")
+      .toArray()[0] as unknown as { n: number };
+    return { pending: n.n };
+  }
+
+  /// The account is gone: so is everything here.
+  async wipe(): Promise<void> {
+    const sql = this.ctx.storage.sql;
+    sql.exec("DELETE FROM likes");
+    sql.exec("DELETE FROM views");
+    sql.exec("DELETE FROM recipients");
+    sql.exec("DELETE FROM deliveries");
+    sql.exec("DELETE FROM stories");
   }
 }

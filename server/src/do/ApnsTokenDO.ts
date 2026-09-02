@@ -1,5 +1,6 @@
+import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../types";
-import { json, err } from "../util";
+import { DOError } from "../util";
 import { mintApnsJwt } from "../push/apns";
 
 /// Apple accepts a provider token for up to an hour; refresh with margin.
@@ -15,26 +16,24 @@ interface CachedJwt {
 // Sole owner of the APNs JWT, addressed by the name "apns-jwt". The cache lives in
 // object storage rather than a module variable: UserDO can be spread over many
 // isolates, and Apple rate-limits how often a token may be generated.
-export class ApnsTokenDO implements DurableObject {
-  constructor(private state: DurableObjectState, private env: Env) {}
+export class ApnsTokenDO extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+  }
 
-  async fetch(req: Request): Promise<Response> {
-    const url = new URL(req.url);
-    if (url.pathname !== "/jwt") return err("unknown_path", 404);
-
-    const force = url.searchParams.get("force") === "1";
+  async jwt(force: boolean): Promise<{ token: string }> {
     const now = Math.floor(Date.now() / 1000);
-    const cached = await this.state.storage.get<CachedJwt>("jwt");
+    const cached = await this.ctx.storage.get<CachedJwt>("jwt");
     if (cached) {
       const age = now - cached.iat;
       if (age < (force ? MIN_REMINT_SEC : JWT_TTL_SEC)) {
-        return json({ ok: true, token: cached.token });
+        return { token: cached.token };
       }
     }
 
     const token = await mintApnsJwt(this.env, now);
-    if (!token) return err("no_apns_key", 500);
-    await this.state.storage.put("jwt", { token, iat: now } satisfies CachedJwt);
-    return json({ ok: true, token });
+    if (!token) throw new DOError("no_apns_key", 500);
+    await this.ctx.storage.put("jwt", { token, iat: now } satisfies CachedJwt);
+    return { token };
   }
 }

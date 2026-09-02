@@ -152,6 +152,13 @@ check("user search folds Cyrillic case",
   cyrUser.ok && foundCyr.ok && foundCyr.users.length === 1
   && foundCyr.users[0].id === cyrUser.userId, JSON.stringify(foundCyr));
 
+// A query long enough to overrun the 50-byte LIKE pattern the SQLite backend
+// allows (DirectoryDO) must still answer 200: the Worker cuts it to 40 bytes
+// before it reaches the object.
+const longQuery = "q".repeat(60);
+const foundLong = await api(`/api/users?q=${longQuery}`, { token: alice.token });
+check("over-length search still answers", foundLong.ok, JSON.stringify(foundLong));
+
 const bundle = await api(`/api/users/${bob.userId}/prekeys`, { token: alice.token });
 check("prekey bundle", bundle.ok && bundle.bundles[0].oneTimePrekey?.key === "otp1_b");
 const bundle2 = await api(`/api/users/${bob.userId}/prekeys`, { token: alice.token });
@@ -656,6 +663,15 @@ const disc = await api("/api/contacts/discover", { token: alice.token,
   body: { hashes: ["hash_" + suffix, "nonexistent"] } });
 check("contact discovery", ph.ok && disc.ok && disc.matches.length === 1
   && disc.matches[0].id === bob.userId);
+
+// A discover call with more than 100 hashes must not hit the SQLite backend's
+// 100-bound-parameters-per-query ceiling: DirectoryDO batches phoneFind at 100.
+const manyHashes = Array.from({ length: 130 }, (_, i) => `nope_${suffix}_${i}`);
+manyHashes.push("hash_" + suffix);
+const discMany = await api("/api/contacts/discover", { token: alice.token,
+  body: { hashes: manyHashes } });
+check("discover over 100 hashes", discMany.ok && discMany.matches.length === 1
+  && discMany.matches[0].id === bob.userId, JSON.stringify(discMany).slice(0, 200));
 
 // 15a. Contact-ness reads the current state at the moment of the question:
 // a number that registers later needs no propagation into anyone's book

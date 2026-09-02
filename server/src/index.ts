@@ -4,7 +4,7 @@ import { authenticate } from "./auth";
 import {
   ulid, newToken, sha256hex, json, err, directChatName, b64url, provisionCode,
   isValidUsername, isValidDisplayName, verifyEd25519, readPrivacy, userStub,
-  privacyAllows, privacyChecks, cardFor, cardsFor, userAvatarId, avatarOwner,
+  privacyAllows, privacyChecks, cardFor, cardsFor, userAvatarId, avatarOwner, DOError,
 } from "./util";
 import type { LastSeenVisibility } from "./types";
 import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "./version";
@@ -17,6 +17,7 @@ import {
 } from "./do/LookupDO";
 import { PRESENCE_GROUP_MAX } from "./presence";
 import { roomToken, sfuConfigured, ROOM_TOKEN_TTL_SEC } from "./calls/livekit";
+import { wrapStub } from "./perf";
 
 export { UserDO } from "./do/UserDO";
 export { ConversationDO } from "./do/ConversationDO";
@@ -30,8 +31,27 @@ import { storiesStub, authorOf, authorOfLink } from "./do/StoriesDO";
 type Vars = { auth: AuthCtx };
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
 
+// A refusal an RPC method throws (DOError) answers exactly as the same
+// refusal did over `fetch`: the same code and status, `{ ok: false, error }`.
+app.onError((e) => {
+  const d = DOError.from(e);
+  if (d) return err(d.error, d.status);
+  throw e;
+});
+
 function convStub(env: Env, chatId: string) {
-  return env.CONV_DO.get(env.CONV_DO.idFromName(chatId));
+  return wrapStub(env.CONV_DO.get(env.CONV_DO.idFromName(chatId)));
+}
+
+/// The chat's state, or the same not_member refusal a chat that never
+/// existed used to answer with over `fetch` (`state()` throws
+/// chat_not_found where a caller only ever distinguished "not a member").
+async function chatStateOrNotMember(env: Env, chatId: string): Promise<ChatState> {
+  try {
+    return (await convStub(env, chatId).state()).state;
+  } catch {
+    throw new DOError("not_member", 403);
+  }
 }
 
 /// The account's card as the account itself holds it: the row every pull path
@@ -39,11 +59,12 @@ function convStub(env: Env, chatId: string) {
 async function ownProfile(
   env: Env, userId: string,
 ): Promise<(PublicUser & { phone_hash: string | null }) | null> {
-  const r = await userStub(env, userId).fetch("https://do/profile-read");
-  if (!r.ok) return null;
-  return ((await r.json()) as {
-    profile: PublicUser & { phone_hash: string | null };
-  }).profile;
+  try {
+    return (await userStub(env, userId).profileRead()).profile as
+      PublicUser & { phone_hash: string | null };
+  } catch {
+    return null;
+  }
 }
 
 /// Copies the account's card into the people-search index, from the object
@@ -62,10 +83,8 @@ async function indexUser(env: Env, userId: string): Promise<void> {
 /// Whether a block stands between the two, either way. Both objects hold the
 /// pair, so the one already at hand answers it.
 async function blockedPair(env: Env, a: string, b: string): Promise<boolean> {
-  const r = await userStub(env, a).fetch(
-    `https://do/block-pair?peer=${encodeURIComponent(b)}`);
-  const j = (await r.json()) as { byMe: boolean; byPeer: boolean };
-  return j.byMe || j.byPeer;
+  const { byMe, byPeer } = await userStub(env, a).blockPair(b);
+  return byMe || byPeer;
 }
 
 // --- the public page of a story ---
@@ -110,10 +129,12 @@ async function publicFrames(env: Env, code: string): Promise<Array<{
 }> | null> {
   const author = await authorOfLink(env, code);
   if (!author) return null;
-  const r = await storiesStub(env, author).fetch(`https://do/public?code=${encodeURIComponent(code)}`);
-  if (!r.ok) return null;
-  const j = (await r.json()) as { frames: Array<{ mediaId: string; type: string }> };
-  return j.frames;
+  try {
+    const r = await storiesStub(env, author).publicFrames(code) as { frames: unknown[] };
+    return r.frames as Array<{ mediaId: string; type: string }>;
+  } catch {
+    return null;
+  }
 }
 
 app.get("/s/:code", async (c) => {
@@ -202,9 +223,8 @@ app.post("/api/register", async (c) => {
 
   // The keys, the card and the first session are one write inside the object:
   // an account is either whole or was never opened.
-  const kw = await userStub(c.env, userId).fetch("https://do/keys-register", {
-    method: "POST",
-    body: JSON.stringify({
+  try {
+    await userStub(c.env, userId).keysRegister({
       userId, deviceId,
       identityKey: b.identityKey, identitySignKey: b.identitySignKey,
       identityKeySig: b.identityKeySig, signedPrekey: b.signedPrekey,
@@ -215,9 +235,8 @@ app.post("/api/register", async (c) => {
         phone_hash: b.phoneHash ?? null, created_at: now,
       },
       device: { deviceId, name: b.device?.name ?? null, tokenHash },
-    }),
-  });
-  if (!kw.ok) {
+    });
+  } catch {
     await releaseHandle(c.env, b.username, userId, false);
     return err("keys_write_failed", 500);
   }
@@ -316,10 +335,7 @@ app.post("/api/provision/:id/claim", async (c) => {
   const userId = s.rec.approvedBy;
   // The identity belongs to the account, not to the device: a device that does
   // not present the account's own keys is not one this account authorised.
-  const kd = await userStub(c.env, userId).fetch("https://do/keys-devices");
-  const known = (await kd.json()) as {
-    devices: Array<{ identityKey: string; identitySignKey: string }>;
-  };
+  const known = await userStub(c.env, userId).keysDevices();
   if (!known.devices.length) return err("account_has_no_devices", 409);
   const matches = known.devices.every(
     (k) => k.identityKey === b.identityKey && k.identitySignKey === b.identitySignKey
@@ -334,9 +350,8 @@ app.post("/api/provision/:id/claim", async (c) => {
   const spent = await lookupPatch<ProvisionRec>(
     c.env, "prov", s.rec.id, { claimedAt: now, envelope: null }, ["claimedAt"]);
   if (!spent) return err("provision_claimed", 409);
-  const kw = await userStub(c.env, userId).fetch("https://do/keys-register", {
-    method: "POST",
-    body: JSON.stringify({
+  try {
+    await userStub(c.env, userId).keysRegister({
       userId, deviceId,
       identityKey: b.identityKey, identitySignKey: b.identitySignKey,
       identityKeySig: b.identityKeySig, signedPrekey: b.signedPrekey,
@@ -345,9 +360,10 @@ app.post("/api/provision/:id/claim", async (c) => {
         deviceId, name: b.device?.name ?? s.rec.deviceName,
         tokenHash: await sha256hex(token),
       },
-    }),
-  });
-  if (!kw.ok) return err("keys_write_failed", 500);
+    });
+  } catch {
+    return err("keys_write_failed", 500);
+  }
   return json({ ok: true, userId, deviceId, token });
 });
 
@@ -378,11 +394,7 @@ app.post("/api/restore/start", async (c) => {
   const ownerId = await resolveHandle(c.env, b.username);
   if (!ownerId) return err("account_not_found", 404);
   const user = { id: ownerId };
-  const kd = await userStub(c.env, user.id).fetch("https://do/keys-devices");
-  const known = (await kd.json()) as {
-    devices: Array<{ identityKey: string; identitySignKey: string }>;
-    account: { identityKey: string; identitySignKey: string } | null;
-  };
+  const known = await userStub(c.env, user.id).keysDevices();
   // The account identity outlives its devices: logging out everywhere is the
   // exact state a backup restore is for, so the check is against the account
   // record, not against a live device.
@@ -431,9 +443,8 @@ app.post("/api/restore/:id/claim", async (c) => {
   const spent = await lookupPatch<RestoreRec>(
     c.env, "rest", row.id, { claimedAt: now }, ["claimedAt"]);
   if (!spent) return err("restore_claimed", 409);
-  const kw = await userStub(c.env, userId).fetch("https://do/keys-register", {
-    method: "POST",
-    body: JSON.stringify({
+  try {
+    await userStub(c.env, userId).keysRegister({
       userId, deviceId,
       identityKey: b.identityKey, identitySignKey: b.identitySignKey,
       identityKeySig: b.identityKeySig,
@@ -441,9 +452,10 @@ app.post("/api/restore/:id/claim", async (c) => {
       device: {
         deviceId, name: b.device?.name ?? null, tokenHash: await sha256hex(token),
       },
-    }),
-  });
-  if (!kw.ok) return err("keys_write_failed", 500);
+    });
+  } catch {
+    return err("keys_write_failed", 500);
+  }
   return json({ ok: true, userId, deviceId, token });
 });
 
@@ -475,10 +487,7 @@ app.get("/api/me", async (c) => {
 async function revokeDevice(env: Env, userId: string, deviceId: string) {
   // the token, the sockets, the keys, the version bump and the fan-out are one
   // act inside the user's object
-  await userStub(env, userId).fetch("https://do/revoke-device", {
-    method: "POST",
-    body: JSON.stringify({ deviceId, userId }),
-  });
+  await userStub(env, userId).revokeDevice(deviceId, userId);
 }
 
 /// The account's live sessions, as its own object lists them.
@@ -486,11 +495,7 @@ async function sessionsOf(env: Env, userId: string): Promise<Array<{
   deviceId: string; name: string | null; createdAt: number;
   lastSeen: number | null; hasPushToken: boolean;
 }>> {
-  const r = await userStub(env, userId).fetch("https://do/sessions");
-  return ((await r.json()) as { sessions: Array<{
-    deviceId: string; name: string | null; createdAt: number;
-    lastSeen: number | null; hasPushToken: boolean;
-  }> }).sessions;
+  return (await userStub(env, userId).sessions()).sessions;
 }
 
 app.get("/api/sessions", async (c) => {
@@ -520,16 +525,13 @@ app.post("/api/account/delete", async (c) => {
   if (me) await releaseHandle(c.env, me.username, userId, false);
   if (me?.phone_hash) await phoneIndexPut(c.env, me.phone_hash, null);
   await directoryRemove(c.env, userId);
-  const cr = await userStub(c.env, userId).fetch("https://do/chats", { method: "POST", body: "{}" });
-  const cj = (await cr.json()) as { ok: boolean; chats?: Record<string, unknown> };
-  for (const chatId of Object.keys(cj.chats ?? {})) {
+  const { chats } = await userStub(c.env, userId).chats();
+  for (const chatId of Object.keys(chats ?? {})) {
     if (chatId.startsWith("direct:") || chatId.startsWith("self:")) continue;
-    await convStub(c.env, chatId).fetch("https://do/leave", {
-      method: "POST", body: JSON.stringify({ userId }),
-    });
+    await convStub(c.env, chatId).leave(userId);
   }
-  await userStub(c.env, userId).fetch("https://do/account-wipe", { method: "POST", body: "{}" });
-  await storiesStub(c.env, userId).fetch("https://do/wipe", { method: "POST", body: "{}" });
+  await userStub(c.env, userId).accountWipe();
+  await storiesStub(c.env, userId).wipe();
   return json({ ok: true });
 });
 
@@ -578,9 +580,24 @@ app.post("/api/provision/:id/approve", async (c) => {
   return json({ ok: true });
 });
 
+/// Cuts a string to at most `maxBytes` of UTF-8, never splitting a code point.
+/// DirectoryDO's LIKE pattern is capped at 50 bytes by the SQLite backend; the
+/// query travels lowercased, and folding can grow a character's byte length
+/// (a Cyrillic capital folds to a same-length lowercase, but the margin below
+/// 50 is kept deliberately wide), so the cut happens here, before the fold.
+function cutUtf8Bytes(s: string, maxBytes: number): string {
+  const bytes = new TextEncoder().encode(s);
+  if (bytes.length <= maxBytes) return s;
+  let end = maxBytes;
+  // back off out of the middle of a multi-byte code point (continuation
+  // bytes are 10xxxxxx)
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
+  return new TextDecoder().decode(bytes.subarray(0, end));
+}
+
 app.get("/api/users", async (c) => {
   // a username gets typed with a leading @ and stray spaces often enough
-  const q = (c.req.query("q") ?? "").trim().replace(/^@+/, "");
+  const q = cutUtf8Bytes((c.req.query("q") ?? "").trim().replace(/^@+/, ""), 40);
   if (q.length < 2) return json({ ok: true, users: [] });
   // folded in JS, like the index itself: SQLite's LOWER folds ASCII only, and
   // display names are free Unicode
@@ -610,14 +627,11 @@ app.get("/api/users/:id", async (c) => {
     || (await privacyAllows(c.env, targetId, userId, "call"));
   let presence: { online: boolean; lastSeen: number } | null = null;
   if (userId === targetId) {
-    const p = await userStub(c.env, targetId).fetch("https://do/presence-info");
-    presence = (await p.json()) as { online: boolean; lastSeen: number };
+    presence = await userStub(c.env, targetId).presenceInfo();
   } else {
     // a viewer who hid their own last seen holds no copies at all, so the
     // read below simply finds nothing
-    const p = await userStub(c.env, userId).fetch(
-      `https://do/peer-presence-read?peer=${encodeURIComponent(targetId)}`);
-    presence = ((await p.json()) as { presence: { online: boolean; lastSeen: number } | null }).presence;
+    presence = (await userStub(c.env, userId).peerPresenceRead(targetId)).presence;
   }
   return json({ ok: true, user: u, presence, canCall });
 });
@@ -642,11 +656,7 @@ app.post("/api/calls/room", async (c) => {
   if (!sfuConfigured(c.env)) return err("sfu_unavailable", 503);
   // the chat records who was ticketed into which room: a member removed
   // while the call goes on is taken out of the room by the chat itself
-  const r = await convStub(c.env, b.chatId).fetch("https://do/room-ticket", {
-    method: "POST",
-    body: JSON.stringify({ userId, callId: b.callId, ttl: ROOM_TOKEN_TTL_SEC }),
-  });
-  const m = (await r.json()) as { member?: boolean };
+  const m = await convStub(c.env, b.chatId).roomTicket(userId, b.callId, ROOM_TOKEN_TTL_SEC);
   if (!m.member) return err("not_member", 403);
   const me = await ownProfile(c.env, userId);
   const token = await roomToken(c.env, { userId, name: me?.display_name ?? "", room: b.callId });
@@ -661,13 +671,7 @@ app.get("/api/devices", async (c) => {
   // each user's list and the version stamped on it come from that user's
   // object in one answer, so per user they are one snapshot
   const perUser = await Promise.all(ids.map(async (id) => {
-    const r = await userStub(c.env, id).fetch("https://do/keys-devices");
-    const j = (await r.json()) as {
-      devices?: Array<{
-        deviceId: string; identityKey: string; identitySignKey: string; identityKeySig: string;
-      }>;
-      version?: number | null;
-    };
+    const j = await userStub(c.env, id).keysDevices();
     return { id, devices: j.devices ?? [], version: j.version ?? null };
   }));
   const versions: Record<string, number> = {};
@@ -683,8 +687,7 @@ app.get("/api/devices", async (c) => {
 // How many one-time prekeys this device has left; the client tops up below 20
 app.get("/api/prekeys/count", async (c) => {
   const { userId, deviceId } = c.get("auth");
-  const r = await userStub(c.env, userId).fetch(`https://do/keys-count?deviceId=${deviceId}`);
-  const j = (await r.json()) as { count?: number };
+  const j = await userStub(c.env, userId).keysCount(deviceId);
   return json({ ok: true, count: j.count ?? 0 });
 });
 
@@ -693,8 +696,7 @@ app.get("/api/prekeys/count", async (c) => {
 // once never draw the same key
 app.get("/api/users/:id/prekeys", async (c) => {
   const targetId = c.req.param("id");
-  const r = await userStub(c.env, targetId).fetch("https://do/keys-prekeys", { method: "POST" });
-  const j = (await r.json()) as { bundles?: unknown[] };
+  const j = await userStub(c.env, targetId).keysPrekeys();
   return json({ ok: true, userId: targetId, bundles: j.bundles ?? [] });
 });
 
@@ -708,14 +710,11 @@ app.post("/api/identity", async (c) => {
     identityKey?: string; identitySignKey?: string; identityKeySig?: string;
   }>();
   if (!b.identityKey || !b.identitySignKey || !b.identityKeySig) return err("bad_keys");
-  const r = await userStub(c.env, userId).fetch("https://do/keys-update", {
-    method: "POST",
-    body: JSON.stringify({
-      deviceId, identityKey: b.identityKey,
-      identitySignKey: b.identitySignKey, identityKeySig: b.identityKeySig,
-    }),
+  const r = await userStub(c.env, userId).keysUpdate({
+    deviceId, identityKey: b.identityKey,
+    identitySignKey: b.identitySignKey, identityKeySig: b.identityKeySig,
   });
-  return new Response(r.body, r);
+  return json({ ok: true, ...r });
 });
 
 // The device republishes its whole prekey bundle: a fresh signed prekey and a
@@ -729,22 +728,16 @@ app.post("/api/prekeys/republish", async (c) => {
     oneTimePrekeys?: Array<{ id: number; key: string }>;
   }>();
   if (!b.signedPrekey) return err("bad_keys");
-  const r = await userStub(c.env, userId).fetch("https://do/keys-republish", {
-    method: "POST",
-    body: JSON.stringify({
-      deviceId, signedPrekey: b.signedPrekey, oneTimePrekeys: b.oneTimePrekeys ?? [],
-    }),
+  const r = await userStub(c.env, userId).keysRepublish({
+    deviceId, signedPrekey: b.signedPrekey, oneTimePrekeys: b.oneTimePrekeys ?? [],
   });
-  return new Response(r.body, r);
+  return json({ ok: true, ...r });
 });
 
 app.post("/api/prekeys", async (c) => {
   const { userId, deviceId } = c.get("auth");
   const b = await c.req.json<{ oneTimePrekeys: Array<{ id: number; key: string }> }>();
-  await userStub(c.env, userId).fetch("https://do/keys-topup", {
-    method: "POST",
-    body: JSON.stringify({ deviceId, oneTimePrekeys: b.oneTimePrekeys }),
-  });
+  await userStub(c.env, userId).keysTopup(deviceId, b.oneTimePrekeys);
   return json({ ok: true });
 });
 
@@ -752,13 +745,9 @@ app.post("/api/profile", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{ displayName?: string; bio?: string; avatarId?: string }>();
   if (b.displayName !== undefined && !isValidDisplayName(b.displayName)) return err("bad_name");
-  const w = await userStub(c.env, userId).fetch("https://do/profile-write", {
-    method: "POST",
-    body: JSON.stringify({
-      displayName: b.displayName, bio: b.bio, avatarId: b.avatarId,
-    }),
+  await userStub(c.env, userId).profileWrite({
+    displayName: b.displayName, bio: b.bio, avatarId: b.avatarId,
   });
-  if (!w.ok) return new Response(w.body, w);
   await indexUser(c.env, userId);
   await broadcastProfile(c.env, userId);
   return json({ ok: true });
@@ -775,9 +764,7 @@ app.post("/api/username", async (c) => {
 
   const current = await ownProfile(c.env, userId);
   if (!current) return err("not_found", 404);
-  const write = () => userStub(c.env, userId).fetch("https://do/profile-write", {
-    method: "POST", body: JSON.stringify({ username: b.username }),
-  });
+  const write = () => userStub(c.env, userId).profileWrite({ username: b.username });
   if (current.username.toLowerCase() === b.username.toLowerCase()) {
     // the same handle in another case: nothing to claim or free
     await write();
@@ -806,10 +793,7 @@ async function broadcastProfile(env: Env, userId: string) {
   if ((await readPrivacy(env, userId)).avatar !== "everyone") {
     peerUser = { ...user, bio: null, avatar_id: null };
   }
-  await userStub(env, userId).fetch("https://do/profile-changed", {
-    method: "POST",
-    body: JSON.stringify({ user, peerUser }),
-  });
+  await userStub(env, userId).profileChanged(user, peerUser);
 }
 
 /// Splits the users `actor` wants to put into a group by their group_invites
@@ -855,27 +839,23 @@ app.post("/api/chats", async (c) => {
   const chatId = b.kind === "direct" ? directChatName(userId, members[0])
     : b.kind === "self" ? "self:" + userId
     : ulid();
-  const res = await convStub(c.env, chatId).fetch("https://do/create", {
-    method: "POST",
-    body: JSON.stringify({
-      chatId, kind: b.kind, title: b.title ?? null, memberIds: members, createdBy: userId,
-    }),
+  const res = await convStub(c.env, chatId).create({
+    chatId, kind: b.kind, title: b.title ?? null, memberIds: members, createdBy: userId,
   });
-  if (!res.ok || !invited.length) return new Response(res.body, res);
-  const body = (await res.json()) as Record<string, unknown>;
-  return json({ ...body, invited });
+  if (!invited.length) return json({ ok: true, ...res });
+  return json({ ok: true, ...res, invited });
 });
 
 app.get("/api/chats", async (c) => {
   const { userId } = c.get("auth");
-  const r = await userStub(c.env, userId).fetch("https://do/chats");
-  const { chats } = (await r.json()) as { chats: Record<string, unknown> };
+  const { chats } = await userStub(c.env, userId).chats();
   const states: Array<{ flags: unknown; state: ChatState; users: PublicUser[] }> = [];
   await Promise.all(
     Object.entries(chats).map(async ([chatId, flags]) => {
-      const sr = await convStub(c.env, chatId).fetch("https://do/state");
-      const sj = (await sr.json()) as { ok: boolean; state?: ChatState; users?: PublicUser[] };
-      if (sj.ok && sj.state) states.push({ flags, state: sj.state, users: sj.users ?? [] });
+      try {
+        const sj = await convStub(c.env, chatId).state();
+        states.push({ flags, state: sj.state, users: sj.users ?? [] });
+      } catch { /* the chat is gone */ }
     })
   );
   const memberIds = [...new Set(states.flatMap((s) => s.state.members.map((m) => m.userId)))];
@@ -886,8 +866,7 @@ app.get("/api/chats", async (c) => {
   // built over) is asked directly.
   const cards = new Map<string, PublicUser>();
   for (const s of states) for (const u of s.users) cards.set(u.id, u);
-  const pr = await userStub(c.env, userId).fetch("https://do/peer-cards");
-  for (const u of ((await pr.json()) as { cards: PublicUser[] }).cards) cards.set(u.id, u);
+  for (const u of (await userStub(c.env, userId).peerCards()).cards) cards.set(u.id, u);
   const own = await ownProfile(c.env, userId);
   if (own) {
     const { phone_hash, ...card } = own;
@@ -909,23 +888,25 @@ app.get("/api/chats/:id/history", async (c) => {
   // membership is checked by the object itself on the read that serves the page:
   // asking for it first costs a second invocation on every page of history
   const qs = new URL(c.req.url).searchParams;
-  qs.set("userId", userId);
-  const r = await convStub(c.env, chatId).fetch(
-    `https://do/history?${qs.toString()}`
-  );
-  return new Response(r.body, r);
+  const r = await convStub(c.env, chatId).history({
+    userId,
+    fromSeq: qs.has("fromSeq") ? Number(qs.get("fromSeq")) : undefined,
+    toSeq: qs.has("toSeq") ? Number(qs.get("toSeq")) : undefined,
+    limit: qs.has("limit") ? Number(qs.get("limit")) : undefined,
+    dir: qs.get("dir") === "back" ? "back" : undefined,
+  }) as { msgs: unknown[]; scanned: number; lastScannedSeq: number | null };
+  return json({ ok: true, ...r });
 });
 
 // Fanout queue of the chat: depth and the head job's delivery cursor.
 app.get("/api/chats/:id/fanout", async (c) => {
   const { userId } = c.get("auth");
   const chatId = c.req.param("id");
-  const sr = await convStub(c.env, chatId).fetch("https://do/state");
-  const sj = (await sr.json()) as { ok: boolean; state?: ChatState };
-  if (!sj.ok || !sj.state?.members.some((m) => m.userId === userId))
+  const state = await chatStateOrNotMember(c.env, chatId);
+  if (!state.members.some((m) => m.userId === userId))
     return err("not_member", 403);
-  const r = await convStub(c.env, chatId).fetch("https://do/fanout-state");
-  return new Response(r.body, r);
+  const r = await convStub(c.env, chatId).fanoutState();
+  return json({ ok: true, ...r });
 });
 
 // Dev test hook: the caller's own session object rejects the next n frame
@@ -933,10 +914,8 @@ app.get("/api/chats/:id/fanout", async (c) => {
 app.post("/api/dev/fault", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{ failEvents: number }>();
-  const r = await userStub(c.env, userId).fetch("https://do/dev-fault", {
-    method: "POST", body: JSON.stringify({ failEvents: b.failEvents }),
-  });
-  return new Response(r.body, r);
+  const r = await userStub(c.env, userId).devFault(b.failEvents);
+  return json({ ok: true, ...r });
 });
 
 // Dev hook for a stand whose chats predate presence subscriptions: the
@@ -945,21 +924,20 @@ app.post("/api/dev/fault", async (c) => {
 // relinks for itself; the peers' own relations come from their own call.
 app.post("/api/dev/relink", async (c) => {
   const { userId } = c.get("auth");
-  const r = await userStub(c.env, userId).fetch("https://do/chats");
-  const { chats } = (await r.json()) as { chats: Record<string, unknown> };
+  const { chats } = await userStub(c.env, userId).chats();
   let relinked = 0;
   for (const chatId of Object.keys(chats)) {
-    const sr = await convStub(c.env, chatId).fetch("https://do/state");
-    const sj = (await sr.json()) as { ok: boolean; state?: ChatState };
-    const me = sj.state?.members.find((m) => m.userId === userId);
-    if (!sj.ok || !sj.state || !me) continue;
+    let sj: { state: ChatState };
+    try {
+      sj = await convStub(c.env, chatId).state();
+    } catch {
+      continue;
+    }
+    const me = sj.state.members.find((m) => m.userId === userId);
+    if (!me) continue;
     const peers = sj.state.members.map((m) => m.userId).filter((id) => id !== userId);
-    await userStub(c.env, userId).fetch("https://do/chat-added", {
-      method: "POST",
-      body: JSON.stringify({
-        chatId, accepted: me.accepted, peers: peers.length < PRESENCE_GROUP_MAX ? peers : [],
-      }),
-    });
+    await userStub(c.env, userId).chatAdded(
+      chatId, me.accepted, peers.length < PRESENCE_GROUP_MAX ? peers : []);
     relinked++;
   }
   return json({ ok: true, relinked });
@@ -973,13 +951,10 @@ app.post("/api/chats/:id/members", async (c) => {
   const { addable, invited } = await addableToGroup(c.env, userId,
     [...new Set(b.add ?? [])].filter((u) => u !== userId));
   const selfJoin = (b.add ?? []).includes(userId) ? [userId] : [];
-  const r = await convStub(c.env, c.req.param("id")).fetch("https://do/members", {
-    method: "POST",
-    body: JSON.stringify({ actor: userId, add: [...selfJoin, ...addable], remove: b.remove ?? [] }),
+  await convStub(c.env, c.req.param("id")).members({
+    actor: userId, add: [...selfJoin, ...addable], remove: b.remove ?? [],
   });
-  if (!r.ok || !invited.length) return new Response(r.body, r);
-  const body = (await r.json()) as Record<string, unknown>;
-  return json({ ...body, invited });
+  return json({ ok: true, ...(invited.length ? { invited } : {}) });
 });
 
 // The delivery receipt with no socket to send it on. The notification extension
@@ -992,18 +967,14 @@ app.post("/api/chats/:id/recv", async (c) => {
   const b = await c.req.json<{ seqs?: number[] }>();
   const seqs = (b.seqs ?? []).filter((s) => Number.isFinite(s) && s > 0);
   if (!seqs.length) return err("bad_seqs");
-  const r = await convStub(c.env, c.req.param("id")).fetch("https://do/recv", {
-    method: "POST", body: JSON.stringify({ userId, seqs }),
-  });
-  return new Response(r.body, r);
+  await convStub(c.env, c.req.param("id")).recv(userId, seqs);
+  return json({ ok: true });
 });
 
 app.post("/api/chats/:id/accept", async (c) => {
   const { userId } = c.get("auth");
-  const r = await convStub(c.env, c.req.param("id")).fetch("https://do/accept", {
-    method: "POST", body: JSON.stringify({ userId }),
-  });
-  return new Response(r.body, r);
+  await convStub(c.env, c.req.param("id")).accept(userId);
+  return json({ ok: true });
 });
 
 // Deleting a chat is the caller's own act. A group is left, because the others
@@ -1015,41 +986,30 @@ app.post("/api/chats/:id/accept", async (c) => {
 app.post("/api/chats/:id/delete", async (c) => {
   const { userId } = c.get("auth");
   const chatId = c.req.param("id");
-  const sr = await convStub(c.env, chatId).fetch("https://do/state");
-  const sj = (await sr.json()) as { ok: boolean; state?: ChatState };
-  if (!sj.ok || !sj.state?.members.some((m) => m.userId === userId))
+  const state = await chatStateOrNotMember(c.env, chatId);
+  if (!state.members.some((m) => m.userId === userId))
     return err("not_member", 403);
-  if (sj.state.kind === "group") {
-    const r = await convStub(c.env, chatId).fetch("https://do/leave", {
-      method: "POST", body: JSON.stringify({ userId }),
-    });
-    return new Response(r.body, r);
+  if (state.kind === "group") {
+    await convStub(c.env, chatId).leave(userId);
+    return json({ ok: true });
   }
-  await convStub(c.env, chatId).fetch("https://do/read", {
-    method: "POST", body: JSON.stringify({ userId, upToSeq: sj.state.lastSeq }),
-  });
-  const r = await userStub(c.env, userId).fetch("https://do/chat-removed", {
-    method: "POST", body: JSON.stringify({ chatId }),
-  });
-  return new Response(r.body, r);
+  await convStub(c.env, chatId).read(userId, state.lastSeq);
+  await userStub(c.env, userId).chatRemoved(chatId);
+  return json({ ok: true });
 });
 
 app.post("/api/chats/:id/settings", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json();
-  const r = await convStub(c.env, c.req.param("id")).fetch("https://do/settings", {
-    method: "POST", body: JSON.stringify({ ...b, actor: userId }),
-  });
-  return new Response(r.body, r);
+  await convStub(c.env, c.req.param("id")).settings({ ...b, actor: userId });
+  return json({ ok: true });
 });
 
 app.post("/api/chats/:id/admins", async (c) => {
   const { userId } = c.get("auth");
-  const b = await c.req.json();
-  const r = await convStub(c.env, c.req.param("id")).fetch("https://do/admins", {
-    method: "POST", body: JSON.stringify({ ...b, actor: userId }),
-  });
-  return new Response(r.body, r);
+  const b = await c.req.json<{ userId: string; admin: boolean }>();
+  await convStub(c.env, c.req.param("id")).admins(userId, b.userId, b.admin);
+  return json({ ok: true });
 });
 
 // --- bots ---
@@ -1089,9 +1049,8 @@ app.post("/api/bots", async (c) => {
   if (!(await claimHandle(c.env, b.username, botId))) return err("username_taken", 409);
   // a bot is an account: its own object, its own card, its own session — it
   // simply has no keys, which is what makes its chats readable
-  const w = await userStub(c.env, botId).fetch("https://do/bot-register", {
-    method: "POST",
-    body: JSON.stringify({
+  try {
+    await userStub(c.env, botId).botRegister({
       userId: botId,
       profile: {
         id: botId, username: b.username, display_name: b.displayName.trim(),
@@ -1099,25 +1058,21 @@ app.post("/api/bots", async (c) => {
         bot_commands: JSON.stringify(commands), phone_hash: null, created_at: now,
       },
       device: { deviceId, name: "bot", tokenHash: await sha256hex(token) },
-    }),
-  });
-  if (!w.ok) {
+    });
+  } catch {
     await releaseHandle(c.env, b.username, botId, false);
     return err("bot_write_failed", 500);
   }
   // the owner's own object lists what they run: there is no index from an
   // owner back to their bots anywhere else
-  await userStub(c.env, userId).fetch("https://do/bot-owned", {
-    method: "POST", body: JSON.stringify({ botId, add: true }),
-  });
+  await userStub(c.env, userId).botOwnedWrite(botId, true);
   await indexUser(c.env, botId);
   return json({ ok: true, botId, token });
 });
 
 app.get("/api/bots", async (c) => {
   const { userId } = c.get("auth");
-  const r = await userStub(c.env, userId).fetch("https://do/bot-owned");
-  const { botIds } = (await r.json()) as { botIds: string[] };
+  const { botIds } = await userStub(c.env, userId).botOwnedRead();
   const cards = await Promise.all(botIds.map((id) => ownProfile(c.env, id)));
   const bots = cards.flatMap((p) => (p ? [{
     id: p.id, username: p.username, display_name: p.display_name,
@@ -1142,29 +1097,24 @@ app.post("/api/bots/:id", async (c) => {
     commandsJson = JSON.stringify(commands);
   }
   if (b.displayName !== undefined || commandsJson !== undefined) {
-    await userStub(c.env, botId).fetch("https://do/profile-write", {
-      method: "POST",
-      body: JSON.stringify({ displayName: b.displayName, botCommands: commandsJson }),
+    await userStub(c.env, botId).profileWrite({
+      displayName: b.displayName, botCommands: commandsJson,
     });
     await indexUser(c.env, botId);
   }
   let token: string | undefined;
   if (b.newToken) {
     token = newToken(botId);
-    await userStub(c.env, botId).fetch("https://do/device-retoken", {
-      method: "POST", body: JSON.stringify({ tokenHash: await sha256hex(token) }),
-    });
+    await userStub(c.env, botId).deviceRetoken(undefined, await sha256hex(token));
   }
   return json({ ok: true, token });
 });
 
 app.post("/api/chats/:id/roles", async (c) => {
   const { userId } = c.get("auth");
-  const b = await c.req.json();
-  const r = await convStub(c.env, c.req.param("id")).fetch("https://do/roles", {
-    method: "POST", body: JSON.stringify({ ...b, actor: userId }),
-  });
-  return new Response(r.body, r);
+  const b = await c.req.json<{ userId: string; role: "editor" | "reader" }>();
+  await convStub(c.env, c.req.param("id")).roles(userId, b.userId, b.role);
+  return json({ ok: true });
 });
 
 // A channel's posts are journaled in the clear, so its history is searched
@@ -1172,79 +1122,64 @@ app.post("/api/chats/:id/roles", async (c) => {
 app.get("/api/chats/:id/search", async (c) => {
   const { userId } = c.get("auth");
   const qs = new URL(c.req.url).searchParams;
-  qs.set("userId", userId);
-  const r = await convStub(c.env, c.req.param("id")).fetch(`https://do/search?${qs.toString()}`);
-  return new Response(r.body, r);
+  const r = await convStub(c.env, c.req.param("id")).search(
+    userId, qs.get("q") ?? "", qs.has("limit") ? Number(qs.get("limit")) : undefined);
+  return json({ ok: true, ...r });
 });
 
 app.post("/api/chats/:id/pin-message", async (c) => {
   const { userId } = c.get("auth");
-  const b = await c.req.json();
-  const r = await convStub(c.env, c.req.param("id")).fetch("https://do/pin-message", {
-    method: "POST", body: JSON.stringify({ ...b, actor: userId }),
-  });
-  return new Response(r.body, r);
+  const b = await c.req.json<{ seq?: number | null; pinned?: boolean }>();
+  await convStub(c.env, c.req.param("id")).pinMessage(userId, b.seq, b.pinned);
+  return json({ ok: true });
 });
 
 // The user's default push sounds by chat shape; a chat's own sound (a flag)
 // overrides them, and both resolve on the object that sends the push.
 app.get("/api/notify-sounds", async (c) => {
   const { userId } = c.get("auth");
-  const r = await userStub(c.env, userId).fetch("https://do/notify-sounds?read=1", {
-    method: "POST", body: "{}",
-  });
-  return new Response(r.body, r);
+  const r = await userStub(c.env, userId).notifySoundsRead();
+  return json({ ok: true, ...r });
 });
 // A person's own sound, applied to their messages wherever they write; a
 // chat's explicit sound still wins inside that chat.
 app.get("/api/notify-sounds/person/:id", async (c) => {
   const { userId } = c.get("auth");
-  const r = await userStub(c.env, userId).fetch("https://do/person-sound", {
-    method: "POST", body: JSON.stringify({ userId: c.req.param("id"), read: true }),
-  });
-  return new Response(r.body, r);
+  const r = await userStub(c.env, userId).personSound(c.req.param("id"), undefined, true);
+  return json({ ok: true, ...r });
 });
 app.post("/api/notify-sounds/person/:id", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{ sound?: string | null }>();
-  const r = await userStub(c.env, userId).fetch("https://do/person-sound", {
-    method: "POST", body: JSON.stringify({ userId: c.req.param("id"), sound: b.sound ?? null }),
-  });
-  return new Response(r.body, r);
+  await userStub(c.env, userId).personSound(c.req.param("id"), b.sound ?? null);
+  return json({ ok: true });
 });
 
 app.post("/api/notify-sounds", async (c) => {
   const { userId } = c.get("auth");
-  const r = await userStub(c.env, userId).fetch("https://do/notify-sounds", {
-    method: "POST", body: JSON.stringify(await c.req.json()),
-  });
-  return new Response(r.body, r);
+  const b = await c.req.json<{ direct?: string | null; group?: string | null }>();
+  const r = await userStub(c.env, userId).notifySoundsWrite(b);
+  return json({ ok: true, ...r });
 });
 
 // Every chat and person with a sound of their own, for the settings list.
 app.get("/api/notify-sounds/exceptions", async (c) => {
   const { userId } = c.get("auth");
-  const r = await userStub(c.env, userId).fetch("https://do/sound-exceptions", {
-    method: "POST", body: "{}",
-  });
-  return new Response(r.body, r);
+  const r = await userStub(c.env, userId).soundExceptions();
+  return json({ ok: true, ...r });
 });
 
 app.get("/api/chats/:id/flags", async (c) => {
   const { userId } = c.get("auth");
-  const r = await userStub(c.env, userId).fetch("https://do/flags-read", {
-    method: "POST", body: JSON.stringify({ chatId: c.req.param("id") }),
-  });
-  return new Response(r.body, r);
+  const r = await userStub(c.env, userId).flagsRead(c.req.param("id"));
+  return json({ ok: true, ...r });
 });
 
 app.post("/api/chats/:id/flags", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json();
-  const r = await userStub(c.env, userId).fetch("https://do/flags", {
-    method: "POST", body: JSON.stringify({ ...b, chatId: c.req.param("id") }),
-  });
-  return new Response(r.body, r);
+  await userStub(c.env, userId).flags({ ...b, chatId: c.req.param("id") });
+  return json({ ok: true });
 });
 
 // --- invite links ---
@@ -1253,14 +1188,13 @@ app.post("/api/chats/:id/invite", async (c) => {
   const chatId = c.req.param("id");
   // only a member of the chat may mint an invite, and only while the group's
   // rights let them bring anyone in
-  const sr = await convStub(c.env, chatId).fetch("https://do/state");
-  const sj = (await sr.json()) as { ok: boolean; state?: ChatState };
-  const me = sj.state?.members.find((m) => m.userId === userId);
-  if (!sj.ok || !me) return err("not_member", 403);
-  if (sj.state!.kind === "group" && sj.state!.invitePolicy === "admins" && me.role !== "admin")
+  const state = await chatStateOrNotMember(c.env, chatId);
+  const me = state.members.find((m) => m.userId === userId);
+  if (!me) return err("not_member", 403);
+  if (state.kind === "group" && state.invitePolicy === "admins" && me.role !== "admin")
     return err("not_allowed", 403);
   // a channel's link is what its audience arrives by, and it is the editors' to hand out
-  if (sj.state!.kind === "channel" && me.role !== "owner" && me.role !== "editor")
+  if (state.kind === "channel" && me.role !== "owner" && me.role !== "editor")
     return err("not_allowed", 403);
   const code = b64url(crypto.getRandomValues(new Uint8Array(9)));
   await lookupPut(c.env, "inv", code, { chatId, createdBy: userId, createdAt: Date.now() });
@@ -1271,12 +1205,9 @@ app.post("/api/join/:code", async (c) => {
   const { userId } = c.get("auth");
   const inv = await lookupGet<{ chatId: string }>(c.env, "inv", c.req.param("code"));
   if (!inv) return err("invalid_invite", 404);
-  const r = await convStub(c.env, inv.chatId).fetch("https://do/members", {
-    method: "POST",
-    body: JSON.stringify({ actor: userId, add: [userId], remove: [], viaInvite: true }),
+  await convStub(c.env, inv.chatId).members({
+    actor: userId, add: [userId], remove: [], viaInvite: true,
   });
-  const rj = (await r.json()) as { ok: boolean; error?: string };
-  if (!rj.ok) return err(rj.error ?? "join_failed", r.status);
   return json({ ok: true, chatId: inv.chatId });
 });
 
@@ -1316,11 +1247,10 @@ app.post("/api/avatar", async (c) => {
   const { userId } = c.get("auth");
   const chatId = c.req.query("chatId");
   if (chatId) {
-    const sr = await convStub(c.env, chatId).fetch("https://do/state");
-    const sj = (await sr.json()) as { ok: boolean; state?: ChatState };
-    const me = sj.state?.members.find((m) => m.userId === userId);
-    if (!sj.ok || !me) return err("not_member", 403);
-    if (sj.state!.kind === "group" && me.role !== "admin") return err("not_admin", 403);
+    const state = await chatStateOrNotMember(c.env, chatId);
+    const me = state.members.find((m) => m.userId === userId);
+    if (!me) return err("not_member", 403);
+    if (state.kind === "group" && me.role !== "admin") return err("not_admin", 403);
   }
   // a user avatar carries its owner in its id; a chat avatar has no owner
   const mediaId = chatId ? "avatar-" + ulid() : userAvatarId(userId);
@@ -1330,16 +1260,9 @@ app.post("/api/avatar", async (c) => {
     httpMetadata: { contentType: c.req.header("content-type") ?? "image/jpeg" },
   });
   if (chatId) {
-    const r = await convStub(c.env, chatId).fetch("https://do/settings", {
-      method: "POST",
-      body: JSON.stringify({ actor: userId, avatarId: mediaId }),
-    });
-    const rj = (await r.json()) as { ok: boolean; error?: string };
-    if (!rj.ok) return err(rj.error ?? "settings_failed", r.status);
+    await convStub(c.env, chatId).settings({ actor: userId, avatarId: mediaId });
   } else {
-    await userStub(c.env, userId).fetch("https://do/profile-write", {
-      method: "POST", body: JSON.stringify({ avatarId: mediaId }),
-    });
+    await userStub(c.env, userId).profileWrite({ avatarId: mediaId });
     await indexUser(c.env, userId);
     await broadcastProfile(c.env, userId);
   }
@@ -1369,10 +1292,7 @@ app.get("/api/avatar/:id", async (c) => {
 app.post("/api/push-token", async (c) => {
   const { userId, deviceId } = c.get("auth");
   const b = await c.req.json<{ apnsToken: string; env: string }>();
-  await userStub(c.env, userId).fetch("https://do/push-token", {
-    method: "POST",
-    body: JSON.stringify({ deviceId, apnsToken: b.apnsToken, env: b.env, userId }),
-  });
+  await userStub(c.env, userId).pushToken(deviceId, b.apnsToken, b.env, userId);
   return json({ ok: true });
 });
 
@@ -1398,9 +1318,7 @@ app.post("/api/contacts/discover", async (c) => {
   const b = await c.req.json<{ hashes: string[]; remove?: string[] }>();
   const hashes = [...new Set(b.hashes)].slice(0, 5000);
   if (!hashes.length && !b.remove?.length) return json({ ok: true, matches: [] });
-  await userStub(c.env, userId).fetch("https://do/contacts-sync", {
-    method: "POST", body: JSON.stringify({ hashes, remove: b.remove }),
-  });
+  await userStub(c.env, userId).contactsSync(hashes, b.remove);
   const found = await phoneIndexFind(c.env, hashes);
   const ids = [...new Set(found.values())];
   const discoverable = await discoverableBy(c.env, userId, ids);
@@ -1419,13 +1337,9 @@ app.post("/api/contacts/discover", async (c) => {
 app.post("/api/phone", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{ phoneHash: string | null }>();
-  const r = await userStub(c.env, userId).fetch("https://do/phone", {
-    method: "POST", body: JSON.stringify({ phoneHash: b.phoneHash }),
-  });
-  if (!r.ok) return new Response(r.body, r);
+  const { was } = await userStub(c.env, userId).phone(b.phoneHash);
   // the reverse index follows: the number that was there stops answering for
   // this account, and the new one starts
-  const { was } = (await r.json()) as { was: string | null };
   if (was && was !== b.phoneHash) await phoneIndexPut(c.env, was, null);
   if (b.phoneHash) await phoneIndexPut(c.env, b.phoneHash, userId);
   return json({ ok: true });
@@ -1436,19 +1350,15 @@ app.post("/api/block", async (c) => {
   const b = await c.req.json<{ userId: string; blocked: boolean }>();
   // the block is written in this user's object and mirrored into the peer's,
   // and the presences stop flowing between the two, or start again
-  await userStub(c.env, userId).fetch("https://do/block", {
-    method: "POST", body: JSON.stringify({ peer: b.userId, blocked: b.blocked }),
-  });
+  await userStub(c.env, userId).block(b.userId, b.blocked);
   // drop the cached block state in the pair's direct chat, which may not exist yet
-  await convStub(c.env, directChatName(userId, b.userId))
-    .fetch("https://do/block-changed", { method: "POST" });
+  await convStub(c.env, directChatName(userId, b.userId)).blockChanged();
   return json({ ok: true });
 });
 
 app.get("/api/blocked", async (c) => {
   const { userId } = c.get("auth");
-  const r = await userStub(c.env, userId).fetch("https://do/blocks");
-  const { blocked } = (await r.json()) as { blocked: string[] };
+  const { blocked } = await userStub(c.env, userId).blocks();
   return json({ ok: true, blocked });
 });
 
@@ -1472,14 +1382,11 @@ app.post("/api/report", async (c) => {
         text: typeof m.text === "string" ? m.text.slice(0, 4096) : null,
       })))
     : null;
-  await userStub(c.env, userId).fetch("https://do/report", {
-    method: "POST",
-    body: JSON.stringify({
-      reporterId: userId, chatId: b.chatId ?? null,
-      targetUserId: b.targetUserId ?? null, reason: b.reason,
-      comment: b.comment ? String(b.comment).slice(0, 2048) : null,
-      attached, createdAt: Date.now(),
-    }),
+  await userStub(c.env, userId).report({
+    reporterId: userId, chatId: b.chatId ?? null,
+    targetUserId: b.targetUserId ?? null, reason: b.reason,
+    comment: b.comment ? String(b.comment).slice(0, 2048) : null,
+    attached, createdAt: Date.now(),
   });
   return json({ ok: true });
 });
@@ -1497,10 +1404,7 @@ const EXCEPTION_SETTINGS = ["last_seen", "avatar", "phone_discovery", "group_inv
 // who never is, whatever the tier says.
 app.get("/api/privacy/exceptions", async (c) => {
   const { userId } = c.get("auth");
-  const r = await userStub(c.env, userId).fetch("https://do/privacy-exceptions");
-  const { exceptions } = (await r.json()) as {
-    exceptions: Array<{ setting: string; peerId: string; allow: boolean }>;
-  };
+  const { exceptions } = await userStub(c.env, userId).privacyExceptions();
   // the list is shown by name, and a name is its owner's to hand out
   const cards = await cardsFor(c.env, userId, [...new Set(exceptions.map((e) => e.peerId))]);
   return json({ ok: true, exceptions: exceptions.flatMap((e) => {
@@ -1516,12 +1420,7 @@ app.post("/api/privacy/exceptions", async (c) => {
     return err("bad_exception");
   }
   if (!(await ownProfile(c.env, b.peerId))) return err("not_found", 404);
-  await userStub(c.env, userId).fetch("https://do/privacy-exception", {
-    method: "POST",
-    body: JSON.stringify({
-      setting: b.setting, peerId: b.peerId, allow: b.allow ?? null,
-    }),
-  });
+  await userStub(c.env, userId).privacyException(b.setting, b.peerId, b.allow ?? null);
   // an avatar override changes what this peer already holds from the last
   // profile frame; the broadcast is one card for all, so it only helps when
   // the change makes the card MORE hidden — an allowed peer refetches
@@ -1529,7 +1428,7 @@ app.post("/api/privacy/exceptions", async (c) => {
   // a last-seen override changes what this peer may hold: the user's object
   // pushes the presence or takes the copy back
   if (b.setting === "last_seen") {
-    await userStub(c.env, userId).fetch("https://do/presence-policy-changed", { method: "POST", body: "{}" });
+    await userStub(c.env, userId).presencePolicyChanged();
   }
   return json({ ok: true });
 });
@@ -1558,17 +1457,12 @@ app.post("/api/privacy", async (c) => {
   if (b.callPrivacy !== undefined) wanted.callPrivacy = b.callPrivacy as LastSeenVisibility;
   if (b.readReceipts !== undefined) wanted.readReceipts = b.readReceipts;
   if (b.typing !== undefined) wanted.typing = b.typing;
-  const w = await userStub(c.env, userId).fetch("https://do/privacy-write", {
-    method: "POST", body: JSON.stringify(wanted),
-  });
-  const res = (await w.json()) as {
-    privacy: PrivacySettings; avatarChanged: boolean; lastSeenChanged: boolean;
-  };
+  const res = await userStub(c.env, userId).privacyWrite(wanted);
   // peers hold the card from the last profile frame, so a photo hidden or shown
   // again travels to them at once instead of waiting for a refetch
   if (res.avatarChanged) await broadcastProfile(c.env, userId);
   if (res.lastSeenChanged) {
-    await userStub(c.env, userId).fetch("https://do/presence-policy-changed", { method: "POST", body: "{}" });
+    await userStub(c.env, userId).presencePolicyChanged();
   }
   return json({ ok: true, privacy: res.privacy });
 });
@@ -1607,8 +1501,7 @@ function cleanFrames(value: unknown): unknown[] | null {
 /// from the two ids, so the list is read out of the chat list itself without
 /// asking a single conversation object.
 async function directPeers(env: Env, userId: string): Promise<string[]> {
-  const r = await userStub(env, userId).fetch("https://do/chats");
-  const { chats } = (await r.json()) as { chats: Record<string, unknown> };
+  const { chats } = await userStub(env, userId).chats();
   const peers: string[] = [];
   for (const chatId of Object.keys(chats)) {
     if (!chatId.startsWith("direct:")) continue;
@@ -1641,19 +1534,14 @@ app.post("/api/stories", async (c) => {
   // direct chat with, minus anyone with a block between them. The author's
   // object delivers to each of them from its queue
   const peers = await directPeers(c.env, userId);
-  const br = await userStub(c.env, userId).fetch("https://do/blocks");
-  const bj = (await br.json()) as { blocked: string[]; blockedBy: string[] };
+  const bj = await userStub(c.env, userId).blocks();
   const hidden = new Set([...bj.blocked, ...bj.blockedBy]);
   const recipients = [userId, ...peers.filter((p) => !hidden.has(p))];
   const author = await cardFor(c.env, userId, userId);
-  const r = await storiesStub(c.env, userId).fetch("https://do/publish", {
-    method: "POST",
-    body: JSON.stringify({
-      authorId: userId, frames, audience, hours, link: b.link === true,
-      recipients, author, origin: publicOrigin(c),
-    }),
+  const j = await storiesStub(c.env, userId).publish({
+    authorId: userId, frames, audience, hours, link: b.link === true,
+    recipients, author, origin: publicOrigin(c),
   });
-  const j = (await r.json()) as { id: string; code: string | null };
   return json({ ok: true, storyId: j.id, link: j.code ? `${publicOrigin(c)}/s/${j.code}` : null });
 });
 
@@ -1663,17 +1551,18 @@ app.post("/api/stories", async (c) => {
 async function canWatchStory(env: Env, userId: string, authorId: string, storyId: string): Promise<boolean> {
   if (authorId === userId) return true;
   if (await blockedPair(env, userId, authorId)) return false;
-  const r = await userStub(env, userId).fetch(`https://do/story-has?id=${encodeURIComponent(storyId)}`);
-  const j = (await r.json()) as { has: boolean };
-  return j.has;
+  return (await userStub(env, userId).storyHas(storyId)).has;
 }
 
 /// The story a request names, from its author's object, with the access rule
 /// applied: null when there is nothing this user may act on.
 async function watchableStory(env: Env, userId: string, authorId: string, storyId: string) {
-  const r = await storiesStub(env, authorId).fetch(`https://do/story?id=${encodeURIComponent(storyId)}`);
-  if (!r.ok) return null;
-  const j = (await r.json()) as { audience: string };
+  let j: { audience: string };
+  try {
+    j = await storiesStub(env, authorId).story(storyId);
+  } catch {
+    return null;
+  }
   return (await canWatchStory(env, userId, authorId, storyId)) ? j : null;
 }
 
@@ -1684,12 +1573,10 @@ app.get("/api/stories", async (c) => {
   // the list is this user's own inbox: every story delivered to them, kept
   // by their own object as the authors' objects pushed it. Nobody else is
   // asked; a block that came after the delivery hides the row here
-  const [ir, br] = await Promise.all([
-    userStub(c.env, userId).fetch("https://do/stories-inbox"),
-    userStub(c.env, userId).fetch("https://do/blocks"),
+  const [inbox, bj] = await Promise.all([
+    userStub(c.env, userId).storiesInbox() as Promise<{ stories: StoryItem[] }>,
+    userStub(c.env, userId).blocks(),
   ]);
-  const inbox = (await ir.json()) as { stories: StoryItem[] };
-  const bj = (await br.json()) as { blocked: string[]; blockedBy: string[] };
   const hidden = new Set([...bj.blocked, ...bj.blockedBy]);
   const stories = inbox.stories.filter((s) => s.authorId === userId || !hidden.has(s.authorId));
   return json({ ok: true, stories });
@@ -1703,13 +1590,9 @@ app.post("/api/stories/:id/seen", async (c) => {
   // the author looking at their own story is not a viewer
   if (authorId === userId) return json({ ok: true });
   if (!(await watchableStory(c.env, userId, authorId, id))) return err("not_found", 404);
-  await storiesStub(c.env, authorId).fetch("https://do/seen", {
-    method: "POST", body: JSON.stringify({ storyId: id, viewer: userId }),
-  });
+  await storiesStub(c.env, authorId).seen(id, userId);
   // the viewer's own copy remembers it, and their other devices hear it
-  await userStub(c.env, userId).fetch("https://do/story-mark", {
-    method: "POST", body: JSON.stringify({ storyId: id, seen: true }),
-  });
+  await userStub(c.env, userId).storyMark(id, true);
   return json({ ok: true });
 });
 
@@ -1723,15 +1606,9 @@ app.post("/api/stories/:id/like", async (c) => {
   if (!authorId) return err("not_found", 404);
   if (authorId === userId) return err("own_story");
   if (!(await watchableStory(c.env, userId, authorId, id))) return err("not_found", 404);
-  const r = await storiesStub(c.env, authorId).fetch("https://do/like", {
-    method: "POST", body: JSON.stringify({ storyId: id, user: userId, on: b.on !== false }),
-  });
-  if (r.ok) {
-    await userStub(c.env, userId).fetch("https://do/story-mark", {
-      method: "POST", body: JSON.stringify({ storyId: id, seen: true, liked: b.on !== false }),
-    });
-  }
-  return new Response(r.body, r);
+  const liked = (await storiesStub(c.env, authorId).like(id, userId, b.on !== false)).liked;
+  await userStub(c.env, userId).storyMark(id, true, liked);
+  return json({ ok: true, liked });
 });
 
 /// Who watched, and who of them left a heart. The creator's alone: nobody
@@ -1742,9 +1619,7 @@ app.get("/api/stories/:id/viewers", async (c) => {
   const authorId = authorOf(id);
   if (!authorId) return err("not_found", 404);
   if (authorId !== userId) return err("not_author", 403);
-  const r = await storiesStub(c.env, userId).fetch(`https://do/viewers?storyId=${encodeURIComponent(id)}`);
-  if (!r.ok) return new Response(r.body, r);
-  const j = (await r.json()) as { viewers: Array<{ viewer_id: string; seen_at: number; liked: boolean }> };
+  const j = await storiesStub(c.env, userId).viewers(id);
   const cards = await cardsFor(c.env, userId, [...new Set(j.viewers.map((v) => v.viewer_id))]);
   const viewers = j.viewers.flatMap((v) => {
     const card = cards.get(v.viewer_id);
@@ -1761,18 +1636,13 @@ app.post("/api/stories/:id", async (c) => {
   const authorId = authorOf(id);
   if (!authorId) return err("not_found", 404);
   if (authorId !== userId) return err("not_author", 403);
-  const r = await storiesStub(c.env, userId).fetch("https://do/update", {
-    method: "POST",
-    body: JSON.stringify({ authorId: userId, storyId: id, takeDown: b.takeDown, link: b.link }),
+  const j = await storiesStub(c.env, userId).update({
+    authorId: userId, storyId: id, takeDown: b.takeDown, link: b.link,
   });
-  if (!r.ok) return new Response(r.body, r);
-  const j = (await r.json()) as { code?: string | null };
   if (b.takeDown) return json({ ok: true });
   const link = j.code ? `${publicOrigin(c)}/s/${j.code}` : null;
   // the author's own copy carries the link they see in the list
-  await userStub(c.env, userId).fetch("https://do/story-mark", {
-    method: "POST", body: JSON.stringify({ storyId: id, link }),
-  });
+  await userStub(c.env, userId).storyMark(id, undefined, undefined, link);
   return json({ ok: true, link });
 });
 

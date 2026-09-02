@@ -73,7 +73,7 @@ function wrapStorage(storage: DurableObjectStorage, c: PerfCounters): DurableObj
   });
 }
 
-export function wrapState(state: DurableObjectState, c: PerfCounters): DurableObjectState {
+export function wrapState<Props>(state: DurableObjectState<Props>, c: PerfCounters): DurableObjectState<Props> {
   const storage = wrapStorage(state.storage, c);
   return new Proxy(state, {
     get(target, prop) {
@@ -84,23 +84,54 @@ export function wrapState(state: DurableObjectState, c: PerfCounters): DurableOb
   });
 }
 
-/// Counts every fetch made through a stub of another object.
-export function wrapStub<T extends { fetch: (...a: never[]) => Promise<Response> }>(
-  stub: T,
-  c: PerfCounters
-): T {
+/// A call the platform tunnels back as retryable (a transient failure, worth
+/// repeating for an idempotent call) or overloaded (never worth repeating —
+/// retrying an overloaded object only adds to the overload). See
+/// https://developers.cloudflare.com/durable-objects/best-practices/error-handling.
+interface RetryableError {
+  retryable?: boolean;
+  overloaded?: boolean;
+}
+
+/// Pause before each retry of a retryable call, by the attempts already made.
+const RPC_RETRY_DELAYS_MS = [100, 300];
+
+/// Wraps every RPC method call made through a stub of another object: an
+/// `overloaded` error is never retried, a `retryable` one is retried a bounded
+/// number of times (every call here is idempotent — a claim, a fetch, an
+/// upsert — so a repeat changes nothing a first success would not have),
+/// and, when `c` is given (dev measurement, PERF_LOG), every call is counted
+/// and timed. Every stub in this codebase is created through a `*Stub` helper
+/// that passes through here, so a call anywhere gets the same treatment.
+export function wrapStub<T extends object>(stub: T, c?: PerfCounters | null): T {
   return new Proxy(stub, {
     get(target, prop) {
       const value = Reflect.get(target, prop, target);
-      if (prop !== "fetch" || typeof value !== "function") {
-        return typeof value === "function" ? value.bind(target) : value;
-      }
-      return async (...args: never[]) => {
-        const t0 = Date.now();
-        c.sub++;
-        const res = await (value as (...a: never[]) => Promise<Response>).apply(target, args);
-        c.subMs += Date.now() - t0;
-        return res;
+      if (typeof value !== "function") return value;
+      // an RPC method value is already bound to the stub's own internal
+      // capability, not a plain function: calling it through .apply/.call
+      // with an explicit thisArg re-targets that binding and corrupts the
+      // RPC serialization ("Could not serialize object of type
+      // DurableObject"), so it is invoked directly, unbound.
+      const call = value as (...a: unknown[]) => Promise<unknown>;
+      return async (...args: unknown[]) => {
+        for (let attempt = 0; ; attempt++) {
+          const t0 = Date.now();
+          if (c) c.sub++;
+          try {
+            const res = await call(...args);
+            if (c) c.subMs += Date.now() - t0;
+            return res;
+          } catch (e) {
+            if (c) c.subMs += Date.now() - t0;
+            const re = e as RetryableError;
+            if (!re?.overloaded && re?.retryable && attempt < RPC_RETRY_DELAYS_MS.length) {
+              await new Promise((r) => setTimeout(r, RPC_RETRY_DELAYS_MS[attempt]));
+              continue;
+            }
+            throw e;
+          }
+        }
       };
     },
   }) as T;
