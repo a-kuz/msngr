@@ -458,11 +458,11 @@ A ✅ goes in only together with a link to the evidence.
     under the map picker's pin; bubbles with initials or a map snapshot, a
     tap opens the card sheet or the full map
     (qa/runs/2026-08-31-contact-location; ContactLocationTests)
-  - 🟡 GIFs: an animated one is sent unchanged and plays in the feed and the
+  - ✅ GIFs: an animated one is sent unchanged and plays in the feed and the
     viewer (qa/runs/2026-08-21-gif-run.md). Stickers are the shader stickers
-    above (their own pack, «В стикеры» on a received one). A GIF search picker
-    is not built: it needs a provider (Tenor or GIPHY) and a key for it, which
-    the project does not have — an external blocker, not device work
+    above (their own pack, «В стикеры» on a received one)
+  - ⬜ a GIF search picker — an external blocker: it needs a provider (Tenor
+    or GIPHY) and a key for it, which the project does not have
   - ⬜ shooting a photo or a video from the attachment sheet, without leaving the
     chat for the system camera
   - ✅ receiving what other apps share: a photo, a file or a link arrives through
@@ -1015,10 +1015,12 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   so it covers what this device never pulled (smoke `the server searches a
   channel's history`; the live search in qa/runs/2026-09-01-channel-run is in
   the stand's log)
-- 🟡 channel media: a picture or a video travels the ordinary media path with
-  its key in the readable body, so the server can serve it to any subscriber
-  and read it itself. CF Stream / Images is not wired — there is no binding
-  for either
+- ✅ channel media: a picture travels the ordinary media path with its key in
+  the readable body, so the server can serve it to any subscriber and read it
+  itself — a late subscriber fetched the blob and opened the photo the moment
+  it joined (qa/runs/2026-09-02-channel-media-run)
+- ⬜ channel media through CF Stream / Images — an external blocker: neither
+  has a binding on the stand or in `wrangler.jsonc`
 - ✅ subscriber comments and reactions: a subscriber answers a post
   («Прокомментировать» in its menu) and reacts to it; the object holds them to
   those two kinds, which it can tell apart because the channel is readable
