@@ -182,6 +182,7 @@ public final class MediaStream: NSObject, AVAssetResourceLoaderDelegate, @unchec
         let hashes = try await manifest()
         let first = MediaCrypto.blockRange(index: blocks.lowerBound, plaintextSize: size)
         let last = MediaCrypto.blockRange(index: blocks.upperBound - 1, plaintextSize: size)
+        MsngrLog.media.debug("stream \(self.media.mediaId, privacy: .public): blocks \(blocks.lowerBound, privacy: .public)…\(blocks.upperBound - 1, privacy: .public) over range \(first.lowerBound, privacy: .public)+\(last.upperBound - first.lowerBound, privacy: .public)")
         let bytes = try await fetchRange(first.lowerBound, last.upperBound - first.lowerBound)
         guard bytes.count == last.upperBound - first.lowerBound else { throw StreamError.badFile }
         let handle = try openFile()
