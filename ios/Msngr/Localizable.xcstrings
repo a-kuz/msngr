@@ -34,6 +34,61 @@
         }
       }
     },
+    "Search emoji" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Найти эмодзи"
+          }
+        }
+      }
+    },
+    "Classic" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Классика"
+          }
+        }
+      }
+    },
+    "Serif" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Антиква"
+          }
+        }
+      }
+    },
+    "Typewriter" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Машинка"
+          }
+        }
+      }
+    },
+    "Rounded" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Округлый"
+          }
+        }
+      }
+    },
     "Not encrypted: who sees it is a rule on the server, not a key." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1901,7 +1956,7 @@
       }
     },
     "Bold" : {
-      "extractionState" : "stale",
+      "extractionState" : "manual",
       "localizations" : {
         "ru" : {
           "stringUnit" : {

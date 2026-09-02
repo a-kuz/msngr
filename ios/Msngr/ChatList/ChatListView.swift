@@ -156,7 +156,9 @@ struct ChatListView: View {
                 StoryComposerView { _ in }
             }
             .fullScreenCover(item: $watchingStories) { author in
-                StoryViewerView(author: author) { watchingStories = nil }
+                StoryViewerView(authors: StoriesModel.shared.authors, start: author) { watchingStories = nil }
+                    // the list shows through while the viewer is pulled down
+                    .presentationBackground(.clear)
             }
             .sheet(isPresented: $showFolders) {
                 ChatFoldersView(model: model)

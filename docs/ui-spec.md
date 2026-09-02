@@ -591,23 +591,71 @@ takes a title and a set of members.
 ## Stories
 
 Adding a story opens on the camera: the front camera fills the screen, the
-shutter sits at the bottom centre, the library is at the bottom left and the
-other camera at the bottom right. A tap of the shutter takes a picture; holding
-it records a clip for as long as the finger stays, up to 60 seconds, with a red
-ring filling around the button and the time in a red capsule above it. The
-front camera's picture and clip are mirrored, the way the preview showed them.
-Where there is no camera the screen says «Камера недоступна» and the library
-still works. The library picker takes up to ten photos and videos in order.
+shutter sits at the bottom centre, the library is at the bottom left wearing
+the last picture taken (only when the library may already be read; the camera
+never asks for it), and the other camera at the bottom right. A tap of the
+shutter takes a picture; holding it records a clip for as long as the finger
+stays, up to 60 seconds, with a red ring filling around the button and the
+time in a red capsule above it. A pinch zooms (the factor shows above the
+shutter), a tap focuses and exposes on the spot with a yellow square, a double
+tap flips the camera, a swipe up opens the library, and the flash cycles off →
+auto → on at the top right where the camera has one (the torch, for a clip).
+The front camera's picture and clip are mirrored, the way the preview showed
+them. Where there is no camera the screen says «Камера недоступна» and the
+library still works. The library picker takes up to ten photos and videos in
+order.
 
-A shot or picked frame fills the screen and the tools lie over it: text,
-markup (pictures only), another take from the camera, and removing the frame.
-The text tool types straight onto the frame, with the colour row and the plate
-button above the keyboard; the plate cycles dark → light → none. The text is
-dragged into place with a finger. An undo button (`arrow.uturn.backward`)
-appears at the top once there is something to undo, and every step is one
-undo: a frame added or removed, a typing session, a colour, a plate, a drag, a
-markup. The filmstrip along the bottom holds the frames in the order they go
-out, and the arrow publishes.
+The canvas is the whole screen. A picture is fitted and stands over a blurred
+copy of itself; a pinch and a drag zoom and move it, a double tap puts it
+back. A clip fills the canvas and plays in a loop while it is edited; the
+speaker tool takes its sound away. The tools lie down the right edge: text,
+drawing, stickers, sound (clips), another take from the camera, and removing
+the frame.
+
+Text and emoji are layers. A tap on empty canvas or on the text tool opens
+the text tool, which types straight onto the frame in the chosen style: five
+fonts (Classic, Serif, Typewriter, Rounded, Bold), left/centre/right
+alignment, a plate that cycles none → dark → light, and a colour row, all
+above the keyboard. The keyboard's Done key or a tap outside closes it; empty
+text removes the layer. A layer is dragged with one finger, pinched to any
+size and turned with two; while a layer is dragged a bin appears at the bottom
+centre and letting go over it throws the layer away. A tap on a text layer
+reopens it in the tool. Stickers are emoji from a sheet (a grid, plus whatever
+the keyboard types into its field) and land near the centre, each a little off
+the last.
+
+Drawing has three brushes — pen, marker (wide, translucent) and neon (a
+coloured halo around a white core) — a width slider and the colour row. Every
+stroke is a `CAShapeLayer`, and no brush uses a shadow: a live stroke updates
+its path only. During any gesture the canvas alone moves — a layer's view
+takes the transform and nothing is re-rendered — and the frame is written back
+once, when the gesture ends.
+
+An undo button (`arrow.uturn.backward`) appears at the top once there is
+something to undo, and every step is one undo: a frame added or removed, a
+typing session, a stroke, a sticker, a colour, a plate, a drag, a pinch, a
+turn, a layer thrown away, the sound switched. The filmstrip along the bottom
+holds the frames in the order they go out, and the arrow publishes.
+
+Publishing bakes the canvas. A picture frame is rendered at 1080 pt wide with
+the screen's own proportions — backdrop, picture, strokes, layers — into one
+JPEG. A clip is exported as an mp4 of the same size, filling the canvas, cut
+at 60 seconds, without its sound track when muted, with the strokes and
+layers burnt in through a `CALayer` over the composition. The server frame
+carries only the media and its size: the viewer and the public page show the
+picture as it left, and nothing is laid over it afterwards.
+
+Watching stories pages between authors horizontally — both pages move under
+the finger, the one leaving shrinking and dimming a little — and a pull down
+shrinks the viewer towards the chat list behind it and closes it past a
+third of the screen. Within an author a tap on the right half moves on, on the
+left goes back (past the first frame, to the previous author), and a finger
+held anywhere stops the clock; a clip stands on its first frame until its page
+is the one on screen. Watching starts at the first story not yet seen. The
+clock runs only once the frame is on disk. While a frame stands, the next
+three frames of the author are fetched in the background, and so is the first
+frame of each neighbouring author, so a swipe lands on a page already showing
+its frame.
 
 Three palettes, chosen in settings under «Оформление» through preview cards and
 stored in `UserDefaults` under the key `palette`, defaulting to `graphite`:
