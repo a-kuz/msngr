@@ -1461,3 +1461,14 @@ retryPending → replay → DoubleRatchetSession.skipRecvKeys`
 fix (cd326a0, a replay pass bounded to twenty envelopes, newest first) are in
 the severed-pair entry above; the wall of «Код безопасности собеседника
 изменился» rows in alfa's chat with bravo is the visible side of that pair.
+
+### A video with no preview blob pulls its whole file into the feed
+Noticed 2026-09-02 while setting up the streaming run
+(`runs/2026-09-02-video-streaming-run.md`): to draw a video's tile
+`MessageCell.loadMedia` falls back to the video's own blob when the message
+carries no preview frame, so the feed downloads the whole file just to show a
+still. The app's own composer always attaches a preview frame, so the path is
+reachable only through a sender that does not (`msngrfixture send --video`
+without `--poster` was the first take of that run, and it looked exactly like
+a full download instead of streaming). With format 2 a tile could be drawn
+from the first block instead; nothing in the product needs it yet.
