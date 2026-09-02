@@ -274,6 +274,34 @@ struct ChatScreen: View {
                             .accessibilityIdentifier("chat.videoCall")
                         }
                     }
+                    // a group's call is a room on the SFU: everyone in the
+                    // chat rings, and the card in the chat lets the rest join
+                    if model.chat?.kind == .group {
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Button {
+                                Task { await AppState.shared.callManager?.startGroupCall(chatId: chatId) }
+                            } label: {
+                                Image(systemName: "phone")
+                                    .font(Theme.glyph(17, max: 24))
+                                    .foregroundStyle(Color.primary)
+                            }
+                            .accessibilityLabel(String(localized: "Group call"))
+                            .accessibilityIdentifier("chat.groupCall")
+                        }
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Button {
+                                Task {
+                                    await AppState.shared.callManager?.startGroupCall(chatId: chatId, video: true)
+                                }
+                            } label: {
+                                Image(systemName: "video")
+                                    .font(Theme.glyph(17, max: 24))
+                                    .foregroundStyle(Color.primary)
+                            }
+                            .accessibilityLabel(String(localized: "Video call"))
+                            .accessibilityIdentifier("chat.groupVideoCall")
+                        }
+                    }
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button { openSearch() } label: {
                             // the same colour as the back chevron beside it: the two
@@ -608,6 +636,10 @@ struct ChatScreen: View {
                      onOpenLocation: { shownLocation = $0 },
                      onOpenStory: { openStory($0) },
                      onRedial: {
+                         if model.chat?.kind == .group {
+                             Task { await AppState.shared.callManager?.startGroupCall(chatId: chatId) }
+                             return
+                         }
                          guard model.chat?.kind == .direct, let peerId = model.peer?.id else { return }
                          Task { await AppState.shared.callManager?.startCall(chatId: chatId, peerUserId: peerId) }
                      },

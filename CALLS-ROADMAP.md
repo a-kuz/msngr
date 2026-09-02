@@ -63,11 +63,17 @@ is the system PiP — AVPictureInPictureController over the remote video track
 when the app goes to background. Needs 1:1 video first, and a device for the
 entitlement check.
 
-### Group calls
-A different animal: P2P mesh does not scale past three, so this is an SFU —
-self-hosted LiveKit or mediasoup on adad — plus room signaling, a member
-grid in the UI, and per-member mute state. Big enough to be its own block;
-nothing in the current 1:1 code has to change ahead of it.
+### Group calls: what remains
+The room is shipped (`docs/plans/2026-09-02-group-calls-design.md`): LiveKit
+on adad behind `sfu.a-kuz.online`, the Worker's room ticket, the `room`
+invite with the frame key, the group chat's call buttons, the tile grid with
+speaking and mute, the 1:1 call moving into a room when a third person is
+pulled in, the card kept by the lowest userId and closed by the last one
+out. What remains: key rotation when someone leaves (today the one key of a
+call lives for the call; a left participant who kept it and a valid ticket
+could rejoin within the ticket's hour), the device check with a real camera
+and a real network, and the SFU's capacity ceiling measured rather than
+assumed.
 
 ## Polish
 

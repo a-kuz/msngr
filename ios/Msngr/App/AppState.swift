@@ -229,6 +229,11 @@ final class AppState: ObservableObject {
                     (try? await api?.mayCall(peerId: caller)) ?? false
                 },
                 makeTransport: { try WebRTCTransport() },
+                makeRoom: { LiveKitRoomSession() },
+                fetchTicket: { [api] callId, chatId in
+                    guard let api else { throw CallManager.RoomError.unavailable }
+                    return try await api.roomTicket(callId: callId, chatId: chatId)
+                },
                 openChat: { userId in await DirectChat.open(userId: userId) })
             observeCallState(callManager)
             observeSessionRevoked(engine)

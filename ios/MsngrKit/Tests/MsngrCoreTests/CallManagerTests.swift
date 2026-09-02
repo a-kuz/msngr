@@ -584,180 +584,303 @@ final class CallManagerTests: XCTestCase {
         XCTAssertEqual(closed.all, ["c1"], "a declined ring closes nothing")
     }
 
-    /// The inviter writes the live card into the chat the call started in and
-    /// into the invited person's chat, naming everyone in the call.
-    func testInviteLeavesTheLiveCardInBothChats() async {
-        let (manager, log, factory, cards) = makeCardManager()
-        await manager.startCall(chatId: "chat1", peerUserId: "peer")
-        await manager.handle(event(CallSignal(type: .answer, callId: log.all[0].0.callId, sdp: "a")))
-        factory.all[0].emit(.connected)
-        try? await Task.sleep(nanoseconds: 100_000_000)
+    // MARK: - Rooms (a group call on the SFU)
 
-        await manager.invite(userId: "carol")
-        XCTAssertEqual(Set(cards.all.map(\.1)), ["chat1", "direct:me-carol"])
-        for (card, _) in cards.all {
-            XCTAssertEqual(card.callId, log.all[0].0.callId)
-            XCTAssertEqual(Set(card.memberIds), ["me", "peer", "carol"])
-            XCTAssertTrue(card.isLive)
+    /// A room that joins instantly and records what it was told.
+    final class FakeRoom: CallRoomSession, @unchecked Sendable {
+        let lock = NSLock()
+        var joined: (url: String, token: String, key: String, video: Bool)?
+        var muted: Bool?
+        var video: Bool?
+        var left = false
+        private var continuation: AsyncStream<CallRoomEvent>.Continuation?
+        private let stream: AsyncStream<CallRoomEvent>
+
+        init() {
+            var c: AsyncStream<CallRoomEvent>.Continuation!
+            stream = AsyncStream { c = $0 }
+            continuation = c
         }
+
+        func join(url: String, token: String, key: String, video: Bool) async throws {
+            lock.lock(); joined = (url, token, key, video); lock.unlock()
+        }
+        func setMuted(_ muted: Bool) async { lock.lock(); self.muted = muted; lock.unlock() }
+        func setVideo(enabled: Bool) async { lock.lock(); video = enabled; lock.unlock() }
+        func leave() async {
+            lock.lock(); left = true; lock.unlock()
+            continuation?.finish()
+        }
+        func events() -> AsyncStream<CallRoomEvent> { stream }
+        func emit(_ event: CallRoomEvent) { continuation?.yield(event) }
     }
 
-    /// Hanging up closes every card this device wrote, once, and nothing is
-    /// written after that.
-    func testHangUpClosesTheLiveCards() async {
-        let (manager, log, factory, cards) = makeCardManager()
+    /// A manager with a room behind it: tickets are recorded as
+    /// «callId|chatId», the room and the 1:1 transports come from logs.
+    private func makeRoomManager(closed: SignalLogStrings = SignalLogStrings())
+        -> (CallManager, SignalLog, FakeRoom, TransportFactoryLog, CardSink, tickets: SignalLogStrings,
+            invites: SignalLogStrings) {
+        let log = SignalLog()
+        let factory = TransportFactoryLog()
+        let cards = CardSink()
+        let tickets = SignalLogStrings()
+        let invites = SignalLogStrings()
+        let room = FakeRoom()
+        let manager = CallManager(
+            ownUserId: "me",
+            sendSignal: { log.record($0, chatId: $1) },
+            makeTransport: { factory.make() },
+            makeRoom: { room },
+            fetchTicket: { callId, chatId in
+                tickets.record("\(callId)|\(chatId)")
+                return CallRoomTicket(url: "wss://sfu", token: "tok")
+            },
+            openChat: { userId in "direct:me-\(userId)" },
+            sendInviteRow: { chatId, userId in invites.record("\(chatId)|\(userId)") },
+            sendLiveCard: { cards.record($0, chatId: $1) },
+            endLiveCards: { closed.record($0) },
+            iceRestartDelay: 60)
+        return (manager, log, room, factory, cards, tickets, invites)
+    }
+
+    /// The group's call: a ticket for the chat, the room joined under a fresh
+    /// key, the `room` invite into the chat with that key, the card in the
+    /// chat with the key too. Dialing until the first person walks in.
+    func testGroupCallOpensTheRoomAndRingsTheChat() async {
+        let (manager, log, room, _, cards, tickets, _) = makeRoomManager()
+        await manager.startGroupCall(chatId: "grp")
+        var state = await manager.current
+        XCTAssertEqual(state.phase, .dialing)
+        XCTAssertTrue(state.isRoom)
+        XCTAssertNil(state.peerUserId)
+        XCTAssertEqual(tickets.all, ["\(state.callId!)|grp"])
+        XCTAssertEqual(room.joined?.url, "wss://sfu")
+        XCTAssertEqual(room.joined?.token, "tok")
+        XCTAssertEqual(room.joined?.video, false)
+        XCTAssertEqual(log.types, [.room])
+        XCTAssertEqual(log.all[0].1, "grp")
+        XCTAssertEqual(log.all[0].0.key, room.joined?.key)
+        XCTAssertNotNil(room.joined?.key)
+        XCTAssertEqual(cards.all.count, 1)
+        XCTAssertEqual(cards.all[0].1, "grp")
+        XCTAssertEqual(cards.all[0].0.key, room.joined?.key)
+        XCTAssertEqual(cards.all[0].0.memberIds, ["me"])
+
+        room.emit(.participants([CallParticipant(userId: "zed")]))
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        state = await manager.current
+        XCTAssertEqual(state.phase, .active)
+        XCTAssertNotNil(state.connectedAt)
+        XCTAssertEqual(state.participants.map(\.userId), ["zed"])
+        XCTAssertEqual(cards.all.last?.0.memberIds, ["me", "zed"], "the writer keeps the card current")
+    }
+
+    /// The invited side: the `room` invite rings like an offer, and accepting
+    /// it walks into the room — a ticket for the chat the invite came over,
+    /// the room joined under the invite's key — with a bare answer on the
+    /// wire for this account's other devices.
+    func testRoomInviteRingsAndJoins() async {
+        let (manager, log, room, _, _, tickets, _) = makeRoomManager()
+        await manager.handle(event(CallSignal(type: .room, callId: "c1", key: "k1"),
+                                   chatId: "grp", from: "alice"))
+        var state = await manager.current
+        XCTAssertEqual(state.phase, .ringing)
+        XCTAssertTrue(state.isRoom)
+        XCTAssertEqual(state.peerUserId, "alice")
+
+        await manager.accept()
+        state = await manager.current
+        XCTAssertEqual(state.phase, .active)
+        XCTAssertNotNil(state.connectedAt)
+        XCTAssertEqual(tickets.all, ["c1|grp"])
+        XCTAssertEqual(room.joined?.key, "k1")
+        XCTAssertEqual(log.types, [.answer])
+        XCTAssertNil(log.all[0].0.sdp)
+        XCTAssertEqual(log.all[0].1, "grp")
+    }
+
+    /// A stale invite does not ring, exactly as a stale offer does not.
+    func testStaleRoomInviteIsNotFresh() {
+        let now = Date().timeIntervalSince1970
+        let invite = CallSignal(type: .room, callId: "c1", key: "k")
+        XCTAssertTrue(invite.isFresh(sentAt: now - 30, now: now))
+        XCTAssertFalse(invite.isFresh(sentAt: now - 61, now: now))
+    }
+
+    /// In a room the roster is the SFU's word: a member declining the invite,
+    /// or answering busy, changes nothing for the one who opened it.
+    func testDeclineOfARoomInviteLeavesTheOpenerAlone() async {
+        let (manager, _, room, _, _, _, _) = makeRoomManager()
+        await manager.startGroupCall(chatId: "grp")
+        let callId = await manager.current.callId!
+        room.emit(.participants([CallParticipant(userId: "zed")]))
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.handle(event(CallSignal(type: .end, callId: callId, reason: .decline),
+                                   chatId: "grp", from: "bob"))
+        await manager.handle(event(CallSignal(type: .end, callId: callId, reason: .busy),
+                                   chatId: "grp", from: "carol"))
+        let state = await manager.current
+        XCTAssertEqual(state.phase, .active)
+        XCTAssertFalse(room.left)
+    }
+
+    /// Pulling someone into a 1:1 call moves it into a room: the peer gets the
+    /// key over the chat before the transport closes, this device joins the
+    /// room, and then the invite goes to the new person over their chat with
+    /// the same key, the invited-by row and the card in both chats.
+    func testInviteFromAOneToOneCallMovesItIntoARoom() async {
+        let (manager, log, room, factory, cards, tickets, invites) = makeRoomManager()
         await manager.startCall(chatId: "chat1", peerUserId: "peer")
-        await manager.handle(event(CallSignal(type: .answer, callId: log.all[0].0.callId, sdp: "a")))
+        let callId = log.all[0].0.callId
+        await manager.handle(event(CallSignal(type: .answer, callId: callId, sdp: "a")))
         factory.all[0].emit(.connected)
         try? await Task.sleep(nanoseconds: 100_000_000)
-        await manager.invite(userId: "carol")
-        let before = cards.all.count
 
-        await manager.hangUp()
-        let after = Array(cards.all.dropFirst(before))
-        XCTAssertEqual(Set(after.map(\.1)), ["chat1", "direct:me-carol"])
-        XCTAssertEqual(after.count, 2, "one closing card per chat, none for the legs torn down after")
-        XCTAssertTrue(after.allSatisfy { $0.0.endedAt != nil })
+        await manager.invite(userId: "carol")
+        let state = await manager.current
+        XCTAssertEqual(state.phase, .active)
+        XCTAssertTrue(state.isRoom)
+        XCTAssertEqual(state.callId, callId)
+        XCTAssertTrue(factory.all[0].closed)
+        XCTAssertEqual(tickets.all, ["\(callId)|chat1"])
+        let rooms = log.all.filter { $0.0.type == .room }
+        XCTAssertEqual(rooms.map(\.1), ["chat1", "direct:me-carol"])
+        XCTAssertEqual(rooms[0].0.key, room.joined?.key)
+        XCTAssertEqual(rooms[1].0.key, room.joined?.key)
+        XCTAssertTrue(rooms.allSatisfy { $0.0.callId == callId })
+        XCTAssertEqual(invites.all, ["direct:me-carol|carol"])
+        XCTAssertEqual(Set(cards.all.map(\.1)), ["chat1", "direct:me-carol"])
+        XCTAssertTrue(cards.all.allSatisfy { $0.0.key == room.joined?.key && $0.0.isLive })
     }
 
-    /// A member of neither chat with no card of their own — the invited
-    /// person, say — reads the card and joins: an offer with the card's callId
-    /// to its writer over this chat, and a leg to every other member.
-    func testJoinFromTheCardDialsTheWriterAndTheMembers() async {
-        let (manager, log, _, cards) = makeCardManager()
-        let card = CallLive(callId: "c1", startedAt: 100,
-                            members: [.init(id: "alice", name: "Alice"), .init(id: "bob", name: "Bob")])
-        await manager.join(card, chatId: "direct:me-alice", hostUserId: "alice")
+    /// The peer's side of that move: the `room` signal for the running call
+    /// closes the transport and joins the room under the peer's key; the
+    /// call stands throughout.
+    func testPeerFollowsTheCallIntoTheRoom() async {
+        let (manager, log, room, factory, _, tickets, _) = makeRoomManager()
+        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "s")))
+        await manager.accept()
+        factory.all[0].emit(.connected)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        await manager.handle(event(CallSignal(type: .room, callId: "c1", key: "k9")))
         let state = await manager.current
-        XCTAssertEqual(state.phase, .dialing)
+        XCTAssertEqual(state.phase, .active)
+        XCTAssertTrue(state.isRoom)
+        XCTAssertTrue(factory.all[0].closed)
+        XCTAssertEqual(room.joined?.key, "k9")
+        XCTAssertEqual(tickets.all, ["c1|chat1"])
+        XCTAssertEqual(log.types, [.answer], "no signaling answers a room")
+    }
+
+    /// A tap on a live card joins the room under the card's key; a card with
+    /// no key, or an ended one, is not joinable.
+    func testJoinFromTheCardWalksIntoTheRoom() async {
+        let (manager, log, room, _, cards, tickets, _) = makeRoomManager()
+        let card = CallLive(callId: "c1", startedAt: 100,
+                            members: [.init(id: "alice", name: "Alice")], key: "kc")
+        await manager.join(card, chatId: "grp", hostUserId: "alice")
+        let state = await manager.current
+        XCTAssertEqual(state.phase, .active)
+        XCTAssertTrue(state.isRoom)
         XCTAssertEqual(state.callId, "c1")
-        XCTAssertEqual(state.peerUserId, "alice")
-        XCTAssertEqual(state.extraPeers, ["bob"])
-        XCTAssertEqual(log.types, [.offer, .offer])
-        XCTAssertEqual(log.all.map(\.1), ["direct:me-alice", "direct:me-bob"])
-        XCTAssertTrue(log.all.allSatisfy { $0.0.callId == "c1" })
+        XCTAssertEqual(room.joined?.key, "kc")
+        XCTAssertEqual(tickets.all, ["c1|grp"])
+        XCTAssertTrue(log.all.isEmpty)
         XCTAssertTrue(cards.all.isEmpty, "the joiner writes no card of its own")
 
-        // an ended card is not joinable
-        let (idle, idleLog, _, _) = makeCardManager()
+        let (idle, _, idleRoom, _, _, _, _) = makeRoomManager()
         var ended = card
         ended.endedAt = 200
-        await idle.join(ended, chatId: "direct:me-alice", hostUserId: "alice")
+        await idle.join(ended, chatId: "grp", hostUserId: "alice")
+        var keyless = card
+        keyless.key = nil
+        await idle.join(keyless, chatId: "grp", hostUserId: "alice")
         let idleState = await idle.current
         XCTAssertEqual(idleState.phase, .idle)
-        XCTAssertTrue(idleLog.all.isEmpty)
+        XCTAssertNil(idleRoom.joined)
     }
 
-    /// The inviter: a second leg opens toward the invited person, the offer
-    /// names everyone already in, and the invited-by row lands in their chat.
-    func testInviteOpensALegAndLeavesTheRow() async {
-        let (manager, log, factory, invites) = makeConferenceManager()
-        await manager.startCall(chatId: "chat1", peerUserId: "peer")
-        await manager.handle(event(CallSignal(type: .answer, callId: log.all[0].0.callId,
-                                              sdp: "a")))
-        factory.all[0].emit(.connected)
-        try? await Task.sleep(nanoseconds: 100_000_000)
-
-        await manager.invite(userId: "carol")
-        let state = await manager.current
-        XCTAssertEqual(state.extraPeers, ["carol"])
-        let inviteOffer = log.all.last!
-        XCTAssertEqual(inviteOffer.0.type, .offer)
-        XCTAssertEqual(inviteOffer.1, "direct:me-carol")
-        XCTAssertEqual(inviteOffer.0.callId, log.all[0].0.callId)
-        XCTAssertEqual(Set(inviteOffer.0.members ?? []), ["me", "peer"])
-        XCTAssertEqual(invites.all, ["direct:me-carol|carol"])
-    }
-
-    /// The invited side: accepting an offer that names the members dials the
-    /// ones it has no leg to yet, over their direct chats.
-    func testJoinerDialsTheOtherMembers() async {
-        let (manager, log, _, _) = makeConferenceManager()
-        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "s",
-                                              members: ["alice", "bob"]),
-                                   chatId: "direct:me-alice", from: "alice"))
+    /// Leaving a room with people still in it leaves the room and its card
+    /// alone: no end on the wire, no closing edit. The last one out closes
+    /// the card, in the chat and locally.
+    func testLastOneOutClosesTheCard() async {
+        let closed = SignalLogStrings()
+        let (manager, log, room, _, cards, _, _) = makeRoomManager(closed: closed)
+        await manager.handle(event(CallSignal(type: .room, callId: "c1", key: "k1"),
+                                   chatId: "grp", from: "alice"))
         await manager.accept()
-        let state = await manager.current
-        XCTAssertEqual(state.extraPeers, ["bob"])
-        XCTAssertEqual(log.types, [.answer, .offer])
-        XCTAssertEqual(log.all[1].1, "direct:me-bob")
-        XCTAssertEqual(log.all[1].0.callId, "c1")
+        room.emit(.participants([CallParticipant(userId: "alice")]))
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await manager.hangUp()
+        XCTAssertTrue(room.left)
+        XCTAssertEqual(log.types, [.answer], "nobody is told; the room lives on")
+        XCTAssertTrue(cards.all.isEmpty)
+        XCTAssertTrue(closed.all.isEmpty)
+
+        let (last, lastLog, lastRoom, _, lastCards, _, _) = makeRoomManager(closed: closed)
+        await last.handle(event(CallSignal(type: .room, callId: "c2", key: "k2"),
+                                chatId: "grp", from: "alice"))
+        await last.accept()
+        lastRoom.emit(.participants([CallParticipant(userId: "alice")]))
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        lastRoom.emit(.participants([]))
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await last.hangUp()
+        XCTAssertEqual(lastLog.types, [.answer])
+        // alice leaving made this device the writer: one card with itself
+        // alone, then the closing one
+        XCTAssertEqual(lastCards.all.map(\.0.memberIds), [["me"], ["me"]])
+        XCTAssertEqual(lastCards.all.map(\.1), ["grp", "grp"])
+        XCTAssertNil(lastCards.all[0].0.endedAt)
+        XCTAssertNotNil(lastCards.all[1].0.endedAt)
+        XCTAssertEqual(lastCards.all[1].0.key, "k2")
+        XCTAssertEqual(closed.all, ["c2"])
     }
 
-    /// The third leg reaching an existing participant: a same-callId offer
-    /// from someone new joins in place — the callId is the ticket — with no
-    /// ringing and no busy.
-    func testSameCallIdOfferFromNewUserJoins() async {
-        let (manager, log, factory, _) = makeConferenceManager()
-        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "s")))
-        await manager.accept()
-        factory.all[0].emit(.connected)
-        try? await Task.sleep(nanoseconds: 100_000_000)
-
-        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "carol-sdp"),
-                                   chatId: "direct:me-carol", from: "carol"))
+    /// A room left empty ends on its own after the timeout, and its card
+    /// closes: the reader of a card whose call died with its last
+    /// participant's app is not left standing in an empty room.
+    func testEmptyRoomEndsAndClosesTheCard() async {
+        let log = SignalLog()
+        let cards = CardSink()
+        let closed = SignalLogStrings()
+        let room = FakeRoom()
+        let manager = CallManager(
+            ownUserId: "me",
+            sendSignal: { log.record($0, chatId: $1) },
+            makeTransport: { FakeTransport() },
+            makeRoom: { room },
+            fetchTicket: { _, _ in CallRoomTicket(url: "wss://sfu", token: "tok") },
+            sendLiveCard: { cards.record($0, chatId: $1) },
+            endLiveCards: { closed.record($0) },
+            emptyRoomTimeout: 0.1)
+        let card = CallLive(callId: "c1", startedAt: 100,
+                            members: [.init(id: "alice", name: "Alice")], key: "kc")
+        await manager.join(card, chatId: "grp", hostUserId: "alice")
+        room.emit(.participants([]))
+        try? await Task.sleep(nanoseconds: 400_000_000)
         let state = await manager.current
-        XCTAssertEqual(state.phase, .active)
-        XCTAssertEqual(state.extraPeers, ["carol"])
-        XCTAssertEqual(factory.all.count, 2)
-        XCTAssertEqual(factory.all[1].remoteOffer, "carol-sdp")
-        XCTAssertEqual(log.types, [.answer, .answer])
-        XCTAssertEqual(log.all[1].1, "direct:me-carol")
+        XCTAssertEqual(state.phase, .ended(.hangup))
+        XCTAssertTrue(room.left)
+        XCTAssertEqual(cards.all.count, 1)
+        XCTAssertNotNil(cards.all[0].0.endedAt)
+        XCTAssertEqual(closed.all, ["c1"])
+        XCTAssertTrue(log.all.isEmpty)
     }
 
-    /// A participant leaving takes their leg; the call stands.
-    func testExtraLeavingKeepsTheCall() async {
-        let (manager, log, factory, _) = makeConferenceManager()
-        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "s")))
-        await manager.accept()
-        factory.all[0].emit(.connected)
-        try? await Task.sleep(nanoseconds: 100_000_000)
-        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "cs"),
-                                   chatId: "direct:me-carol", from: "carol"))
-        await manager.handle(event(CallSignal(type: .end, callId: "c1", reason: .hangup),
-                                   chatId: "direct:me-carol", from: "carol"))
-        let state = await manager.current
-        XCTAssertEqual(state.phase, .active)
-        XCTAssertEqual(state.extraPeers, [])
-        XCTAssertTrue(factory.all[1].closed)
-        _ = log
-    }
-
-    /// The primary peer leaving a conference promotes the oldest extra leg:
-    /// the call keeps standing on it.
-    func testPrimaryLeavingPromotesTheExtra() async {
-        let (manager, _, factory, _) = makeConferenceManager()
-        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "s"),
-                                   from: "alice"))
-        await manager.accept()
-        factory.all[0].emit(.connected)
-        try? await Task.sleep(nanoseconds: 100_000_000)
-        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "cs"),
-                                   chatId: "direct:me-carol", from: "carol"))
-        await manager.handle(event(CallSignal(type: .end, callId: "c1", reason: .hangup),
-                                   chatId: "chat1", from: "alice"))
-        let state = await manager.current
-        XCTAssertEqual(state.phase, .active)
-        XCTAssertEqual(state.peerUserId, "carol")
-        XCTAssertEqual(state.chatId, "direct:me-carol")
-        XCTAssertEqual(state.extraPeers, [])
-        XCTAssertTrue(factory.all[0].closed)
-        XCTAssertFalse(factory.all[1].closed)
-    }
-
-    /// Hanging up a conference tells every leg over its own chat.
-    func testHangUpEndsEveryLeg() async {
-        let (manager, log, factory, _) = makeConferenceManager()
-        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "s")))
-        await manager.accept()
-        factory.all[0].emit(.connected)
-        try? await Task.sleep(nanoseconds: 100_000_000)
-        await manager.handle(event(CallSignal(type: .offer, callId: "c1", sdp: "cs"),
-                                   chatId: "direct:me-carol", from: "carol"))
+    /// The opener still alone in the room hanging up cancels the ringing
+    /// everywhere and closes the card; the room session is left.
+    func testOpenerAloneCancelsTheRing() async {
+        let (manager, log, room, _, cards, _, _) = makeRoomManager()
+        await manager.startGroupCall(chatId: "grp")
         await manager.hangUp()
         let ends = log.all.filter { $0.0.type == .end }
-        XCTAssertEqual(Set(ends.map(\.1)), ["chat1", "direct:me-carol"])
-        XCTAssertTrue(factory.all.allSatisfy(\.closed))
+        XCTAssertEqual(ends.count, 1)
+        XCTAssertEqual(ends[0].0.reason, .cancel)
+        XCTAssertEqual(ends[0].1, "grp")
+        XCTAssertTrue(room.left)
+        XCTAssertNotNil(cards.all.last?.0.endedAt)
     }
 
     /// The caller applies the answer to its restart offer without leaving the

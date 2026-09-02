@@ -538,25 +538,33 @@ asked for it.
   (`GroupEvent`): the verb, the display name of whoever acted, and the name and
   id of the member it concerns. The names travel with the event so a line about
   someone who has already left still reads;
-- `call` carries one step of a call's WebRTC signaling in `text` as JSON
-  (`CallSignal`): `{type: "offer"|"answer"|"ice"|"end"|"hold", callId, sdp?,
-  candidates?, reason?, video?, members?, held?}`. `video` on a renegotiation
-  offer says whether the sender's camera is on. `members` on an offer makes it
-  a conference invite: it names everyone already in the call, the invited side
-  answers it and dials each of the others over their direct chats, and any
-  participant answers a same-callId offer from someone new in place — the
-  callId is the ticket, so the mesh closes without ringing anyone twice.
-  `hold` says the sender parked the call (`held: true`) or took it back
-  (`held: false`): the connection stands, their audio is silenced both ways,
-  and the receiver shows the silence as theirs. It is a service frame with no feed row; delivery on
-  the receiver is in-memory only, straight to the call engine. An offer older
-  than 60 seconds is dropped instead of ringing, so a journal replay after a
-  reconnect cannot start a ghost call. Candidate batches (`type: "ice"`) do
-  not enter the journal at all: they travel the `callRelay` frame — the same
-  E2E envelope, relayed to live sockets and forgotten. A batch that outruns
-  its journaled offer is held by callId on the receiver until the offer lands. Media itself never touches the server:
-  the peers connect directly over DTLS-SRTP, and the SDP inside the E2EE
-  envelope is what authenticates the endpoints;
+- `call` carries one step of a call's signaling in `text` as JSON
+  (`CallSignal`): `{type: "offer"|"answer"|"ice"|"end"|"hold"|"room", callId,
+  sdp?, candidates?, reason?, video?, held?, key?}`. `video` on a
+  renegotiation offer says whether the sender's camera is on. `hold` says the
+  sender parked the call (`held: true`) or took it back (`held: false`): the
+  connection stands, their audio is silenced both ways, and the receiver
+  shows the silence as theirs. `room` is the invite into a group call's room
+  on the SFU, with the room's frame `key` (32 random bytes, base64): sent
+  into a group chat it rings every member; sent to the peer of a running
+  1:1 call with that call's `callId` it moves the call into the room in
+  place. A room invite is accepted by joining the room — a ticket from
+  `POST /api/calls/room` for the chat the invite came over, the room named
+  by the callId — and the bare `answer` (no `sdp`) that goes back is for the
+  acceptor's other devices, which stop ringing on it. Inside a room the SFU
+  owns the roster: a decline or a busy from someone invited changes nothing
+  for the others, and leaving sends nothing. It is a service frame with no
+  feed row; delivery on the receiver is in-memory only, straight to the
+  call engine. An offer or a room invite older than 60 seconds is dropped
+  instead of ringing, so a journal replay after a reconnect cannot start a
+  ghost call. Candidate batches (`type: "ice"`) do not enter the journal at
+  all: they travel the `callRelay` frame — the same E2E envelope, relayed to
+  live sockets and forgotten. A batch that outruns its journaled offer is
+  held by callId on the receiver until the offer lands. Media never reaches
+  a server in the clear: 1:1 peers connect directly over DTLS-SRTP, with the
+  SDP inside the E2EE envelope authenticating the endpoints; a room's
+  frames are encrypted under the invite's key before they leave the device,
+  and the SFU forwards ciphertext;
 - `callLog` is the record a finished call leaves in the feed, in `text` as
   `call:` followed by JSON (`CallLog`): `{outcome: "completed"|"missed"|
   "declined"|"busy"|"failed", duration?, callId}`. The caller alone sends it,
@@ -565,17 +573,20 @@ asked for it.
   with a feed row on both sides — no unread count and no push — but unlike
   one it does move the chat up the list: a missed call is exactly the thing
   the list has to show;
-- `callLive` is the card a conference leaves in the chats it reached, in
+- `callLive` is the card a group call leaves in the chats it reached, in
   `text` as `live:` followed by JSON (`CallLive`): `{callId, startedAt,
-  members: [{id, name}], endedAt?}`. The inviter writes it into the chat the
-  call started in and into the chat of each person they pull in
-  (`clientMsgId` is `clive:<callId>:<chatId>`), then keeps it current with
-  ordinary `edit` frames on that row as people join or leave, and closes it
-  with `endedAt` when the call ends. Service on the wire with a feed row, like
-  `callLog`. A reader joins a live card by sending an `offer` with its
-  `callId` to the card's writer over the same chat — the callId is the ticket,
-  so the offer joins in place instead of ringing — and a leg to every other
-  member;
+  members: [{id, name}], endedAt?, key?}`. Whoever opens the room writes it
+  into the chat the call belongs to, and whoever invites someone writes it
+  into that person's chat (`clientMsgId` is `clive:<callId>:<chatId>`); the
+  participant with the lowest userId keeps it current with ordinary `edit`
+  frames on that row as people come and go — every device sees the same
+  roster, so the role passes on without a word — and the last one out
+  closes it with `endedAt`. Service on the wire with a feed row, like
+  `callLog`. A reader joins a live card by fetching a ticket for the chat
+  and joining the room under the card's `key`; a room found empty for 20
+  seconds ends the call on that device and closes the card, so a call that
+  died with its last participant's app does not stay live in the chat. A
+  card carries no `callLog` behind it, since nobody in a room is the caller;
 - `to` — an addressed frame: the envelope is encrypted pairwise to a single
   member, even in a group. The whole repair protocol travels this way.
 

@@ -20,4 +20,6 @@ public enum MsngrLog {
     public static let shader = Logger(subsystem: subsystem, category: "shader")
     /// on-device voice transcription: model availability and failed takes
     public static let transcript = Logger(subsystem: subsystem, category: "transcript")
+    /// calls: how a call ended, why a room could not be joined
+    public static let call = Logger(subsystem: subsystem, category: "call")
 }

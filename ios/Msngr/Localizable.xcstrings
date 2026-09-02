@@ -3442,6 +3442,17 @@
         }
       }
     },
+    "Incoming group call" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Входящий групповой звонок"
+          }
+        }
+      }
+    },
     "Incoming video call" : {
       "extractionState" : "manual",
       "localizations" : {

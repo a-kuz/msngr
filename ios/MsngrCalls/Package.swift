@@ -11,14 +11,17 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../MsngrKit"),
-        .package(url: "https://github.com/stasel/WebRTC.git", exact: "151.0.0"),
+        // the SDK pins its own WebRTC build (LiveKitWebRTC, LKRTC-prefixed
+        // classes); the 1:1 transport runs on that same build, so the app
+        // links one WebRTC
+        .package(url: "https://github.com/livekit/client-sdk-swift.git", exact: "2.16.0"),
     ],
     targets: [
         .target(
             name: "MsngrCalls",
             dependencies: [
                 .product(name: "MsngrCore", package: "MsngrKit"),
-                .product(name: "WebRTC", package: "WebRTC"),
+                .product(name: "LiveKit", package: "client-sdk-swift"),
             ]
         )
     ]

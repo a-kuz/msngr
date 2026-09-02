@@ -1073,12 +1073,11 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   feed row) and in a list — the phone button on the chat list opens every
   call newest-first, named as the address book names them, with direction,
   outcome and duration; a tap redials (live run 2026-09-01)
-- ✅ pulling a third person into a 1:1 call: the add button on the call
-  screen, a short-lived mesh of three (each pair on its own transport over
-  their direct chat, the callId as the ticket — a same-callId offer joins in
-  place), the primary peer leaving promotes the remaining leg, everyone hears
-  everyone (live three-simulator run 2026-09-01; growing past three is the
-  SFU's job — CALLS-ROADMAP.md)
+- ✅ pulling another person into a 1:1 call: the add button on the call
+  screen moves the call into a room on the SFU — the peer gets the key over
+  the chat and follows in place — and the invite goes to the new person over
+  their direct chat; no cap on this side (CallManagerTests room tests,
+  2026-09-02)
 - ✅ the invited-by row in the pairwise chat of the inviter and the invited
   (created on the spot when they had none): «Вы пригласили X в звонок», a
   system line written by the inviter once (live run 2026-09-01)

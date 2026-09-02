@@ -14,7 +14,7 @@ public enum CallTransportEvent: Sendable {
     case remoteVideo(Bool)
 }
 
-/// The media half of a call: SDP, ICE and audio live here. The production
+/// The media half of a 1:1 call: SDP, ICE and audio live here. The production
 /// implementation wraps a WebRTC peer connection; tests use a fake. One
 /// transport serves one call and is closed with it.
 public protocol CallMediaTransport: AnyObject, Sendable {
@@ -56,6 +56,8 @@ public enum CallPhase: Equatable, Sendable {
 public struct CallState: Equatable, Sendable {
     public var phase: CallPhase = .idle
     public var chatId: String?
+    /// the other side of a 1:1 call; in a room, whoever invited this device
+    /// (nil for the one who opened it)
     public var peerUserId: String?
     public var callId: String?
     public var muted = false
@@ -63,8 +65,12 @@ public struct CallState: Equatable, Sendable {
     public var localVideo = false
     /// the peer's camera is sending
     public var remoteVideo = false
-    /// extra participants of a conference, beyond `peerUserId`, join order
-    public var extraPeers: [String] = []
+    /// the call runs in a room on the SFU rather than peer to peer
+    public var isRoom = false
+    /// everyone else in the room, by userId
+    public var participants: [CallParticipant] = []
+    /// the room's path to the SFU dropped and is being rebuilt
+    public var reconnecting = false
     /// someone else is calling while this call stands; the screen offers to
     /// refuse them or to end this call and take theirs
     public var waitingCallerId: String?
@@ -90,37 +96,29 @@ public struct CallState: Equatable, Sendable {
 /// Runs the one call this device can be in: dials, rings, answers, trickles
 /// ICE, and closes. Signals go out through the SyncEngine as E2EE service
 /// content and come back on its `callSignalStream`; media is behind
-/// `CallMediaTransport`.
+/// `CallMediaTransport` for a 1:1 call and behind `CallRoomSession` for a
+/// group call in a room on the SFU.
 ///
 /// Glare — both sides dialing the same chat at once — is settled without a
 /// human: the call with the smaller id survives as the call, the other side
 /// cancels its own offer and answers the surviving one.
 public actor CallManager {
     public typealias TransportFactory = @Sendable () throws -> CallMediaTransport
+    public typealias RoomFactory = @Sendable () throws -> CallRoomSession
+    /// Fetches the ticket into a call's room, judged by the server against
+    /// this user's membership of the chat the call belongs to.
+    public typealias TicketFetcher = @Sendable (_ callId: String, _ chatId: String) async throws -> CallRoomTicket
     public typealias SignalSender = @Sendable (CallSignal, String) async -> Void
     public typealias LogSender = @Sendable (CallLog, String) async -> Void
     /// Whether this user's call-privacy setting lets `userId` ring this
     /// device. Judged on the callee: the signaling is E2EE, so no server can.
     public typealias CallGate = @Sendable (_ userId: String) async -> Bool
     /// Opens (or finds) the direct chat with a user and returns its id: the
-    /// signaling channel to a conference participant one has never written to.
+    /// signaling channel to someone one has never written to.
     public typealias ChatOpener = @Sendable (_ userId: String) async -> String?
 
-    /// One extra participant of a conference: their own transport and the
-    /// direct chat their signaling rides.
-    private final class PeerLink {
-        let userId: String
-        let chatId: String
-        let transport: CallMediaTransport
-        var task: Task<Void, Never>?
-        var outgoing: [CallSignal.IceCandidate] = []
-        var flushTask: Task<Void, Never>?
-
-        init(userId: String, chatId: String, transport: CallMediaTransport) {
-            self.userId = userId
-            self.chatId = chatId
-            self.transport = transport
-        }
+    public enum RoomError: Error {
+        case unavailable
     }
 
     public nonisolated let stateStream = Broadcast<CallState>(initial: CallState())
@@ -130,18 +128,18 @@ public actor CallManager {
     private let sendLog: LogSender
     private let mayCall: CallGate
     private let makeTransport: TransportFactory
+    private let makeRoom: RoomFactory
+    private let fetchTicket: TicketFetcher
     private let openChat: ChatOpener
     private let sendInviteRow: @Sendable (_ chatId: String, _ invitedUserId: String) async -> Void
-    /// Writes or updates the conference card in a chat.
+    /// Writes or updates the call's card in a chat.
     private let sendLiveCard: @Sendable (CallLive, _ chatId: String) async -> Void
     /// Closes this device's copies of a call's cards once its own call is over.
     private let endLiveCards: @Sendable (_ callId: String) async -> Void
-    /// The chats holding this call's card, written by this device: the
-    /// inviter's, refreshed as people come and go and closed when the call ends.
+    /// The chats holding this call's card as this device knows them: the one
+    /// the call started in, and the chat of everyone this device invited.
     private var liveCardChats: Set<String> = []
     private let dialTimeout: TimeInterval
-    /// conference links beyond the primary peer, by userId
-    private var extras: [String: PeerLink] = [:]
     /// this device dialed the running call; the caller alone publishes its log
     private var isCaller = false
 
@@ -150,14 +148,23 @@ public actor CallManager {
     }
     private var transport: CallMediaTransport?
     private var transportTask: Task<Void, Never>?
+    /// the room of a group call, and the key its frames are encrypted with
+    private var room: CallRoomSession?
+    private var roomTask: Task<Void, Never>?
+    private var roomKey: String?
     private var dialTimeoutTask: Task<Void, Never>?
+    /// a room with nobody else in it ends after this long: whoever tapped a
+    /// card of a call that died with its last participant's app is not left
+    /// standing in an empty room, and that card gets closed
+    private let emptyRoomTimeout: TimeInterval
+    private var emptyRoomTask: Task<Void, Never>?
     /// remote candidates that arrived while the offer was still ringing
     private var heldRemoteCandidates: [CallSignal.IceCandidate] = []
     /// candidates that outran their offer: they ride the ephemeral relay and
     /// the offer rides the journal, so the order between them is not given.
     /// Keyed by callId, claimed when the offer lands, capped small.
     private var earlyCandidates: [String: [CallSignal.IceCandidate]] = [:]
-    /// the incoming offer being rung, kept to answer it
+    /// the incoming offer or room invite being rung, kept to answer it
     private var pendingOffer: CallSignalEvent?
     /// a second caller's offer, waiting behind the live call until the user
     /// refuses it or trades the call for it
@@ -189,17 +196,23 @@ public actor CallManager {
                 sendLog: @escaping LogSender = { _, _ in },
                 mayCall: @escaping CallGate = { _ in true },
                 makeTransport: @escaping TransportFactory,
+                makeRoom: @escaping RoomFactory = { throw RoomError.unavailable },
+                fetchTicket: @escaping TicketFetcher = { _, _ in throw RoomError.unavailable },
                 openChat: @escaping ChatOpener = { _ in nil },
                 sendInviteRow: @Sendable @escaping (String, String) async -> Void = { _, _ in },
                 sendLiveCard: @Sendable @escaping (CallLive, String) async -> Void = { _, _ in },
                 endLiveCards: @Sendable @escaping (String) async -> Void = { _ in },
                 dialTimeout: TimeInterval = CallSignal.offerLifetime,
-                iceRestartDelay: TimeInterval = 3.0) {
+                iceRestartDelay: TimeInterval = 3.0,
+                emptyRoomTimeout: TimeInterval = 20) {
         self.ownUserId = ownUserId
+        self.emptyRoomTimeout = emptyRoomTimeout
         self.sendSignal = sendSignal
         self.sendLog = sendLog
         self.mayCall = mayCall
         self.makeTransport = makeTransport
+        self.makeRoom = makeRoom
+        self.fetchTicket = fetchTicket
         self.openChat = openChat
         self.sendInviteRow = sendInviteRow
         self.sendLiveCard = sendLiveCard
@@ -212,6 +225,8 @@ public actor CallManager {
     /// in from its stream.
     public init(engine: SyncEngine, mayCall: @escaping CallGate = { _ in true },
                 makeTransport: @escaping TransportFactory,
+                makeRoom: @escaping RoomFactory = { throw RoomError.unavailable },
+                fetchTicket: @escaping TicketFetcher = { _, _ in throw RoomError.unavailable },
                 openChat: @escaping ChatOpener = { _ in nil }) {
         self.init(ownUserId: engine.ownUserId,
                   sendSignal: { [weak engine] signal, chatId in
@@ -222,6 +237,8 @@ public actor CallManager {
                   },
                   mayCall: mayCall,
                   makeTransport: makeTransport,
+                  makeRoom: makeRoom,
+                  fetchTicket: fetchTicket,
                   openChat: openChat,
                   sendInviteRow: { [weak engine] chatId, invitedUserId in
                       await engine?.sendCallInviteRow(chatId: chatId, invitedUserId: invitedUserId)
@@ -272,10 +289,41 @@ public actor CallManager {
         }
     }
 
-    /// Answers the ringing call.
+    /// Opens a room for the chat — a group's call — and invites everyone in
+    /// it: this device joins first, the `room` invite rings the members, and
+    /// the card lands in the chat for whoever comes later. Dialing until the
+    /// first person joins; nobody within the dial timeout is «no answer».
+    public func startGroupCall(chatId: String, video: Bool = false) async {
+        guard case .idle = state.phase else { return }
+        let callId = UUID().uuidString
+        let key = CallRoomKey.make()
+        isCaller = true
+        state = CallState(phase: .dialing, chatId: chatId, callId: callId)
+        state.isRoom = true
+        state.localVideo = video
+        roomKey = key
+        do {
+            try await openRoom(callId: callId, chatId: chatId, key: key, video: video)
+            guard state.callId == callId, state.phase == .dialing else { return }
+            await sendSignal(CallSignal(type: .room, callId: callId,
+                                        video: video ? true : nil, key: key), chatId)
+            liveCardChats.insert(chatId)
+            await refreshLiveCards()
+            armDialTimeout(callId: callId)
+        } catch {
+            await finish(reason: .failed, notifyPeer: false)
+        }
+    }
+
+    /// Answers the ringing call: a 1:1 offer with an answer over signaling, a
+    /// room invite by joining the room.
     public func accept() async {
-        guard state.phase == .ringing, let offer = pendingOffer,
-              let sdp = offer.signal.sdp else { return }
+        guard state.phase == .ringing, let offer = pendingOffer else { return }
+        if offer.signal.type == .room {
+            await acceptRoom(offer)
+            return
+        }
+        guard let sdp = offer.signal.sdp else { return }
         state.phase = .connecting
         do {
             let transport = try makeTransport()
@@ -295,186 +343,168 @@ public actor CallManager {
             }
             await sendSignal(CallSignal(type: .answer, callId: offer.signal.callId, sdp: answer),
                              offer.chatId)
-            // an offer into a conference names everyone already in it: the
-            // joiner dials each of the others over their direct chats
-            if let members = offer.signal.members {
-                for member in members where member != ownUserId && member != offer.fromUserId {
-                    await dialLink(to: member, callId: offer.signal.callId)
-                }
-            }
         } catch {
             await finish(reason: .failed, notifyPeer: true)
         }
     }
 
-    /// Pulls a third person into the running call: their leg is its own
-    /// transport over the direct chat, and the chat gets the invited-by row.
-    public func invite(userId: String) async {
-        guard state.phase == .active, let callId = state.callId,
-              userId != ownUserId, userId != state.peerUserId,
-              extras[userId] == nil, extras.count < 2 else { return }
-        var everyone = [ownUserId]
-        if let primary = state.peerUserId { everyone.append(primary) }
-        everyone.append(contentsOf: extras.keys)
-        guard let chatId = await openChat(userId), state.callId == callId else { return }
-        do {
-            let transport = try makeTransport()
-            let link = PeerLink(userId: userId, chatId: chatId, transport: transport)
-            extras[userId] = link
-            state.extraPeers.append(userId)
-            consumeLink(link)
-            let sdp = try await transport.makeOffer()
-            guard state.callId == callId else { return }
-            await sendSignal(CallSignal(type: .offer, callId: callId, sdp: sdp,
-                                        members: everyone), chatId)
-            await sendInviteRow(chatId, userId)
-            // the card goes into the chat the call started in and into the
-            // invited person's chat; from here on this device keeps both current
-            if let primary = state.chatId { liveCardChats.insert(primary) }
-            liveCardChats.insert(chatId)
-            await refreshLiveCards()
-        } catch {
-            await closeLink(userId)
+    /// The room invite is accepted by walking in: a ticket from the server,
+    /// the room joined under the invite's key. The bare answer on the wire
+    /// is for this account's other devices, which stop ringing on it.
+    private func acceptRoom(_ offer: CallSignalEvent) async {
+        guard let key = offer.signal.key else {
+            await finish(reason: .failed, notifyPeer: false)
+            return
         }
-    }
-
-    /// Joins the running conference a live card describes: an offer with its
-    /// callId to the card's writer over this chat — the callId is the ticket,
-    /// so it joins in place without ringing — and a leg to every other member.
-    public func join(_ card: CallLive, chatId: String, hostUserId: String) async {
-        guard case .idle = state.phase, card.isLive, hostUserId != ownUserId else { return }
-        isCaller = false
-        state = CallState(phase: .dialing, chatId: chatId, peerUserId: hostUserId, callId: card.callId)
+        let callId = offer.signal.callId
+        state.phase = .connecting
+        state.localVideo = offer.signal.video == true
+        roomKey = key
+        await sendSignal(CallSignal(type: .answer, callId: callId), offer.chatId)
         do {
-            let transport = try makeTransport()
-            self.transport = transport
-            consume(transport)
-            let sdp = try await transport.makeOffer()
-            guard state.callId == card.callId, state.phase == .dialing else { return }
-            await sendSignal(CallSignal(type: .offer, callId: card.callId, sdp: sdp), chatId)
-            armDialTimeout(callId: card.callId)
-            for member in card.memberIds where member != ownUserId && member != hostUserId {
-                await dialLink(to: member, callId: card.callId)
-            }
+            try await openRoom(callId: callId, chatId: offer.chatId, key: key,
+                               video: offer.signal.video == true)
+            guard state.callId == callId, state.phase == .connecting else { return }
+            state.phase = .active
+            state.connectedAt = Date().timeIntervalSince1970
+            liveCardChats.insert(offer.chatId)
         } catch {
             await finish(reason: .failed, notifyPeer: false)
         }
     }
 
-    /// Everyone in the call as this device sees it, this device first.
-    private var liveMembers: [String] {
-        var members = [ownUserId]
-        if let primary = state.peerUserId { members.append(primary) }
-        members.append(contentsOf: state.extraPeers)
-        return members
+    /// Fetches the ticket and joins the room; the session's events run from
+    /// here on. Throws when the server refuses or the room will not take us.
+    private func openRoom(callId: String, chatId: String, key: String, video: Bool) async throws {
+        do {
+            let ticket = try await fetchTicket(callId, chatId)
+            guard state.callId == callId else { return }
+            let room = try makeRoom()
+            self.room = room
+            consumeRoom(room)
+            try await room.join(url: ticket.url, token: ticket.token, key: key, video: video)
+            await room.setMuted(state.muted)
+        } catch {
+            MsngrLog.call.error("room join failed call=\(callId, privacy: .public) error=\(String(describing: error), privacy: .public)")
+            throw error
+        }
     }
 
-    /// Brings every card this device wrote up to date; `endedAt` closes them
-    /// and forgets the chats, so nothing is written after the call.
-    private func refreshLiveCards(endedAt: Double? = nil) async {
+    /// Pulls another person into the running call. A 1:1 call first moves
+    /// into a room — this device opens one and hands the peer the key over
+    /// their chat, so the peer joins in place — and then the invite goes to
+    /// the new person over their direct chat, with the invited-by row and
+    /// the card. A room has no cap on this side: the SFU's is the ceiling.
+    public func invite(userId: String) async {
+        guard state.phase == .active, let callId = state.callId,
+              userId != ownUserId, userId != state.peerUserId,
+              !state.participants.contains(where: { $0.userId == userId }) else { return }
+        if !state.isRoom {
+            guard await upgradeToRoom() else { return }
+            guard state.callId == callId else { return }
+        }
+        guard let key = roomKey else { return }
+        guard let chatId = await openChat(userId), state.callId == callId else { return }
+        await sendSignal(CallSignal(type: .room, callId: callId, key: key), chatId)
+        await sendInviteRow(chatId, userId)
+        // the card goes into the chat the call started in and into the
+        // invited person's chat
+        if let primary = state.chatId { liveCardChats.insert(primary) }
+        liveCardChats.insert(chatId)
+        await refreshLiveCards()
+    }
+
+    /// The 1:1 call becomes a room call in place: the peer learns the key
+    /// over the chat before the peer-to-peer transport closes, then this
+    /// device joins the room. The moment of silence between the two is the
+    /// price of running one WebRTC audio unit at a time.
+    private func upgradeToRoom() async -> Bool {
+        guard state.phase == .active, let callId = state.callId, let chatId = state.chatId,
+              transport != nil else { return false }
+        let key = CallRoomKey.make()
+        roomKey = key
+        await sendSignal(CallSignal(type: .room, callId: callId,
+                                    video: state.localVideo ? true : nil, key: key), chatId)
+        await closeTransport()
+        state.isRoom = true
+        state.remoteVideo = false
+        state.remoteHold = false
+        do {
+            try await openRoom(callId: callId, chatId: chatId, key: key, video: state.localVideo)
+            guard state.callId == callId else { return false }
+            liveCardChats.insert(chatId)
+            return true
+        } catch {
+            await finish(reason: .failed, notifyPeer: true)
+            return false
+        }
+    }
+
+    /// The peer moved the running call into a room: this side follows —
+    /// the transport closes, the room is joined under the peer's key — and
+    /// the call stands throughout.
+    private func followIntoRoom(_ event: CallSignalEvent) async {
+        guard let key = event.signal.key, let callId = state.callId, let chatId = state.chatId else { return }
+        roomKey = key
+        await closeTransport()
+        state.isRoom = true
+        state.remoteVideo = false
+        state.remoteHold = false
+        do {
+            try await openRoom(callId: callId, chatId: chatId, key: key, video: state.localVideo)
+            guard state.callId == callId else { return }
+            liveCardChats.insert(chatId)
+        } catch {
+            await finish(reason: .failed, notifyPeer: true)
+        }
+    }
+
+    /// Joins the running call a live card describes: a ticket for the chat
+    /// the card is in, the room under the card's key. A card with no key
+    /// belongs to a call this build cannot join.
+    public func join(_ card: CallLive, chatId: String, hostUserId: String) async {
+        guard case .idle = state.phase, card.isLive, let key = card.key else { return }
+        isCaller = false
+        state = CallState(phase: .connecting, chatId: chatId,
+                          peerUserId: hostUserId == ownUserId ? nil : hostUserId, callId: card.callId)
+        state.isRoom = true
+        roomKey = key
+        do {
+            try await openRoom(callId: card.callId, chatId: chatId, key: key, video: false)
+            guard state.callId == card.callId, state.phase == .connecting else { return }
+            state.phase = .active
+            state.connectedAt = Date().timeIntervalSince1970
+            liveCardChats.insert(chatId)
+        } catch {
+            await finish(reason: .failed, notifyPeer: false)
+        }
+    }
+
+    /// Everyone in the call as this device sees it, sorted so every device
+    /// writes the same card.
+    private var liveMembers: [String] {
+        ([ownUserId] + state.participants.map(\.userId)).sorted()
+    }
+
+    /// The one device that keeps the card current while people come and go:
+    /// the lowest userId in the room. Every device sees the same roster, so
+    /// they agree without a word, and the role passes on when the writer
+    /// leaves.
+    private var isCardWriter: Bool { liveMembers.first == ownUserId }
+
+    /// Brings the card in every chat this device knows up to date; `endedAt`
+    /// closes them and forgets the chats, so nothing is written after the call.
+    private func refreshLiveCards(endedAt: Double? = nil, members: [String]? = nil) async {
         guard !liveCardChats.isEmpty, let callId = state.callId else { return }
         let card = CallLive(callId: callId,
                             startedAt: state.connectedAt ?? Date().timeIntervalSince1970,
-                            members: liveMembers.map { CallLive.Member(id: $0, name: "") },
-                            endedAt: endedAt)
+                            members: (members ?? liveMembers).map { CallLive.Member(id: $0, name: "") },
+                            endedAt: endedAt, key: roomKey)
         let chats = liveCardChats
         if endedAt != nil { liveCardChats = [] }
         for chatId in chats {
             await sendLiveCard(card, chatId)
         }
-    }
-
-    /// The joiner's leg toward one existing participant: an offer over their
-    /// direct chat, carrying the callId that proves membership.
-    private func dialLink(to userId: String, callId: String) async {
-        guard extras[userId] == nil, userId != state.peerUserId else { return }
-        guard let chatId = await openChat(userId), state.callId == callId else { return }
-        do {
-            let transport = try makeTransport()
-            let link = PeerLink(userId: userId, chatId: chatId, transport: transport)
-            extras[userId] = link
-            state.extraPeers.append(userId)
-            consumeLink(link)
-            let sdp = try await transport.makeOffer()
-            guard state.callId == callId else { return }
-            await sendSignal(CallSignal(type: .offer, callId: callId, sdp: sdp), chatId)
-        } catch {
-            await closeLink(userId)
-        }
-    }
-
-    /// An offer for the running call from someone new: the conference leg
-    /// reaching this side. The callId is the ticket, so it joins in place.
-    private func acceptLink(_ event: CallSignalEvent, sdp: String, callId: String) async {
-        do {
-            let transport = try makeTransport()
-            let link = PeerLink(userId: event.fromUserId, chatId: event.chatId,
-                                transport: transport)
-            extras[event.fromUserId] = link
-            state.extraPeers.append(event.fromUserId)
-            consumeLink(link)
-            let answer = try await transport.answerOffer(sdp)
-            guard state.callId == callId else { return }
-            if let early = earlyCandidates.removeValue(forKey: callId) {
-                await transport.add(candidates: early)
-            }
-            await sendSignal(CallSignal(type: .answer, callId: callId, sdp: answer), event.chatId)
-            await refreshLiveCards()
-        } catch {
-            await closeLink(event.fromUserId)
-        }
-    }
-
-    private func consumeLink(_ link: PeerLink) {
-        let events = link.transport.events()
-        let userId = link.userId
-        link.task = Task { [weak self] in
-            for await event in events {
-                await self?.handleLinkTransport(event, userId: userId)
-            }
-        }
-    }
-
-    private func handleLinkTransport(_ event: CallTransportEvent, userId: String) async {
-        guard let link = extras[userId] else { return }
-        switch event {
-        case .candidates(let list):
-            link.outgoing.append(contentsOf: list)
-            scheduleLinkFlush(link)
-        case .failed:
-            // one leg failing drops that participant, not the call
-            await closeLink(userId)
-        case .connected, .disconnected, .remoteVideo:
-            break
-        }
-    }
-
-    private func scheduleLinkFlush(_ link: PeerLink) {
-        guard link.flushTask == nil else { return }
-        let userId = link.userId
-        link.flushTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 200_000_000)
-            await self?.flushLinkCandidates(userId: userId)
-        }
-    }
-
-    private func flushLinkCandidates(userId: String) async {
-        guard let link = extras[userId], let callId = state.callId else { return }
-        link.flushTask = nil
-        guard !link.outgoing.isEmpty else { return }
-        let batch = link.outgoing
-        link.outgoing = []
-        await sendSignal(CallSignal(type: .ice, callId: callId, candidates: batch), link.chatId)
-    }
-
-    /// Closes one conference leg and forgets the participant.
-    private func closeLink(_ userId: String) async {
-        guard let link = extras.removeValue(forKey: userId) else { return }
-        link.task?.cancel()
-        link.flushTask?.cancel()
-        await link.transport.close()
-        state.extraPeers.removeAll { $0 == userId }
-        await refreshLiveCards()
     }
 
     /// Refuses the ringing call.
@@ -484,14 +514,14 @@ public actor CallManager {
         await teardown(showing: .ended(.decline))
     }
 
-    /// Ends the call from this side: cancels a dial, hangs up a live call.
-    /// Every leg of a conference is told, over its own chat.
+    /// Ends the call from this side: cancels a dial, hangs up a live call,
+    /// leaves a room. A room's opener who is still alone in it cancels the
+    /// ringing on everyone's phones; a room with others in it lives on.
     public func hangUp() async {
         guard let chatId = state.chatId, let callId = state.callId else { return }
         let reason: CallSignal.EndReason = state.phase == .dialing ? .cancel : .hangup
-        await sendSignal(CallSignal(type: .end, callId: callId, reason: reason), chatId)
-        for link in extras.values {
-            await sendSignal(CallSignal(type: .end, callId: callId, reason: reason), link.chatId)
+        if !state.isRoom || state.phase == .dialing {
+            await sendSignal(CallSignal(type: .end, callId: callId, reason: reason), chatId)
         }
         await teardown(showing: .ended(reason))
     }
@@ -510,11 +540,8 @@ public actor CallManager {
     /// Ends the live call and answers the one waiting behind it.
     public func acceptWaiting() async {
         guard waitingOffer != nil else { return }
-        if let chatId = state.chatId, let callId = state.callId {
+        if let chatId = state.chatId, let callId = state.callId, !state.isRoom {
             await sendSignal(CallSignal(type: .end, callId: callId, reason: .hangup), chatId)
-            for link in extras.values {
-                await sendSignal(CallSignal(type: .end, callId: callId, reason: .hangup), link.chatId)
-            }
         }
         // teardown promotes the waiter to ringing on its own
         await teardown(showing: .ended(.hangup))
@@ -524,34 +551,30 @@ public actor CallManager {
     /// Puts the live call aside and answers the one waiting behind it: the
     /// held call's transport stays open and silent until the user switches
     /// back or one of the calls ends. With the hold slot already taken, or
-    /// on a conference, the trade is the only move left.
+    /// on a room call, the trade is the only move left.
     public func holdAndAcceptWaiting() async {
-        guard let waiting = waitingOffer, heldCall == nil, extras.isEmpty,
+        guard let waiting = waitingOffer, heldCall == nil, !state.isRoom,
               state.phase == .active, let transport,
               let chatId = state.chatId, let callId = state.callId,
-              let peerUserId = state.peerUserId else {
-            await acceptWaiting()
-            return
-        }
+              let peerUserId = state.peerUserId else { return }
         waitingOffer = nil
         state.waitingCallerId = nil
         await parkCurrent(transport: transport, chatId: chatId, callId: callId,
                           peerUserId: peerUserId)
+        // the waiter rings in place of the parked call and is answered at once
         pendingOffer = waiting
         heldRemoteCandidates = earlyCandidates.removeValue(forKey: waiting.signal.callId) ?? []
         isCaller = false
-        let heldPeer = state.heldPeerId
         state = CallState(phase: .ringing, chatId: waiting.chatId,
                           peerUserId: waiting.fromUserId, callId: waiting.signal.callId)
         state.remoteVideo = waiting.signal.video == true
-        state.heldPeerId = heldPeer
+        state.heldPeerId = peerUserId
         await accept()
     }
 
-    /// Swaps the live call and the held one: the live one goes silent on its
-    /// open transport, the held one speaks again.
+    /// Swaps the live call and the held one.
     public func switchToHeld() async {
-        guard let held = heldCall, state.phase == .active, extras.isEmpty,
+        guard let held = heldCall, state.phase == .active, !state.isRoom,
               let transport, let chatId = state.chatId, let callId = state.callId,
               let peerUserId = state.peerUserId else { return }
         heldCall = nil
@@ -599,6 +622,8 @@ public actor CallManager {
         state.localVideo = held.localVideo
         state.remoteVideo = held.remoteVideo
         state.remoteHold = held.remoteHold
+        state.isRoom = false
+        state.participants = []
         state.phase = .active
         await sendSignal(CallSignal(type: .hold, callId: held.callId, held: false), held.chatId)
     }
@@ -639,20 +664,22 @@ public actor CallManager {
     public func setMuted(_ muted: Bool) async {
         state.muted = muted
         await transport?.setMuted(muted)
-        for link in extras.values {
-            await link.transport.setMuted(muted)
-        }
+        await room?.setMuted(muted)
     }
 
-    /// Turns the local camera on or off. The first time a video track joins
-    /// the connection the SDP changes, so a renegotiation offer for the same
-    /// call follows; the peer answers it on the live transport.
+    /// Turns the local camera on or off. On a 1:1 call the first video track
+    /// changes the SDP, so a renegotiation offer for the same call follows;
+    /// the peer answers it on the live transport. In a room the SFU takes the
+    /// new track on its own.
     public func setVideo(_ on: Bool) async {
-        // a conference is voice-only for now: renegotiating video across the
-        // mesh is not built, and half-applied video would be worse than none
-        guard extras.isEmpty else { return }
-        guard state.phase == .active || state.phase == .connecting,
-              let transport, let chatId = state.chatId, let callId = state.callId else { return }
+        guard state.phase == .active || state.phase == .connecting, let callId = state.callId else { return }
+        if let room {
+            await room.setVideo(enabled: on)
+            guard state.callId == callId else { return }
+            state.localVideo = on
+            return
+        }
+        guard let transport, let chatId = state.chatId else { return }
         await transport.setVideo(enabled: on)
         state.localVideo = on
         if let sdp = try? await transport.makeOffer(), state.callId == callId {
@@ -660,9 +687,12 @@ public actor CallManager {
         }
     }
 
-    /// The transport this call runs on, for the UI to reach media surfaces
+    /// The transport a 1:1 call runs on, for the UI to reach media surfaces
     /// (video renderers) the core does not model.
     public func activeTransport() -> CallMediaTransport? { transport }
+
+    /// The room a group call runs in, for the UI to reach its video tracks.
+    public func activeRoom() -> CallRoomSession? { room }
 
     /// The UI dismisses the ended-call screen.
     public func reset() {
@@ -685,15 +715,20 @@ public actor CallManager {
         switch event.signal.type {
         case .offer:
             await handleOffer(event)
-        case .answer:
-            guard event.signal.callId == state.callId,
-                  let sdp = event.signal.sdp else { return }
-            // a conference leg's answer lands on that leg's transport
-            if let link = extras[event.fromUserId] {
-                try? await link.transport.acceptAnswer(sdp)
+        case .room:
+            // the peer of the running 1:1 call moved it into a room
+            if event.signal.callId == state.callId, !state.isRoom, transport != nil,
+               event.fromUserId == state.peerUserId,
+               state.phase == .active || state.phase == .connecting {
+                await followIntoRoom(event)
                 return
             }
-            guard let transport else { return }
+            // a repeat of the invite into the room this device is in
+            if event.signal.callId == state.callId { return }
+            await handleOffer(event)
+        case .answer:
+            guard event.signal.callId == state.callId,
+                  let sdp = event.signal.sdp, let transport else { return }
             switch state.phase {
             case .dialing:
                 dialTimeoutTask?.cancel()
@@ -723,15 +758,10 @@ public actor CallManager {
                 earlyCandidates[event.signal.callId, default: []].append(contentsOf: candidates)
                 return
             }
-            if let link = extras[event.fromUserId] {
-                await link.transport.add(candidates: candidates)
-            } else if event.fromUserId == state.peerUserId, let transport {
+            if event.fromUserId == state.peerUserId, let transport {
                 await transport.add(candidates: candidates)
             } else if event.fromUserId == state.peerUserId {
                 heldRemoteCandidates.append(contentsOf: candidates)
-            } else {
-                // a conference leg whose offer has not landed here yet
-                earlyCandidates[event.signal.callId, default: []].append(contentsOf: candidates)
             }
         case .hold:
             // the peer of the live call, or of the parked one, went on hold
@@ -759,26 +789,12 @@ public actor CallManager {
                 return
             }
             guard event.signal.callId == state.callId else { return }
-            // a conference participant leaving takes their leg, not the call
-            if extras[event.fromUserId] != nil {
-                await closeLink(event.fromUserId)
-                return
-            }
+            // in a room the roster is the SFU's word: a decline or a busy
+            // from someone invited changes nothing here, and whoever leaves
+            // is gone from the participants. Only the invite being cancelled
+            // while this device rings still means something
+            if state.isRoom, state.phase != .ringing { return }
             guard event.fromUserId == state.peerUserId else { return }
-            if let promoted = state.extraPeers.first, let link = extras[promoted] {
-                // the primary peer left a conference: the oldest extra leg
-                // becomes the call, and the screen keeps standing on it
-                extras.removeValue(forKey: promoted)
-                transportTask?.cancel()
-                await transport?.close()
-                transport = link.transport
-                link.task?.cancel()
-                consume(link.transport)
-                state.peerUserId = promoted
-                state.chatId = link.chatId
-                state.extraPeers.removeAll { $0 == promoted }
-                return
-            }
             await teardown(showing: .ended(event.signal.reason ?? .hangup))
         }
     }
@@ -787,9 +803,10 @@ public actor CallManager {
     /// takes a waiter, one at a time, and the privacy gate still applies —
     /// re-checked after its await in case the call moved meanwhile.
     private func holdAsWaiting(_ event: CallSignalEvent) async -> Bool {
-        guard state.phase == .active, waitingOffer == nil, event.signal.sdp != nil,
+        guard state.phase == .active, waitingOffer == nil,
+              event.signal.sdp != nil || event.signal.key != nil,
               event.fromUserId != state.peerUserId,
-              extras[event.fromUserId] == nil else { return false }
+              !state.participants.contains(where: { $0.userId == event.fromUserId }) else { return false }
         guard await mayCall(event.fromUserId) else { return false }
         guard state.phase == .active, waitingOffer == nil,
               event.signal.callId != state.callId else { return false }
@@ -798,10 +815,11 @@ public actor CallManager {
         return true
     }
 
+    /// An offer or a room invite asking this device to ring.
     private func handleOffer(_ event: CallSignalEvent) async {
         // a fresh offer for the running call from its peer is the caller
         // restarting ICE or renegotiating video: answered in place
-        if event.signal.callId == state.callId,
+        if event.signal.type == .offer, event.signal.callId == state.callId,
            event.fromUserId == state.peerUserId,
            state.phase == .active || state.phase == .connecting,
            let sdp = event.signal.sdp, let transport,
@@ -812,23 +830,6 @@ public actor CallManager {
             // the renegotiation says whether the peer's camera is on: the
             // track going quiet on its own would only freeze the last frame
             if let video = event.signal.video { state.remoteVideo = video }
-            return
-        }
-        // the same for an extra leg of a conference
-        if event.signal.callId == state.callId, let link = extras[event.fromUserId],
-           let sdp = event.signal.sdp, let callId = state.callId {
-            if let answer = try? await link.transport.answerOffer(sdp) {
-                await sendSignal(CallSignal(type: .answer, callId: callId, sdp: answer), link.chatId)
-            }
-            return
-        }
-        // a same-callId offer from someone new is a conference leg reaching
-        // this side: the callId is the ticket, so it joins without ringing
-        if event.signal.callId == state.callId,
-           state.phase == .active || state.phase == .connecting,
-           let sdp = event.signal.sdp, let callId = state.callId,
-           extras.count < 2 {
-            await acceptLink(event, sdp: sdp, callId: callId)
             return
         }
         // glare: both sides dialed the same chat. The smaller call id survives
@@ -846,6 +847,7 @@ public actor CallManager {
             isCaller = false
             state = CallState(phase: .ringing, chatId: event.chatId,
                               peerUserId: event.fromUserId, callId: event.signal.callId)
+            state.isRoom = event.signal.type == .room
             await accept()
             return
         }
@@ -882,6 +884,7 @@ public actor CallManager {
         isCaller = false
         state = CallState(phase: .ringing, chatId: event.chatId,
                           peerUserId: event.fromUserId, callId: event.signal.callId)
+        state.isRoom = event.signal.type == .room
         // the ringing screen says what kind of call is asking
         state.remoteVideo = event.signal.video == true
     }
@@ -919,6 +922,70 @@ public actor CallManager {
             await finish(reason: .failed, notifyPeer: true)
         case .remoteVideo(let on):
             state.remoteVideo = on
+        }
+    }
+
+    /// Closes the 1:1 transport and everything that served it, leaving the
+    /// call itself standing: the step before the room takes the media over.
+    private func closeTransport() async {
+        transportTask?.cancel()
+        transportTask = nil
+        candidateFlushTask?.cancel()
+        candidateFlushTask = nil
+        iceRestartTask?.cancel()
+        iceRestartTask = nil
+        outgoingCandidates = []
+        heldRemoteCandidates = []
+        if let transport {
+            self.transport = nil
+            await transport.close()
+        }
+    }
+
+    // MARK: - Room events
+
+    private func consumeRoom(_ room: CallRoomSession) {
+        let events = room.events()
+        roomTask = Task { [weak self] in
+            for await event in events {
+                await self?.handleRoom(event)
+            }
+        }
+    }
+
+    private func handleRoom(_ event: CallRoomEvent) async {
+        switch event {
+        case .connected:
+            state.reconnecting = false
+        case .reconnecting:
+            state.reconnecting = true
+        case .reconnected:
+            state.reconnecting = false
+        case .participants(let list):
+            let sorted = list.sorted { $0.userId < $1.userId }
+            let rosterChanged = sorted.map(\.userId) != state.participants.map(\.userId)
+            state.participants = sorted
+            // the opener waits as «calling» until the first person walks in
+            if state.phase == .dialing, !sorted.isEmpty {
+                dialTimeoutTask?.cancel()
+                dialTimeoutTask = nil
+                state.phase = .active
+                state.connectedAt = Date().timeIntervalSince1970
+            }
+            if rosterChanged, state.phase == .active, isCardWriter {
+                await refreshLiveCards()
+            }
+            // the joiner's first roster arrives while the join is still
+            // completing, so connecting counts as in
+            if sorted.isEmpty, state.phase == .active || state.phase == .connecting {
+                armEmptyRoomTimeout()
+            } else {
+                emptyRoomTask?.cancel()
+                emptyRoomTask = nil
+            }
+        case .disconnected(let failed):
+            MsngrLog.call.error("room disconnected call=\(self.state.callId ?? "-", privacy: .public) failed=\(failed, privacy: .public)")
+            await finish(reason: failed ? .failed : .hangup, notifyPeer: false)
         }
     }
 
@@ -983,8 +1050,26 @@ public actor CallManager {
         await finish(reason: .timeout, notifyPeer: true)
     }
 
+    private func armEmptyRoomTimeout() {
+        guard emptyRoomTask == nil else { return }
+        let callId = state.callId
+        let timeout = emptyRoomTimeout
+        emptyRoomTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await self?.emptyRoomTimedOut(callId: callId)
+        }
+    }
+
+    private func emptyRoomTimedOut(callId: String?) async {
+        emptyRoomTask = nil
+        guard state.isRoom, state.phase == .active, state.callId == callId,
+              state.participants.isEmpty else { return }
+        await finish(reason: .hangup, notifyPeer: false)
+    }
+
     private func finish(reason: CallSignal.EndReason, notifyPeer: Bool) async {
-        if notifyPeer, let chatId = state.chatId, let callId = state.callId {
+        if notifyPeer, let chatId = state.chatId, let callId = state.callId, !state.isRoom {
             await sendSignal(CallSignal(type: .end, callId: callId, reason: reason), chatId)
         }
         await teardown(showing: .ended(reason))
@@ -992,18 +1077,17 @@ public actor CallManager {
 
     private func teardown(showing phase: CallPhase) async {
         if case .ended(let reason) = phase {
+            MsngrLog.call.info("call ended call=\(self.state.callId ?? "-", privacy: .public) room=\(self.state.isRoom, privacy: .public) from=\(String(describing: self.state.phase), privacy: .public) reason=\(reason.rawValue, privacy: .public)")
             await publishLog(reason: reason)
-            await refreshLiveCards(endedAt: Date().timeIntervalSince1970)
-            // a card someone else wrote closes here on its own: their edit
-            // may never come if their app died with the call
-            if state.connectedAt != nil, let callId = state.callId { await endLiveCards(callId) }
+            await closeCardsOnLeaving()
         }
         var next = state
         next.phase = phase
         next.muted = false
         next.localVideo = false
         next.remoteVideo = false
-        next.extraPeers = []
+        next.participants = []
+        next.reconnecting = false
         // claimed before teardown, which clears the early buffer whole
         let waitingEarly = waitingOffer.flatMap { earlyCandidates[$0.signal.callId] } ?? []
         await teardown(showing: next)
@@ -1015,6 +1099,7 @@ public actor CallManager {
             isCaller = false
             state = CallState(phase: .ringing, chatId: waiting.chatId,
                               peerUserId: waiting.fromUserId, callId: waiting.signal.callId)
+            state.isRoom = waiting.signal.type == .room
             state.remoteVideo = waiting.signal.video == true
             state.heldPeerId = heldCall?.peerUserId
             return
@@ -1028,10 +1113,30 @@ public actor CallManager {
         }
     }
 
-    /// The caller alone writes the call into the feed, once the outcome is
-    /// known: how it ended, and for a completed call how long it ran.
+    /// What this device's leaving does to the call's cards. A 1:1 call, or a
+    /// room this device leaves empty, is over: the cards close everywhere,
+    /// this device's copies included, whether or not anyone else's edit ever
+    /// comes. A room with people still in it lives on: the card writer hands
+    /// over the roster without itself, and nothing closes.
+    private func closeCardsOnLeaving() async {
+        guard let callId = state.callId else { return }
+        let othersRemain = state.isRoom && !state.participants.isEmpty
+        if othersRemain {
+            if isCardWriter {
+                await refreshLiveCards(members: state.participants.map(\.userId).sorted())
+            }
+            liveCardChats = []
+            return
+        }
+        await refreshLiveCards(endedAt: Date().timeIntervalSince1970)
+        if state.connectedAt != nil { await endLiveCards(callId) }
+    }
+
+    /// The caller alone writes a 1:1 call into the feed, once the outcome is
+    /// known: how it ended, and for a completed call how long it ran. A room
+    /// call leaves its card instead: nobody there is the caller.
     private func publishLog(reason: CallSignal.EndReason) async {
-        guard isCaller, let chatId = state.chatId, let callId = state.callId else { return }
+        guard isCaller, !state.isRoom, let chatId = state.chatId, let callId = state.callId else { return }
         let outcome: CallLog.Outcome
         var duration: Double?
         if let connectedAt = state.connectedAt {
@@ -1057,12 +1162,19 @@ public actor CallManager {
         iceRestartTask = nil
         transportTask?.cancel()
         transportTask = nil
+        roomTask?.cancel()
+        roomTask = nil
+        emptyRoomTask?.cancel()
+        emptyRoomTask = nil
         outgoingCandidates = []
         heldRemoteCandidates = []
         earlyCandidates = [:]
         pendingOffer = nil
-        for userId in Array(extras.keys) {
-            await closeLink(userId)
+        roomKey = nil
+        liveCardChats = []
+        if let room {
+            self.room = nil
+            await room.leave()
         }
         if let transport {
             self.transport = nil

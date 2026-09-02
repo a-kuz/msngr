@@ -23,6 +23,11 @@ public struct CallSignal: Codable, Equatable, Sendable {
         /// the sender put this call on hold (`held` true) or took it back
         /// (`held` false); media keeps flowing, muted both ways on their side
         case hold
+        /// the invite into a group call's room on the SFU: carries the frame
+        /// `key`. Rings like an offer; accepting it joins the room instead of
+        /// answering over signaling. Sent for the running call to the 1:1 peer,
+        /// it moves that call into the room in place
+        case room
     }
 
     /// Why a call ended. `hangup` after it was up, `cancel` by the caller
@@ -50,6 +55,9 @@ public struct CallSignal: Codable, Equatable, Sendable {
     public var members: [String]?
     /// hold: whether the sender is holding the call now
     public var held: Bool?
+    /// room: the frame key of the room, base64. Only a participant has it,
+    /// and the SFU never does
+    public var key: String?
 
     public struct IceCandidate: Codable, Equatable, Sendable {
         public var sdpMid: String?
@@ -65,7 +73,8 @@ public struct CallSignal: Codable, Equatable, Sendable {
 
     public init(type: SignalType, callId: String, sdp: String? = nil,
                 candidates: [IceCandidate]? = nil, reason: EndReason? = nil,
-                video: Bool? = nil, members: [String]? = nil, held: Bool? = nil) {
+                video: Bool? = nil, members: [String]? = nil, held: Bool? = nil,
+                key: String? = nil) {
         self.type = type
         self.callId = callId
         self.sdp = sdp
@@ -74,7 +83,11 @@ public struct CallSignal: Codable, Equatable, Sendable {
         self.video = video
         self.members = members
         self.held = held
+        self.key = key
     }
+
+    /// Whether this signal asks a device to ring: an offer or a room invite.
+    public var rings: Bool { type == .offer || type == .room }
 
     /// The `ContentPayload` kind a call signal travels under.
     public static let kind = "call"
@@ -84,10 +97,10 @@ public struct CallSignal: Codable, Equatable, Sendable {
     public static let offerLifetime: TimeInterval = 60
 
     /// Whether a signal sent at `sentAt` is still worth delivering `now`.
-    /// Only an offer rings, so only an offer has a freshness bar; the other
-    /// types are cheap to deliver and are judged against the call's state.
+    /// Only a ringing signal has a freshness bar; the other types are cheap
+    /// to deliver and are judged against the call's state.
     public func isFresh(sentAt: Double, now: Double = Date().timeIntervalSince1970) -> Bool {
-        guard type == .offer else { return true }
+        guard rings else { return true }
         return now - sentAt < Self.offerLifetime
     }
 
@@ -169,12 +182,17 @@ public struct CallLive: Codable, Equatable, Sendable {
     public var startedAt: Double
     public var members: [Member]
     public var endedAt: Double?
+    /// the frame key of the room, so a reader of the card can join it; the
+    /// card is E2EE content of the chat, which is the only place it lives
+    public var key: String?
 
-    public init(callId: String, startedAt: Double, members: [Member], endedAt: Double? = nil) {
+    public init(callId: String, startedAt: Double, members: [Member], endedAt: Double? = nil,
+                key: String? = nil) {
         self.callId = callId
         self.startedAt = startedAt
         self.members = members
         self.endedAt = endedAt
+        self.key = key
     }
 
     public var isLive: Bool { endedAt == nil }

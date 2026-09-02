@@ -1,9 +1,9 @@
 import AVFoundation
 import Foundation
 import MsngrCore
-import WebRTC
+import LiveKitWebRTC
 
-/// The WebRTC half of a call: one peer connection with one audio track,
+/// The WebRTC half of a 1:1 call: one peer connection with one audio track,
 /// driven by `CallManager` through the `CallMediaTransport` seam.
 ///
 /// Media is end-to-end encrypted by DTLS-SRTP on the connection itself; the
@@ -15,25 +15,25 @@ public final class WebRTCTransport: NSObject, CallMediaTransport, @unchecked Sen
         case sdpMissing
     }
 
-    private static let factory: RTCPeerConnectionFactory = {
-        RTCInitializeSSL()
-        return RTCPeerConnectionFactory(
-            encoderFactory: RTCDefaultVideoEncoderFactory(),
-            decoderFactory: RTCDefaultVideoDecoderFactory())
+    private static let factory: LKRTCPeerConnectionFactory = {
+        LKRTCInitializeSSL()
+        return LKRTCPeerConnectionFactory(
+            encoderFactory: LKRTCDefaultVideoEncoderFactory(),
+            decoderFactory: LKRTCDefaultVideoDecoderFactory())
     }()
 
-    private let pc: RTCPeerConnection
-    private let audioTrack: RTCAudioTrack
+    private let pc: LKRTCPeerConnection
+    private let audioTrack: LKRTCAudioTrack
     private let eventStream: AsyncStream<CallTransportEvent>
     private let continuation: AsyncStream<CallTransportEvent>.Continuation
 
     // Video is created lazily: an audio call never touches the camera.
-    private var videoSource: RTCVideoSource?
-    private var videoTrack: RTCVideoTrack?
-    private var capturer: RTCVideoCapturer?
-    private var remoteVideoTrack: RTCVideoTrack?
-    private var localRenderer: RTCVideoRenderer?
-    private var remoteRenderer: RTCVideoRenderer?
+    private var videoSource: LKRTCVideoSource?
+    private var videoTrack: LKRTCVideoTrack?
+    private var capturer: LKRTCVideoCapturer?
+    private var remoteVideoTrack: LKRTCVideoTrack?
+    private var localRenderer: LKRTCVideoRenderer?
+    private var remoteRenderer: LKRTCVideoRenderer?
     private var cameraPosition: AVCaptureDevice.Position = .front
 
     /// Servers for NAT traversal: plain STUN for address discovery, and our
@@ -59,23 +59,23 @@ public final class WebRTCTransport: NSObject, CallMediaTransport, @unchecked Sen
     ]
 
     public init(iceServers: [IceServer] = WebRTCTransport.defaultIceServers) throws {
-        let config = RTCConfiguration()
+        let config = LKRTCConfiguration()
         config.iceServers = iceServers.map { server in
             if let user = server.username, let pass = server.credential {
-                return RTCIceServer(urlStrings: server.urls, username: user, credential: pass)
+                return LKRTCIceServer(urlStrings: server.urls, username: user, credential: pass)
             }
-            return RTCIceServer(urlStrings: server.urls)
+            return LKRTCIceServer(urlStrings: server.urls)
         }
         config.sdpSemantics = .unifiedPlan
         config.continualGatheringPolicy = .gatherContinually
-        let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
+        let constraints = LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
         guard let pc = Self.factory.peerConnection(with: config, constraints: constraints,
                                                    delegate: nil) else {
             throw TransportError.peerConnectionFailed
         }
         self.pc = pc
         let source = Self.factory.audioSource(
-            with: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil))
+            with: LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil))
         audioTrack = Self.factory.audioTrack(with: source, trackId: "audio0")
         var cont: AsyncStream<CallTransportEvent>.Continuation!
         eventStream = AsyncStream { cont = $0 }
@@ -88,8 +88,8 @@ public final class WebRTCTransport: NSObject, CallMediaTransport, @unchecked Sen
     public func events() -> AsyncStream<CallTransportEvent> { eventStream }
 
     public func makeOffer() async throws -> String {
-        let constraints = RTCMediaConstraints(
-            mandatoryConstraints: [kRTCMediaConstraintsOfferToReceiveAudio: kRTCMediaConstraintsValueTrue],
+        let constraints = LKRTCMediaConstraints(
+            mandatoryConstraints: [kLKRTCMediaConstraintsOfferToReceiveAudio: kLKRTCMediaConstraintsValueTrue],
             optionalConstraints: nil)
         let offer = try await pc.offer(for: constraints)
         try await pc.setLocalDescription(offer)
@@ -97,9 +97,9 @@ public final class WebRTCTransport: NSObject, CallMediaTransport, @unchecked Sen
     }
 
     public func restartOffer() async throws -> String {
-        let constraints = RTCMediaConstraints(
-            mandatoryConstraints: [kRTCMediaConstraintsOfferToReceiveAudio: kRTCMediaConstraintsValueTrue,
-                                   kRTCMediaConstraintsIceRestart: kRTCMediaConstraintsValueTrue],
+        let constraints = LKRTCMediaConstraints(
+            mandatoryConstraints: [kLKRTCMediaConstraintsOfferToReceiveAudio: kLKRTCMediaConstraintsValueTrue,
+                                   kLKRTCMediaConstraintsIceRestart: kLKRTCMediaConstraintsValueTrue],
             optionalConstraints: nil)
         let offer = try await pc.offer(for: constraints)
         try await pc.setLocalDescription(offer)
@@ -107,9 +107,9 @@ public final class WebRTCTransport: NSObject, CallMediaTransport, @unchecked Sen
     }
 
     public func answerOffer(_ sdp: String) async throws -> String {
-        try await pc.setRemoteDescription(RTCSessionDescription(type: .offer, sdp: sdp))
-        let constraints = RTCMediaConstraints(
-            mandatoryConstraints: [kRTCMediaConstraintsOfferToReceiveAudio: kRTCMediaConstraintsValueTrue],
+        try await pc.setRemoteDescription(LKRTCSessionDescription(type: .offer, sdp: sdp))
+        let constraints = LKRTCMediaConstraints(
+            mandatoryConstraints: [kLKRTCMediaConstraintsOfferToReceiveAudio: kLKRTCMediaConstraintsValueTrue],
             optionalConstraints: nil)
         let answer = try await pc.answer(for: constraints)
         try await pc.setLocalDescription(answer)
@@ -117,14 +117,14 @@ public final class WebRTCTransport: NSObject, CallMediaTransport, @unchecked Sen
     }
 
     public func acceptAnswer(_ sdp: String) async throws {
-        try await pc.setRemoteDescription(RTCSessionDescription(type: .answer, sdp: sdp))
+        try await pc.setRemoteDescription(LKRTCSessionDescription(type: .answer, sdp: sdp))
     }
 
     public func add(candidates: [CallSignal.IceCandidate]) async {
         for c in candidates {
-            let candidate = RTCIceCandidate(sdp: c.candidate,
-                                            sdpMLineIndex: c.sdpMLineIndex,
-                                            sdpMid: c.sdpMid)
+            let candidate = LKRTCIceCandidate(sdp: c.candidate,
+                                              sdpMLineIndex: c.sdpMLineIndex,
+                                              sdpMid: c.sdpMid)
             try? await pc.add(candidate)
         }
     }
@@ -139,7 +139,7 @@ public final class WebRTCTransport: NSObject, CallMediaTransport, @unchecked Sen
     public func setHeld(_ held: Bool) async {
         audioTrack.isEnabled = !held
         for receiver in pc.receivers {
-            (receiver.track as? RTCAudioTrack)?.isEnabled = !held
+            (receiver.track as? LKRTCAudioTrack)?.isEnabled = !held
         }
     }
 
@@ -165,7 +165,7 @@ public final class WebRTCTransport: NSObject, CallMediaTransport, @unchecked Sen
     /// on the other one. The synthetic stand-in has nothing to flip.
     public func switchCamera() {
         cameraPosition = cameraPosition == .front ? .back : .front
-        guard capturer is RTCCameraVideoCapturer else { return }
+        guard capturer is LKRTCCameraVideoCapturer else { return }
         stopCapture()
         startCapture()
     }
@@ -178,13 +178,13 @@ public final class WebRTCTransport: NSObject, CallMediaTransport, @unchecked Sen
         // the simulator lists a capture device but it never delivers a frame
         let device: AVCaptureDevice? = nil
         #else
-        let device = RTCCameraVideoCapturer.captureDevices().first(where: { $0.position == cameraPosition })
-            ?? RTCCameraVideoCapturer.captureDevices().first
+        let device = LKRTCCameraVideoCapturer.captureDevices().first(where: { $0.position == cameraPosition })
+            ?? LKRTCCameraVideoCapturer.captureDevices().first
         #endif
         if let device {
-            let camera = RTCCameraVideoCapturer(delegate: videoSource)
+            let camera = LKRTCCameraVideoCapturer(delegate: videoSource)
             capturer = camera
-            let formats = RTCCameraVideoCapturer.supportedFormats(for: device)
+            let formats = LKRTCCameraVideoCapturer.supportedFormats(for: device)
             // the smallest format at or above 480p keeps the encoder cheap
             let format = formats.min(by: {
                 abs(CMVideoFormatDescriptionGetDimensions($0.formatDescription).height - 640)
@@ -200,19 +200,19 @@ public final class WebRTCTransport: NSObject, CallMediaTransport, @unchecked Sen
     }
 
     private func stopCapture() {
-        (capturer as? RTCCameraVideoCapturer)?.stopCapture()
+        (capturer as? LKRTCCameraVideoCapturer)?.stopCapture()
         (capturer as? SyntheticVideoCapturer)?.stop()
         capturer = nil
     }
 
     // MARK: - Renderers (the UI's view onto the tracks)
 
-    public func attachLocal(_ renderer: RTCVideoRenderer) {
+    public func attachLocal(_ renderer: LKRTCVideoRenderer) {
         localRenderer = renderer
         videoTrack?.add(renderer)
     }
 
-    public func attachRemote(_ renderer: RTCVideoRenderer) {
+    public func attachRemote(_ renderer: LKRTCVideoRenderer) {
         remoteRenderer = renderer
         remoteVideoTrack?.add(renderer)
     }
@@ -224,17 +224,17 @@ public final class WebRTCTransport: NSObject, CallMediaTransport, @unchecked Sen
     }
 }
 
-extension WebRTCTransport: RTCPeerConnectionDelegate {
-    public func peerConnection(_ peerConnection: RTCPeerConnection,
-                               didGenerate candidate: RTCIceCandidate) {
+extension WebRTCTransport: LKRTCPeerConnectionDelegate {
+    public func peerConnection(_ peerConnection: LKRTCPeerConnection,
+                               didGenerate candidate: LKRTCIceCandidate) {
         continuation.yield(.candidates([CallSignal.IceCandidate(
             sdpMid: candidate.sdpMid,
             sdpMLineIndex: candidate.sdpMLineIndex,
             candidate: candidate.sdp)]))
     }
 
-    public func peerConnection(_ peerConnection: RTCPeerConnection,
-                               didChange newState: RTCIceConnectionState) {
+    public func peerConnection(_ peerConnection: LKRTCPeerConnection,
+                               didChange newState: LKRTCIceConnectionState) {
         switch newState {
         case .connected, .completed:
             continuation.yield(.connected)
@@ -247,22 +247,22 @@ extension WebRTCTransport: RTCPeerConnectionDelegate {
         }
     }
 
-    public func peerConnection(_ peerConnection: RTCPeerConnection,
-                               didChange stateChanged: RTCSignalingState) {}
-    public func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
-    public func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
-    public func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
-    public func peerConnection(_ peerConnection: RTCPeerConnection,
-                               didChange newState: RTCIceGatheringState) {}
-    public func peerConnection(_ peerConnection: RTCPeerConnection,
-                               didRemove candidates: [RTCIceCandidate]) {}
-    public func peerConnection(_ peerConnection: RTCPeerConnection,
-                               didOpen dataChannel: RTCDataChannel) {}
+    public func peerConnection(_ peerConnection: LKRTCPeerConnection,
+                               didChange stateChanged: LKRTCSignalingState) {}
+    public func peerConnection(_ peerConnection: LKRTCPeerConnection, didAdd stream: LKRTCMediaStream) {}
+    public func peerConnection(_ peerConnection: LKRTCPeerConnection, didRemove stream: LKRTCMediaStream) {}
+    public func peerConnectionShouldNegotiate(_ peerConnection: LKRTCPeerConnection) {}
+    public func peerConnection(_ peerConnection: LKRTCPeerConnection,
+                               didChange newState: LKRTCIceGatheringState) {}
+    public func peerConnection(_ peerConnection: LKRTCPeerConnection,
+                               didRemove candidates: [LKRTCIceCandidate]) {}
+    public func peerConnection(_ peerConnection: LKRTCPeerConnection,
+                               didOpen dataChannel: LKRTCDataChannel) {}
 
-    public func peerConnection(_ peerConnection: RTCPeerConnection,
-                               didAdd rtpReceiver: RTCRtpReceiver,
-                               streams mediaStreams: [RTCMediaStream]) {
-        guard let track = rtpReceiver.track as? RTCVideoTrack else { return }
+    public func peerConnection(_ peerConnection: LKRTCPeerConnection,
+                               didAdd rtpReceiver: LKRTCRtpReceiver,
+                               streams mediaStreams: [LKRTCMediaStream]) {
+        guard let track = rtpReceiver.track as? LKRTCVideoTrack else { return }
         remoteVideoTrack = track
         if let renderer = remoteRenderer { track.add(renderer) }
         continuation.yield(.remoteVideo(true))

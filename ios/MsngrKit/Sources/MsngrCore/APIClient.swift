@@ -1011,4 +1011,11 @@ public final class APIClient: @unchecked Sendable {
         struct R: Decodable { let allow: Bool }
         return try await get("api/privacy/may-call/\(peerId)", as: R.self).allow
     }
+
+    /// The ticket into a group call's room on the SFU: where to connect and
+    /// the token that admits this user to the room named by the call.
+    public func roomTicket(callId: String, chatId: String) async throws -> CallRoomTicket {
+        try await post("api/calls/room", body: ["callId": callId, "chatId": chatId],
+                       as: CallRoomTicket.self)
+    }
 }
