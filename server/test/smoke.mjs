@@ -2282,8 +2282,11 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
   const landed = await cb2.waitFor((f) => f.t === "msg" && f.chatId === chat.chatId
     && f.at >= due - 250 && f.from === alice.userId, 8000);
   check("deferred envelope arrives once due", !!landed, JSON.stringify(landed));
-  const echoMark = ca.frames.findIndex((f) =>
-    f.t === "msg" && f.chatId === chat.chatId && f.seq === landed?.seq);
+  // the fan-out reaches the members in parallel: the recipient's copy and the
+  // author's echo race each other, so the echo is waited for, not looked up
+  const echo = await ca.waitFor((f) =>
+    f.t === "msg" && f.chatId === chat.chatId && f.seq === landed?.seq, 3000);
+  const echoMark = echo ? ca.frames.indexOf(echo) : -1;
   check("sender gets the echo of the deferred send", echoMark >= 0);
   // the echo names the outbox row it closes: an author offline at the deadline
   // finalizes from the journal instead of the sent ack
