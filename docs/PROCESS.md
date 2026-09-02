@@ -10,9 +10,9 @@ user re-registered, frames and REST change freely, keys and sessions may be
 dropped. Versioning is wired in ahead of time (protocol version in the
 handshake, schema version, `migrations` in `wrangler.jsonc`, a version on the
 E2EE envelope) so there is a place to write the compatibility once there are
-users to break. The one exception that has bitten: the shared stand keeps the
-test users' state, so a schema change there needs either a wipe or a numbered
-migration — which one is an open owner decision (`docs/BACKLOG.md`, B59).
+users to break. The shared stand follows the same rule (the owner's call,
+2026-09-03): a change to what an object stores wipes the stand's state and
+reseeds the trio; nothing is written to carry old state forward.
 
 ## Three files
 
