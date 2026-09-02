@@ -581,7 +581,26 @@ only on an explicit tap of «Найти по контактам» (number → E.
 discover), and a name from the address book wins over the server's; a group mode
 takes a title and a set of members.
 
-## Themes
+## Stories
+
+Adding a story opens on the camera: the front camera fills the screen, the
+shutter sits at the bottom centre, the library is at the bottom left and the
+other camera at the bottom right. A tap of the shutter takes a picture; holding
+it records a clip for as long as the finger stays, up to 60 seconds, with a red
+ring filling around the button and the time in a red capsule above it. The
+front camera's picture and clip are mirrored, the way the preview showed them.
+Where there is no camera the screen says «Камера недоступна» and the library
+still works. The library picker takes up to ten photos and videos in order.
+
+A shot or picked frame fills the screen and the tools lie over it: text,
+markup (pictures only), another take from the camera, and removing the frame.
+The text tool types straight onto the frame, with the colour row and the plate
+button above the keyboard; the plate cycles dark → light → none. The text is
+dragged into place with a finger. An undo button (`arrow.uturn.backward`)
+appears at the top once there is something to undo, and every step is one
+undo: a frame added or removed, a typing session, a colour, a plate, a drag, a
+markup. The filmstrip along the bottom holds the frames in the order they go
+out, and the arrow publishes.
 
 Three palettes, chosen in settings under «Оформление» through preview cards and
 stored in `UserDefaults` under the key `palette`, defaulting to `graphite`:
