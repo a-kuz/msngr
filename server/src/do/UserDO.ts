@@ -338,6 +338,25 @@ export class UserDO implements DurableObject {
     } satisfies ChatFlags);
   }
 
+  /// The inbox of stories delivered to this user, oldest first; the ones
+  /// whose time is over go out of it as they are met. The inbox is bounded by
+  /// the peers' output over a week, and the list is capped past that.
+  private async storiesInbox(): Promise<StoryItem[]> {
+    const listed = await this.state.storage.list<StoryItem>({ prefix: STORY_PREFIX, limit: 2000 });
+    const now = Date.now();
+    const stories: StoryItem[] = [];
+    const expired: string[] = [];
+    for (const [k, item] of listed) {
+      if (item.expiresAt <= now) expired.push(k); else stories.push(item);
+    }
+    // one storage delete takes at most 128 keys
+    for (let i = 0; i < expired.length; i += 128) {
+      await this.state.storage.delete(expired.slice(i, i + 128));
+    }
+    stories.sort((a, b) => a.createdAt - b.createdAt);
+    return stories;
+  }
+
   private async chatIds(): Promise<string[]> {
     const listed = await this.state.storage.list<ChatFlags>({ prefix: "chat:" });
     return [...listed.keys()].map((k) => k.slice(5));
@@ -1542,23 +1561,9 @@ export class UserDO implements DurableObject {
         return json({ ok: true, has: !!item && item.expiresAt > Date.now() });
       }
 
-      /// Every live story delivered to this user, oldest first; the ones whose
-      /// time is over go out of the inbox as they are met. The inbox is bounded
-      /// by the peers' output over a week, and the list is capped past that.
+      /// Every live story delivered to this user, oldest first.
       case "/stories-inbox": {
-        const listed = await this.state.storage.list<StoryItem>({ prefix: STORY_PREFIX, limit: 2000 });
-        const now = Date.now();
-        const stories: StoryItem[] = [];
-        const expired: string[] = [];
-        for (const [k, item] of listed) {
-          if (item.expiresAt <= now) expired.push(k); else stories.push(item);
-        }
-        // one storage delete takes at most 128 keys
-        for (let i = 0; i < expired.length; i += 128) {
-          await this.state.storage.delete(expired.slice(i, i + 128));
-        }
-        stories.sort((a, b) => a.createdAt - b.createdAt);
-        return json({ ok: true, stories });
+        return json({ ok: true, stories: await this.storiesInbox() });
       }
 
       case "/profile-changed": {
@@ -2118,6 +2123,9 @@ export class UserDO implements DurableObject {
           }
         }
         if (frame.t === "sync") {
+          // the stories inbox as it stands: a story frame sent while the socket
+          // was down is gone, and this is what stands in for it
+          this.send(ws, { t: "stories", stories: await this.storiesInbox() });
           // chats the client does not know yet, created or joined while it was offline:
           // send the state and replay the history from zero
           const known = new Set(Object.keys(frame.cursors));

@@ -167,6 +167,8 @@ public struct WSIncoming: Decodable {
     /// story: `new` carries the story as the list shows it; every event names it
     public let storyId: String?
     public let story: APIClient.StoryDTO?
+    /// stories: the whole inbox, answered to every sync
+    public let stories: [APIClient.StoryDTO]?
     /// story `stats`: the author's counts; `mark`: this user's own watch and heart
     public let views: Int?
     public let likes: Int?

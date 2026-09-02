@@ -86,15 +86,15 @@ export interface PrivacySettings {
   typing: boolean;
 }
 
-/// A user card as everyone may see it: what GET /api/users/:id serves.
 /// A story as a viewer's list carries it: the same shape whether it comes
-/// from GET /api/stories or in a `story` frame.
+/// from GET /api/stories, in the `stories` frame or in a `story` frame.
 export interface StoryItem {
   id: string; authorId: string; username: string; displayName: string; avatarId: string | null;
   createdAt: number; expiresAt: number; frames: unknown[]; audience: string; link: string | null;
   seen: boolean; liked: boolean; views: number | null; likes: number | null;
 }
 
+/// A user card as everyone may see it: what GET /api/users/:id serves.
 export interface PublicUser {
   id: string;
   username: string;
@@ -125,6 +125,8 @@ export type ServerFrame =
   /// `mark` tells this user's other devices what they watched or liked
   | { t: "story"; event: "new" | "removed" | "stats" | "mark"; storyId: string;
       story?: StoryItem; views?: number; likes?: number; seen?: boolean; liked?: boolean }
+  /// the whole inbox, answered to every `sync`: the list a connection starts from
+  | { t: "stories"; stories: StoryItem[] }
   /// someone's card changed: name, bio, avatar or username. The profile is
   /// public, so the frame carries the whole row rather than a hint to refetch
   | { t: "profile"; user: PublicUser }

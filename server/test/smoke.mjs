@@ -2583,6 +2583,12 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
     bobSees.stories?.some((s) => s.id === posted.storyId
       && s.displayName === "Alice" && s.frames?.length === 1),
     JSON.stringify(bobSees.stories));
+  const sb2 = new Client("bob-stories-2", bob.token); await sb2.connect();
+  sb2.send({ t: "sync", cursors: {} });
+  const inboxFrame = await sb2.waitFor((f) => f.t === "stories");
+  check("a connection starts from the inbox, answered to the sync",
+    inboxFrame?.stories?.some((s) => s.id === posted.storyId), JSON.stringify(inboxFrame?.stories?.length));
+  sb2.ws.close();
   const carolSees = await api("/api/stories", { token: carol.token });
   check("a stranger does not see a contacts-only story",
     !carolSees.stories?.some((s) => s.id === posted.storyId), JSON.stringify(carolSees.stories));

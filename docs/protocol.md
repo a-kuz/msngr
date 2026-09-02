@@ -156,12 +156,15 @@ GET  /api/stories                 the caller's inbox — the stories delivered t
                                   authorId, username, displayName, avatarId, createdAt,
                                   expiresAt, frames, audience, link, seen, liked, views,
                                   likes}]; `views` and `likes` are counts on the caller's
-                                  own stories and null on everyone else's. A client reads
-                                  it once per connection and follows the `story` frames:
-                                  `new`, `removed` (taken down), `stats` (the author's
-                                  counts moved: views, likes), `mark` (this user's own
-                                  seen/liked, for their other devices). Expired rows go
-                                  out of the inbox as the read meets them
+                                  own stories and null on everyone else's. The client
+                                  never asks for it on its own: every `sync` frame is
+                                  answered with `{t:"stories", stories}` — the whole
+                                  inbox, the list a connection starts from — and from
+                                  there the `story` frames move it: `new`, `removed`
+                                  (taken down), `stats` (the author's counts moved:
+                                  views, likes), `mark` (this user's own seen/liked, for
+                                  their other devices). Expired rows go out of the inbox
+                                  as the read meets them
 POST /api/stories/:id/seen        remembers the watch in the author's object; the author's
                                   own is not counted. A first watch sends the author a
                                   `stats` frame; the viewer's inbox row is marked and their

@@ -67,12 +67,6 @@ struct StoriesTray: View {
         .scrollDisabled(p < 0.5)
         .accessibilityIdentifier("stories.tray")
         .task(id: app.ready) { await loadMe() }
-        // the list is read once per connection and then follows the socket:
-        // a story posted, taken down or watched arrives as a frame
-        .task(id: app.ready) {
-            guard app.ready, let engine = app.engine else { return }
-            await stories.follow(engine)
-        }
     }
 
     /// Your own picture: a tap watches what you have live, the plus adds to it

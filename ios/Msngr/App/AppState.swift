@@ -62,6 +62,8 @@ final class AppState: ObservableObject {
     private(set) var db: DatabaseQueue!
     private(set) var api: APIClient!
     private(set) var engine: SyncEngine!
+    /// The stories list following the engine's frames, for the engine's life.
+    private var storiesTask: Task<Void, Never>?
     private(set) var callManager: CallManager!
     private var callStateTask: Task<Void, Never>?
     private(set) var e2ee: E2EEManager!
@@ -158,6 +160,8 @@ final class AppState: ObservableObject {
         NotificationCoordinator.shared.detach()
         media?.clearCache()
         engine = nil
+        storiesTask?.cancel()
+        storiesTask = nil
         e2ee = nil
         store = nil
         media = nil
@@ -220,6 +224,10 @@ final class AppState: ObservableObject {
             comps.queryItems = [URLQueryItem(name: "token", value: s.token)]
             engine = SyncEngine(db: db, api: api, e2ee: e2ee, media: media, wsURL: comps.url!,
                                 ownUserId: s.userId, ownDeviceId: s.deviceId)
+            // the stories inbox arrives on the heels of the first sync, before
+            // any screen is on: the list is subscribed before the socket opens
+            storiesTask?.cancel()
+            storiesTask = StoriesModel.shared.follow(engine)
             await engine.start()
             // the call gate fails closed: an offer whose permission cannot be
             // judged is answered busy rather than rung through the setting

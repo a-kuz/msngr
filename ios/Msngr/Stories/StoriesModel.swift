@@ -3,17 +3,16 @@ import MsngrCore
 
 /// Everyone's live stories, grouped by their author. A story is not encrypted:
 /// who may see one is an access rule the server keeps, so the list comes from
-/// the server and nothing of it is stored on the device. It is read once per
-/// connection and then follows the socket: a story delivered, taken down, its
-/// counts moved or this user's own watch made elsewhere arrives as a frame,
-/// and the list is never asked for again while the socket stands.
+/// the server and nothing of it is stored on the device. Every sync is
+/// answered with the whole inbox, and from there the list follows the socket:
+/// a story delivered, taken down, its counts moved or this user's own watch
+/// made elsewhere arrives as a frame. The list is never asked for.
 @MainActor
 final class StoriesModel: ObservableObject {
     static let shared = StoriesModel()
 
     @Published private(set) var stories: [APIClient.StoryDTO] = []
     @Published private(set) var loading = false
-    private var following: Task<Void, Never>?
 
     /// Authors in the order the list shows them: the ones with something
     /// unwatched first, then by their newest story.
@@ -50,26 +49,28 @@ final class StoriesModel: ObservableObject {
         stories.contains { $0.authorId == userId }
     }
 
-    /// Keeps the list in step with the engine for as long as the caller's task
-    /// lives: the list is read on every connection — a frame sent while the
-    /// socket was down is gone, and the server's inbox is the truth — and the
-    /// frames in between are applied one by one.
-    func follow(_ engine: SyncEngine) async {
-        following?.cancel()
-        let frames = Task { [weak self] in
-            for await frame in engine.storyStream.subscribe() {
+    /// Keeps the list in step with the engine until the returned task is
+    /// cancelled. The subscription is taken here, synchronously, so a frame
+    /// sent the moment the socket opens is not missed: every sync is answered
+    /// with the whole inbox — a frame sent while the socket was down is gone,
+    /// and the server's inbox is the truth — and the frames in between are
+    /// applied one by one. Nothing is asked for.
+    @discardableResult
+    func follow(_ engine: SyncEngine) -> Task<Void, Never> {
+        let frames = engine.storyStream.subscribe()
+        return Task { @MainActor [weak self] in
+            for await frame in frames {
                 guard let self else { return }
                 self.apply(frame)
             }
         }
-        following = frames
-        defer { frames.cancel() }
-        for await up in engine.connectionStream.subscribe() {
-            if up { await load() }
-        }
     }
 
     private func apply(_ f: WSIncoming) {
+        if f.t == "stories", let list = f.stories {
+            stories = list
+            return
+        }
         guard let storyId = f.storyId else { return }
         switch f.event {
         case "new":
@@ -95,7 +96,8 @@ final class StoriesModel: ObservableObject {
         }
     }
 
-    /// The whole list from the server; expired stories fall out here.
+    /// The whole list asked for outright: only for a story named by a reply
+    /// before the inbox has arrived on this connection.
     func load() async {
         guard !loading, AppState.shared.ready, let api = AppState.shared.api else { return }
         loading = true
