@@ -100,6 +100,13 @@ Every push was answered with the message written first; the rows were in
   `direct:… isRequest=1 iAccepted=0` with the author's name in `user`, and the
   banner «Echo Service / Новая заявка».
 
+- **A reaction with the app killed.** Bravo long-pressed charlie's «Same
+  here.» in Design and tapped 👍. The relay logged one push, to charlie's
+  token alone (the frame named the target's author, `notifyUser`); the
+  journal answered `stored → show`; charlie's row carries
+  `{"👍": [bravo]}` before the app opened; the banner reads «Bravo Service /
+  Design / Реакция 👍 на «Same here.»» under the group's picture.
+
 ## Not run here
 
 - A burst through the extension (the coalescing window with several pushes

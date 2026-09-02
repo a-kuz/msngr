@@ -882,11 +882,15 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     a mute still in the queue — MuteActionTests; re-run 2026-09-02: the flag
     held locally through the snapshot and reached the server —
     qa/runs/2026-09-02-nse-simulator-run)
-  - 🟡 a banner when someone reacts to your message («Реакция 👍 на «🖼 Альбом»»,
+  - ✅ a banner when someone reacts to your message («Реакция 👍 на «🖼 Альбом»»,
     live run 2026-08-28 on the WS path, NotificationContentTests for the body;
-    the reaction frame is service on the wire — with the app killed there is no
-    push for it yet, that part needs the server to raise a targeted push and
-    the NSE to render it, device-gated)
+    with the app killed the send frame names the target's author, the user
+    object pushes the service frame to them alone and the extension builds the
+    banner from the applied payload — smoke «service frame addressed to a
+    member pushes to them», ReactionPushTests; live 2026-09-02 on the
+    simulator: «Bravo Service / Design / Реакция 👍 на «Same here.»» with the
+    group's picture, the reaction on the row before the app opened —
+    qa/runs/2026-09-02-nse-simulator-run)
   - ✅ a photo preview as an image in the notification: the extension fetches
     and decrypts the photo (a video's preview frame, an album's first photo)
     with a deadline and attaches it; the app's local banner does the same from
