@@ -465,10 +465,12 @@ A ✅ goes in only together with a link to the evidence.
     three (receipts-run)
   - ✅ a mark the server never heard is queued again from the chat state, so a
     receipt lost into a dying socket still arrives (receipts-run, `DeliveryReceiptTests`)
-  - 🟡 the receipt from the notification extension, with the app not running:
+  - ✅ the receipt from the notification extension, with the app not running:
     `POST /api/chats/:id/recv` and the queue behind it (integration test
-    `testDeliveredReceiptWithoutASocket`, smoke `rest recv …`; the extension
-    itself needs a device, `simctl push` does not launch it)
+    `testDeliveredReceiptWithoutASocket`, smoke `rest recv …`; live 2026-09-02
+    on the simulator over real APNs: the app killed, the extension wrote the
+    message and the stand logged the `recv` from it —
+    qa/runs/2026-09-02-nse-simulator-run)
   - ✅ idempotency by clientMsgId (smoke `idempotent resend same seq`)
   - ✅ the ack right after the seq is assigned, before the fanout and the push (smoke `ack precedes push`, `ack while apns still hanging`)
   - ✅ «не отправлено» when the server refuses the send, and «Отправить заново»
@@ -827,20 +829,25 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - A notification avalanche
   - ✅ the push carries seq and sentAt — the display order is built from them (smoke `push carries seq`, `push carries sentAt`)
   - 🟡 the coalescing window: the extension holds pushes back, plans a batch and answers by seq in a single chain
-    (NotificationBurstTests, NotificationBurstGateTests units; not verified on a device)
-  - 🟡 one message, one banner: the claim to show is written into the database and taken by both the app and the extension
-    (NotificationBurstStoreTests units, qa/runs/2026-08-15-push-burst — the app's banner is in place)
+    (NotificationBurstTests, NotificationBurstGateTests units; single pushes run through the chain live on the
+    simulator — qa/runs/2026-09-02-nse-simulator-run; a burst through the extension is not run live yet)
+  - ✅ one message, one banner: the claim to show is written into the database and taken by both the app and the extension
+    (NotificationBurstStoreTests units, qa/runs/2026-08-15-push-burst for the app's banner; the extension's
+    claim live 2026-09-02 — one banner per message with the app killed, qa/runs/2026-09-02-nse-simulator-run)
   - ✅ the batch reaches the chat even when there were no banners (qa/runs/2026-08-15-push-burst)
   - ✅ a seq gap from a push opens a hole for the app to fill (unit `testBurstOpensTheHoleForTheApp`)
   - ✅ the extension's trace in the app group: every didReceive, answer and budget expiry
-    (NotificationJournalTests units; on the simulator, 0 calls out of 30 pushes)
+    (NotificationJournalTests units; the live trace of the simulator run is in
+    qa/runs/2026-09-02-nse-simulator-run)
   - ⬜ the ceiling on extension calls during an avalanche — measurable only on a device, from the trace
 - The message arrives by push
   - ✅ the push carries the envelope cut down to the device, and the sender; over
     4 KB the envelope is dropped (smoke `push carries the envelope`, `envelope trimmed to this device`,
     `oversized envelope is dropped from the push`)
-  - 🟡 the extension decrypts and writes the message in the same transaction that claims the banner
-    (PushMessageWriterTests units; the extension does not launch on the simulator, a device is needed)
+  - ✅ the extension decrypts and writes the message in the same transaction that claims the banner
+    (PushMessageWriterTests units; live 2026-09-02 on the simulator with the app killed: the journal
+    shows `received envelope → stored → show` and the row is in the database before the app opens —
+    qa/runs/2026-09-02-nse-simulator-run)
   - ✅ the ratchet across two processes is kept apart by the gate: the position of the sending chain does not go out
     twice (CryptoGateTests units; without the gate the control run catches a repeat)
   - ✅ the same message over the socket and by push lands once, and the envelope of an already written
@@ -848,18 +855,24 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   - ✅ what the other process wrote is visible on returning to the screen
     (unit `testForegroundShowsWhatTheOtherProcessWrote`)
 - The NSE and presentation
-  - 🟡 previews from the shared database in the NSE (the extension does not launch on the simulator, a device is needed — docs/research/nse-simulator-experiment.md)
+  - ✅ previews from the shared database in the NSE: the banner text is read from the row the extension
+    wrote (live 2026-09-02 on the simulator over real APNs, the app killed — text and «📷 Фото» banners,
+    qa/runs/2026-09-02-nse-simulator-run)
   - ✅ the sender's avatar and name through Communication Notifications: the
     extension builds an INSendMessageIntent from the avatar the app cached in
     the shared container (commit 6f2a0ef; live banner with the sender's avatar
     on the iPhone 17 dev simulator, real APNs through the stand's relay,
     2026-09-02)
   - ⬜ a group avatar in the notification
-  - 🟡 quick reply straight from the push (category, action routing and the
-    reply/mute handlers are in — NotificationActionRouteTests; the expanded
-    banner itself needs a device: idb cannot produce the SpringBoard
-    context-menu press, and the NSE path does not run on the simulator)
-  - 🟡 mute the chat straight from the push (same category; same device caveat)
+  - ✅ quick reply straight from the push (category, action routing and the
+    reply handler — NotificationActionRouteTests; live 2026-09-02 on the
+    simulator: the extension's banner, opened through the Notification Center's
+    swipe → «Смотреть», «Ответить» typed with the app killed, the reply landed
+    on the peer's side as the next seq — qa/runs/2026-09-02-nse-simulator-run)
+  - 🟡 mute the chat straight from the push (same category; the live run found
+    the flag lost to the snapshot the background launch fetches alongside, so
+    the mute now goes through the action queue like a pin — MuteActionTests;
+    the re-run is pending)
   - 🟡 a banner when someone reacts to your message («Реакция 👍 на «🖼 Альбом»»,
     live run 2026-08-28 on the WS path, NotificationContentTests for the body;
     the reaction frame is service on the wire — with the app killed there is no
