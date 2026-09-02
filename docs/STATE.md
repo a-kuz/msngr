@@ -14,8 +14,27 @@ code, scanning one from a picture, the NSE, real APNs on a simulator all work
 without a phone. Truly device-only: the camera as a live input (shooting a
 photo/video/story, live QR scanning), PushKit/VoIP and CallKit, Data
 Protection on a locked screen, fps measurements, the extension-call ceiling
-in an avalanche. Calls belong to the `calls` session (worktree-calls) and are
-not taken here.
+in an avalanche. There is no separate `calls` session any more: calls and
+everything else are run from this session; at most one helper agent runs in
+parallel (the owner's word, 2026-09-02 evening: two at once hit the token
+limit).
+
+Later the same evening, on main: the NSE family is closed live on the
+simulator over real APNs (`docs/qa/runs/2026-09-02-nse-simulator-run.md`) —
+468, 831, 842, 851, 853, 854, 858, 864, 773 are ✅; 829 stays 🟡 for the
+burst only. Two things were in the way and are fixed: the fixture's
+notification grant carried the old bundle id inside the archive (the topic
+went non-waking and pushes for a killed app waited at Apple), and gate-runner
+held stale PlugInKit registrations of the extension from old bundle ids
+(`pluginkit -r`). Product fixes along the way: a mute from the banner goes
+through the action queue and survives the snapshot race (`8e26381`), the
+banner carries the message's picture (`8e26381`), a request's first push
+names its author and the extension writes the request chat (`0872a16`,
+deployed to the shared stand). The fixture trio was reseeded (alfa6, bravo6,
+charlie6); bravo is on gate-runner, charlie on `fable-charlie`
+(28CE558E-6C92-4220-8FC5-A762FCECB666), alfa is free in `.claude/fixtures`.
+Helper `d1-leftovers` runs on `run-d1-leftovers` (rework step 6) with the
+session id in `.claude/agents.tsv`; it was told main moved in `UserDO.ts`.
 
 Landed on main today (this session): `ed5757e` one bundle id
 `com.msngr.msngr` for every build and the simulator asking APNs for a real
