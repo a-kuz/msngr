@@ -33,8 +33,24 @@ names its author and the extension writes the request chat (`0872a16`,
 deployed to the shared stand). The fixture trio was reseeded (alfa6, bravo6,
 charlie6); bravo is on gate-runner, charlie on `fable-charlie`
 (28CE558E-6C92-4220-8FC5-A762FCECB666), alfa is free in `.claude/fixtures`.
-Helper `d1-leftovers` runs on `run-d1-leftovers` (rework step 6) with the
-session id in `.claude/agents.tsv`; it was told main moved in `UserDO.ts`.
+Helper `d1-leftovers` finished on `run-d1-leftovers` (rework step 6): five
+commits, rebased on main, smoke green on its own stand (463 checks), live run
+in `docs/qa/runs/2026-09-02-d1-leftovers-run.md` (in the worktree). Not
+merged: migration 0022 drops every remaining D1 table and the objects start
+empty, so the merge needs the shared stand's `.wrangler/` wiped, the service
+restarted and the trio reseeded, and every account on the stand registers
+again — the owner's call, not mine. The bearer token format changes to
+`<userId>.<secret>` with it. The worktree and the `agents.tsv` row stay until
+that decision.
+
+Also closed live the same evening: 773 (a request's push names its author and
+the extension writes the request chat), 853 (group avatar in the banner), 859
+(a reaction reaches the target's author with the app closed, `notifyUser`),
+876 (the sound of a mention or a reply, «Sound: mentions and replies»), 50 and
+690 (the link code and the safety number as QR codes read from a picture —
+`docs/qa/runs/2026-09-02-qr-run.md`). New ⬜ lines record what these found:
+a mention in a muted chat with the app closed gets no push at all today; the
+camera as the QR reader is device work.
 
 Landed on main today (this session): `ed5757e` one bundle id
 `com.msngr.msngr` for every build and the simulator asking APNs for a real
