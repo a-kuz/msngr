@@ -6,6 +6,64 @@ work in it looks like clutter.
 
 Delete an entry when its branch is merged and gone.
 
+## 2026-09-02 evening — the goal: close every ROADMAP line that needs no device
+
+The owner's standing goal (session `/goal`): close everything in ROADMAP.md
+that does not need a phone. Read "needs a device" critically: showing a QR
+code, scanning one from a picture, the NSE, real APNs on a simulator all work
+without a phone. Truly device-only: the camera as a live input (shooting a
+photo/video/story, live QR scanning), PushKit/VoIP and CallKit, Data
+Protection on a locked screen, fps measurements, the extension-call ceiling
+in an avalanche. Calls belong to the `calls` session (worktree-calls) and are
+not taken here.
+
+Landed on main today (this session): `ed5757e` one bundle id
+`com.msngr.msngr` for every build and the simulator asking APNs for a real
+token (the UDID/`dev-sim` path is a fallback only); `6f2a0ef` the extension
+answers with a Communication Notification (sender avatar from the shared
+`avatars/` cache, group members as recipients); `d155737` `make device` finds
+a paired phone, CLAUDE.md corrected: the NSE does run on the simulator — the
+owner showed a breakpoint in `didReceive` and a banner with the sender's
+avatar on iPhone 17 dev. To find the extension in `log show`, filter by
+`processImagePath CONTAINS "NotificationService.appex"`, not by process name.
+The shared stand sends real pushes through the relay on adad; simulator
+pushes arrive (relay log `→ 200`).
+
+ROADMAP lines to move from what was seen today: 852 (sender avatar and name
+through Communication Notifications) is done on the simulator; the NSE family
+(829, 831, 842, 851, 854, 858, 468, 773, 853, 859, 864, 876) is now checkable
+on a simulator with the extension attached from Xcode or by reading
+`nse-journal.log` in the group container.
+
+Open, no device needed, in the order simple-first: the NSE family above
+(verify live, then implement 864 photo preview, 859 reaction push with the
+app killed, 876 mention sound in the extension, 853 group avatar check);
+1330 the last D1 tables into UserDO with the token carrying the userId so auth
+is one call into the object; 1198 automatic backup on a charger over Wi-Fi;
+49 moving history to a new device; 441 GIF picker and stickers; 272 streaming
+media over range requests (block-wise sealing + AVAssetResourceLoaderDelegate);
+50 and 690 QR: show the code on one simulator, scan it from a picture on the
+other (`simctl addmedia` + the photo picker); 1214 iCloud passwordless backup
+(needs a CloudKit container, try on the simulator with a signed-in account).
+External blocker, not a device: 932 channel media through CF Stream/Images
+has no binding.
+
+Agents are started only the CLI way from `.claude/ORCHESTRATION.md`
+(worktree in `.claude/worktrees/<name>`, `task.md` per
+`.claude/task-template.md`, `nohup claude -p --session-id $(uuidgen) --model
+<id> --permission-mode bypassPermissions "$(cat task.md)"`, a row in
+`.claude/agents.tsv`), two slots, never the built-in Agent tool (the owner
+stopped that twice; two such agents were killed tonight before doing
+anything). Simulators in use: `44CE2242…` (owner's iPhone 17 dev) runs alfa
+with the owner's Xcode attached to the NSE, `14C70E21…` (gate-runner) runs
+bravo; both hold the current build. Fixtures: alfa on 44CE, bravo on
+gate-runner, charlie in `.claude/fixtures`.
+
+Device install (`make device` on iPhone15pm) is blocked on the portal, not on
+code: Apple answers "device 00008130-001A00C2216A001C already exists on this
+team" while the team profile excludes it (0xe8008012); the owner enables the
+device on developer.apple.com, then `make device` goes through.
+
 One slot is open by the owner's word and taken: `msgid` on **run-msgid** — the
 tail of rework step 2: the message's identity becomes `(chatId, seq)` and the
 ULID goes away. The dispatcher runs a bug conveyor on main between ticks (the
