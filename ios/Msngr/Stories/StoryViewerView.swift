@@ -490,7 +490,13 @@ struct StoryAuthorPage: View {
         guard active else { return }
         // what follows this frame is fetched while it stands
         preloader.prefetch(Array(slides[(index + 1)...].prefix(3).map(\.frame)))
-        await model.markSeen(slide.story.id)
+        if isMine {
+            // the author's counts are as fresh as the last read of the list:
+            // their own story on screen is the moment to read it again
+            await model.load()
+        } else {
+            await model.markSeen(slide.story.id)
+        }
     }
 
     /// Answering a story goes into the direct chat with its author as a text
