@@ -58,6 +58,17 @@ signed into a simulator), the GIF picker (a provider key), and history
 transfer to a new device (touches the provisioning tables the D1 branch moves,
 so it waits for that merge).
 
+Late evening: `run-streaming` merged (media format 2 in blocks, the stream
+serving ranges, the viewer playing from it — a 48 MB video started nine
+seconds before its download ended on the helper's simulator; the helper seeded
+its own `alfa2/bravo2/charlie2` on the shared stand). The iCloud backup is
+built but not watched (`cb8fd78`): the key in the iCloud Keychain, the v3
+seal, one CloudKit record with an asset, a daily processing task on a charger
+with a network, «Восстановить из iCloud» on the registration screen; the
+switch on the simulator is off with «iCloud недоступен на этом устройстве»
+because no Apple ID is signed in, and the container has to exist on the
+portal for the owner's team. ROADMAP 1198 and 1214 are 🟡 with that said.
+
 After the merge: the history moves to a linked device (`38f0922`, ROADMAP 49
 ✅, `docs/qa/runs/2026-09-02-history-transfer-run.md`): the approving device
 packs the backup payload, uploads it encrypted as an attachment and puts the
