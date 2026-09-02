@@ -1483,3 +1483,12 @@ reachable only through a sender that does not (`msngrfixture send --video`
 without `--poster` was the first take of that run, and it looked exactly like
 a full download instead of streaming). With format 2 a tile could be drawn
 from the first block instead; nothing in the product needs it yet.
+
+### `msngrfixture showcase --to` times out after the stand forgot nova
+Noticed 2026-09-02 while dressing a fresh account for the eye moods run: with
+the reseeded stand the command re-registered `nova` and `iris` («has a session
+the stand does not know»), created the direct chat with the guest, and then
+timed out waiting for the guest set to leave nova's outbox. The chat reached
+the guest as a message request with nothing in it; whether the sticker set is
+stuck in nova's outbox or was never enqueued after the re-registration is not
+established.

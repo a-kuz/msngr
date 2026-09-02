@@ -16,6 +16,7 @@ transpiler and the Metal compiler.
 | Sticker | Pond | a round pond; a finger is a drop, rain falls on its own |
 | Sticker | Fireworks | a tap launches a rocket toward the finger; one goes up by itself every few seconds |
 | Sticker | Eye | follows the finger, the pupil widens under it, a tap makes it blink |
+| Sticker | Tired, Tender, Asleep, Angry, Scared | the same eye program with the lids, brow, gaze and skin set to a mood; the asleep one peeks while a finger holds it |
 | Sticker | Ink | ink in water, stirred by the finger; a thread rises by itself; the ink is the accent colour |
 | Sticker | Clock | the real time from the phone's clock; face and marks in the theme's colours |
 | Sticker | Heart, Sparkle | the bundled pair: a raymarched heart that beats and hums on a tap, the sparkle plate that orbits under the finger |
@@ -90,6 +91,8 @@ stand has never been seeded: the avatars and the group are its work.
    - Pond: touch the water, hold and drag; watch the rain when you let go.
    - Fireworks: tap twice in different places.
    - Eye: move a finger around it, then tap.
+   - The five moods after it are that one program with other values in its
+     dials; hold a finger on the sleeping one.
    - Ink: stir with a finger; note it is the app's accent colour, and that a
      different accent gives a different ink.
    - Clock: it is the real time.

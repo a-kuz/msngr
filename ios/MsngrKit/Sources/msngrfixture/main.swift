@@ -697,6 +697,11 @@ func showcase(dir: URL, base: URL) async throws {
             "Pond": "Drop a finger in.",
             "Fireworks": "Tap where the next one should go.",
             "Eye": "It follows your finger. Tap to make it blink.",
+            "Tired": "The same eye, worn out.",
+            "Tender": "Melting.",
+            "Asleep": "Shh. Hold a finger on it and it peeks.",
+            "Angry": "Don't.",
+            "Scared": "What was that.",
             "Ink": "Stir it.",
             "Clock": "This one knows the time.",
         ]
@@ -810,6 +815,11 @@ func showcaseGuest(dir: URL, base: URL, handle: String) async throws {
             "Pond": "Drop a finger in.",
             "Fireworks": "Tap where the next one should go.",
             "Eye": "It follows your finger. Tap to make it blink.",
+            "Tired": "The same eye, worn out.",
+            "Tender": "Melting.",
+            "Asleep": "Shh. Hold a finger on it and it peeks.",
+            "Angry": "Don't.",
+            "Scared": "What was that.",
             "Ink": "Stir it.",
             "Clock": "This one knows the time.",
         ]

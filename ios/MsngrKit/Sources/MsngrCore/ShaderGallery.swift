@@ -7,7 +7,9 @@ import Foundation
 /// The app seeds the stickers into every new pack, and `msngrfixture showcase`
 /// puts the whole set onto the stand's service accounts.
 public enum ShaderGallery {
-    public static let stickers: [ShaderDocument] = [pond, fireworks, eye, smoke, clock]
+    public static let stickers: [ShaderDocument] = [
+        pond, fireworks, eye, eyeTired, eyeTender, eyeAsleep, eyeAngry, eyeScared, smoke, clock,
+    ]
     public static let backgrounds: [ShaderDocument] = [aurora, dusk, paper]
     public static let bubbles: [ShaderDocument] = [foil, ember]
     public static let avatars: [ShaderDocument] = [nebula, orbit]
@@ -201,10 +203,186 @@ public enum ShaderGallery {
     /// iris plane, with vessels in the sclera, bump-mapped skin, two rows of
     /// lashes and their shadows. It looks around on its own, blinks, and grows
     /// heavy-lidded now and then; a finger it follows while the touch lasts.
-    /// One pass, no state: `ALPHA_OUT` gives it the transparent surround a
-    /// sticker needs, so the skin patch fades out well inside the square.
-    public static let eye = ShaderDocument(name: "Eye", passes: [
-        ShaderPass(id: ShaderPass.imageId, kind: .image, code: """
+    /// `ALPHA_OUT` gives it the transparent surround a sticker needs, so the
+    /// skin patch fades out well inside the square.
+    ///
+    /// The eye has moods: every expression is the one program with another set
+    /// of tuning values, so it lives in the posture of the lids, the brow, the
+    /// gaze and the skin rather than in separate drawings. A sticker is the eye
+    /// resting in one mood; a tap sends it into another one, morphing the
+    /// tuning over a moment, and a few seconds later it comes back to its own.
+    /// Buffer S holds the mood it came from, the one it is in, when it
+    /// switched and how many taps it has had.
+    public static let eye = eyeDocument(0)
+    /// Heavy lids that keep sagging, a downcast slow gaze, dark swollen
+    /// under-eyes, a bloodshot sclera.
+    public static let eyeTired = eyeDocument(1)
+    /// The cheek pushes the lower lid up into a smile, the pupil is wide, the
+    /// eye is wet and bright, the head tilts, the gaze rests a little upward.
+    public static let eyeTender = eyeDocument(2)
+    /// Shut lids that rise and fall with the breath, the cornea moving under
+    /// them in REM; a finger held on it makes it peek for as long as it stays.
+    public static let eyeAsleep = eyeDocument(3)
+    /// The brow pressed down onto a lid slanting toward the nose, a pinpoint
+    /// pupil, a fixed stare that barely blinks, flushed skin, the sclera red.
+    public static let eyeAngry = eyeDocument(4)
+    /// Lids pulled wide so the white shows all around the iris, a dilated
+    /// pupil, a darting trembling gaze, drained skin beaded with sweat.
+    public static let eyeScared = eyeDocument(5)
+
+    /// The moods by index, the neutral eye first: the sticker's name and the
+    /// tuning values that differ from the neutral ones.
+    static let eyeMoods: [(String, [String: Double])] = [
+        ("Eye", [:]),
+        ("Tired", [
+            "pLidDroop": 0.50, "pDrowsyAmp": 1.2, "pBlinkT": 5.5, "pBlinkSlow": 2.4,
+            "pSaccT": 4.8, "pSaccAmp": 0.55, "pGazeY": -0.16,
+            "pVein": 5.5, "pBloodshot": 0.45, "pScleraWarm": 2.6, "pSkinRed": 0.5,
+            "pShadow": 3.0, "pPuff": 1.0, "pIrisBright": 0.17, "pOily": 1.3,
+            "pKey": 0.16, "pIdle": 0.5,
+        ]),
+        ("Tender", [
+            "pCheekLift": 0.55, "pLidDroop": 0.12, "pPupil": 0.20, "pWet": 1.0,
+            "pIrisBright": 0.26, "pBlinkT": 5.0, "pBlinkSlow": 1.5,
+            "pSaccT": 4.0, "pSaccAmp": 0.45, "pGazeY": 0.10, "pTilt": 3.2,
+            "pSSS": 0.11, "pSkinRed": 0.4, "pVein": 1.6, "pBloodshot": 0.12,
+            "pLashLen": 1.6, "pLashLenLo": 0.85, "pCurlUp": 2.1,
+        ]),
+        ("Asleep", [
+            "pClosed": 1.0, "pBreath": 1.0, "pDrowsyAmp": 0.0,
+            "pSaccT": 2.2, "pSaccAmp": 0.8, "pIdle": 0.35, "pTilt": 2.0,
+            "pKey": 0.14, "pShadow": 1.4,
+        ]),
+        ("Angry", [
+            "pBrowDrop": 1.0, "pLidDroop": 0.08, "pPupil": 0.09, "pDrowsyAmp": 0.0,
+            "pSaccT": 6.0, "pSaccAmp": 0.18, "pBlinkT": 7.5, "pTremor": 0.5,
+            "pVein": 6.5, "pBloodshot": 0.65, "pScleraWarm": 2.8, "pSkinRed": 1.4,
+            "pKey": 0.30, "pOily": 2.8, "pTilt": 0.0,
+        ]),
+        ("Scared", [
+            "pLidLift": 1.0, "pPupil": 0.23, "pDrowsyAmp": 0.0,
+            "pSaccT": 0.75, "pSaccAmp": 1.7, "pTremor": 1.6,
+            "pBlinkT": 6.5, "pBlinkSlow": 0.7, "pPale": 1.0, "pOily": 4.5,
+            "pVein": 4.0, "pBloodshot": 0.25, "pKey": 0.24, "pWet": 0.4, "pIdle": 1.6,
+            "pRim": 0.80, "pZoom": 1.12,
+        ]),
+    ]
+
+    /// The eye's tuning, in the order it is written into the program: name,
+    /// the neutral value, what it does. A mood overrides values by name.
+    static let eyeTuning: [(String, Double, String)] = [
+        ("pBlinkT",      3.998, "seconds between blinks"),
+        ("pBlinkSlow",   1.0,   "blink duration"),
+        ("pSaccT",       3.14,  "seconds between saccades"),
+        ("pSaccAmp",     1.0,   "saccade spread"),
+        ("pGazeY",       0.0,   "resting gaze, vertical"),
+        ("pTremor",      0.0,   "gaze and lid tremble"),
+        ("pDrowsyAmp",   0.22,  "tired half-closure amount"),
+        ("pLidDroop",    0.0,   "resting sag of the upper lid"),
+        ("pLidLift",     0.0,   "lids retracted past their resting height"),
+        ("pCheekLift",   0.0,   "lower lid pushed up by the cheek"),
+        ("pBrowDrop",    0.0,   "brow pressed down toward the nose"),
+        ("pClosed",      0.0,   "lids held shut; a finger lifts them"),
+        ("pBreath",      0.0,   "the whole patch rising and falling"),
+        ("pTilt",        1.0,   "head tilt"),
+        ("pWhip",        2.74,  "lash lag behind lid motion"),
+        ("pWhipVar",     0.125, "per-strand lag spread"),
+        ("pBreeze",      0.0,   "shared air sway"),
+        ("pIdle",        1.035, "per-strand idle sway"),
+        ("pLashRot",     4.0,   "lash fan rotation over a blink"),
+        ("pLashLen",     1.264, "upper lash length"),
+        ("pLashLenLo",   0.613, "lower lash length"),
+        ("pCurlUp",      1.73,  "upper lash curl"),
+        ("pCurlLo",      0.2,   "lower lash curl"),
+        ("pHook",        0.55,  "J-root dip below the margin"),
+        ("pStray",       6.0,   "stray lash probability"),
+        ("pLashDark",    2.0,   "lash opacity"),
+        ("pLashGlint",   0.42,  "specular glints on lashes"),
+        ("pSolo",        0.0,   "debug: draw a single lash"),
+        ("pPupil",       0.126, "pupil radius"),
+        ("pIrisBright",  0.2,   "iris brightness"),
+        ("pIrisSat",     2.0,   "iris saturation"),
+        ("pLimbus",      1.0,   "limbal ring darkness"),
+        ("pFiberRelief", 0.24,  "iris fiber shading"),
+        ("pVein",        2.5,   "sclera vessels"),
+        ("pBloodshot",   0.0,   "blood in the whole sclera"),
+        ("pScleraWarm",  2.0,   "sclera warm corners"),
+        ("pTension",     3.0,   "conjunctiva tension on turns"),
+        ("pAnchor",      0.0,   "conjunctiva lag behind the globe"),
+        ("pWet",         0.0,   "welling tear film"),
+        ("pSkinRed",     0.0,   "capillary blotches"),
+        ("pPale",        0.0,   "blood drained from the skin"),
+        ("pShadow",      1.0,   "under-eye shade"),
+        ("pPuff",        0.0,   "lower lid swelling"),
+        ("pPores",       2.28,  "pore / micro wrinkle depth"),
+        ("pOily",        2.25,  "skin sheen"),
+        ("pSSS",         0.075, "subsurface red at terminator"),
+        ("pKey",         0.2,   "key light strength"),
+        ("pWin",         33.175, "window brightness"),
+        ("pGrain",       0.0,   "film grain"),
+        ("pRim",         0.695, "skin patch radius"),
+        ("pZoom",        1.0,   "how much of the frame the eye spans, larger is further away"),
+        ("pBG",          0.385, "backdrop brightness (Shadertoy fill; unused with ALPHA_OUT)"),
+    ]
+
+    /// Seconds a tapped-in mood holds before the eye comes back to its own.
+    static let eyeMoodHold = 7.0
+
+    /// The eye resting in mood `base`. The image pass carries every tuning
+    /// value as a variable set to the neutral one, `moodValue` picks a mood's
+    /// value by index, and `applyMoods` blends the two moods the state buffer
+    /// names; a value no mood touches stays a plain constant.
+    static func eyeDocument(_ base: Int) -> ShaderDocument {
+        let moods = eyeMoods
+        let tuning: String = eyeTuning.map { name, value, what -> String in
+            let touched = moods.contains { $0.1[name] != nil }
+            return "\(touched ? "PV" : "P")(\(name), \(value)) // \(what)"
+        }.joined(separator: "\n")
+        let blends = eyeTuning.compactMap { name, value, _ -> String? in
+            guard moods.contains(where: { $0.1[name] != nil }) else { return nil }
+            let list = moods.map { "\($0.1[name] ?? value)" }.joined(separator: ", ")
+            return "    \(name) = mix(moodValue(prev, \(list)), moodValue(cur, \(list)), w);"
+        }.joined(separator: "\n")
+        let pick = (0..<moods.count).map { "m == \($0) ? v\($0) :" }.joined(separator: " ")
+        let params = (0..<moods.count).map { "float v\($0)" }.joined(separator: ", ")
+        let moodCode: String = """
+        #define BASE_MOOD \(base)
+        float moodValue(int m, \(params)){ return \(pick) v0; }
+        void applyMoods(int prev, int cur, float w){
+        \(blends)
+        }
+
+        """
+        let state: String = """
+        // Buffer S, one texel: x the mood the eye came from, y the one it is
+        // in, z when it switched, w the tap count + 2 (below 1.5 is unwritten).
+        // A tap picks another mood than the current one; a mood not the eye's
+        // own lets go after a hold and the eye comes back to its own.
+        float hash11(float p){ p = fract(p*0.1031); p *= p+33.33; return fract(p*(p+p)); }
+        void mainImage(out vec4 O, in vec2 F){
+            vec4 s = texelFetch(iChannel3, ivec2(0), 0);
+            if(s.w < 1.5) s = vec4(\(base).0, \(base).0, -10.0, 2.0);
+            if(iMouse.w > 0.0){
+                float taps = s.w - 2.0;
+                float h = hash11(taps*7.3 + 1.7);
+                int cur = int(s.y + 0.5);
+                int next = int(mod(float(cur) + 1.0 + floor(h*\(moods.count - 1).0), \(moods.count).0));
+                s = vec4(s.y, float(next), iTime, s.w + 1.0);
+            } else if(int(s.y + 0.5) != \(base) && iTime - s.z > \(eyeMoodHold)){
+                s = vec4(s.y, \(base).0, iTime, s.w);
+            }
+            O = s;
+        }
+        """
+        let image: String = [eyeHead, tuning, "\n", moodCode, eyeBody].joined()
+        return ShaderDocument(name: moods[base].0, passes: [
+            ShaderPass(id: "S", kind: .buffer, code: state, inputs: [stateInput("S")]),
+            ShaderPass(id: ShaderPass.imageId, kind: .image, code: image,
+                       inputs: [readInput("S", filter: "nearest")]),
+        ])
+    }
+
+    static let eyeHead = """
         #define ALPHA_OUT 1
         precision highp float;
         // Photorealistic human eye, fully procedural, single pass.
@@ -230,46 +408,20 @@ public enum ShaderGallery {
         // ------------------------------------------------- tunable parameters
         // The test harness defines TUNE and drives these as uniform sliders;
         // standalone (Shadertoy) they compile as constants with the same values.
+        // The lines themselves are written here by `eyeDocument` from
+        // `eyeTuning`: P for a value no mood touches, PV for one `applyMoods`
+        // sets per frame from the state buffer.
         #ifdef TUNE
         #define P(n, v) uniform float n;
+        #define PV(n, v) uniform float n;
         #else
         #define P(n, v) const float n = v;
+        #define PV(n, v) float n = v;
         #endif
-        P(pBlinkT,      3.998) // seconds between blinks
-        P(pSaccT,       3.14)  // seconds between saccades
-        P(pDrowsyAmp,   0.22)  // tired half-closure amount
-        P(pWhip,        2.74)  // lash lag behind lid motion
-        P(pWhipVar,     0.125) // per-strand lag spread
-        P(pBreeze,      0.0)   // shared air sway
-        P(pIdle,        1.035) // per-strand idle sway
-        P(pLashRot,     4.0)   // lash fan rotation over a blink
-        P(pLashLen,     1.264) // upper lash length
-        P(pLashLenLo,   0.613) // lower lash length
-        P(pCurlUp,      1.73)  // upper lash curl
-        P(pCurlLo,      0.2)   // lower lash curl
-        P(pHook,        0.55)  // J-root dip below the margin
-        P(pStray,       6.0)   // stray lash probability
-        P(pLashDark,    2.0)   // lash opacity
-        P(pLashGlint,   0.42)  // specular glints on lashes
-        P(pSolo,        0.0)   // debug: draw a single lash
-        P(pPupil,       0.126) // pupil radius
-        P(pIrisBright,  0.2)   // iris brightness
-        P(pIrisSat,     2.0)   // iris saturation
-        P(pLimbus,      1.0)   // limbal ring darkness
-        P(pFiberRelief, 0.24)  // iris fiber shading
-        P(pVein,        2.5)   // sclera vessels
-        P(pScleraWarm,  2.0)   // sclera warm corners
-        P(pTension,     3.0)   // conjunctiva tension on turns
-        P(pAnchor,      0.0)   // conjunctiva lag behind the globe
-        P(pSkinRed,     0.0)   // capillary blotches
-        P(pPores,       2.28)  // pore / micro wrinkle depth
-        P(pOily,        2.25)  // skin sheen
-        P(pSSS,         0.075) // subsurface red at terminator
-        P(pKey,         0.2)   // key light strength
-        P(pWin,         33.175)// window brightness
-        P(pGrain,       0.0)   // film grain
-        P(pRim,         0.695) // skin patch radius
-        P(pBG,          0.385) // backdrop brightness (Shadertoy fill; unused with ALPHA_OUT)
+
+        """
+
+    static let eyeBody = """
 
         // ------------------------------------------------------------- utils
         mat3 rotX(float a){ float c=cos(a),s=sin(a); return mat3(1,0,0, 0,c,s, 0,-s,c); }
@@ -364,11 +516,14 @@ public enum ShaderGallery {
                 float T = pSaccT;
                 float id = floor(t/T), ft = fract(t/T);
                 float dur = 0.55 + 0.6*hash11(id*3.7);           // some fixations longer
-                vec2 g0 = (hash21(id)     - 0.5) * vec2(0.62, 0.34);
-                vec2 g1 = (hash21(id+1.0) - 0.5) * vec2(0.62, 0.34);
+                vec2 g0 = (hash21(id)     - 0.5) * vec2(0.62, 0.34) * pSaccAmp;
+                vec2 g1 = (hash21(id+1.0) - 0.5) * vec2(0.62, 0.34) * pSaccAmp;
                 float k = smoothstep(0.0, 0.09*dur+0.05, ft);
                 g = mix(g0, g1, k);
                 g += 0.012*vec2(fbm(vec2(t*1.3, 4.7)), fbm(vec2(t*1.1, 9.3))) - 0.006;
+                g.y += pGazeY;
+                // tremble: fast, small, never settling
+                g += pTremor*0.010*vec2(sin(t*37.0) + sin(t*23.0), cos(t*31.0));
             }
             return g;
         }
@@ -376,7 +531,7 @@ public enum ShaderGallery {
             float T = pBlinkT;
             float id = floor(t/T), ft = t - id*T;
             float off = 0.4 + 2.2*hash11(id*7.1);
-            float x = ft - off;
+            float x = (ft - off)/pBlinkSlow;
             float b = smoothstep(0.00,0.09,x)*smoothstep(0.26,0.12,x);
             // occasional quick double blink
             if(hash11(id*13.3) > 0.72){
@@ -411,10 +566,19 @@ public enum ShaderGallery {
             float squint = 0.10*(fbm(vec2(iTime*0.33, 2.7)) - 0.35); // slow lid tension
             float hu = 0.53*(1.0 + 0.55*g.y - squint);
             float hl = 0.35*(1.0 - 0.28*g.y - 0.6*squint);
+            // posture: retracted lids bare the white around the iris; the cheek
+            // rising into a smile carries the lower lid up with it
+            hu *= 1.0 + 0.55*pLidLift;
+            hl *= (1.0 + 0.35*pLidLift)*(1.0 - 0.45*pCheekLift);
             float pu = pow(max(sin(PI*pow(s,0.78)),0.0), 1.05);  // apex nasal of center
             float pl = pow(max(sin(PI*pow(s,1.18)),0.0), 1.00);  // apex temporal
             float yu = base + hu*pu;
             float yl = base - hl*pl;
+            // the brow pressed down lands on the lid, hardest at the nasal side:
+            // the margin straightens and slants down toward the nose
+            yu -= pBrowDrop*pu*(0.10 + 0.30*(1.0 - s));
+            // a trembling lid
+            yu += pTremor*0.004*sin(iTime*29.0 + x*3.0)*pu;
             // the cornea pushes the lower lid around where the eye points,
             // and a slow micro-ripple keeps the margin alive; corners stay pinned
             float push = exp(-(x - g.x*1.35)*(x - g.x*1.35)*4.5);
@@ -423,8 +587,13 @@ public enum ShaderGallery {
             yl += 0.005*(noise2(vec2(x*2.0 + 3.0, iTime*0.8)) - 0.5)*pl;
             // blink: upper lid sweeps down and seals against the lower lid
             float closeLine = base - 0.30*hl*pl;
+            // a heavy lid hangs partway down the fissure at rest
+            yu = mix(yu, closeLine, pLidDroop);
+            // under shut lids the cornea still shows as a bump moving along the seal
+            closeLine += 0.018*push*pClosed*pl;
             yu = mix(yu, closeLine, b);
-            yl = mix(yl, closeLine - 0.006*pl, 0.55*smoothstep(0.4,1.0,b));
+            // in sleep the lower lid meets the upper one and the seal is complete
+            yl = mix(yl, closeLine - 0.006*pl, max(0.55*smoothstep(0.4,1.0,b), pClosed*b));
             return vec2(yu, yl);
         }
 
@@ -443,14 +612,22 @@ public enum ShaderGallery {
             float crD = 0.20 + 0.06*g.y + 0.10*b;
             float crA = 1.0 - 0.65*b + 0.35*max(g.y, 0.0);
             h -= 0.038*crA*exp(-(du-crD)*(du-crD)*120.0)*f;
-            h += 0.030*smoothstep(0.30,0.85,du)*smoothstep(1.5,0.5,abs(p.x-0.10)); // brow rise
-            h += 0.045*exp(-dl*dl*230.0)*step(0.0, dl)*f;        // lower lid roll
+            // brow rise: higher when the lids are pulled wide, flattened when pressed
+            h += 0.030*(1.0 + 0.8*pLidLift)*(1.0 - 0.6*pBrowDrop)
+               * smoothstep(0.30,0.85,du)*smoothstep(1.5,0.5,abs(p.x-0.10));
+            // the brow pressed down: its mass lands on the lid at the nasal side,
+            // and the skin between the brows folds into a vertical furrow
+            h += pBrowDrop*0.085*exp(-(du-0.22)*(du-0.22)*12.0)*smoothstep(1.0,-0.8,p.x)*step(0.0, du);
+            h -= pBrowDrop*0.025*exp(-(p.x+1.25)*(p.x+1.25)*30.0)*smoothstep(0.15,0.55,du);
+            // lower lid roll: swollen when tired, bunched up under a smiling cheek
+            h += 0.045*(1.0 + 0.9*pPuff + 0.8*pCheekLift)
+               * exp(-dl*dl*230.0/(1.0 + pPuff))*step(0.0, dl)*f;
             h -= 0.018*exp(-(dl-0.17)*(dl-0.17)*80.0)*smoothstep(1.1,0.3,abs(p.x)); // tear trough
-            // crow's feet: faint radial wrinkles past the outer corner
+            // crow's feet: faint radial wrinkles past the outer corner, deeper in a smile
             vec2 oc = p - vec2(1.48, 0.02);
             float cf = smoothstep(0.55,0.28,length(oc)) * smoothstep(0.14,0.30,length(oc))
                      * smoothstep(1.16,1.34,p.x);
-            h += 0.0022*sin(atan(oc.y,oc.x)*20.0 + noise2(p*6.0)*3.5)*cf;
+            h += 0.0022*(1.0 + 1.5*pCheekLift)*sin(atan(oc.y,oc.x)*20.0 + noise2(p*6.0)*3.5)*cf;
             h += 0.007*fbm(p*12.0);
             h += 0.0022*fbm(p*48.0);
             // micro wrinkle network: patchy and strongly warped so it never
@@ -483,13 +660,16 @@ public enum ShaderGallery {
             alb = mix(alb, vec3(0.56,0.36,0.29), fbm(r30*p*3.4+vec2(1.3,7.7))*0.35);
             alb = mix(alb, vec3(0.60,0.29,0.24),                     // pink lid margins
                       (0.42*exp(-du*du*420.0) + 0.45*exp(-dl*dl*260.0))*f);
-            alb = mix(alb, vec3(0.46,0.30,0.27),                     // under-eye shade
-                      0.40*exp(-(dl-0.15)*(dl-0.15)*55.0)*smoothstep(1.2,0.3,abs(p.x)));
+            // under-eye shade: deeper and bluer the more tired the eye
+            alb = mix(alb, mix(vec3(0.46,0.30,0.27), vec3(0.36,0.24,0.30), clamp(pShadow-1.0, 0.0, 1.0)),
+                      min(0.40*pShadow, 0.85)*exp(-(dl-0.15)*(dl-0.15)*55.0)*smoothstep(1.2,0.3,abs(p.x)));
             alb = mix(alb, vec3(0.55,0.37,0.30),                     // upper lid warmth
                       0.35*exp(-(du-0.10)*(du-0.10)*80.0)*f);
             alb *= 0.93 + 0.12*fbm(p*8.0+vec2(3.7,9.1));             // mottling
             alb = mix(alb, alb*vec3(1.07,0.84,0.80),                 // capillary blotches
                       smoothstep(0.55,0.80,fbm(r30*p*2.6+vec2(17.3,5.1)))*min(0.60*pSkinRed, 1.0));
+            // blood drained: lighter, greyer, the warmth gone
+            alb = mix(alb, vec3(0.70,0.60,0.56), 0.5*pPale);
             alb *= 0.975 + 0.045*noise2(p*46.0+1.8);                 // pores tint
             vec3 n = skinNormal(p, b, g);
             // AO in crease and near lash lines
@@ -499,6 +679,8 @@ public enum ShaderGallery {
             ao -= 0.26*crA*exp(-(du-crD)*(du-crD)*120.0)*f;
             ao -= 0.22*exp(-du*du*900.0)*f;
             ao -= 0.20*exp(-dl*dl*600.0)*f;
+            // the pressed brow shades the lid under it
+            ao -= pBrowDrop*0.30*exp(-(du-0.10)*(du-0.10)*30.0)*smoothstep(1.0,-0.8,p.x)*step(0.0, du);
             vec3 col = shadeDiffuse(n, alb, max(ao,0.0));
             // subsurface red at the shadow terminator
             float ndl = dot(n, KEY);
@@ -536,7 +718,7 @@ public enum ShaderGallery {
             float d = side > 0.0 ? p.y - rootY : rootY - p.y;
             if(d < (side > 0.0 ? -0.08 : -0.01) || d > 0.30) return 0.0;
             float dc = max(d, 0.0);
-            float px = VIEW/iResolution.y;
+            float px = VIEW*pZoom/iResolution.y;
             // length profile along the lid: short nasal, longest mid-temporal
             float prof = 0.40 + 0.60*smoothstep(-1.05, -0.30, p.x);
             prof *= 1.0 - 0.45*smoothstep(0.70, 1.06, p.x);
@@ -726,6 +908,9 @@ public enum ShaderGallery {
             vein *= 1.0 - 0.30*str;                              // taut side blanches
             cap  *= 1.0 - 0.30*str;
             alb *= 0.97 + 0.05*fbm(exy*18.0);                    // conjunctival texture
+            // blood in the conjunctiva: the whole white flushes pink, most at the
+            // corners and least right next to the iris
+            alb = mix(alb, vec3(0.80,0.50,0.46), pBloodshot*(0.55 + 0.45*corner)*mix(0.6, 1.0, nearLimb));
             alb = mix(alb, vec3(0.48,0.10,0.09), clamp(vein*1.30*pVein, 0.0, 1.0));
             alb = mix(alb, vec3(0.62,0.22,0.20), clamp(cap*0.85*pVein, 0.0, 1.0));
             alb = mix(alb, vec3(0.80,0.76,0.72), 0.15*str);
@@ -745,11 +930,18 @@ public enum ShaderGallery {
         }
 
         void mainImage(out vec4 fragColor, in vec2 fragCoord){
+            // the mood: the state buffer names the two it is between and when
+            // it left the first; before its first write the eye is in its own
+            vec4 S = texelFetch(iChannel0, ivec2(0), 0);
+            if(S.w > 1.5) applyMoods(int(S.x + 0.5), int(S.y + 0.5), smoothstep(0.0, 0.9, iTime - S.z));
+            else applyMoods(BASE_MOOD, BASE_MOOD, 1.0);
             vec3 R = iResolution;
-            float scale = VIEW;
+            float scale = VIEW*pZoom;
             vec2 uv = (fragCoord - 0.5*R.xy)/R.y * scale;
             uv.y -= 0.02;
-            float tilt = 0.035 + 0.006*sin(iTime*0.13);          // slight head tilt + sway
+            // breathing: the whole patch rises and falls with a sleeper's chest
+            uv.y -= pBreath*0.035*sin(iTime*0.85);
+            float tilt = (0.035 + 0.006*sin(iTime*0.13))*pTilt; // slight head tilt + sway
             uv = mat2(cos(tilt),-sin(tilt),sin(tilt),cos(tilt))*uv;
             float px = scale / R.y;
             float t = iTime;
@@ -761,6 +953,10 @@ public enum ShaderGallery {
             vec2 gLid = gazeAngles(t - 0.06, iMouse, R);      // lids trail the saccade
             float b = max(blinkAmt(t), drowsy(t));
             b = max(b, 0.75*smoothstep(2.5, 0.4, t));         // wake up from a squint
+            // asleep: the lids stay shut; a finger on the sticker lifts them to a
+            // drowsy peek for as long as it stays, and it looks at the finger
+            float peek = iMouse.z > 0.0 ? 0.42 + 0.04*sin(t*7.0) : 1.0;
+            b = max(b, pClosed*peek);
 
             // lid inertia: lashes lag the moving lid a touch and settle with one
             // soft overshoot — smooth differences of the lid curve itself, so the
@@ -813,7 +1009,7 @@ public enum ShaderGallery {
                 float Fs = fresnel(max(dot(nWs, -rd), 0.0));
                 // tear film over the sclera is duller than the cornea: cap the
                 // window highlight so it doesn't mirror a second crisp rectangle
-                sclera += min(envLight(reflect(rd, nWs)), vec3(5.0)) * Fs * 0.45;
+                sclera += min(envLight(reflect(rd, nWs)), vec3(5.0)) * Fs * (0.45 + 0.5*pWet);
 
                 // --- cornea shading (refract to the iris plane)
                 vec3 cornea = sclera;
@@ -868,15 +1064,19 @@ public enum ShaderGallery {
                 // tear meniscus: bright along the lower lid; the upper one sits in
                 // the lid shadow, so only a faint glint remains
                 float men = 0.12*exp(-su*su*2600.0) + exp(-(sp.y-L.y)*(sp.y-L.y)*3800.0);
+                // a welling eye: the meniscus swells into a pool along the lower lid
+                men += pWet*(0.7*exp(-(sp.y-L.y)*(sp.y-L.y)*500.0) + 1.5*exp(-(sp.y-L.y)*(sp.y-L.y)*3800.0));
                 eyeCol += vec3(0.9,0.9,0.95) * men * 0.22;
                 eyeCol *= 1.0 - 0.35*exp(-su*su*9000.0);      // contact dark line
             }
 
             // ---------------- composite skin / eye
             // orbicularis: a blink pulls the surrounding skin toward the eye,
-            // and a faint tremor keeps the field alive
+            // and a faint tremor keeps the field alive; lids merely resting
+            // shut squeeze nothing
             vec2 dv = sp - vec2(0.0, -0.05);
-            vec2 spSkin = sp - dv*(0.05*b)*exp(-dot(dv,dv)*0.35);
+            float squeeze = max(blinkAmt(t), drowsy(t));
+            vec2 spSkin = sp - dv*(0.05*squeeze)*exp(-dot(dv,dv)*0.35);
             spSkin += 0.0022*vec2(noise2(sp*2.5 + vec2(t*0.7, 0.0)) - 0.5,
                                   noise2(sp*2.5 + vec2(7.7, t*0.6)) - 0.5);
             vec3 col = inside < 0.999 ? skinColor(spSkin, b, gLid) : eyeCol;
@@ -940,8 +1140,7 @@ public enum ShaderGallery {
             fragColor = vec4(col, 1.0 - rim);
         #endif
         }
-        """, inputs: []),
-    ])
+        """
 
     /// Ink in water. Buffer A carries a velocity field and the dye through
     /// itself frame to frame; a finger pushes and stains, and a thin thread
