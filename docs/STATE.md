@@ -43,6 +43,18 @@ again — the owner's call, not mine. The bearer token format changes to
 `<userId>.<secret>` with it. The worktree and the `agents.tsv` row stay until
 that decision.
 
+Later still: a muted chat's push travels silent and flagged and the extension
+lets a mention or a reply through (`bcf2e68`, live on the simulator); the
+smoke's deferred-send echo check raced the parallel fan-out under a host load
+above ten and was made to wait (`2cd268b`, the only red of the evening's
+gates, not the product). Helper `streaming` runs on `run-streaming` (ROADMAP
+line «streaming over range requests»), session id in `agents.tsv`. What is
+left open and needs no device is now gated on the owner: the `run-d1-leftovers`
+merge (a stand wipe), iCloud backup and its passwordless key (an Apple ID
+signed into a simulator), the GIF picker (a provider key), and history
+transfer to a new device (touches the provisioning tables the D1 branch moves,
+so it waits for that merge).
+
 Also closed live the same evening: 773 (a request's push names its author and
 the extension writes the request chat), 853 (group avatar in the banner), 859
 (a reaction reaches the target's author with the app closed, `notifyUser`),
