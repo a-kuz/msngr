@@ -1492,3 +1492,37 @@ timed out waiting for the guest set to leave nova's outbox. The chat reached
 the guest as a message request with nothing in it; whether the sticker set is
 stuck in nova's outbox or was never enqueued after the re-registration is not
 established.
+
+### A repair storm between two fresh homes: sessions rebuilt every minute, handshakes failing on one side — open
+Found 2026-09-02 during the missed-call run
+(`runs/2026-09-02-missed-call-run.md`), on the trio reseeded that evening —
+no fixture fork this time, both homes installed once and each on its own
+simulator. Since 21:34 bravo and charlie rebuild their pairwise session about
+once a minute in both directions (`MessageRepair.sessionRebuildInterval`):
+the direct chat's journal holds prekey handshakes at seqs 1, 10, 11, 14, 16,
+17, 19, 23 and the group's at 13, 18, 20–26, 29; the stand answered nine
+bundle fetches for bravo and fifteen for charlie in eighty minutes, and
+bravo's one-time prekeys on the server went from 24 to 14. On bravo the debt
+is six rows: two of charlie's handshakes as `pk_decrypt_failed` (direct 11,
+group 23), four frames as `no_session` (direct 8 and 12, group 11 and 12)
+with 113 replays and all five repair requests spent; charlie holds one of
+bravo's (group 16, 58 replays). Every stuck frame is `service` — sender-key
+handouts and call signalling — so no text is unreadable, but each rebuild
+burns a one-time prekey on the peer and the loop does not converge.
+
+What is ruled out: neither outbox holds a `blocked` row, so this is not the
+TOFU shape of the severed-pair entry; no identity change is pending on either
+side; the identity sign keys the server hands out for bravo, charlie and alfa
+are the ones each home trusts. What is not ruled out, in the order to check:
+both of charlie's handshakes that failed on bravo landed while the
+extension, not the app, was the reader (group 23 at 22:22 and direct 11 at
+22:39, both with the app killed), while other handshakes from the same device
+opened — a prekey failure inside the extension is written as a terminal
+reason and never replayed by the app, so a transient failure there (the
+one-time prekey consumed by the other process a moment earlier, or the store
+read under the gate returning an older blob) would look exactly like this.
+The republish self-heal cannot help either way: it waits for three distinct
+`pk_decrypt_failed` rows and bravo has two. The group's `no_session` pair at
+21:34:50 predates all of it — right after the homes were installed — and is
+where the storm started.
+

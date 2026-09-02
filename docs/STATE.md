@@ -143,6 +143,22 @@ catalog; the test-file tail is converted and being re-run before its commit.
 `.claude/agents.tsv` holds only live work, so `scripts/agents.py` is the
 picture of the site.
 
+Late on 2026-09-02, after the gate on `d4cd8f3` came back green: two mixed
+🟡 lines were split so the watched half is ✅ and the blocked half a ⬜ with
+its blocker named — channel media through the ordinary path is live (a late
+subscriber opens the photo from the readable post,
+`docs/qa/runs/2026-09-02-channel-media-run.md`) while CF Stream / Images
+waits on a binding, GIFs play while the search picker waits on a provider
+key — and the missed-call push was watched live
+(`docs/qa/runs/2026-09-02-missed-call-run.md`), leaving the VoIP push as the
+⬜ behind the certificate. That run found a repair storm between the fresh
+bravo and charlie homes (sessions rebuilt every minute, two handshakes stuck
+on bravo as `pk_decrypt_failed`), logged open in `docs/qa/defects.md`; it is
+the first thing to take next. The shared gate runner was reinstalled under
+xctest by another session at 22:30:52 mid-run, which cleared bravo's
+delivered notifications — a reminder that the gate runner is not a place to
+watch banners.
+
 ## On main, 2026-08-21 late evening — the solo roadmap run
 
 A single agent working the easiest open ROADMAP items straight on main, one

@@ -1147,10 +1147,11 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
 - ⬜ CallKit and PushKit
 - ✅ ringback while dialing, and the callee's ringtone (CallSounds, the merge
   of worktree-calls 2026-09-01)
-- 🟡 a push for an incoming call, and a missed-call notification with a way
-  back (the missed-call push is shipped — the caller's `callLog` rides
-  `service` + `notify`, covered in smoke; the incoming-call ring with the app
-  closed is the VoIP push, blocked on the device signing certificate)
+- ✅ a missed-call notification with a way back: the caller's `callLog` rides
+  `service` + `notify`, the extension on a killed app writes the call row and
+  raises the banner (smoke; qa/runs/2026-09-02-missed-call-run)
+- ⬜ a push for an incoming call, so the ring reaches a closed app — the VoIP
+  push, blocked on the device signing certificate
 - ✅ the in-app call bar: the call folds into a floating tile over the chats,
   the timer on it, a tap returns to the call screen (the merge of
   worktree-calls 2026-09-01)
@@ -1466,12 +1467,11 @@ Decided in `docs/research/2026-08-19-per-user-do.md`; the queue orders the steps
 From the open backlog (`docs/audits/2026-08-12-code-audit.md`) and the topics
 still not closed:
 
-1. The device run that closes the NSE family of 🟡 lines: the extension comes
-   up on hardware, fits into the limits, sees the group container; the same
-   run checks the banner-to-chat write in airplane mode, quick reply and mute
-   from the push, the coalescing window, and measures the call ceiling during
-   an avalanche — `simctl push` does not launch the extension on the simulator
-   at all. Data Protection on a locked screen rides along.
+1. The device run for what the simulator cannot show: the extension's memory
+   and time limits on hardware, the coalescing window under pushes that arrive
+   in parallel, the call ceiling during an avalanche, and Data Protection on a
+   locked screen. Everything else in the NSE family is closed on the simulator
+   over real APNs (qa/runs/2026-09-02-nse-simulator-run).
 2. Calls v2 by `CALLS-ROADMAP.md`: the SFU path, E2EE over insertable streams,
    video; the VoIP push stays blocked on the device signing certificate.
 3. Channels, stories, bots — the three plaintext surfaces not yet started.
