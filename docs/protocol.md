@@ -135,9 +135,15 @@ POST /api/stories                 {frames:[{mediaId, type:"photo"|"video", w?, h
                                   are the text's centre as a fraction of the frame
 GET  /api/stories                 what the caller may watch now, own stories included:
                                   [{id, authorId, displayName, avatarId, createdAt,
-                                  expiresAt, frames, audience, link, seen}]
+                                  expiresAt, frames, audience, link, seen, liked,
+                                  views, likes}]; `views` and `likes` are counts on the
+                                  caller's own stories and null on everyone else's
 POST /api/stories/:id/seen        remembers the watch; the author's own is not counted
-GET  /api/stories/:id/viewers     the author's alone → {viewers:[{viewer_id, seen_at, …}]}
+POST /api/stories/:id/like        {on?:bool} puts a heart on (default) or takes it off;
+                                  a heart counts as a view too. `own_story` for the
+                                  author, 404 for anyone the story is not shown to
+GET  /api/stories/:id/viewers     the author's alone → {viewers:[{viewer_id, seen_at,
+                                  liked, …}]}, hearts first
 POST /api/stories/:id             {takeDown:true} or {link:bool} → {link?}; a revoked
                                   link is never handed out again, asking again mints a new code
 GET  /s/:code                     the public page: media, text over it, no names; a
@@ -475,7 +481,7 @@ asked for it.
 `ContentPayload` (also the plaintext in `skm`):
 
 ```
-{kind, text?, media?, album?, replyTo?, fwd?, shader?, bubbleShader?, targetMsgId?,
+{kind, text?, media?, album?, replyTo?, fwd?, story?, shader?, bubbleShader?, targetMsgId?,
  emoji?, ttlSeconds?, to?, repairSeq?, reason?, attempt?, repairOf?, origSentAt?,
  orig?, keyId?}
 ```
@@ -503,6 +509,10 @@ asked for it.
 - `media` / `album` — `MediaInfo`: `type, mediaId, key, hash, size, mime, name?,
   w?, h?, dur?, waveform?, blurhash?, thumbMediaId?, thumbKey?, thumbHash?`;
 - `replyTo` — `{msgId, authorId, text, kind}`, `fwd` — `{fromUserId, fromName}`;
+- `story` — `StoryRef`: `{storyId, authorId, mediaId, type, w?, h?, expiresAt}`,
+  the story a `text` answers. Both sides draw the frame from `mediaId` (a story's
+  media is plaintext) and open the story by `storyId` while `expiresAt` has not
+  passed; afterwards the strip reads as an expired story;
 - a forward is an ordinary content frame in the target chat: the sender copies
   the content and the `replyTo` preview of the original into a new payload and
   sets `fwd` to the original author (forwarding a forward keeps the `fwd` it

@@ -19,6 +19,9 @@ struct BubbleLayoutPlan: Equatable {
     var replyFrame: CGRect?
     var replyAuthor: String?
     var replyText: String?
+    /// the story the message answers: its frame is drawn as a thumbnail at
+    /// the right end of the reply strip
+    var storyThumb: StoryRef?
     /// the link card under the text, in the bubble's coordinates
     var linkFrame: CGRect?
     var linkTitle: String?
@@ -102,6 +105,11 @@ enum BubbleLayout {
         ceil(Theme.Text.replyAuthor.uiFont.lineHeight + Theme.Text.replyText.uiFont.lineHeight) + 6
     }
     static var replyWidth: CGFloat { TypeScale.scaled(220, max: 340) }
+    /// The strip over a story reply: tall enough for the frame's thumbnail,
+    /// a portrait the shape of the story itself.
+    static var storyThumbHeight: CGFloat { TypeScale.scaled(48, max: 68) }
+    static var storyThumbWidth: CGFloat { round(storyThumbHeight * 0.6) }
+    static var storyStripHeight: CGFloat { max(replyHeight, storyThumbHeight + 4) }
     /// The link card under the text: its labels' fonts and paddings.
     static var linkTitleFont: UIFont { Theme.Text.replyAuthor.uiFont }
     static var linkDescFont: UIFont { Theme.Text.replyText.uiFont }
@@ -138,7 +146,7 @@ enum BubbleLayout {
     static func cacheKey(_ msg: Message, width: CGFloat, tightGap: Bool, showTail: Bool,
                          showName: Bool, avatarInset: Bool, ownId: String) -> NSString {
         let reactions = msg.reactions.map { "\($0.key)\($0.value.count)\($0.value.contains(ownId) ? "*" : "")" }.sorted().joined()
-        let ver = "\(msg.text ?? "")|\(msg.status.rawValue)|\(msg.edited)|\(reactions)|\(msg.deletedForAll)|\(msg.linkPreview?.url ?? "")|\(msg.linkPreview?.image?.mediaId ?? (msg.linkPreview?.image != nil ? "local" : ""))|\(msg.transcriptShown ? msg.transcript ?? "" : "")"
+        let ver = "\(msg.text ?? "")|\(msg.status.rawValue)|\(msg.edited)|\(reactions)|\(msg.deletedForAll)|\(msg.linkPreview?.url ?? "")|\(msg.linkPreview?.image?.mediaId ?? (msg.linkPreview?.image != nil ? "local" : ""))|\(msg.transcriptShown ? msg.transcript ?? "" : "")|\(msg.story.map { $0.expiresAt / 1000 > Date().timeIntervalSince1970 } ?? false)"
         return "\(msg.id)|\(Int(width))|\(TypeScale.category.rawValue)|\(tightGap)|\(showTail)|\(showName)|\(avatarInset)|\(ver.hashValue)" as NSString
     }
 
@@ -208,10 +216,12 @@ enum BubbleLayout {
             y += h + 2
         }
 
-        // reply strip
-        if msg.replyTo != nil, !msg.deletedForAll {
+        // reply strip; a story reply wears the same strip with the frame's
+        // thumbnail at its right end
+        let story = msg.deletedForAll ? nil : msg.story
+        if msg.replyTo != nil || story != nil, !msg.deletedForAll {
             let w = min(maxBubbleWidth - 2 * hPadding, replyWidth)
-            let h = replyHeight
+            let h = story != nil ? storyStripHeight : replyHeight
             replyFrame = CGRect(x: hPadding, y: y, width: w, height: h)
             contentWidth = max(contentWidth, w)
             y += h + 4
@@ -578,8 +588,9 @@ enum BubbleLayout {
             voiceFrame: voiceFrame,
             shaderFrame: shaderFrame,
             replyFrame: replyFrame,
-            replyAuthor: msg.replyTo != nil ? replyAuthorName : nil,
-            replyText: msg.replyTo.map(Self.replyPreviewText),
+            replyAuthor: replyFrame != nil ? replyAuthorName : nil,
+            replyText: msg.replyTo.map(Self.replyPreviewText) ?? story.map { Self.storyStripText($0) },
+            storyThumb: story,
             linkFrame: linkFrame,
             linkTitle: linkFrame != nil ? msg.linkPreview?.title : nil,
             linkDesc: linkFrame != nil ? msg.linkPreview?.desc : nil,
@@ -608,6 +619,13 @@ enum BubbleLayout {
 
     /// The marker next to the time on an edited message; layout and cell share it.
     static let editedMark = String(localized: "edited") + " "
+
+    /// The second line of a story reply's strip: what the thumbnail is, and
+    /// whether there is still a story to open behind it.
+    static func storyStripText(_ story: StoryRef, now: Date = Date()) -> String {
+        story.expiresAt / 1000 > now.timeIntervalSince1970
+            ? String(localized: "Story") : String(localized: "Expired story")
+    }
 
     /// Preview of the quoted message in the reply strip: media gets an icon and a caption
     /// instead of an empty line, text gets itself (or a stand-in when it was not kept).

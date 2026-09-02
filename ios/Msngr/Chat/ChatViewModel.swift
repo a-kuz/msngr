@@ -669,9 +669,10 @@ final class ChatViewModel: ObservableObject {
         let avatarIdById = Dictionary(uniqueKeysWithValues: members.map { ($0.id, $0.avatarId) })
         let isGroupChat = members.count > 2
 
-        // author of the quoted message: "you" for our own, otherwise a member's name
-        func replyAuthorName(_ reply: ReplyPreview) -> String {
-            reply.authorId == ownId ? String(localized: "You") : (nameById[reply.authorId] ?? "?")
+        // author of the quoted message or story: "you" for our own, otherwise a
+        // member's name
+        func quotedAuthorName(_ authorId: String) -> String {
+            authorId == ownId ? String(localized: "You") : (nameById[authorId] ?? "?")
         }
 
         func sameSeries(_ a: Message, _ b: Message) -> Bool {
@@ -702,7 +703,8 @@ final class ChatViewModel: ObservableObject {
             out.append(.message(msg, tightGap: tightGap, showTail: showTail,
                                 showName: showName,
                                 authorName: nameById[msg.fromUserId] ?? "?",
-                                replyAuthorName: msg.replyTo.map(replyAuthorName),
+                                replyAuthorName: (msg.replyTo?.authorId ?? msg.story?.authorId)
+                                    .map(quotedAuthorName),
                                 avatar: avatar))
             let next = older
 

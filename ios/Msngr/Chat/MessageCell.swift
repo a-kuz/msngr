@@ -296,7 +296,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     }
 
     @objc private func handleReplyQuoteTap() {
-        guard msg?.replyTo != nil else { return }
+        guard msg?.replyTo != nil || msg?.story != nil else { return }
         onTapReplyQuote?()
     }
 
@@ -503,7 +503,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         if let rf = plan.replyFrame {
             replyBar.isHidden = false
             replyBar.configure(author: plan.replyAuthor ?? "", text: plan.replyText ?? "",
-                               outgoing: plan.isOutgoing)
+                               story: plan.storyThumb, outgoing: plan.isOutgoing)
             replyBar.frame = rf
         } else {
             replyBar.isHidden = true
@@ -1454,6 +1454,11 @@ final class ReplyStripView: UIView {
     private let bar = UIView()
     private let authorLabel = UILabel()
     private let textLabel = UILabel()
+    /// The frame of the story a reply answers, at the strip's right end.
+    private let thumbView = UIImageView()
+    /// The story whose frame is on the thumbnail, so reconfiguring the same
+    /// strip does not flash it.
+    private var thumbStoryId: String?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1461,14 +1466,20 @@ final class ReplyStripView: UIView {
         bar.layer.cornerRadius = 1.5
         authorLabel.textColor = UIColor(Theme.accent)
         textLabel.textColor = .secondaryLabel
+        thumbView.contentMode = .scaleAspectFill
+        thumbView.clipsToBounds = true
+        thumbView.layer.cornerRadius = 5
+        thumbView.backgroundColor = UIColor.black.withAlphaComponent(0.15)
+        thumbView.isHidden = true
         addSubview(bar)
         addSubview(authorLabel)
         addSubview(textLabel)
+        addSubview(thumbView)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(author: String, text: String, outgoing: Bool) {
+    func configure(author: String, text: String, story: StoryRef? = nil, outgoing: Bool) {
         authorLabel.font = Theme.Text.replyAuthor.uiFont
         textLabel.font = Theme.Text.replyText.uiFont
         authorLabel.text = author
@@ -1477,16 +1488,54 @@ final class ReplyStripView: UIView {
         bar.backgroundColor = outgoing ? UIColor(Theme.outgoingText) : UIColor(Theme.accent)
         authorLabel.textColor = outgoing ? UIColor(Theme.outgoingText) : UIColor(Theme.accent)
         textLabel.textColor = outgoing ? UIColor(Theme.outgoingMeta) : .secondaryLabel
+        loadThumb(story)
+    }
+
+    /// A story's frame was never encrypted: it comes back as it lies, and a
+    /// clip gives up its first frame.
+    private func loadThumb(_ story: StoryRef?) {
+        guard let story else {
+            thumbView.isHidden = true
+            thumbView.image = nil
+            thumbStoryId = nil
+            return
+        }
+        thumbView.isHidden = false
+        guard story.storyId != thumbStoryId else { return }
+        thumbStoryId = story.storyId
+        thumbView.image = nil
+        let side = BubbleLayout.storyThumbHeight * UIScreen.main.scale
+        Task { [weak self] in
+            guard let image = await StoryThumb.load(story, pixelHeight: side) else { return }
+            await MainActor.run {
+                guard let self, self.thumbStoryId == story.storyId else { return }
+                self.thumbView.image = image
+            }
+        }
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        // the two lines split the strip by their own line heights
+        // the two lines split the strip by their own line heights; the
+        // thumbnail, when there is one, takes the right end
         let authorH = ceil(authorLabel.font.lineHeight)
+        let thumbW = thumbView.isHidden ? 0 : BubbleLayout.storyThumbWidth + 8
+        let textW = bounds.width - 9 - thumbW
         bar.frame = CGRect(x: 0, y: 2, width: 3, height: bounds.height - 4)
-        authorLabel.frame = CGRect(x: 9, y: 2, width: bounds.width - 9, height: authorH)
-        textLabel.frame = CGRect(x: 9, y: 2 + authorH, width: bounds.width - 9,
-                                 height: max(0, bounds.height - 4 - authorH))
+        if thumbView.isHidden {
+            authorLabel.frame = CGRect(x: 9, y: 2, width: textW, height: authorH)
+            textLabel.frame = CGRect(x: 9, y: 2 + authorH, width: textW,
+                                     height: max(0, bounds.height - 4 - authorH))
+        } else {
+            // the two lines sit centred against the taller thumbnail
+            let textH = ceil(textLabel.font.lineHeight)
+            let top = max(2, (bounds.height - authorH - textH) / 2)
+            authorLabel.frame = CGRect(x: 9, y: top, width: textW, height: authorH)
+            textLabel.frame = CGRect(x: 9, y: top + authorH, width: textW, height: textH)
+            let h = bounds.height - 4
+            thumbView.frame = CGRect(x: bounds.width - BubbleLayout.storyThumbWidth, y: 2,
+                                     width: BubbleLayout.storyThumbWidth, height: h)
+        }
     }
 }
 

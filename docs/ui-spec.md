@@ -659,6 +659,22 @@ three frames of the author are fetched in the background, and so is the first
 frame of each neighbouring author, so a swipe lands on a page already showing
 its frame.
 
+Under someone else's story lies the reply field with a heart beside it. The
+heart goes red at once with a swell and a light tap, and comes off the same
+way; the author sees it in «Кто посмотрел» next to the name, hearts first, and
+nobody else is told. Typing turns the heart into the send arrow; the keyboard's
+key is «Отправить». A reply empties the field, says «Отправлено» over it for a
+moment and goes into the direct chat with the author as a text carrying the
+story: in both chats the bubble wears the reply strip with the author's name,
+the word «История» and the frame's thumbnail at its right end, and a tap on the
+strip opens that story in the viewer over the chat. Once the story's day is
+over the strip reads «История истекла» and the tap only nudges.
+
+Under the author's own story stands a capsule with the eye and how many
+watched, and the heart with how many liked once there is one; a tap opens
+«Кто посмотрел». The author's own watching is not counted, and a heart counts
+as a watch.
+
 Three palettes, chosen in settings under «Оформление» through preview cards and
 stored in `UserDefaults` under the key `palette`, defaulting to `graphite`:
 

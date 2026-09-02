@@ -43,6 +43,38 @@ final class BubbleLayoutTests: XCTestCase {
         XCTAssertGreaterThan(unfolded.cellHeight, folded.cellHeight)
     }
 
+    /// A story reply wears the reply strip with the frame's thumbnail: the
+    /// strip is tall enough for the picture, names the story's author, says
+    /// what it is, and carries the story for the cell to draw and to open.
+    func testStoryReplyWearsAStripWithTheFrame() {
+        var m = outgoing("nice one")
+        let live = Date().timeIntervalSince1970 * 1000 + 3_600_000
+        m.story = StoryRef(storyId: "s1", authorId: "peer", mediaId: "m1", type: "photo",
+                           w: 1080, h: 1920, expiresAt: live)
+        let p = BubbleLayout.plan(for: m, width: width, tightGap: false,
+                                  showTail: true, showName: false, authorName: nil,
+                                  replyAuthorName: "Bravo")
+        let strip = try! XCTUnwrap(p.replyFrame)
+        XCTAssertGreaterThanOrEqual(strip.height, BubbleLayout.storyThumbHeight)
+        XCTAssertEqual(p.replyAuthor, "Bravo")
+        XCTAssertEqual(p.replyText, String(localized: "Story"))
+        XCTAssertEqual(p.storyThumb?.storyId, "s1")
+        let tf = try! XCTUnwrap(p.textFrame)
+        XCTAssertGreaterThanOrEqual(tf.minY, strip.maxY, "the text sits under the strip")
+
+        m.story?.expiresAt = live - 7_200_000
+        let gone = BubbleLayout.plan(for: m, width: width, tightGap: false,
+                                     showTail: true, showName: false, authorName: nil,
+                                     replyAuthorName: "Bravo")
+        XCTAssertEqual(gone.replyText, String(localized: "Expired story"))
+
+        m.deletedForAll = true
+        let tomb = BubbleLayout.plan(for: m, width: width, tightGap: false,
+                                     showTail: true, showName: false, authorName: nil)
+        XCTAssertNil(tomb.replyFrame, "a tombstone carries no strip")
+        XCTAssertNil(tomb.storyThumb)
+    }
+
     /// Case 1: short single-line text — the time sits inline on the same line.
     func testShortTextTimeInline() {
         let p = plan("Hello")

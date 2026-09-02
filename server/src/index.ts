@@ -1725,6 +1725,25 @@ app.get("/api/stories", async (c) => {
     "SELECT story_id FROM story_views WHERE viewer_id = ?"
   ).bind(userId).all<{ story_id: string }>();
   const watched = new Set(seen.results.map((r) => r.story_id));
+  const hearts = await c.env.DB.prepare(
+    "SELECT story_id FROM story_likes WHERE user_id = ?"
+  ).bind(userId).all<{ story_id: string }>();
+  const liked = new Set(hearts.results.map((r) => r.story_id));
+  // the counts are the author's: a viewer is told nothing about the others
+  const own = rows.results.filter((r) => r.author_id === userId).map((r) => r.id);
+  const views = new Map<string, number>();
+  const likes = new Map<string, number>();
+  if (own.length) {
+    const marks = own.map(() => "?").join(",");
+    const v = await c.env.DB.prepare(
+      `SELECT story_id, COUNT(*) AS n FROM story_views WHERE story_id IN (${marks}) GROUP BY story_id`
+    ).bind(...own).all<{ story_id: string; n: number }>();
+    for (const r of v.results) views.set(r.story_id, r.n);
+    const l = await c.env.DB.prepare(
+      `SELECT story_id, COUNT(*) AS n FROM story_likes WHERE story_id IN (${marks}) GROUP BY story_id`
+    ).bind(...own).all<{ story_id: string; n: number }>();
+    for (const r of l.results) likes.set(r.story_id, r.n);
+  }
   const blocked = await c.env.DB.prepare(
     "SELECT user_id, blocked_id FROM blocks WHERE user_id = ? OR blocked_id = ?"
   ).bind(userId, userId).all<{ user_id: string; blocked_id: string }>();
@@ -1737,9 +1756,27 @@ app.get("/api/stories", async (c) => {
       frames: JSON.parse(r.frames), audience: r.audience,
       link: r.link_code && !r.link_revoked ? `${publicOrigin(c)}/s/${r.link_code}` : null,
       seen: watched.has(r.id),
+      liked: liked.has(r.id),
+      views: r.author_id === userId ? views.get(r.id) ?? 0 : null,
+      likes: r.author_id === userId ? likes.get(r.id) ?? 0 : null,
     }));
   return json({ ok: true, stories });
 });
+
+/// Whether this user may watch the story right now: it is live, and either
+/// it is open to everyone or the two share a direct chat, with no block
+/// between them. The author is a watcher of their own.
+async function canWatchStory(env: Env, userId: string, story: StoryRow): Promise<boolean> {
+  if (story.taken_down || story.expires_at <= Date.now()) return false;
+  if (story.author_id === userId) return true;
+  const block = await env.DB.prepare(
+    `SELECT 1 FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)`
+  ).bind(userId, story.author_id, story.author_id, userId).first();
+  if (block) return false;
+  if (story.audience === "everyone") return true;
+  const peers = await directPeers(env, userId);
+  return peers.includes(story.author_id);
+}
 
 app.post("/api/stories/:id/seen", async (c) => {
   const { userId } = c.get("auth");
@@ -1755,8 +1792,38 @@ app.post("/api/stories/:id/seen", async (c) => {
   return json({ ok: true });
 });
 
-/// Who watched. The creator's alone: nobody else is told, and the public page
-/// is not counted at all.
+/// A heart on a story, put on or taken off. Liking is watching, so the like
+/// also counts as a view; the author cannot like their own.
+app.post("/api/stories/:id/like", async (c) => {
+  const { userId } = c.get("auth");
+  const id = c.req.param("id");
+  const b = await c.req.json<{ on?: boolean }>();
+  const story = await c.env.DB.prepare("SELECT * FROM stories WHERE id = ?")
+    .bind(id).first<StoryRow>();
+  if (!story) return err("not_found", 404);
+  if (story.author_id === userId) return err("own_story");
+  if (!(await canWatchStory(c.env, userId, story))) return err("not_found", 404);
+  const now = Date.now();
+  if (b.on === false) {
+    await c.env.DB.prepare("DELETE FROM story_likes WHERE story_id = ? AND user_id = ?")
+      .bind(id, userId).run();
+  } else {
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `INSERT INTO story_views (story_id, viewer_id, seen_at) VALUES (?,?,?)
+         ON CONFLICT(story_id, viewer_id) DO NOTHING`
+      ).bind(id, userId, now),
+      c.env.DB.prepare(
+        `INSERT INTO story_likes (story_id, user_id, liked_at) VALUES (?,?,?)
+         ON CONFLICT(story_id, user_id) DO NOTHING`
+      ).bind(id, userId, now),
+    ]);
+  }
+  return json({ ok: true, liked: b.on !== false });
+});
+
+/// Who watched, and who of them left a heart. The creator's alone: nobody
+/// else is told, and the public page is not counted at all.
 app.get("/api/stories/:id/viewers", async (c) => {
   const { userId } = c.get("auth");
   const story = await c.env.DB.prepare(
@@ -1765,11 +1832,13 @@ app.get("/api/stories/:id/viewers", async (c) => {
   if (!story) return err("not_found", 404);
   if (story.author_id !== userId) return err("not_author", 403);
   const rows = await c.env.DB.prepare(
-    `SELECT v.viewer_id, v.seen_at, u.username, u.display_name, u.avatar_id
+    `SELECT v.viewer_id, v.seen_at, u.username, u.display_name, u.avatar_id,
+            l.user_id IS NOT NULL AS liked
      FROM story_views v JOIN users u ON u.id = v.viewer_id
-     WHERE v.story_id = ? ORDER BY v.seen_at DESC`
-  ).bind(c.req.param("id")).all();
-  return json({ ok: true, viewers: rows.results });
+     LEFT JOIN story_likes l ON l.story_id = v.story_id AND l.user_id = v.viewer_id
+     WHERE v.story_id = ? ORDER BY liked DESC, v.seen_at DESC`
+  ).bind(c.req.param("id")).all<{ liked: number }>();
+  return json({ ok: true, viewers: rows.results.map((r) => ({ ...r, liked: r.liked === 1 })) });
 });
 
 /// Taking it down, and minting or revoking its public link.

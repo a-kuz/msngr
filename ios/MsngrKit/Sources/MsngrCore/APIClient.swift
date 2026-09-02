@@ -586,6 +586,12 @@ public final class APIClient: @unchecked Sendable {
         /// The public link, while the creator keeps one open.
         public let link: String?
         public let seen: Bool
+        /// The caller's own heart on it.
+        public var liked: Bool
+        /// How many watched and how many left a heart: the author's numbers,
+        /// nil on everyone else's stories.
+        public var views: Int?
+        public var likes: Int?
     }
 
     public struct StoryViewer: Decodable, Identifiable, Equatable {
@@ -594,6 +600,7 @@ public final class APIClient: @unchecked Sendable {
         public let username: String
         public let display_name: String
         public let avatar_id: String?
+        public let liked: Bool
         public var id: String { viewer_id }
     }
 
@@ -620,6 +627,12 @@ public final class APIClient: @unchecked Sendable {
 
     public func markStorySeen(_ storyId: String) async throws {
         _ = try await request("api/stories/\(storyId)/seen", method: "POST", jsonBody: [String: String]())
+    }
+
+    /// A heart on someone's story, on or off.
+    public func likeStory(_ storyId: String, on: Bool) async throws {
+        struct Body: Encodable { let on: Bool }
+        _ = try await request("api/stories/\(storyId)/like", method: "POST", jsonBody: Body(on: on))
     }
 
     public func storyViewers(_ storyId: String) async throws -> [StoryViewer] {

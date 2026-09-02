@@ -49,6 +49,31 @@ public struct BotCommand: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// The story a message answers: enough of it to draw the strip over the text
+/// and to open it again. The frame's media is plaintext, so the receiver
+/// fetches the thumbnail as it lies; `expiresAt` says whether there is still
+/// anything to open.
+public struct StoryRef: Codable, Equatable, Sendable {
+    public var storyId: String
+    public var authorId: String
+    public var mediaId: String
+    public var type: String        // photo | video
+    public var w: Int?
+    public var h: Int?
+    public var expiresAt: Double
+
+    public init(storyId: String, authorId: String, mediaId: String, type: String,
+                w: Int? = nil, h: Int? = nil, expiresAt: Double) {
+        self.storyId = storyId
+        self.authorId = authorId
+        self.mediaId = mediaId
+        self.type = type
+        self.w = w
+        self.h = h
+        self.expiresAt = expiresAt
+    }
+}
+
 /// A button under a bot's message. Tapping it sends the bot a `callback`
 /// content carrying `data`; the reader sees the text.
 public struct MessageButton: Codable, Equatable, Identifiable, Sendable {
@@ -383,6 +408,8 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
     public var location: LocationInfo?
     /// A bot's buttons under the message, a row per array.
     public var buttons: [[MessageButton]]?
+    /// text: the story this message answers.
+    public var story: StoryRef?
     /// voice: the on-device transcript, recognized on demand. Local only —
     /// it never travels.
     public var transcript: String?
@@ -410,7 +437,7 @@ public struct Message: Codable, Identifiable, Equatable, FetchableRecord, Persis
              kind, text, media, album, replyTo, forward, shader, bubbleShader, edited, editHistory,
              editedAt, deletedForAll, status, isOutgoing, reactions, expiresAt,
              failReason, scheduledFor, listenedAt, listenedBy, poll, pollVotes,
-             contact, location, buttons,
+             contact, location, buttons, story,
              transcript, transcriptSpans, transcriptShown
     }
 
@@ -533,6 +560,8 @@ public struct ContentPayload: Codable {
     public var buttons: [[MessageButton]]?
     /// callback: what the pressed button carries back to the bot.
     public var data: String?
+    /// text: the story this message answers.
+    public var story: StoryRef?
 
     public init(kind: String) { self.kind = kind }
 }

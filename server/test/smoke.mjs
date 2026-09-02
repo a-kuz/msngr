@@ -2533,6 +2533,43 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
   const notAuthor = await apiRaw(`/api/stories/${posted.storyId}/viewers`, { token: bob.token });
   check("nobody else sees who watched", notAuthor.status === 403, String(notAuthor.status));
 
+  // hearts: a viewer's own is theirs, the counts are the author's
+  const bobBefore = afterSeen.stories.find((s) => s.id === posted.storyId);
+  check("a story arrives without a heart and tells a viewer no counts",
+    bobBefore?.liked === false && bobBefore?.views === null && bobBefore?.likes === null,
+    JSON.stringify(bobBefore));
+  const liked = await api(`/api/stories/${posted.storyId}/like`, { token: bob.token, body: { on: true } });
+  check("a heart is put on", liked.liked === true, JSON.stringify(liked));
+  const ownHeart = await apiRaw(`/api/stories/${posted.storyId}/like`, { token: alice.token, body: { on: true } });
+  check("the author cannot like their own", ownHeart.status === 400, String(ownHeart.status));
+  const strangerHeart = await apiRaw(`/api/stories/${posted.storyId}/like`, { token: carol.token, body: { on: true } });
+  check("a stranger cannot like a contacts-only story", strangerHeart.status === 404,
+    String(strangerHeart.status));
+  // liking is watching: carol's heart on the open story counts her as a viewer too
+  await api(`/api/stories/${open.storyId}/like`, { token: carol.token, body: {} });
+  const aliceList = await api("/api/stories", { token: alice.token });
+  const mine = aliceList.stories.find((s) => s.id === posted.storyId);
+  check("the author sees the counts", mine?.views === 1 && mine?.likes === 1, JSON.stringify(mine));
+  const openMine = aliceList.stories.find((s) => s.id === open.storyId);
+  check("a heart alone counts as a view", openMine?.views === 1 && openMine?.likes === 1,
+    JSON.stringify(openMine));
+  const bobAfter = (await api("/api/stories", { token: bob.token })).stories
+    .find((s) => s.id === posted.storyId);
+  check("the viewer sees their own heart", bobAfter?.liked === true, JSON.stringify(bobAfter));
+  const hearted = await api(`/api/stories/${posted.storyId}/viewers`, { token: alice.token });
+  check("the viewers list marks the heart",
+    hearted.viewers?.length === 1 && hearted.viewers[0].liked === true,
+    JSON.stringify(hearted.viewers));
+  await api(`/api/stories/${posted.storyId}/like`, { token: bob.token, body: { on: false } });
+  const unhearted = await api(`/api/stories/${posted.storyId}/viewers`, { token: alice.token });
+  check("a heart taken off leaves the view",
+    unhearted.viewers?.length === 1 && unhearted.viewers[0].liked === false,
+    JSON.stringify(unhearted.viewers));
+  const countsAfter = (await api("/api/stories", { token: alice.token })).stories
+    .find((s) => s.id === posted.storyId);
+  check("the like count follows", countsAfter?.likes === 0 && countsAfter?.views === 1,
+    JSON.stringify(countsAfter));
+
   // the page outside the app
   const code = posted.link.split("/s/")[1];
   const page = await fetch(`${BASE}/s/${code}`);

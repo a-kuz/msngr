@@ -13,6 +13,9 @@ import MsngrCore
 struct StoryViewerView: View {
     let authors: [StoriesModel.Author]
     let start: StoriesModel.Author
+    /// The story to stand on first, when the viewer was opened on one in
+    /// particular; otherwise the author's first story not yet seen.
+    var startStoryId: String? = nil
     var onFinished: () -> Void
 
     @State private var position: String?
@@ -27,6 +30,7 @@ struct StoryViewerView: View {
                     ForEach(authors) { author in
                         StoryAuthorPage(author: author,
                                         active: position == author.id,
+                                        startStoryId: author.id == start.id ? startStoryId : nil,
                                         preloader: preloader,
                                         onNext: { advance(from: author) },
                                         onPrevious: { retreat(from: author) },
@@ -143,6 +147,8 @@ struct StoryAuthorPage: View {
     let author: StoriesModel.Author
     /// This page is the one on screen: its clock runs and its clip plays.
     let active: Bool
+    /// The story to open on, when the viewer was asked for one in particular.
+    var startStoryId: String? = nil
     let preloader: StoryPreloader
     var onNext: () -> Void
     var onPrevious: () -> Void
@@ -162,6 +168,10 @@ struct StoryAuthorPage: View {
     @State private var showViewers = false
     @State private var link: String?
     @State private var started = false
+    /// The heart swelling for a moment after it is tapped.
+    @State private var heartPop = false
+    /// A reply just went out: the word shows for a moment over the field.
+    @State private var sentToast = false
 
     /// How long one frame stands before the next one comes up.
     private static let frameSeconds: Double = 5
@@ -175,6 +185,12 @@ struct StoryAuthorPage: View {
         index < slides.count ? slides[index] : nil
     }
     private var story: APIClient.StoryDTO? { slide?.story }
+    /// The story as the list knows it now: its heart and its counts move
+    /// while the page stands.
+    private var live: APIClient.StoryDTO? {
+        guard let story else { return nil }
+        return model.stories.first { $0.id == story.id } ?? story
+    }
     private var isMine: Bool { author.id == app.session?.userId }
 
     var body: some View {
@@ -221,18 +237,26 @@ struct StoryAuthorPage: View {
                 progress = 0
                 if !started {
                     started = true
-                    index = firstUnseen
+                    index = startIndex
                 }
             }
         }
         .onAppear {
-            if active { started = true; index = firstUnseen }
+            if active { started = true; index = startIndex }
         }
     }
 
-    /// Where watching begins: the first frame of the first story not yet seen.
-    private var firstUnseen: Int {
+    /// Where watching begins: the story the viewer was opened on, or else the
+    /// first frame of the first story not yet seen.
+    private var startIndex: Int {
         var offset = 0
+        if let startStoryId {
+            for story in author.stories {
+                if story.id == startStoryId { return offset }
+                offset += story.frames.count
+            }
+            offset = 0
+        }
         for story in author.stories {
             if !story.seen { return offset }
             offset += story.frames.count
@@ -337,9 +361,31 @@ struct StoryAuthorPage: View {
     /// is open over the frame.
     private var paused: Bool { held || showActions || showViewers || replyFocused }
 
+    /// Under the frame: the author's counts, or a viewer's reply field with
+    /// the heart beside it.
     @ViewBuilder
     private var footer: some View {
-        if !isMine {
+        if isMine {
+            if let live {
+                Button { showViewers = true } label: {
+                    HStack(spacing: 16) {
+                        Label(CountFormatter.short(live.views ?? 0), systemImage: "eye.fill")
+                            .accessibilityIdentifier("story.views")
+                        if let likes = live.likes, likes > 0 {
+                            Label(CountFormatter.short(likes), systemImage: "heart.fill")
+                                .accessibilityIdentifier("story.likes")
+                        }
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(.white.opacity(0.15), in: Capsule())
+                }
+                .accessibilityIdentifier("story.counts")
+                .padding(.bottom, 18)
+            }
+        } else {
             HStack(spacing: 10) {
                 TextField("Reply…", text: $reply)
                     .textFieldStyle(.plain)
@@ -348,20 +394,61 @@ struct StoryAuthorPage: View {
                     .background(.white.opacity(0.15), in: Capsule())
                     .foregroundStyle(.white)
                     .focused($replyFocused)
+                    .submitLabel(.send)
+                    .onSubmit { Task { await sendReply() } }
+                    .overlay(alignment: .leading) {
+                        if sentToast {
+                            Text("Sent")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(.white.opacity(0.25), in: Capsule())
+                                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                                .accessibilityIdentifier("story.sent")
+                        }
+                    }
                     .accessibilityIdentifier("story.reply")
-                Button {
-                    Task { await sendReply() }
-                } label: {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(.white)
+                if reply.trimmingCharacters(in: .whitespaces).isEmpty {
+                    Button { toggleHeart() } label: {
+                        Image(systemName: live?.liked == true ? "heart.fill" : "heart")
+                            .font(.title2)
+                            .foregroundStyle(live?.liked == true ? .red : .white)
+                            .scaleEffect(heartPop ? 1.35 : 1)
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityIdentifier("story.like")
+                    .accessibilityValue(live?.liked == true ? "1" : "0")
+                } else {
+                    Button {
+                        Task { await sendReply() }
+                    } label: {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.white)
+                            .frame(width: 36, height: 36)
+                    }
+                    .accessibilityIdentifier("story.replySend")
                 }
-                .disabled(reply.trimmingCharacters(in: .whitespaces).isEmpty)
-                .accessibilityIdentifier("story.replySend")
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 18)
         }
+    }
+
+    /// The heart goes on or comes off at once, with a swell and a tap of the
+    /// engine; the server hears about it behind.
+    private func toggleHeart() {
+        guard let live else { return }
+        let on = !live.liked
+        if on { Haptics.light() }
+        withAnimation(.spring(duration: 0.3, bounce: 0.5)) { heartPop = true }
+        Task {
+            try? await Task.sleep(for: .milliseconds(200))
+            withAnimation(.spring(duration: 0.3)) { heartPop = false }
+        }
+        Task { await model.like(live.id, on: on) }
     }
 
     /// A picture stands for a fixed few seconds; a video stands for as long
@@ -406,15 +493,28 @@ struct StoryAuthorPage: View {
         await model.markSeen(slide.story.id)
     }
 
-    /// Answering a story goes into the direct chat with its author, quoting
-    /// nothing: the story is not a message and has no seq to reply to.
+    /// Answering a story goes into the direct chat with its author as a text
+    /// carrying the story: the chat draws the frame over the words and opens
+    /// the story from it. The field empties at once and says «Sent» for a
+    /// moment; the send itself is the engine's, with its own retries.
     private func sendReply() async {
         let text = reply.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty, let chatId = await DirectChat.open(userId: author.id) else { return }
+        guard !text.isEmpty, let slide else { return }
+        reply = ""
+        replyFocused = false
+        withAnimation(.spring(duration: 0.3)) { sentToast = true }
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            withAnimation(.easeOut(duration: 0.25)) { sentToast = false }
+        }
+        guard let chatId = await DirectChat.open(userId: author.id) else { return }
         var content = ContentPayload(kind: "text")
         content.text = text
+        content.story = StoryRef(storyId: slide.story.id, authorId: slide.story.authorId,
+                                 mediaId: slide.frame.mediaId, type: slide.frame.type,
+                                 w: slide.frame.w, h: slide.frame.h,
+                                 expiresAt: slide.story.expiresAt)
         try? await app.engine.enqueue(content: content, chatId: chatId)
-        reply = ""
     }
 }
 
@@ -437,6 +537,12 @@ struct StoryViewersSheet: View {
                         Text(viewer.display_name)
                         Text(StoryTime.ago(viewer.seen_at))
                             .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if viewer.liked {
+                        Image(systemName: "heart.fill")
+                            .foregroundStyle(.red)
+                            .accessibilityLabel(Text("Liked"))
                     }
                 }
             }

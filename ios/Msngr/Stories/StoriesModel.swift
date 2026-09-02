@@ -67,6 +67,25 @@ final class StoriesModel: ObservableObject {
         await load()
     }
 
+    /// A heart on someone's story, on or off. The heart shows at once and the
+    /// server is told behind it, a few times over if it has to be; only a
+    /// refusal that outlasts the retries takes the heart back.
+    func like(_ storyId: String, on: Bool) async {
+        guard let api = AppState.shared.api,
+              let index = stories.firstIndex(where: { $0.id == storyId }),
+              stories[index].authorId != AppState.shared.session?.userId else {
+            return
+        }
+        stories[index].liked = on
+        for attempt in 0..<3 {
+            if (try? await api.likeStory(storyId, on: on)) != nil { return }
+            try? await Task.sleep(for: .seconds(1 << attempt))
+        }
+        if let index = stories.firstIndex(where: { $0.id == storyId }) {
+            stories[index].liked = !on
+        }
+    }
+
     func takeDown(_ storyId: String) async {
         guard let api = AppState.shared.api else { return }
         try? await api.takeStoryDown(storyId)

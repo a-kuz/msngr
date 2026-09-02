@@ -588,6 +588,12 @@ public enum AppDatabase {
                 t.add(column: "buttons", .text)
             }
         }
+        m.registerMigration("v36-storyReply") { db in
+            try db.alter(table: "message") { t in
+                // the story the message answers (JSON StoryRef)
+                t.add(column: "story", .text)
+            }
+        }
         return m
     }
 }
@@ -640,6 +646,7 @@ extension Message {
         contact = (row["contact"] as String?).flatMap { try? dec.decode(ContactCard.self, from: Data($0.utf8)) }
         location = (row["location"] as String?).flatMap { try? dec.decode(LocationInfo.self, from: Data($0.utf8)) }
         buttons = (row["buttons"] as String?).flatMap { try? dec.decode([[MessageButton]].self, from: Data($0.utf8)) }
+        story = (row["story"] as String?).flatMap { try? dec.decode(StoryRef.self, from: Data($0.utf8)) }
         transcript = row["transcript"]
         transcriptSpans = (row["transcriptSpans"] as String?).flatMap { try? dec.decode([TranscriptSpan].self, from: Data($0.utf8)) } ?? []
         transcriptShown = row["transcriptShown"]
@@ -684,6 +691,7 @@ extension Message {
         container["contact"] = js(contact)
         container["location"] = js(location)
         container["buttons"] = js(buttons)
+        container["story"] = js(story)
         container["transcript"] = transcript
         container["transcriptSpans"] = js(transcriptSpans) ?? "[]"
         container["transcriptShown"] = transcriptShown

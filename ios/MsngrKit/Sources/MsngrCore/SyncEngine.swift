@@ -1618,6 +1618,7 @@ public actor SyncEngine {
         original.fwd = row.forward
         original.shader = row.shader
         original.bubbleShader = row.bubbleShader
+        original.story = row.story
         var reply = ContentPayload(kind: "repair")
         reply.to = from
         reply.repairSeq = target
@@ -1959,6 +1960,7 @@ public actor SyncEngine {
             msg.shader = content.shader
             msg.bubbleShader = content.bubbleShader
             msg.linkPreview = content.preview
+            msg.story = content.story
             msg.poll = content.poll
             msg.contact = content.contact
             msg.location = content.location
@@ -2081,6 +2083,7 @@ public actor SyncEngine {
                 msg.shader = content.shader
                 msg.bubbleShader = content.bubbleShader
                 msg.linkPreview = content.preview
+                msg.story = content.story
                 msg.poll = content.poll
                 msg.contact = content.contact
                 msg.location = content.location
@@ -2378,6 +2381,7 @@ public actor SyncEngine {
         content.shader = msg.shader
         content.bubbleShader = msg.bubbleShader
         content.preview = msg.linkPreview
+        content.story = msg.story
         return content
     }
 
@@ -2531,6 +2535,7 @@ public actor SyncEngine {
         msg.shader = content.shader
         msg.bubbleShader = content.bubbleShader
         msg.linkPreview = content.preview
+        msg.story = content.story
         msg.poll = content.poll
         msg.contact = content.contact
         msg.location = content.location

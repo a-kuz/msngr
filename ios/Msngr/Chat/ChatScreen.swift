@@ -33,6 +33,8 @@ struct ChatScreen: View {
     @State private var showLocationPicker = false
     @State private var shownContact: Message?
     @State private var shownLocation: Message?
+    /// The story a reply in the feed was tapped on, opened over the chat.
+    @State private var watchingStory: StoryOpening?
     @State private var forwardMessage: Message?
     @State private var reportMessage: Message?
     @State private var forwardingSelection = false
@@ -409,6 +411,11 @@ struct ChatScreen: View {
                 LocationViewerSheet(point: point)
             }
         }
+        .fullScreenCover(item: $watchingStory) { opening in
+            StoryViewerView(authors: [opening.author], start: opening.author,
+                            startStoryId: opening.storyId) { watchingStory = nil }
+                .presentationBackground(.clear)
+        }
         .onAppear { backgroundRunning = true }
         .onDisappear { backgroundRunning = false }
         // palette change: bubble colours are read in the cell's configure, so force a reload
@@ -599,6 +606,7 @@ struct ChatScreen: View {
                      onShowPollVoters: { pollVotersMessage = $0 },
                      onOpenContact: { shownContact = $0 },
                      onOpenLocation: { shownLocation = $0 },
+                     onOpenStory: { openStory($0) },
                      onRedial: {
                          guard model.chat?.kind == .direct, let peerId = model.peer?.id else { return }
                          Task { await AppState.shared.callManager?.startCall(chatId: chatId, peerUserId: peerId) }
@@ -1374,6 +1382,25 @@ struct ChatScreen: View {
         Haptics.light()
     }
 
+    /// The story behind a reply's strip: found among what is live now (the
+    /// list is asked again if it is not there yet) and opened on that very
+    /// story. A story that is gone answers with a nudge and nothing else.
+    private func openStory(_ ref: StoryRef) {
+        Task {
+            let stories = StoriesModel.shared
+            if !stories.stories.contains(where: { $0.id == ref.storyId }) {
+                await stories.load()
+            }
+            guard let author = stories.authors.first(where: { author in
+                author.stories.contains { $0.id == ref.storyId }
+            }) else {
+                Haptics.rigid()
+                return
+            }
+            watchingStory = StoryOpening(author: author, storyId: ref.storyId)
+        }
+    }
+
     private func sendLocation(_ point: LocationInfo) {
         var c = ContentPayload(kind: "location")
         c.location = point
@@ -1526,6 +1553,13 @@ struct ChatScreen: View {
     }
 }
 
+/// A story opened from the feed: its author's page, standing on that story.
+struct StoryOpening: Identifiable {
+    let author: StoriesModel.Author
+    let storyId: String
+    var id: String { storyId }
+}
+
 struct VideoTransferable: Transferable {
     let url: URL
     static var transferRepresentation: some TransferRepresentation {
@@ -1563,6 +1597,8 @@ struct MessagesView: UIViewControllerRepresentable {
     var onShowPollVoters: (Message) -> Void
     var onOpenContact: (Message) -> Void
     var onOpenLocation: (Message) -> Void
+    /// a tap on the strip of a story reply, asking for the story itself
+    var onOpenStory: (StoryRef) -> Void
     var onRedial: () -> Void
     var onJoinCall: (Message) -> Void
     var onDateTap: () -> Void
@@ -1584,6 +1620,11 @@ struct MessagesView: UIViewControllerRepresentable {
         // tapping a quote jumps to the original; if it lies deeper than the loaded
         // page, history is fetched first
         vc.onTapReplyQuote = { [weak model, weak vc] msg in
+            // the strip of a story reply opens the story, not a message
+            if let story = msg.story {
+                onOpenStory(story)
+                return
+            }
             guard let vc, let targetSeq = msg.replyTo?.seq else { return }
             if vc.scrollTo(seq: targetSeq, highlight: true) { return }
             guard let model else { return }
