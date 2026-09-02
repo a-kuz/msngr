@@ -1,11 +1,14 @@
-import type { Env, ClientFrame, ServerFrame, PublicUser } from "../types";
-import { json, err, nowSec, shouldArmAlarm } from "../util";
+import type {
+  Env, ClientFrame, ServerFrame, PublicUser, PrivacySettings, LastSeenVisibility,
+} from "../types";
+import {
+  json, err, nowSec, shouldArmAlarm, ulid, PRIVACY_DEFAULTS, type PrivacySetting,
+} from "../util";
 import { sendPush, envelopeForDevice } from "../push/apns";
 import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "../version";
 import {
-  newCounters, snapshot, diff, logPerf, wrapState, wrapDB, wrapStub, type PerfCounters,
+  newCounters, snapshot, diff, logPerf, wrapState, wrapStub, type PerfCounters,
 } from "../perf";
-import { presenceViewers } from "../presence";
 
 /// Presence travels by subscription between user objects. Every chat a user is
 /// in makes them and each other member watch one another: `sub:<S>` holds the
@@ -22,7 +25,12 @@ const WATCH_PREFIX = "watch:";
 const PEER_PREFIX = "peer:";
 /// `name:<userId>`: the public display name of somebody this user shares a
 /// chat with, as the roster frame carried it; a push names its author by it.
+/// Every chat fills it, however large the roster.
 const NAME_PREFIX = "name:";
+/// `pcard:<T>`: this user's copy of T's card, as T decided this one subscriber
+/// may see it — the photo and the bio are in it only while T's avatar rule
+/// says so. A chat list is answered out of these copies and calls nobody.
+const PCARD_PREFIX = "pcard:";
 const ACC_PREFIX = "acc:";
 /// Chats through which one user watches another, keyed by chat id.
 type Reasons = Record<string, true>;
@@ -151,6 +159,41 @@ function otpKey(deviceId: string, keyId: number): string {
   return otpPrefix(deviceId) + String(keyId).padStart(10, "0");
 }
 
+/// The person, as opposed to their keys and their chats: the card everyone
+/// else reads, the sessions that may speak for the account, who they will not
+/// hear from, and what they let anyone see.
+///
+/// `dev:<deviceId>` is a session; `tok:<sha256(token)>` points at the session
+/// a bearer token belongs to, which is the whole of authentication — a token
+/// names its own account, so the lookup is inside the object that owns the
+/// answer. A revoked device loses both records at once.
+const DEV_PREFIX = "dev:";
+const TOKEN_PREFIX = "tok:";
+/// `blk:<peerId>`: this user blocked them. `blkby:<peerId>`: they blocked this
+/// user — written by the blocker's object, so either side answers for the pair
+/// without asking the other.
+const BLOCK_PREFIX = "blk:";
+const BLOCKED_BY_PREFIX = "blkby:";
+/// `pex:<setting>:<peerId>`: a named override of one privacy tier, 1 or 0.
+const PEX_PREFIX = "pex:";
+/// `rep:<ulid>`: a report this user filed.
+const REPORT_PREFIX = "rep:";
+/// `bot:<botId>`: a bot account this user runs.
+const BOT_PREFIX = "bot:";
+
+/// The card of the account plus what only the account itself may read.
+interface Profile extends PublicUser {
+  phone_hash: string | null;
+  created_at: number;
+}
+
+interface DeviceRecord {
+  name: string | null;
+  tokenHash: string;
+  createdAt: number;
+  lastSeen: number | null;
+}
+
 /// storage.put/get take at most 128 keys per call
 const STORAGE_BATCH = 128;
 
@@ -188,7 +231,6 @@ export class UserDO implements DurableObject {
     if (env.PERF_LOG) {
       this.perf = newCounters();
       this.state = wrapState(state, this.perf);
-      this.env = { ...env, DB: wrapDB(env.DB, this.perf) };
     }
   }
 
@@ -330,7 +372,20 @@ export class UserDO implements DurableObject {
       const reasons = await this.state.storage.get<Reasons>(SUB_PREFIX + id);
       if (reasons && Object.keys(reasons).some((chatId) => !openChats.has(chatId))) candidates.push(id);
     }
-    return presenceViewers(this.env, userId, candidates, (hashes) => this.inBook(hashes));
+    // the last-seen rule, blocks in either direction and the address book are
+    // all this object's own storage, so the whole judgement is local. The other
+    // half of the rule — hiding your own last seen blinds you to everyone
+    // else's — is enforced where it costs nothing, at the subscriber taking
+    // the copy in
+    const privacy = await this.privacy();
+    const out = new Set<string>();
+    for (const v of candidates) {
+      if (v === userId) continue;
+      const { byMe, byPeer } = await this.blockPair(v);
+      if (byMe || byPeer) continue;
+      if (await this.mayView(v, "last_seen", privacy)) out.add(v);
+    }
+    return out;
   }
 
   /// Which of the phone hashes are in this user's address book.
@@ -342,6 +397,75 @@ export class UserDO implements DurableObject {
       for (const h of part) if (got.has(`ct:${h}`)) held.add(h);
     }
     return held;
+  }
+
+  private async privacy(): Promise<PrivacySettings> {
+    return (await this.state.storage.get<PrivacySettings>("privacy")) ?? PRIVACY_DEFAULTS;
+  }
+
+  /// The tier a setting is governed by.
+  private tierOf(p: PrivacySettings, setting: PrivacySetting): LastSeenVisibility {
+    switch (setting) {
+      case "last_seen": return p.lastSeen;
+      case "avatar": return p.avatar;
+      case "phone_discovery": return p.phoneDiscovery;
+      case "group_invites": return p.groupInvites;
+      case "call": return p.callPrivacy;
+    }
+  }
+
+  /// The phone hash another account currently publishes, read from its own
+  /// object: "contacts" is answered against the number a person holds now, so
+  /// a number registering or changing hands needs no propagation.
+  private async peerPhoneHash(userId: string): Promise<string | null> {
+    try {
+      const r = await this.userStub(userId).fetch("https://do/phone-hash");
+      if (!r.ok) return null;
+      return ((await r.json()) as { phoneHash: string | null }).phoneHash;
+    } catch (e) {
+      console.warn(`phone hash of ${userId} failed: ${e}`);
+      return null;
+    }
+  }
+
+  /// May `viewerId` see this user's `setting`? A named exception decides
+  /// first, whichever way it points; then the tier — everyone, the address
+  /// book, nobody.
+  private async mayView(
+    viewerId: string, setting: PrivacySetting, privacy?: PrivacySettings,
+  ): Promise<boolean> {
+    const self = await this.getUserId();
+    if (viewerId === self) return true;
+    const exception = await this.state.storage.get<number>(`${PEX_PREFIX}${setting}:${viewerId}`);
+    if (exception !== undefined) return exception === 1;
+    const tier = this.tierOf(privacy ?? (await this.privacy()), setting);
+    if (tier === "everyone") return true;
+    if (tier === "nobody") return false;
+    const hash = await this.peerPhoneHash(viewerId);
+    return hash !== null && (await this.inBook([hash])).has(hash);
+  }
+
+  /// This user's card as `viewerId` may see it: the photo and the bio go only
+  /// as far as the avatar rule lets them.
+  private async cardFor(viewerId: string): Promise<PublicUser | null> {
+    const p = await this.state.storage.get<Profile>("profile");
+    if (!p) return null;
+    const card: PublicUser = {
+      id: p.id, username: p.username, display_name: p.display_name,
+      bio: p.bio, avatar_id: p.avatar_id,
+      bot_owner: p.bot_owner ?? null, bot_commands: p.bot_commands ?? null,
+    };
+    if (await this.mayView(viewerId, "avatar")) return card;
+    return { ...card, bio: null, avatar_id: null };
+  }
+
+  /// Whether a block stands between this user and `peer`, either way.
+  private async blockPair(peer: string): Promise<{ byMe: boolean; byPeer: boolean }> {
+    const got = await this.state.storage.get([BLOCK_PREFIX + peer, BLOCKED_BY_PREFIX + peer]);
+    return {
+      byMe: got.get(BLOCK_PREFIX + peer) !== undefined,
+      byPeer: got.get(BLOCKED_BY_PREFIX + peer) !== undefined,
+    };
   }
 
   /// Pushes this user's presence to the subscribers in `ids` who may see it.
@@ -364,6 +488,21 @@ export class UserDO implements DurableObject {
     }
     for (let i = 0; i < calls.length; i += PRESENCE_FAN) {
       await Promise.all(calls.slice(i, i + PRESENCE_FAN).map((c) => c()));
+    }
+  }
+
+  /// Hands this user's card to each of `ids`, each seeing what this user's own
+  /// avatar rule lets them see. A subscriber holds the copy until it is
+  /// replaced, so their chat list asks nobody.
+  private async pushCards(ids: string[]) {
+    const userId = await this.getUserId();
+    if (!userId || !ids.length) return;
+    if (!(await this.state.storage.get<Profile>("profile"))) return;
+    for (let i = 0; i < ids.length; i += PRESENCE_FAN) {
+      await Promise.all(ids.slice(i, i + PRESENCE_FAN).map(async (id) => {
+        const card = await this.cardFor(id);
+        if (card) await this.tell(id, "/peer-card", { userId, card });
+      }));
     }
   }
 
@@ -408,7 +547,7 @@ export class UserDO implements DurableObject {
           if (Object.keys(reasons).length) put[k] = reasons;
           else {
             del.push(k);
-            if (k.startsWith(WATCH_PREFIX)) del.push(PEER_PREFIX + p);
+            if (k.startsWith(WATCH_PREFIX)) del.push(PEER_PREFIX + p, PCARD_PREFIX + p);
           }
         }
       }
@@ -445,6 +584,13 @@ export class UserDO implements DurableObject {
       const deviceId = req.headers.get("x-device-id")!;
       await this.state.storage.put("userId", userId);
       this.userId = userId;
+      // the session list shows when each device was last here, and this is
+      // when: the connection is the device saying so
+      const rec = await this.state.storage.get<DeviceRecord>(DEV_PREFIX + deviceId);
+      if (rec) {
+        rec.lastSeen = Date.now();
+        await this.state.storage.put(DEV_PREFIX + deviceId, rec);
+      }
 
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair);
@@ -544,6 +690,7 @@ export class UserDO implements DurableObject {
         if (peers.length) {
           await this.relate(b.chatId, peers);
           await this.pushPresence(peers);
+          await this.pushCards(peers);
         }
         return json({ ok: true });
       }
@@ -565,6 +712,7 @@ export class UserDO implements DurableObject {
         if (b.added?.length) {
           await this.relate(b.chatId, b.added);
           await this.pushPresence(b.added);
+          await this.pushCards(b.added);
         }
         return json({ ok: true });
       }
@@ -583,12 +731,34 @@ export class UserDO implements DurableObject {
         // a chat's members are told at once, and the source's snapshot can
         // arrive first
         const b = (await req.json()) as PeerPresence & { userId: string };
+        // hiding your own last seen blinds you to everyone else's: the copy is
+        // refused here rather than filtered at every source
+        if ((await this.privacy()).lastSeen === "nobody") return json({ ok: true });
         const held = await this.state.storage.get<PeerPresence>(PEER_PREFIX + b.userId);
         if (held && held.stamp > b.stamp) return json({ ok: true });
         await this.state.storage.put(PEER_PREFIX + b.userId,
           { online: b.online, lastSeen: b.lastSeen, stamp: b.stamp } satisfies PeerPresence);
         this.broadcast({ t: "presence", userId: b.userId, online: b.online, lastSeen: b.lastSeen });
         return json({ ok: true });
+      }
+
+      case "/peer-card": {
+        // from a source this user watches: its card, as it lets this user see
+        // it. The chat list is answered out of these copies
+        const b = (await req.json()) as { userId: string; card: PublicUser };
+        await this.state.storage.put({
+          [PCARD_PREFIX + b.userId]: b.card,
+          // the name a push writes is the same name: a rename reaches it here
+          // rather than waiting for the next roster frame
+          [NAME_PREFIX + b.userId]: b.card.display_name,
+        });
+        return json({ ok: true });
+      }
+
+      /// Every card copy this user holds, for the chat list.
+      case "/peer-cards": {
+        const listed = await this.state.storage.list<PublicUser>({ prefix: PCARD_PREFIX });
+        return json({ ok: true, cards: [...listed.values()] });
       }
 
       case "/peer-drop": {
@@ -608,21 +778,22 @@ export class UserDO implements DurableObject {
         // the last-seen tier or one of its exceptions changed: every
         // subscriber is pushed the presence or told to forget it
         await this.pushPresence(await this.subscribers(), undefined, true);
-        return json({ ok: true });
-      }
-
-      case "/block-changed": {
-        // a block hides both presences from each other; lifting it brings
-        // them back, each side pushing its own
-        const b = (await req.json()) as { peer: string; blocked: boolean };
-        const userId = await this.getUserId();
-        if (!userId) return json({ ok: true });
-        if (b.blocked) {
-          await this.state.storage.delete(PEER_PREFIX + b.peer);
-          await this.tell(b.peer, "/peer-drop", { userId });
-        } else {
-          await this.pushPresence([b.peer]);
-          await this.tell(b.peer, "/peer-refresh", { subscriber: userId });
+        // and the other half of the rule: a user who has just hidden their own
+        // last seen holds no more copies, and one who stopped hiding it asks
+        // for the copies back
+        const self = await this.getUserId();
+        const watched = await this.state.storage.list<Reasons>({ prefix: WATCH_PREFIX });
+        const peers = [...watched.keys()].map((k) => k.slice(WATCH_PREFIX.length));
+        if ((await this.privacy()).lastSeen === "nobody") {
+          for (let i = 0; i < peers.length; i += STORAGE_BATCH) {
+            await this.state.storage.delete(
+              peers.slice(i, i + STORAGE_BATCH).map((p) => PEER_PREFIX + p));
+          }
+        } else if (self) {
+          for (let i = 0; i < peers.length; i += PRESENCE_FAN) {
+            await Promise.all(peers.slice(i, i + PRESENCE_FAN).map(
+              (p) => this.tell(p, "/peer-refresh", { subscriber: self })));
+          }
         }
         return json({ ok: true });
       }
@@ -630,13 +801,17 @@ export class UserDO implements DurableObject {
       case "/peer-refresh": {
         const b = (await req.json()) as { subscriber: string };
         await this.pushPresence([b.subscriber]);
+        await this.pushCards([b.subscriber]);
         return json({ ok: true });
       }
 
       case "/peer-gone": {
         // an account this user was related to is deleted
         const b = (await req.json()) as { userId: string };
-        await this.state.storage.delete([SUB_PREFIX + b.userId, WATCH_PREFIX + b.userId, PEER_PREFIX + b.userId]);
+        await this.state.storage.delete([
+          SUB_PREFIX + b.userId, WATCH_PREFIX + b.userId, PEER_PREFIX + b.userId,
+          PCARD_PREFIX + b.userId, BLOCK_PREFIX + b.userId, BLOCKED_BY_PREFIX + b.userId,
+        ]);
         return json({ ok: true });
       }
 
@@ -731,9 +906,13 @@ export class UserDO implements DurableObject {
         const userId = await this.getUserId();
         if (userId) {
           const watched = await this.state.storage.list<Reasons>({ prefix: WATCH_PREFIX });
+          const blocked = await this.state.storage.list({ prefix: BLOCK_PREFIX });
+          const blockedBy = await this.state.storage.list({ prefix: BLOCKED_BY_PREFIX });
           const related = new Set([
             ...(await this.subscribers()),
             ...[...watched.keys()].map((k) => k.slice(WATCH_PREFIX.length)),
+            ...[...blocked.keys()].map((k) => k.slice(BLOCK_PREFIX.length)),
+            ...[...blockedBy.keys()].map((k) => k.slice(BLOCKED_BY_PREFIX.length)),
           ]);
           const calls = [...related].map((id) => () => this.tell(id, "/peer-gone", { userId }));
           for (let i = 0; i < calls.length; i += PRESENCE_FAN) {
@@ -805,10 +984,16 @@ export class UserDO implements DurableObject {
           delete tokens[b.deviceId];
           await this.state.storage.put("apns", tokens);
         }
-        // the device's keys go with it: the next send builds no box for it and
-        // its prekeys stop being handed out
+        // the session, its token and its keys go together: the token stops
+        // authenticating, the next send builds no box for the device and its
+        // prekeys stop being handed out
+        const rec = await this.state.storage.get<DeviceRecord>(DEV_PREFIX + b.deviceId);
         const otps = await this.state.storage.list({ prefix: otpPrefix(b.deviceId) });
-        const gone = [ikKey(b.deviceId), ...otps.keys()];
+        const gone = [
+          ikKey(b.deviceId), DEV_PREFIX + b.deviceId,
+          ...(rec ? [TOKEN_PREFIX + rec.tokenHash] : []),
+          ...otps.keys(),
+        ];
         for (let i = 0; i < gone.length; i += STORAGE_BATCH) {
           await this.state.storage.delete(gone.slice(i, i + STORAGE_BATCH));
         }
@@ -830,6 +1015,11 @@ export class UserDO implements DurableObject {
           /// a linked device changes the set an existing account's peers hold;
           /// the first registration starts it and nobody holds a copy yet
           bump?: boolean;
+          /// the card a registration opens the account with; a device joining
+          /// an account that already exists sends none
+          profile?: Profile;
+          /// the session this device speaks for from now on
+          device?: { deviceId: string; name: string | null; tokenHash: string };
         };
         await this.state.storage.put("userId", b.userId);
         this.userId = b.userId;
@@ -855,6 +1045,16 @@ export class UserDO implements DurableObject {
         };
         for (const k of (b.oneTimePrekeys ?? []).slice(0, 200)) {
           puts[otpKey(b.deviceId, k.id)] = k.key;
+        }
+        // the card and the session go in the same write as the keys: an
+        // account is either whole here or was never opened
+        if (b.profile) puts["profile"] = b.profile;
+        if (b.device) {
+          puts[DEV_PREFIX + b.device.deviceId] = {
+            name: b.device.name, tokenHash: b.device.tokenHash,
+            createdAt: Date.now(), lastSeen: null,
+          } satisfies DeviceRecord;
+          puts[TOKEN_PREFIX + b.device.tokenHash] = b.device.deviceId;
         }
         await this.putBatched(puts);
         if (b.bump) await this.broadcastDevicesChanged(version);
@@ -1016,6 +1216,249 @@ export class UserDO implements DurableObject {
         return json({ ok: true, contact: held });
       }
 
+      // --- the account itself: who may speak for it, its card, its rules ---
+
+      case "/auth": {
+        // the hash covers the whole token, the account id included, so a
+        // secret lifted from one account proves nothing on another
+        const hash = url.searchParams.get("hash") ?? "";
+        const deviceId = hash === "" ? undefined
+          : await this.state.storage.get<string>(TOKEN_PREFIX + hash);
+        if (!deviceId) return err("unauthorized", 401);
+        return json({ ok: true, deviceId });
+      }
+
+      /// A bot account opening: a card and a session, and no keys at all —
+      /// which is exactly what makes every chat it joins readable.
+      case "/bot-register": {
+        const b = (await req.json()) as {
+          userId: string; profile: Profile;
+          device: { deviceId: string; name: string | null; tokenHash: string };
+        };
+        this.userId = b.userId;
+        await this.state.storage.put({
+          userId: b.userId,
+          profile: b.profile,
+          [DEV_PREFIX + b.device.deviceId]: {
+            name: b.device.name, tokenHash: b.device.tokenHash,
+            createdAt: Date.now(), lastSeen: null,
+          } satisfies DeviceRecord,
+          [TOKEN_PREFIX + b.device.tokenHash]: b.device.deviceId,
+        });
+        return json({ ok: true });
+      }
+
+      /// The bots this account runs. There is no index from an owner back to
+      /// their bots anywhere else, so the owner's object keeps the list.
+      case "/bot-owned": {
+        if (req.method === "GET") {
+          const listed = await this.state.storage.list({ prefix: BOT_PREFIX });
+          return json({ ok: true, botIds: [...listed.keys()].map((k) => k.slice(BOT_PREFIX.length)) });
+        }
+        const b = (await req.json()) as { botId: string; add: boolean };
+        if (b.add) await this.state.storage.put(BOT_PREFIX + b.botId, Date.now());
+        else await this.state.storage.delete(BOT_PREFIX + b.botId);
+        return json({ ok: true });
+      }
+
+      case "/device-add": {
+        const b = (await req.json()) as {
+          deviceId: string; name: string | null; tokenHash: string;
+        };
+        await this.state.storage.put({
+          [DEV_PREFIX + b.deviceId]: {
+            name: b.name, tokenHash: b.tokenHash, createdAt: Date.now(), lastSeen: null,
+          } satisfies DeviceRecord,
+          [TOKEN_PREFIX + b.tokenHash]: b.deviceId,
+        });
+        return json({ ok: true });
+      }
+
+      /// A fresh token for a device that already exists: the old one stops
+      /// working in the same write.
+      case "/device-retoken": {
+        const b = (await req.json()) as { deviceId?: string; tokenHash: string };
+        const listed = await this.state.storage.list<DeviceRecord>({ prefix: DEV_PREFIX });
+        const target = b.deviceId
+          ? ([...listed].find(([k]) => k === DEV_PREFIX + b.deviceId))
+          : [...listed][0];
+        if (!target) return err("device_not_found", 404);
+        const [key, rec] = target;
+        await this.state.storage.delete(TOKEN_PREFIX + rec.tokenHash);
+        rec.tokenHash = b.tokenHash;
+        await this.state.storage.put({ [key]: rec, [TOKEN_PREFIX + b.tokenHash]: key.slice(DEV_PREFIX.length) });
+        return json({ ok: true });
+      }
+
+      case "/sessions": {
+        const listed = await this.state.storage.list<DeviceRecord>({ prefix: DEV_PREFIX });
+        const tokens =
+          (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
+        const sessions = [...listed].map(([k, d]) => ({
+          deviceId: k.slice(DEV_PREFIX.length),
+          name: d.name, createdAt: d.createdAt, lastSeen: d.lastSeen,
+          hasPushToken: (k.slice(DEV_PREFIX.length) in tokens),
+        })).sort((a, b2) => a.createdAt - b2.createdAt);
+        return json({ ok: true, sessions });
+      }
+
+      case "/profile-read": {
+        const p = await this.state.storage.get<Profile>("profile");
+        return p ? json({ ok: true, profile: p }) : err("not_found", 404);
+      }
+
+      /// A field left out is left alone. `username` is written only after the
+      /// handle object has granted the claim.
+      case "/profile-write": {
+        const b = (await req.json()) as {
+          displayName?: string; bio?: string; avatarId?: string; username?: string;
+          botCommands?: string;
+        };
+        const p = await this.state.storage.get<Profile>("profile");
+        if (!p) return err("not_found", 404);
+        if (b.displayName !== undefined) p.display_name = b.displayName.trim();
+        if (b.bio !== undefined) p.bio = b.bio;
+        if (b.avatarId !== undefined) p.avatar_id = b.avatarId;
+        if (b.username !== undefined) p.username = b.username;
+        if (b.botCommands !== undefined) p.bot_commands = b.botCommands;
+        await this.state.storage.put("profile", p);
+        return json({ ok: true, profile: p });
+      }
+
+      case "/card": {
+        const card = await this.cardFor(url.searchParams.get("viewer") ?? "");
+        return card ? json({ ok: true, user: card }) : err("not_found", 404);
+      }
+
+      /// The half of the card that is public whoever asks: the name, the
+      /// handle and whether this is a bot. The photo and the bio are per-viewer
+      /// and are not in it, so a chat may hold this copy for its whole roster.
+      case "/card-public": {
+        const p = await this.state.storage.get<Profile>("profile");
+        if (!p) return err("not_found", 404);
+        return json({ ok: true, user: {
+          id: p.id, username: p.username, display_name: p.display_name,
+          bio: null, avatar_id: null,
+          bot_owner: p.bot_owner ?? null, bot_commands: p.bot_commands ?? null,
+        } satisfies PublicUser });
+      }
+
+      case "/phone-hash": {
+        const p = await this.state.storage.get<Profile>("profile");
+        return json({ ok: true, phoneHash: p?.phone_hash ?? null });
+      }
+
+      case "/phone": {
+        const b = (await req.json()) as { phoneHash: string | null };
+        const p = await this.state.storage.get<Profile>("profile");
+        if (!p) return err("not_found", 404);
+        const was = p.phone_hash;
+        p.phone_hash = b.phoneHash;
+        await this.state.storage.put("profile", p);
+        return json({ ok: true, was });
+      }
+
+      case "/privacy-read": {
+        return json({ ok: true, privacy: await this.privacy() });
+      }
+
+      case "/privacy-write": {
+        const b = (await req.json()) as Partial<PrivacySettings>;
+        const current = await this.privacy();
+        const next: PrivacySettings = { ...current, ...b };
+        await this.state.storage.put("privacy", next);
+        return json({
+          ok: true, privacy: next,
+          avatarChanged: next.avatar !== current.avatar,
+          lastSeenChanged: next.lastSeen !== current.lastSeen,
+        });
+      }
+
+      case "/privacy-check": {
+        const b = (await req.json()) as { viewerId: string; settings: PrivacySetting[] };
+        const privacy = await this.privacy();
+        const allow: Record<string, boolean> = {};
+        for (const s of b.settings) allow[s] = await this.mayView(b.viewerId, s, privacy);
+        return json({ ok: true, allow });
+      }
+
+      case "/privacy-exceptions": {
+        const listed = await this.state.storage.list<number>({ prefix: PEX_PREFIX });
+        const exceptions = [...listed].map(([k, allow]) => {
+          const rest = k.slice(PEX_PREFIX.length);
+          const cut = rest.indexOf(":");
+          return { setting: rest.slice(0, cut), peerId: rest.slice(cut + 1), allow: allow === 1 };
+        });
+        return json({ ok: true, exceptions });
+      }
+
+      case "/privacy-exception": {
+        const b = (await req.json()) as {
+          setting: string; peerId: string; allow: boolean | null;
+        };
+        const key = `${PEX_PREFIX}${b.setting}:${b.peerId}`;
+        if (b.allow === null) await this.state.storage.delete(key);
+        else await this.state.storage.put(key, b.allow ? 1 : 0);
+        return json({ ok: true });
+      }
+
+      // --- blocks: this user's own list, and the mirror of who blocked them ---
+
+      case "/blocks": {
+        const mine = await this.state.storage.list<number>({ prefix: BLOCK_PREFIX });
+        const theirs = await this.state.storage.list<number>({ prefix: BLOCKED_BY_PREFIX });
+        return json({
+          ok: true,
+          blocked: [...mine.keys()].map((k) => k.slice(BLOCK_PREFIX.length)),
+          blockedBy: [...theirs.keys()].map((k) => k.slice(BLOCKED_BY_PREFIX.length)),
+        });
+      }
+
+      case "/block-pair": {
+        return json({ ok: true, ...(await this.blockPair(url.searchParams.get("peer") ?? "")) });
+      }
+
+      case "/block": {
+        // the mirror in the peer's object is what lets either side answer for
+        // the pair without a second call on the send path
+        const b = (await req.json()) as { peer: string; blocked: boolean };
+        const userId = await this.getUserId();
+        if (b.blocked) await this.state.storage.put(BLOCK_PREFIX + b.peer, Date.now());
+        else await this.state.storage.delete(BLOCK_PREFIX + b.peer);
+        if (userId) {
+          await this.tell(b.peer, "/blocked-by", { peer: userId, blocked: b.blocked });
+        }
+        if (b.blocked) {
+          await this.state.storage.delete([PEER_PREFIX + b.peer, PCARD_PREFIX + b.peer]);
+          if (userId) await this.tell(b.peer, "/peer-drop", { userId });
+        } else {
+          await this.pushPresence([b.peer]);
+          await this.pushCards([b.peer]);
+          if (userId) await this.tell(b.peer, "/peer-refresh", { subscriber: userId });
+        }
+        return json({ ok: true });
+      }
+
+      case "/blocked-by": {
+        const b = (await req.json()) as { peer: string; blocked: boolean };
+        if (b.blocked) {
+          await this.state.storage.put(BLOCKED_BY_PREFIX + b.peer, Date.now());
+          // nothing of theirs is held any more, name and photo included
+          await this.state.storage.delete([PEER_PREFIX + b.peer, PCARD_PREFIX + b.peer]);
+        } else {
+          await this.state.storage.delete(BLOCKED_BY_PREFIX + b.peer);
+        }
+        return json({ ok: true });
+      }
+
+      /// A report the person filed. Nothing reads these back yet; they are
+      /// kept with the account that made them.
+      case "/report": {
+        const b = await req.json();
+        await this.state.storage.put(REPORT_PREFIX + ulid(), b);
+        return json({ ok: true });
+      }
+
       case "/dev-fault": {
         const b = (await req.json()) as { failEvents?: number };
         this.devFailEvents = Math.max(0, Math.floor(b.failEvents ?? 0));
@@ -1036,6 +1479,9 @@ export class UserDO implements DurableObject {
         const b = (await req.json()) as { user: PublicUser; peerUser?: PublicUser };
         const peerUser = b.peerUser ?? b.user;
         this.broadcast({ t: "profile", user: b.user });
+        // the subscribers' copies are rewritten each as that subscriber may
+        // see the card, which is more than the one frame below can carry
+        await this.pushCards(await this.subscribers());
         const ids = await this.chatIds();
         const results = await Promise.allSettled(
           ids.map(async (chatId) => {
@@ -1272,7 +1718,8 @@ export class UserDO implements DurableObject {
       .map((r) => r.deviceId);
   }
 
-  /// A token APNs answered 410 for is removed from both the DO and D1.
+  /// A token APNs answered 410 for is forgotten: the device is still a
+  /// session, it just has no push address any more.
   private async dropPushTokens(deviceIds: string[]) {
     const tokens =
       (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
@@ -1284,14 +1731,6 @@ export class UserDO implements DurableObject {
       }
     }
     if (changed) await this.state.storage.put("apns", tokens);
-    await Promise.all(
-      deviceIds.map((id) =>
-        this.env.DB.prepare(
-          "UPDATE devices SET apns_token = NULL, apns_env = NULL WHERE id = ?"
-        ).bind(id).run().catch((e: unknown) =>
-          console.warn(`clearing apns token of ${id} failed: ${String(e)}`))
-      )
-    );
   }
 
   // --- Catch-up after a reconnect ---

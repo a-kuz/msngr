@@ -1,5 +1,4 @@
 export interface Env {
-  DB: D1Database;
   MEDIA: R2Bucket;
   USER_DO: DurableObjectNamespace;
   CONV_DO: DurableObjectNamespace;
@@ -10,6 +9,8 @@ export interface Env {
   DIRECTORY_DO: DurableObjectNamespace;
   /// One object per author: their stories, who watched, who liked, the links.
   STORIES_DO: DurableObjectNamespace;
+  /// One object per lookup key: provisioning and restore sessions, invite codes.
+  LOOKUP_DO: DurableObjectNamespace;
   APNS_ENV: string;
   /// Overrides the APNs endpoint, e.g. the dev mock at http://localhost:9871.
   /// Unset means Apple's production or sandbox host, picked by the device's apns-env.

@@ -359,6 +359,12 @@ check("avatar blob needs a token",
 const avatarBytes = await fetch(BASE + "/api/avatar/" + upload.avatarId,
   { headers: { authorization: `Bearer ${alice.token}` } });
 check("peer reads the avatar blob with theirs", avatarBytes.status === 200);
+// the chat list carries the peer's photo, not only their name: the names come
+// from the chat's roster copies and the photo from what the peer pushed here
+const listWithAvatar = await api("/api/chats", { token: alice.token });
+check("the chat list carries a peer's avatar",
+  listWithAvatar.users.find((u) => u.id === bob.userId)?.avatar_id === upload.avatarId,
+  JSON.stringify(listWithAvatar.users));
 
 // 7b. Renaming the handle: the new one is taken and the old one freed by the
 // same statement, under the index that already guards registration

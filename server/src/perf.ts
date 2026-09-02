@@ -1,6 +1,6 @@
 /// Dev-only measurement of what one object invocation costs: storage
-/// operations and the records they touch, D1 statements, subrequests to other
-/// objects. Off unless PERF_LOG is set; the wrappers are never installed then.
+/// operations and the records they touch, subrequests to other objects. Off
+/// unless PERF_LOG is set; the wrappers are never installed then.
 ///
 /// One line per invocation goes to the worker log as `PERF {json}`, so a run
 /// can be read back from the wrangler dev output without a side channel.
@@ -16,8 +16,6 @@ export interface PerfCounters {
   deletes: number;
   /// storage time, ms
   storageMs: number;
-  d1: number;
-  d1Ms: number;
   /// fetches to other durable objects
   sub: number;
   subMs: number;
@@ -29,7 +27,7 @@ export interface PerfCounters {
 export function newCounters(): PerfCounters {
   return {
     lists: 0, listed: 0, gets: 0, got: 0, puts: 0, putKeys: 0, deletes: 0,
-    storageMs: 0, d1: 0, d1Ms: 0, sub: 0, subMs: 0, outFrames: 0, outBytes: 0,
+    storageMs: 0, sub: 0, subMs: 0, outFrames: 0, outBytes: 0,
   };
 }
 
@@ -106,53 +104,6 @@ export function wrapStub<T extends { fetch: (...a: never[]) => Promise<Response>
       };
     },
   }) as T;
-}
-
-/// Counts D1 statements: one per run/first/all of a prepared statement.
-export function wrapDB(db: D1Database, c: PerfCounters): D1Database {
-  const wrapStatement = (stmt: D1PreparedStatement): D1PreparedStatement =>
-    new Proxy(stmt, {
-      get(target, prop) {
-        const value = Reflect.get(target, prop, target);
-        if (typeof value !== "function") return value;
-        const name = String(prop);
-        return (...args: unknown[]) => {
-          if (name === "bind") {
-            return wrapStatement(
-              (value as (...a: unknown[]) => D1PreparedStatement).apply(target, args)
-            );
-          }
-          if (name === "run" || name === "first" || name === "all" || name === "raw") {
-            const t0 = Date.now();
-            c.d1++;
-            return (value as (...a: unknown[]) => Promise<unknown>)
-              .apply(target, args)
-              .then((r) => {
-                c.d1Ms += Date.now() - t0;
-                return r;
-              });
-          }
-          return (value as (...a: unknown[]) => unknown).apply(target, args);
-        };
-      },
-    });
-  return new Proxy(db, {
-    get(target, prop) {
-      const value = Reflect.get(target, prop, target);
-      if (typeof value !== "function") return value;
-      if (prop === "prepare") {
-        return (sql: string) =>
-          wrapStatement((value as (s: string) => D1PreparedStatement).apply(target, [sql]));
-      }
-      if (prop === "batch") {
-        return (stmts: unknown[]) => {
-          c.d1 += stmts.length;
-          return (value as (...a: unknown[]) => unknown).apply(target, [stmts]);
-        };
-      }
-      return (value as (...a: unknown[]) => unknown).bind(target);
-    },
-  });
 }
 
 /// `d` is what this invocation saw, `total` what the object has spent since it

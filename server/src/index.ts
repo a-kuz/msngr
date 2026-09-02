@@ -1,17 +1,20 @@
 import { Hono } from "hono";
-import type { Env, AuthCtx, ChatState, ChatKind, PublicUser } from "./types";
-import { USER_CARD_COLUMNS } from "./types";
+import type { Env, AuthCtx, ChatState, ChatKind, PublicUser, PrivacySettings } from "./types";
 import { authenticate } from "./auth";
 import {
   ulid, newToken, sha256hex, json, err, directChatName, b64url, provisionCode,
-  isValidUsername, isValidDisplayName, verifyEd25519, readPrivacy,
-  hiddenAvatarOwners, privacyAllows,
+  isValidUsername, isValidDisplayName, verifyEd25519, readPrivacy, userStub,
+  privacyAllows, privacyChecks, cardFor, cardsFor, userAvatarId, avatarOwner,
 } from "./util";
 import type { LastSeenVisibility } from "./types";
 import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "./version";
-import { newCounters, wrapDB } from "./perf";
 import { claimHandle, releaseHandle, resolveHandle } from "./do/HandleDO";
-import { directoryPut, directoryRemove, directorySearch, type DirectoryCard } from "./do/DirectoryDO";
+import {
+  directoryPut, directoryRemove, directorySearch, phoneIndexPut, phoneIndexFind,
+} from "./do/DirectoryDO";
+import {
+  lookupPut, lookupClaim, lookupGet, lookupPatch, lookupDelete,
+} from "./do/LookupDO";
 import { PRESENCE_GROUP_MAX } from "./presence";
 import { roomToken, sfuConfigured, ROOM_TOKEN_TTL_SEC } from "./calls/livekit";
 
@@ -21,25 +24,48 @@ export { ApnsTokenDO } from "./do/ApnsTokenDO";
 export { HandleDO } from "./do/HandleDO";
 export { DirectoryDO } from "./do/DirectoryDO";
 export { StoriesDO } from "./do/StoriesDO";
+export { LookupDO } from "./do/LookupDO";
 import { storiesStub, authorOf, authorOfLink } from "./do/StoriesDO";
 
 type Vars = { auth: AuthCtx };
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
 
-function userStub(env: Env, userId: string) {
-  return env.USER_DO.get(env.USER_DO.idFromName(userId));
-}
 function convStub(env: Env, chatId: string) {
   return env.CONV_DO.get(env.CONV_DO.idFromName(chatId));
 }
 
-/// Copies the account's card into the people-search index. The card is read
-/// from the `users` row, which is where a profile change lands first.
+/// The account's card as the account itself holds it: the row every pull path
+/// starts from, before any viewer's rule is applied to it.
+async function ownProfile(
+  env: Env, userId: string,
+): Promise<(PublicUser & { phone_hash: string | null }) | null> {
+  const r = await userStub(env, userId).fetch("https://do/profile-read");
+  if (!r.ok) return null;
+  return ((await r.json()) as {
+    profile: PublicUser & { phone_hash: string | null };
+  }).profile;
+}
+
+/// Copies the account's card into the people-search index, from the object
+/// where a profile change lands first.
 async function indexUser(env: Env, userId: string): Promise<void> {
-  const card = await env.DB.prepare(
-    "SELECT id, username, display_name, avatar_id, bot_owner, bot_commands FROM users WHERE id = ?"
-  ).bind(userId).first<DirectoryCard>();
-  if (card) await directoryPut(env, card);
+  const p = await ownProfile(env, userId);
+  if (p) {
+    await directoryPut(env, {
+      id: p.id, username: p.username, display_name: p.display_name,
+      avatar_id: p.avatar_id, bot_owner: p.bot_owner ?? null,
+      bot_commands: p.bot_commands ?? null,
+    });
+  }
+}
+
+/// Whether a block stands between the two, either way. Both objects hold the
+/// pair, so the one already at hand answers it.
+async function blockedPair(env: Env, a: string, b: string): Promise<boolean> {
+  const r = await userStub(env, a).fetch(
+    `https://do/block-pair?peer=${encodeURIComponent(b)}`);
+  const j = (await r.json()) as { byMe: boolean; byPeer: boolean };
+  return j.byMe || j.byPeer;
 }
 
 // --- the public page of a story ---
@@ -166,7 +192,7 @@ app.post("/api/register", async (c) => {
   const now = Date.now();
   const userId = ulid(now);
   const deviceId = ulid(now);
-  const token = newToken();
+  const token = newToken(userId);
   const tokenHash = await sha256hex(token);
 
   // The handle object is the authority: the claim is the one step that can
@@ -174,6 +200,8 @@ app.post("/api/register", async (c) => {
   // handle that was not won.
   if (!(await claimHandle(c.env, b.username, userId))) return err("username_taken", 409);
 
+  // The keys, the card and the first session are one write inside the object:
+  // an account is either whole or was never opened.
   const kw = await userStub(c.env, userId).fetch("https://do/keys-register", {
     method: "POST",
     body: JSON.stringify({
@@ -181,28 +209,20 @@ app.post("/api/register", async (c) => {
       identityKey: b.identityKey, identitySignKey: b.identitySignKey,
       identityKeySig: b.identityKeySig, signedPrekey: b.signedPrekey,
       oneTimePrekeys: b.oneTimePrekeys,
+      profile: {
+        id: userId, username: b.username, display_name: b.displayName.trim(),
+        bio: null, avatar_id: null, bot_owner: null, bot_commands: null,
+        phone_hash: b.phoneHash ?? null, created_at: now,
+      },
+      device: { deviceId, name: b.device?.name ?? null, tokenHash },
     }),
   });
   if (!kw.ok) {
     await releaseHandle(c.env, b.username, userId, false);
     return err("keys_write_failed", 500);
   }
-
-  try {
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        "INSERT INTO users (id, username, display_name, display_name_lc, phone_hash, created_at) VALUES (?,?,?,?,?,?)"
-      ).bind(userId, b.username, b.displayName.trim(), b.displayName.trim().toLowerCase(), b.phoneHash ?? null, now),
-      c.env.DB.prepare(
-        "INSERT INTO devices (id, user_id, name, token_hash, created_at) VALUES (?,?,?,?,?)"
-      ).bind(deviceId, userId, b.device?.name ?? null, tokenHash, now),
-    ]);
-  } catch (e) {
-    await releaseHandle(c.env, b.username, userId, false);
-    await userStub(c.env, userId).fetch("https://do/account-wipe", { method: "POST", body: "{}" });
-    throw e;
-  }
   await indexUser(c.env, userId);
+  if (b.phoneHash) await phoneIndexPut(c.env, b.phoneHash, userId);
   return json({ ok: true, userId, deviceId, token });
 });
 
@@ -219,26 +239,24 @@ app.post("/api/register", async (c) => {
 /// nothing to hit.
 const PROVISION_TTL = 120;
 
-interface ProvisionRow {
-  id: string; token_hash: string; ephemeral_key: string;
-  device_name: string | null; platform: string | null;
-  expires_at: number; approved_by: string | null; envelope: string | null;
-  claimed_at: number | null;
+interface ProvisionRec {
+  id: string; code: string; tokenHash: string; ephemeralKey: string;
+  deviceName: string | null; platform: string | null;
+  expiresAt: number; approvedBy: string | null; envelope: string | null;
+  claimedAt: number | null;
 }
 
 /// The session named by the path, once its token matches and it is still alive.
 async function provisionSession(
   env: Env, req: Request, id: string
-): Promise<{ row: ProvisionRow } | { error: Response }> {
+): Promise<{ rec: ProvisionRec } | { error: Response }> {
   const token = req.headers.get("x-provision-token");
   if (!token) return { error: err("unauthorized", 401) };
-  const row = await env.DB.prepare(
-    "SELECT * FROM provision_sessions WHERE id = ?"
-  ).bind(id).first<ProvisionRow>();
-  if (!row) return { error: err("provision_not_found", 404) };
-  if (row.token_hash !== (await sha256hex(token))) return { error: err("unauthorized", 401) };
-  if (row.expires_at <= Date.now()) return { error: err("provision_expired", 410) };
-  return { row };
+  const rec = await lookupGet<ProvisionRec>(env, "prov", id);
+  if (!rec) return { error: err("provision_not_found", 404) };
+  if (rec.tokenHash !== (await sha256hex(token))) return { error: err("unauthorized", 401) };
+  if (rec.expiresAt <= Date.now()) return { error: err("provision_expired", 410) };
+  return { rec };
 }
 
 app.post("/api/provision/start", async (c) => {
@@ -247,31 +265,25 @@ app.post("/api/provision/start", async (c) => {
   }>();
   if (!b.ephemeralKey) return err("bad_keys");
   const now = Date.now();
-  // a code is only meaningful while its session lives, and the spent rows are
-  // what a fresh code has to stay unique against
-  await c.env.DB.prepare("DELETE FROM provision_sessions WHERE expires_at <= ?")
-    .bind(now).run();
   const id = ulid(now);
-  const token = newToken();
-  const tokenHash = await sha256hex(token);
-  // the code is unique among live sessions; a collision costs one more draw
+  const provisionToken = newToken(id);
+  const tokenHash = await sha256hex(provisionToken);
+  const expiresAt = now + PROVISION_TTL * 1000;
+  // the code names an object of its own, so a code still in use is one the
+  // claim loses to; a collision costs one more draw
   for (let attempt = 0; ; attempt++) {
     const code = provisionCode();
-    try {
-      await c.env.DB.prepare(
-        `INSERT INTO provision_sessions
-         (id, code, token_hash, ephemeral_key, device_name, platform, created_at, expires_at)
-         VALUES (?,?,?,?,?,?,?,?)`
-      ).bind(
-        id, code, tokenHash, b.ephemeralKey,
-        b.device?.name ?? null, b.device?.platform ?? null, now, now + PROVISION_TTL * 1000
-      ).run();
+    if (await lookupClaim(c.env, "pcode", code, { id, expiresAt })) {
+      await lookupPut(c.env, "prov", id, {
+        id, code, tokenHash, ephemeralKey: b.ephemeralKey,
+        deviceName: b.device?.name ?? null, platform: b.device?.platform ?? null,
+        expiresAt, approvedBy: null, envelope: null, claimedAt: null,
+      } satisfies ProvisionRec);
       return json({
-        ok: true, provisionId: id, code, provisionToken: token, expiresIn: PROVISION_TTL,
+        ok: true, provisionId: id, code, provisionToken, expiresIn: PROVISION_TTL,
       });
-    } catch (e) {
-      if (attempt >= 4 || !String(e).includes("UNIQUE")) throw e;
     }
+    if (attempt >= 4) return err("provision_code_unavailable", 503);
   }
 });
 
@@ -279,9 +291,9 @@ app.post("/api/provision/start", async (c) => {
 app.get("/api/provision/:id", async (c) => {
   const s = await provisionSession(c.env, c.req.raw, c.req.param("id"));
   if ("error" in s) return s.error;
-  if (s.row.claimed_at) return err("provision_claimed", 409);
-  if (!s.row.envelope) return json({ ok: true, status: "pending" });
-  return json({ ok: true, status: "approved", envelope: s.row.envelope });
+  if (s.rec.claimedAt) return err("provision_claimed", 409);
+  if (!s.rec.envelope) return json({ ok: true, status: "pending" });
+  return json({ ok: true, status: "approved", envelope: s.rec.envelope });
 });
 
 // The device takes the account: its row, its identity keys and its prekeys go
@@ -289,8 +301,8 @@ app.get("/api/provision/:id", async (c) => {
 app.post("/api/provision/:id/claim", async (c) => {
   const s = await provisionSession(c.env, c.req.raw, c.req.param("id"));
   if ("error" in s) return s.error;
-  if (s.row.claimed_at) return err("provision_claimed", 409);
-  if (!s.row.approved_by || !s.row.envelope) return err("provision_not_approved", 409);
+  if (s.rec.claimedAt) return err("provision_claimed", 409);
+  if (!s.rec.approvedBy || !s.rec.envelope) return err("provision_not_approved", 409);
   const b = await c.req.json<{
     identityKey: string; identitySignKey: string; identityKeySig: string;
     signedPrekey: { id: number; key: string; sig: string };
@@ -301,7 +313,7 @@ app.post("/api/provision/:id/claim", async (c) => {
     return err("bad_keys");
   }
 
-  const userId = s.row.approved_by;
+  const userId = s.rec.approvedBy;
   // The identity belongs to the account, not to the device: a device that does
   // not present the account's own keys is not one this account authorised.
   const kd = await userStub(c.env, userId).fetch("https://do/keys-devices");
@@ -316,10 +328,12 @@ app.post("/api/provision/:id/claim", async (c) => {
 
   const now = Date.now();
   const deviceId = ulid(now);
-  const token = newToken();
-  // Keys first, the device row second: a failed D1 write leaves the session
-  // unclaimed and a retry repeats both, while the reverse order would mint a
-  // device whose own /api/identity could never heal it.
+  const token = newToken(userId);
+  // The session is spent first: it is the one step two racing claims can only
+  // win once, and the keys and the device go in together after it.
+  const spent = await lookupPatch<ProvisionRec>(
+    c.env, "prov", s.rec.id, { claimedAt: now, envelope: null }, ["claimedAt"]);
+  if (!spent) return err("provision_claimed", 409);
   const kw = await userStub(c.env, userId).fetch("https://do/keys-register", {
     method: "POST",
     body: JSON.stringify({
@@ -327,24 +341,21 @@ app.post("/api/provision/:id/claim", async (c) => {
       identityKey: b.identityKey, identitySignKey: b.identitySignKey,
       identityKeySig: b.identityKeySig, signedPrekey: b.signedPrekey,
       oneTimePrekeys: b.oneTimePrekeys ?? [], bump: true,
+      device: {
+        deviceId, name: b.device?.name ?? s.rec.deviceName,
+        tokenHash: await sha256hex(token),
+      },
     }),
   });
   if (!kw.ok) return err("keys_write_failed", 500);
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      "INSERT INTO devices (id, user_id, name, token_hash, created_at) VALUES (?,?,?,?,?)"
-    ).bind(deviceId, userId, b.device?.name ?? s.row.device_name, await sha256hex(token), now),
-    c.env.DB.prepare(
-      "UPDATE provision_sessions SET claimed_at = ?, envelope = NULL WHERE id = ? AND claimed_at IS NULL"
-    ).bind(now, s.row.id),
-  ]);
   return json({ ok: true, userId, deviceId, token });
 });
 
 app.post("/api/provision/:id/cancel", async (c) => {
   const s = await provisionSession(c.env, c.req.raw, c.req.param("id"));
   if ("error" in s) return s.error;
-  await c.env.DB.prepare("DELETE FROM provision_sessions WHERE id = ?").bind(s.row.id).run();
+  await lookupDelete(c.env, "prov", s.rec.id);
+  await lookupDelete(c.env, "pcode", s.rec.code);
   return json({ ok: true });
 });
 
@@ -356,9 +367,9 @@ app.post("/api/provision/:id/cancel", async (c) => {
 /// one round trip, so this only has to outlast a slow network, not a person.
 const RESTORE_TTL = 120;
 
-interface RestoreRow {
-  id: string; user_id: string; identity_key: string; identity_sign_key: string;
-  nonce: string; expires_at: number; claimed_at: number | null;
+interface RestoreRec {
+  id: string; userId: string; identityKey: string; identitySignKey: string;
+  nonce: string; expiresAt: number; claimedAt: number | null;
 }
 
 app.post("/api/restore/start", async (c) => {
@@ -379,13 +390,12 @@ app.post("/api/restore/start", async (c) => {
   if (!identity) return err("account_has_no_devices", 409);
   const { identityKey, identitySignKey } = identity;
   const now = Date.now();
-  await c.env.DB.prepare("DELETE FROM restore_sessions WHERE expires_at <= ?").bind(now).run();
   const id = ulid(now);
   const nonce = b64url(crypto.getRandomValues(new Uint8Array(32)));
-  await c.env.DB.prepare(
-    `INSERT INTO restore_sessions (id, user_id, identity_key, identity_sign_key, nonce, created_at, expires_at)
-     VALUES (?,?,?,?,?,?,?)`
-  ).bind(id, user.id, identityKey, identitySignKey, nonce, now, now + RESTORE_TTL * 1000).run();
+  await lookupPut(c.env, "rest", id, {
+    id, userId: user.id, identityKey, identitySignKey, nonce,
+    expiresAt: now + RESTORE_TTL * 1000, claimedAt: null,
+  } satisfies RestoreRec);
   return json({ ok: true, restoreId: id, nonce, expiresIn: RESTORE_TTL });
 });
 
@@ -393,11 +403,10 @@ app.post("/api/restore/start", async (c) => {
 // the session's nonce; the server checks that signature against the identity
 // key already on file, then adds this device exactly as a live approval would.
 app.post("/api/restore/:id/claim", async (c) => {
-  const row = await c.env.DB.prepare("SELECT * FROM restore_sessions WHERE id = ?")
-    .bind(c.req.param("id")).first<RestoreRow>();
+  const row = await lookupGet<RestoreRec>(c.env, "rest", c.req.param("id"));
   if (!row) return err("restore_not_found", 404);
-  if (row.claimed_at) return err("restore_claimed", 409);
-  if (row.expires_at <= Date.now()) return err("restore_expired", 410);
+  if (row.claimedAt) return err("restore_claimed", 409);
+  if (row.expiresAt <= Date.now()) return err("restore_expired", 410);
   const b = await c.req.json<{
     identityKey: string; identitySignKey: string; identityKeySig: string; signature: string;
     signedPrekey: { id: number; key: string; sig: string };
@@ -407,18 +416,21 @@ app.post("/api/restore/:id/claim", async (c) => {
   if (!b.identityKey || !b.identitySignKey || !b.identityKeySig || !b.signature || !b.signedPrekey?.key) {
     return err("bad_keys");
   }
-  if (b.identityKey !== row.identity_key || b.identitySignKey !== row.identity_sign_key) {
+  if (b.identityKey !== row.identityKey || b.identitySignKey !== row.identitySignKey) {
     return err("identity_mismatch", 409);
   }
   const nonceBytes = new TextEncoder().encode(row.nonce);
-  if (!(await verifyEd25519(row.identity_sign_key, b.signature, nonceBytes))) {
+  if (!(await verifyEd25519(row.identitySignKey, b.signature, nonceBytes))) {
     return err("bad_signature", 401);
   }
 
-  const userId = row.user_id;
+  const userId = row.userId;
   const now = Date.now();
   const deviceId = ulid(now);
-  const token = newToken();
+  const token = newToken(userId);
+  const spent = await lookupPatch<RestoreRec>(
+    c.env, "rest", row.id, { claimedAt: now }, ["claimedAt"]);
+  if (!spent) return err("restore_claimed", 409);
   const kw = await userStub(c.env, userId).fetch("https://do/keys-register", {
     method: "POST",
     body: JSON.stringify({
@@ -426,17 +438,12 @@ app.post("/api/restore/:id/claim", async (c) => {
       identityKey: b.identityKey, identitySignKey: b.identitySignKey,
       identityKeySig: b.identityKeySig,
       signedPrekey: b.signedPrekey, oneTimePrekeys: b.oneTimePrekeys ?? [], bump: true,
+      device: {
+        deviceId, name: b.device?.name ?? null, tokenHash: await sha256hex(token),
+      },
     }),
   });
   if (!kw.ok) return err("keys_write_failed", 500);
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      "INSERT INTO devices (id, user_id, name, token_hash, created_at) VALUES (?,?,?,?,?)"
-    ).bind(deviceId, userId, b.device?.name ?? null, await sha256hex(token), now),
-    c.env.DB.prepare(
-      "UPDATE restore_sessions SET claimed_at = ? WHERE id = ? AND claimed_at IS NULL"
-    ).bind(now, row.id),
-  ]);
   return json({ ok: true, userId, deviceId, token });
 });
 
@@ -450,10 +457,10 @@ app.use("/api/*", async (c, next) => {
 
 app.get("/api/me", async (c) => {
   const { userId, deviceId } = c.get("auth");
-  const u = await c.env.DB.prepare(
-    `SELECT ${USER_CARD_COLUMNS} FROM users WHERE id = ?`
-  ).bind(userId).first();
-  return json({ ok: true, user: u, deviceId });
+  const p = await ownProfile(c.env, userId);
+  if (!p) return err("not_found", 404);
+  const { phone_hash, ...user } = p;
+  return json({ ok: true, user, deviceId });
 });
 
 // --- active devices and token revocation ---
@@ -466,36 +473,32 @@ app.get("/api/me", async (c) => {
 // builds a box for this device, and its prekeys stop being handed out for
 // sessions nobody will ever open.
 async function revokeDevice(env: Env, userId: string, deviceId: string) {
-  // the token dies in D1, where auth reads it; the sockets, the keys, the
-  // version bump and the fan-out all happen inside the user's object
-  await env.DB.prepare(
-    "UPDATE devices SET revoked_at = ?, apns_token = NULL, apns_env = NULL WHERE id = ? AND user_id = ?"
-  ).bind(Date.now(), deviceId, userId).run();
+  // the token, the sockets, the keys, the version bump and the fan-out are one
+  // act inside the user's object
   await userStub(env, userId).fetch("https://do/revoke-device", {
     method: "POST",
     body: JSON.stringify({ deviceId, userId }),
   });
 }
 
+/// The account's live sessions, as its own object lists them.
+async function sessionsOf(env: Env, userId: string): Promise<Array<{
+  deviceId: string; name: string | null; createdAt: number;
+  lastSeen: number | null; hasPushToken: boolean;
+}>> {
+  const r = await userStub(env, userId).fetch("https://do/sessions");
+  return ((await r.json()) as { sessions: Array<{
+    deviceId: string; name: string | null; createdAt: number;
+    lastSeen: number | null; hasPushToken: boolean;
+  }> }).sessions;
+}
+
 app.get("/api/sessions", async (c) => {
   const { userId, deviceId } = c.get("auth");
-  const rows = await c.env.DB.prepare(
-    `SELECT id, name, created_at, last_seen, apns_token IS NOT NULL AS has_push
-     FROM devices WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at`
-  ).bind(userId).all<{
-    id: string; name: string | null; created_at: number;
-    last_seen: number | null; has_push: number;
-  }>();
+  const sessions = await sessionsOf(c.env, userId);
   return json({
     ok: true,
-    sessions: rows.results.map((r) => ({
-      deviceId: r.id,
-      name: r.name,
-      createdAt: r.created_at,
-      lastSeen: r.last_seen,
-      hasPushToken: r.has_push === 1,
-      current: r.id === deviceId,
-    })),
+    sessions: sessions.map((s) => ({ ...s, current: s.deviceId === deviceId })),
   });
 });
 
@@ -513,9 +516,9 @@ app.post("/api/logout", async (c) => {
 // tokens.
 app.post("/api/account/delete", async (c) => {
   const { userId } = c.get("auth");
-  const me = await c.env.DB.prepare("SELECT username FROM users WHERE id = ?")
-    .bind(userId).first<{ username: string }>();
+  const me = await ownProfile(c.env, userId);
   if (me) await releaseHandle(c.env, me.username, userId, false);
+  if (me?.phone_hash) await phoneIndexPut(c.env, me.phone_hash, null);
   await directoryRemove(c.env, userId);
   const cr = await userStub(c.env, userId).fetch("https://do/chats", { method: "POST", body: "{}" });
   const cj = (await cr.json()) as { ok: boolean; chats?: Record<string, unknown> };
@@ -527,23 +530,14 @@ app.post("/api/account/delete", async (c) => {
   }
   await userStub(c.env, userId).fetch("https://do/account-wipe", { method: "POST", body: "{}" });
   await storiesStub(c.env, userId).fetch("https://do/wipe", { method: "POST", body: "{}" });
-  await c.env.DB.batch([
-    c.env.DB.prepare("DELETE FROM privacy_exceptions WHERE user_id = ? OR peer_id = ?").bind(userId, userId),
-    c.env.DB.prepare("DELETE FROM privacy_settings WHERE user_id = ?").bind(userId),
-    c.env.DB.prepare("DELETE FROM blocks WHERE user_id = ? OR blocked_id = ?").bind(userId, userId),
-    c.env.DB.prepare("DELETE FROM devices WHERE user_id = ?").bind(userId),
-    c.env.DB.prepare("DELETE FROM users WHERE id = ?").bind(userId),
-  ]);
   return json({ ok: true });
 });
 
 app.post("/api/sessions/:deviceId/revoke", async (c) => {
   const { userId } = c.get("auth");
   const target = c.req.param("deviceId");
-  const row = await c.env.DB.prepare(
-    "SELECT id FROM devices WHERE id = ? AND user_id = ? AND revoked_at IS NULL"
-  ).bind(target, userId).first();
-  if (!row) return err("device_not_found", 404);
+  const sessions = await sessionsOf(c.env, userId);
+  if (!sessions.some((s) => s.deviceId === target)) return err("device_not_found", 404);
   await revokeDevice(c.env, userId, target);
   return json({ ok: true });
 });
@@ -555,20 +549,15 @@ app.post("/api/provision/lookup", async (c) => {
   const b = await c.req.json<{ code: string }>();
   const code = (b.code ?? "").trim().toUpperCase().replace(/[^0-9A-Z]/g, "");
   if (!code) return err("provision_not_found", 404);
-  const row = await c.env.DB.prepare(
-    "SELECT id, ephemeral_key, device_name, platform, expires_at, approved_by, claimed_at FROM provision_sessions WHERE code = ?"
-  ).bind(code).first<{
-    id: string; ephemeral_key: string; device_name: string | null;
-    platform: string | null; expires_at: number;
-    approved_by: string | null; claimed_at: number | null;
-  }>();
+  const named = await lookupGet<{ id: string }>(c.env, "pcode", code);
+  const row = named ? await lookupGet<ProvisionRec>(c.env, "prov", named.id) : null;
   if (!row) return err("provision_not_found", 404);
-  if (row.expires_at <= Date.now()) return err("provision_expired", 410);
-  if (row.claimed_at || row.approved_by) return err("provision_claimed", 409);
+  if (row.expiresAt <= Date.now()) return err("provision_expired", 410);
+  if (row.claimedAt || row.approvedBy) return err("provision_claimed", 409);
   return json({
-    ok: true, provisionId: row.id, ephemeralKey: row.ephemeral_key,
-    device: { name: row.device_name, platform: row.platform },
-    expiresIn: Math.max(0, Math.round((row.expires_at - Date.now()) / 1000)),
+    ok: true, provisionId: row.id, ephemeralKey: row.ephemeralKey,
+    device: { name: row.deviceName, platform: row.platform },
+    expiresIn: Math.max(0, Math.round((row.expiresAt - Date.now()) / 1000)),
   });
 });
 
@@ -578,19 +567,14 @@ app.post("/api/provision/:id/approve", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{ envelope: string }>();
   if (!b.envelope) return err("bad_envelope");
-  const row = await c.env.DB.prepare(
-    "SELECT id, expires_at, approved_by, claimed_at FROM provision_sessions WHERE id = ?"
-  ).bind(c.req.param("id")).first<{
-    id: string; expires_at: number; approved_by: string | null; claimed_at: number | null;
-  }>();
+  const row = await lookupGet<ProvisionRec>(c.env, "prov", c.req.param("id"));
   if (!row) return err("provision_not_found", 404);
-  if (row.expires_at <= Date.now()) return err("provision_expired", 410);
-  if (row.claimed_at || row.approved_by) return err("provision_claimed", 409);
-  const res = await c.env.DB.prepare(
-    `UPDATE provision_sessions SET approved_by = ?, approved_at = ?, envelope = ?
-     WHERE id = ? AND approved_by IS NULL AND claimed_at IS NULL`
-  ).bind(userId, Date.now(), b.envelope, row.id).run();
-  if (!res.meta.changes) return err("provision_claimed", 409);
+  if (row.expiresAt <= Date.now()) return err("provision_expired", 410);
+  const approved = await lookupPatch<ProvisionRec>(
+    c.env, "prov", row.id,
+    { approvedBy: userId, approvedAt: Date.now(), envelope: b.envelope },
+    ["approvedBy", "claimedAt"]);
+  if (!approved) return err("provision_claimed", 409);
   return json({ ok: true });
 });
 
@@ -600,12 +584,12 @@ app.get("/api/users", async (c) => {
   if (q.length < 2) return json({ ok: true, users: [] });
   // folded in JS, like the index itself: SQLite's LOWER folds ASCII only, and
   // display names are free Unicode
-  const users = await directorySearch(c.env, q.toLowerCase());
+  const found = await directorySearch(c.env, q.toLowerCase());
   const { userId } = c.get("auth");
-  const hidden = await hiddenAvatarOwners(c.env, userId, users.map((r) => r.id));
-  for (const r of users) {
-    if (hidden.has(r.id)) r.avatar_id = null;
-  }
+  // the index holds one card for everyone; the photo is each owner's to show,
+  // so the row this caller sees comes from that owner's own object
+  const cards = await cardsFor(c.env, userId, found.map((r) => r.id));
+  const users = found.map((r) => cards.get(r.id) ?? { ...r, bio: null });
   return json({ ok: true, users });
 });
 
@@ -616,32 +600,24 @@ app.get("/api/users", async (c) => {
 app.get("/api/users/:id", async (c) => {
   const { userId } = c.get("auth");
   const targetId = c.req.param("id");
-  const u = await c.env.DB.prepare(
-    `SELECT ${USER_CARD_COLUMNS} FROM users WHERE id = ?`
-  ).bind(targetId).first<PublicUser>();
+  // the card is the target's to hand out: their object blanks what their own
+  // photo rule closes to this viewer, and answers the call rule in the same
+  // breath — the dial button is not worth showing on a call that would only
+  // come back busy
+  const u = await cardFor(c.env, userId, targetId);
   if (!u) return err("not_found", 404);
-  if (userId !== targetId) {
-    const tier = (await readPrivacy(c.env.DB, targetId)).avatar;
-    if (!(await privacyAllows(c.env, targetId, userId, "avatar", tier))) {
-      u.bio = null;
-      u.avatar_id = null;
-    }
-  }
+  const canCall = userId === targetId
+    || (await privacyAllows(c.env, targetId, userId, "call"));
   let presence: { online: boolean; lastSeen: number } | null = null;
   if (userId === targetId) {
     const p = await userStub(c.env, targetId).fetch("https://do/presence-info");
     presence = (await p.json()) as { online: boolean; lastSeen: number };
-  } else if ((await readPrivacy(c.env.DB, userId)).lastSeen !== "nobody") {
+  } else {
+    // a viewer who hid their own last seen holds no copies at all, so the
+    // read below simply finds nothing
     const p = await userStub(c.env, userId).fetch(
       `https://do/peer-presence-read?peer=${encodeURIComponent(targetId)}`);
     presence = ((await p.json()) as { presence: { online: boolean; lastSeen: number } | null }).presence;
-  }
-  // whether the target's call tier lets this viewer ring them: the dial
-  // button is not worth showing on a call that would only come back busy
-  let canCall = true;
-  if (userId !== targetId) {
-    const callTier = (await readPrivacy(c.env.DB, targetId)).callPrivacy;
-    canCall = await privacyAllows(c.env, targetId, userId, "call", callTier);
   }
   return json({ ok: true, user: u, presence, canCall });
 });
@@ -652,8 +628,7 @@ app.get("/api/users/:id", async (c) => {
 app.get("/api/privacy/may-call/:peerId", async (c) => {
   const { userId } = c.get("auth");
   const peerId = c.req.param("peerId");
-  const tier = (await readPrivacy(c.env.DB, userId)).callPrivacy;
-  return json({ ok: true, allow: await privacyAllows(c.env, userId, peerId, "call", tier) });
+  return json({ ok: true, allow: await privacyAllows(c.env, userId, peerId, "call") });
 });
 
 // The ticket into a group call's room on the SFU: the caller must be a
@@ -673,8 +648,7 @@ app.post("/api/calls/room", async (c) => {
   });
   const m = (await r.json()) as { member?: boolean };
   if (!m.member) return err("not_member", 403);
-  const me = await c.env.DB.prepare("SELECT display_name FROM users WHERE id = ?")
-    .bind(userId).first<{ display_name: string }>();
+  const me = await ownProfile(c.env, userId);
   const token = await roomToken(c.env, { userId, name: me?.display_name ?? "", room: b.callId });
   return json({ ok: true, url: c.env.LIVEKIT_URL, token, ttl: ROOM_TOKEN_TTL_SEC });
 });
@@ -778,12 +752,13 @@ app.post("/api/profile", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{ displayName?: string; bio?: string; avatarId?: string }>();
   if (b.displayName !== undefined && !isValidDisplayName(b.displayName)) return err("bad_name");
-  await c.env.DB.prepare(
-    `UPDATE users SET display_name = COALESCE(?, display_name),
-     display_name_lc = COALESCE(?, display_name_lc),
-     bio = COALESCE(?, bio), avatar_id = COALESCE(?, avatar_id) WHERE id = ?`
-  ).bind(b.displayName?.trim() ?? null, b.displayName?.trim().toLowerCase() ?? null,
-         b.bio ?? null, b.avatarId ?? null, userId).run();
+  const w = await userStub(c.env, userId).fetch("https://do/profile-write", {
+    method: "POST",
+    body: JSON.stringify({
+      displayName: b.displayName, bio: b.bio, avatarId: b.avatarId,
+    }),
+  });
+  if (!w.ok) return new Response(w.body, w);
   await indexUser(c.env, userId);
   await broadcastProfile(c.env, userId);
   return json({ ok: true });
@@ -798,15 +773,17 @@ app.post("/api/username", async (c) => {
   const b = await c.req.json<{ username?: string }>();
   if (!isValidUsername(b.username)) return err("bad_username");
 
-  const current = await c.env.DB.prepare("SELECT username FROM users WHERE id = ?")
-    .bind(userId).first<{ username: string }>();
+  const current = await ownProfile(c.env, userId);
   if (!current) return err("not_found", 404);
+  const write = () => userStub(c.env, userId).fetch("https://do/profile-write", {
+    method: "POST", body: JSON.stringify({ username: b.username }),
+  });
   if (current.username.toLowerCase() === b.username.toLowerCase()) {
     // the same handle in another case: nothing to claim or free
-    await c.env.DB.prepare("UPDATE users SET username = ? WHERE id = ?").bind(b.username, userId).run();
+    await write();
   } else {
     if (!(await claimHandle(c.env, b.username, userId))) return err("username_taken", 409);
-    await c.env.DB.prepare("UPDATE users SET username = ? WHERE id = ?").bind(b.username, userId).run();
+    await write();
     await releaseHandle(c.env, current.username, userId, true);
   }
   await indexUser(c.env, userId);
@@ -818,16 +795,15 @@ app.post("/api/username", async (c) => {
 /// that the card changed. The card is public — GET /api/users/:id serves it to
 /// anyone — so the frame carries the whole row instead of asking for a refetch.
 async function broadcastProfile(env: Env, userId: string) {
-  const user = await env.DB.prepare(
-    `SELECT ${USER_CARD_COLUMNS} FROM users WHERE id = ?`
-  ).bind(userId).first<PublicUser>();
-  if (!user) return;
+  const p = await ownProfile(env, userId);
+  if (!p) return;
+  const { phone_hash, ...user } = p;
   // peers get the card as they may see it: a hidden photo and bio travel only
   // to the user's own devices. The frame is one card for every peer, so the
   // "contacts" tier blanks it here too — a contact still gets the full card
   // from every pull path, and the bytes route answers them
-  let peerUser = user;
-  if ((await readPrivacy(env.DB, userId)).avatar !== "everyone") {
+  let peerUser: PublicUser = user;
+  if ((await readPrivacy(env, userId)).avatar !== "everyone") {
     peerUser = { ...user, bio: null, avatar_id: null };
   }
   await userStub(env, userId).fetch("https://do/profile-changed", {
@@ -845,8 +821,7 @@ async function addableToGroup(
   const invited: string[] = [];
   for (const id of ids) {
     if (id === actor) { addable.push(id); continue; }
-    const tier = (await readPrivacy(env.DB, id)).groupInvites;
-    if (await privacyAllows(env, id, actor, "group_invites", tier)) {
+    if (await privacyAllows(env, id, actor, "group_invites")) {
       addable.push(id);
     } else {
       invited.push(id);
@@ -866,11 +841,8 @@ app.post("/api/chats", async (c) => {
   if (b.kind === "channel" && !b.title?.trim()) return err("channel_needs_title");
 
   // a block in either direction forbids opening the direct chat
-  if (b.kind === "direct") {
-    const blocked = await c.env.DB.prepare(
-      "SELECT 1 FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)"
-    ).bind(members[0], userId, userId, members[0]).first();
-    if (blocked) return err("blocked", 403);
+  if (b.kind === "direct" && (await blockedPair(c.env, userId, members[0]))) {
+    return err("blocked", 403);
   }
 
   // one saved-messages chat per user, so creating it again opens the same one
@@ -898,31 +870,37 @@ app.get("/api/chats", async (c) => {
   const { userId } = c.get("auth");
   const r = await userStub(c.env, userId).fetch("https://do/chats");
   const { chats } = (await r.json()) as { chats: Record<string, unknown> };
-  const states: Array<{ flags: unknown; state: ChatState }> = [];
+  const states: Array<{ flags: unknown; state: ChatState; users: PublicUser[] }> = [];
   await Promise.all(
     Object.entries(chats).map(async ([chatId, flags]) => {
       const sr = await convStub(c.env, chatId).fetch("https://do/state");
-      const sj = (await sr.json()) as { ok: boolean; state?: ChatState };
-      if (sj.ok && sj.state) states.push({ flags, state: sj.state });
+      const sj = (await sr.json()) as { ok: boolean; state?: ChatState; users?: PublicUser[] };
+      if (sj.ok && sj.state) states.push({ flags, state: sj.state, users: sj.users ?? [] });
     })
   );
   const memberIds = [...new Set(states.flatMap((s) => s.state.members.map((m) => m.userId)))];
-  let users: unknown[] = [];
-  if (memberIds.length) {
-    const placeholders = memberIds.map(() => "?").join(",");
-    const rows = await c.env.DB.prepare(
-      `SELECT ${USER_CARD_COLUMNS} FROM users WHERE id IN (${placeholders})`
-    ).bind(...memberIds).all<PublicUser>();
-    const hidden = await hiddenAvatarOwners(c.env, userId, memberIds);
-    for (const u of rows.results) {
-      if (hidden.has(u.id)) {
-        u.bio = null;
-        u.avatar_id = null;
-      }
-    }
-    users = rows.results;
+  // The names come free with the chats: each conversation holds its roster's
+  // public cards. The photo and the bio are per-viewer, and this caller's own
+  // object holds them — a copy each peer pushed as that peer lets this one see
+  // it. Anybody left over (a roster too large for presence relations to be
+  // built over) is asked directly.
+  const cards = new Map<string, PublicUser>();
+  for (const s of states) for (const u of s.users) cards.set(u.id, u);
+  const pr = await userStub(c.env, userId).fetch("https://do/peer-cards");
+  for (const u of ((await pr.json()) as { cards: PublicUser[] }).cards) cards.set(u.id, u);
+  const own = await ownProfile(c.env, userId);
+  if (own) {
+    const { phone_hash, ...card } = own;
+    cards.set(userId, card);
   }
-  return json({ ok: true, chats: states, users });
+  const unknown = memberIds.filter((id) => !cards.has(id));
+  for (const [id, card] of await cardsFor(c.env, userId, unknown)) cards.set(id, card);
+  const users = memberIds.flatMap((id) => (cards.has(id) ? [cards.get(id)!] : []));
+  return json({
+    ok: true,
+    chats: states.map((s) => ({ flags: s.flags, state: s.state })),
+    users,
+  });
 });
 
 app.get("/api/chats/:id/history", async (c) => {
@@ -959,31 +937,6 @@ app.post("/api/dev/fault", async (c) => {
     method: "POST", body: JSON.stringify({ failEvents: b.failEvents }),
   });
   return new Response(r.body, r);
-});
-
-// Dev hook for a stand whose accounts predate the handle and directory
-// objects: every `users` row claims its handle and lands in the search index.
-// Idempotent; a handle already held by someone else is reported, not taken.
-// Paged by user id — {after, limit} → {next} — because every handle is an
-// object of its own, and a local stand opening thousands of them in one
-// request runs out of memory around the first thousand.
-app.post("/api/dev/reindex", async (c) => {
-  const b = await c.req.json<{ after?: string; limit?: number }>().catch(() => ({} as { after?: string; limit?: number }));
-  const limit = Math.min(Math.max(b.limit ?? 200, 1), 500);
-  const rows = await c.env.DB.prepare(
-    `SELECT id, username, display_name, avatar_id, bot_owner, bot_commands FROM users
-     WHERE id > ? ORDER BY id LIMIT ?`
-  ).bind(b.after ?? "", limit).all<DirectoryCard>();
-  const clashes: string[] = [];
-  for (const card of rows.results) {
-    if (!(await claimHandle(c.env, card.username, card.id))) clashes.push(card.username);
-    await directoryPut(c.env, card);
-  }
-  const last = rows.results.at(-1);
-  return json({
-    ok: true, indexed: rows.results.length, clashes,
-    next: rows.results.length === limit && last ? last.id : null,
-  });
 });
 
 // Dev hook for a stand whose chats predate presence subscriptions: the
@@ -1132,33 +1085,45 @@ app.post("/api/bots", async (c) => {
   const now = Date.now();
   const botId = ulid(now);
   const deviceId = ulid(now);
-  const token = newToken();
+  const token = newToken(botId);
   if (!(await claimHandle(c.env, b.username, botId))) return err("username_taken", 409);
-  try {
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        `INSERT INTO users (id, username, display_name, display_name_lc, created_at,
-                            bot_owner, bot_commands) VALUES (?,?,?,?,?,?,?)`
-      ).bind(botId, b.username, b.displayName.trim(), b.displayName.trim().toLowerCase(),
-             now, userId, JSON.stringify(commands)),
-      c.env.DB.prepare(
-        "INSERT INTO devices (id, user_id, name, token_hash, created_at) VALUES (?,?,?,?,?)"
-      ).bind(deviceId, botId, "bot", await sha256hex(token), now),
-    ]);
-  } catch (e) {
+  // a bot is an account: its own object, its own card, its own session — it
+  // simply has no keys, which is what makes its chats readable
+  const w = await userStub(c.env, botId).fetch("https://do/bot-register", {
+    method: "POST",
+    body: JSON.stringify({
+      userId: botId,
+      profile: {
+        id: botId, username: b.username, display_name: b.displayName.trim(),
+        bio: null, avatar_id: null, bot_owner: userId,
+        bot_commands: JSON.stringify(commands), phone_hash: null, created_at: now,
+      },
+      device: { deviceId, name: "bot", tokenHash: await sha256hex(token) },
+    }),
+  });
+  if (!w.ok) {
     await releaseHandle(c.env, b.username, botId, false);
-    throw e;
+    return err("bot_write_failed", 500);
   }
+  // the owner's own object lists what they run: there is no index from an
+  // owner back to their bots anywhere else
+  await userStub(c.env, userId).fetch("https://do/bot-owned", {
+    method: "POST", body: JSON.stringify({ botId, add: true }),
+  });
   await indexUser(c.env, botId);
   return json({ ok: true, botId, token });
 });
 
 app.get("/api/bots", async (c) => {
   const { userId } = c.get("auth");
-  const rows = await c.env.DB.prepare(
-    "SELECT id, username, display_name, bot_commands FROM users WHERE bot_owner = ? ORDER BY created_at"
-  ).bind(userId).all();
-  return json({ ok: true, bots: rows.results });
+  const r = await userStub(c.env, userId).fetch("https://do/bot-owned");
+  const { botIds } = (await r.json()) as { botIds: string[] };
+  const cards = await Promise.all(botIds.map((id) => ownProfile(c.env, id)));
+  const bots = cards.flatMap((p) => (p ? [{
+    id: p.id, username: p.username, display_name: p.display_name,
+    bot_commands: p.bot_commands ?? null,
+  }] : []));
+  return json({ ok: true, bots });
 });
 
 /// The owner edits the bot's name and its command list, and asks for a fresh
@@ -1167,28 +1132,28 @@ app.post("/api/bots/:id", async (c) => {
   const { userId } = c.get("auth");
   const botId = c.req.param("id");
   const b = await c.req.json<{ displayName?: string; commands?: unknown; newToken?: boolean }>();
-  const bot = await c.env.DB.prepare(
-    "SELECT id, bot_owner FROM users WHERE id = ?"
-  ).bind(botId).first<{ bot_owner: string | null }>();
+  const bot = await ownProfile(c.env, botId);
   if (!bot || bot.bot_owner !== userId) return err("not_owner", 403);
-  if (b.displayName !== undefined) {
-    if (!isValidDisplayName(b.displayName)) return err("bad_name");
-    await c.env.DB.prepare(
-      "UPDATE users SET display_name = ?, display_name_lc = ? WHERE id = ?"
-    ).bind(b.displayName.trim(), b.displayName.trim().toLowerCase(), botId).run();
-  }
+  if (b.displayName !== undefined && !isValidDisplayName(b.displayName)) return err("bad_name");
+  let commandsJson: string | undefined;
   if (b.commands !== undefined) {
     const commands = cleanCommands(b.commands);
     if (commands === null) return err("bad_commands");
-    await c.env.DB.prepare("UPDATE users SET bot_commands = ? WHERE id = ?")
-      .bind(JSON.stringify(commands), botId).run();
+    commandsJson = JSON.stringify(commands);
   }
-  if (b.displayName !== undefined || b.commands !== undefined) await indexUser(c.env, botId);
+  if (b.displayName !== undefined || commandsJson !== undefined) {
+    await userStub(c.env, botId).fetch("https://do/profile-write", {
+      method: "POST",
+      body: JSON.stringify({ displayName: b.displayName, botCommands: commandsJson }),
+    });
+    await indexUser(c.env, botId);
+  }
   let token: string | undefined;
   if (b.newToken) {
-    token = newToken();
-    await c.env.DB.prepare("UPDATE devices SET token_hash = ? WHERE user_id = ?")
-      .bind(await sha256hex(token), botId).run();
+    token = newToken(botId);
+    await userStub(c.env, botId).fetch("https://do/device-retoken", {
+      method: "POST", body: JSON.stringify({ tokenHash: await sha256hex(token) }),
+    });
   }
   return json({ ok: true, token });
 });
@@ -1298,30 +1263,25 @@ app.post("/api/chats/:id/invite", async (c) => {
   if (sj.state!.kind === "channel" && me.role !== "owner" && me.role !== "editor")
     return err("not_allowed", 403);
   const code = b64url(crypto.getRandomValues(new Uint8Array(9)));
-  await c.env.DB.prepare(
-    "INSERT INTO invites (code, chat_id, created_by, created_at) VALUES (?,?,?,?)"
-  ).bind(code, chatId, userId, Date.now()).run();
+  await lookupPut(c.env, "inv", code, { chatId, createdBy: userId, createdAt: Date.now() });
   return json({ ok: true, code, link: `msngr://join/${code}` });
 });
 
 app.post("/api/join/:code", async (c) => {
   const { userId } = c.get("auth");
-  const inv = await c.env.DB.prepare(
-    "SELECT chat_id FROM invites WHERE code = ?"
-  ).bind(c.req.param("code")).first<{ chat_id: string }>();
+  const inv = await lookupGet<{ chatId: string }>(c.env, "inv", c.req.param("code"));
   if (!inv) return err("invalid_invite", 404);
-  const r = await convStub(c.env, inv.chat_id).fetch("https://do/members", {
+  const r = await convStub(c.env, inv.chatId).fetch("https://do/members", {
     method: "POST",
     body: JSON.stringify({ actor: userId, add: [userId], remove: [], viaInvite: true }),
   });
   const rj = (await r.json()) as { ok: boolean; error?: string };
   if (!rj.ok) return err(rj.error ?? "join_failed", r.status);
-  return json({ ok: true, chatId: inv.chat_id });
+  return json({ ok: true, chatId: inv.chatId });
 });
 
 // --- media (E2E: the server keeps ciphertext blobs and nothing else) ---
 app.post("/api/media", async (c) => {
-  const { userId } = c.get("auth");
   const mediaId = ulid();
   const body = c.req.raw.body;
   if (!body) return err("empty_body");
@@ -1329,9 +1289,6 @@ app.post("/api/media", async (c) => {
     httpMetadata: { contentType: "application/octet-stream" },
   });
   const head = await c.env.MEDIA.head(mediaId);
-  await c.env.DB.prepare(
-    "INSERT INTO media (id, owner_id, size, created_at) VALUES (?,?,?,?)"
-  ).bind(mediaId, userId, head?.size ?? 0, Date.now()).run();
   return json({ ok: true, mediaId, size: head?.size ?? 0 });
 });
 
@@ -1365,7 +1322,8 @@ app.post("/api/avatar", async (c) => {
     if (!sj.ok || !me) return err("not_member", 403);
     if (sj.state!.kind === "group" && me.role !== "admin") return err("not_admin", 403);
   }
-  const mediaId = "avatar-" + ulid();
+  // a user avatar carries its owner in its id; a chat avatar has no owner
+  const mediaId = chatId ? "avatar-" + ulid() : userAvatarId(userId);
   const body = c.req.raw.body;
   if (!body) return err("empty_body");
   await c.env.MEDIA.put(mediaId, body, {
@@ -1379,8 +1337,9 @@ app.post("/api/avatar", async (c) => {
     const rj = (await r.json()) as { ok: boolean; error?: string };
     if (!rj.ok) return err(rj.error ?? "settings_failed", r.status);
   } else {
-    await c.env.DB.prepare("UPDATE users SET avatar_id = ? WHERE id = ?")
-      .bind(mediaId, userId).run();
+    await userStub(c.env, userId).fetch("https://do/profile-write", {
+      method: "POST", body: JSON.stringify({ avatarId: mediaId }),
+    });
     await indexUser(c.env, userId);
     await broadcastProfile(c.env, userId);
   }
@@ -1390,15 +1349,13 @@ app.post("/api/avatar", async (c) => {
 app.get("/api/avatar/:id", async (c) => {
   // A user avatar whose owner hid it is withheld at the bytes too, not only by
   // blanking avatar_id in the cards: an id learned earlier must stop answering.
-  // Chat avatars match no users row and stay open to any authenticated caller.
+  // The id names its owner, so the rule is asked of the right object without an
+  // index from a blob back to an account. A chat avatar names none and stays
+  // open to any authenticated caller.
   const mediaId = c.req.param("id");
-  const owner = await c.env.DB.prepare("SELECT id FROM users WHERE avatar_id = ?")
-    .bind(mediaId).first<{ id: string }>();
-  if (owner && owner.id !== c.get("auth").userId) {
-    const tier = (await readPrivacy(c.env.DB, owner.id)).avatar;
-    if (!(await privacyAllows(c.env, owner.id, c.get("auth").userId, "avatar", tier))) {
-      return err("not_found", 404);
-    }
+  const owner = avatarOwner(mediaId);
+  if (owner && !(await privacyAllows(c.env, owner, c.get("auth").userId, "avatar"))) {
+    return err("not_found", 404);
   }
   const obj = await c.env.MEDIA.get(mediaId);
   if (!obj) return err("not_found", 404);
@@ -1412,9 +1369,6 @@ app.get("/api/avatar/:id", async (c) => {
 app.post("/api/push-token", async (c) => {
   const { userId, deviceId } = c.get("auth");
   const b = await c.req.json<{ apnsToken: string; env: string }>();
-  await c.env.DB.prepare(
-    "UPDATE devices SET apns_token = ?, apns_env = ? WHERE id = ?"
-  ).bind(b.apnsToken, b.env, deviceId).run();
   await userStub(c.env, userId).fetch("https://do/push-token", {
     method: "POST",
     body: JSON.stringify({ deviceId, apnsToken: b.apnsToken, env: b.env, userId }),
@@ -1429,13 +1383,10 @@ async function discoverableBy(
   env: Env, searcherId: string, ids: string[]
 ): Promise<Set<string>> {
   const allowed = new Set(ids);
-  for (const id of ids) {
-    if (id === searcherId) continue;
-    const tier = (await readPrivacy(env.DB, id)).phoneDiscovery;
-    if (!(await privacyAllows(env, id, searcherId, "phone_discovery", tier))) {
-      allowed.delete(id);
-    }
-  }
+  await Promise.all(ids.map(async (id) => {
+    if (id === searcherId) return;
+    if (!(await privacyAllows(env, id, searcherId, "phone_discovery"))) allowed.delete(id);
+  }));
   return allowed;
 }
 
@@ -1450,60 +1401,55 @@ app.post("/api/contacts/discover", async (c) => {
   await userStub(c.env, userId).fetch("https://do/contacts-sync", {
     method: "POST", body: JSON.stringify({ hashes, remove: b.remove }),
   });
-  const matches: Array<{ id: string; avatar_id: string | null }> = [];
-  for (let i = 0; i < hashes.length; i += 100) {
-    const chunk = hashes.slice(i, i + 100);
-    const placeholders = chunk.map(() => "?").join(",");
-    const rows = await c.env.DB.prepare(
-      `SELECT id, username, display_name, avatar_id, phone_hash FROM users WHERE phone_hash IN (${placeholders})`
-    ).bind(...chunk).all<{ id: string; avatar_id: string | null }>();
-    matches.push(...rows.results);
-  }
-  const discoverable = await discoverableBy(c.env, userId, matches.map((m) => m.id));
-  const visible = matches.filter((m) => m.id === userId || discoverable.has(m.id));
-  const hidden = await hiddenAvatarOwners(c.env, userId, visible.map((m) => m.id));
-  for (const m of visible) {
-    if (hidden.has(m.id)) m.avatar_id = null;
-  }
-  return json({ ok: true, matches: visible });
+  const found = await phoneIndexFind(c.env, hashes);
+  const ids = [...new Set(found.values())];
+  const discoverable = await discoverableBy(c.env, userId, ids);
+  const visible = ids.filter((id) => id === userId || discoverable.has(id));
+  const cards = await cardsFor(c.env, userId, visible);
+  // the hash comes back with the match: it is what the caller's address book
+  // is keyed by, and the name in the book is the one the list shows
+  const hashOf = new Map([...found].map(([hash, id]) => [id, hash]));
+  const matches = visible.flatMap((id) => {
+    const card = cards.get(id);
+    return card ? [{ ...card, phone_hash: hashOf.get(id)! }] : [];
+  });
+  return json({ ok: true, matches });
 });
 
 app.post("/api/phone", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{ phoneHash: string | null }>();
-  await c.env.DB.prepare("UPDATE users SET phone_hash = ? WHERE id = ?")
-    .bind(b.phoneHash, userId).run();
+  const r = await userStub(c.env, userId).fetch("https://do/phone", {
+    method: "POST", body: JSON.stringify({ phoneHash: b.phoneHash }),
+  });
+  if (!r.ok) return new Response(r.body, r);
+  // the reverse index follows: the number that was there stops answering for
+  // this account, and the new one starts
+  const { was } = (await r.json()) as { was: string | null };
+  if (was && was !== b.phoneHash) await phoneIndexPut(c.env, was, null);
+  if (b.phoneHash) await phoneIndexPut(c.env, b.phoneHash, userId);
   return json({ ok: true });
 });
 
 app.post("/api/block", async (c) => {
   const { userId } = c.get("auth");
   const b = await c.req.json<{ userId: string; blocked: boolean }>();
-  if (b.blocked) {
-    await c.env.DB.prepare(
-      "INSERT OR IGNORE INTO blocks (user_id, blocked_id, created_at) VALUES (?,?,?)"
-    ).bind(userId, b.userId, Date.now()).run();
-  } else {
-    await c.env.DB.prepare(
-      "DELETE FROM blocks WHERE user_id = ? AND blocked_id = ?"
-    ).bind(userId, b.userId).run();
-  }
+  // the block is written in this user's object and mirrored into the peer's,
+  // and the presences stop flowing between the two, or start again
+  await userStub(c.env, userId).fetch("https://do/block", {
+    method: "POST", body: JSON.stringify({ peer: b.userId, blocked: b.blocked }),
+  });
   // drop the cached block state in the pair's direct chat, which may not exist yet
   await convStub(c.env, directChatName(userId, b.userId))
     .fetch("https://do/block-changed", { method: "POST" });
-  // the presences stop flowing between the two, or start again
-  await userStub(c.env, userId).fetch("https://do/block-changed", {
-    method: "POST", body: JSON.stringify({ peer: b.userId, blocked: b.blocked }),
-  });
   return json({ ok: true });
 });
 
 app.get("/api/blocked", async (c) => {
   const { userId } = c.get("auth");
-  const rows = await c.env.DB.prepare(
-    "SELECT blocked_id FROM blocks WHERE user_id = ?"
-  ).bind(userId).all<{ blocked_id: string }>();
-  return json({ ok: true, blocked: rows.results.map((r) => r.blocked_id) });
+  const r = await userStub(c.env, userId).fetch("https://do/blocks");
+  const { blocked } = (await r.json()) as { blocked: string[] };
+  return json({ ok: true, blocked });
 });
 
 const REPORT_REASONS = ["spam", "violence", "scam", "other"];
@@ -1526,10 +1472,15 @@ app.post("/api/report", async (c) => {
         text: typeof m.text === "string" ? m.text.slice(0, 4096) : null,
       })))
     : null;
-  await c.env.DB.prepare(
-    "INSERT INTO reports (reporter_id, chat_id, target_user_id, reason, comment, attached, created_at) VALUES (?,?,?,?,?,?,?)"
-  ).bind(userId, b.chatId ?? null, b.targetUserId ?? null, b.reason,
-         b.comment ? String(b.comment).slice(0, 2048) : null, attached, Date.now()).run();
+  await userStub(c.env, userId).fetch("https://do/report", {
+    method: "POST",
+    body: JSON.stringify({
+      reporterId: userId, chatId: b.chatId ?? null,
+      targetUserId: b.targetUserId ?? null, reason: b.reason,
+      comment: b.comment ? String(b.comment).slice(0, 2048) : null,
+      attached, createdAt: Date.now(),
+    }),
+  });
   return json({ ok: true });
 });
 
@@ -1537,7 +1488,7 @@ const LAST_SEEN_VALUES: LastSeenVisibility[] = ["everyone", "contacts", "nobody"
 
 app.get("/api/privacy", async (c) => {
   const { userId } = c.get("auth");
-  return json({ ok: true, privacy: await readPrivacy(c.env.DB, userId) });
+  return json({ ok: true, privacy: await readPrivacy(c.env, userId) });
 });
 
 const EXCEPTION_SETTINGS = ["last_seen", "avatar", "phone_discovery", "group_invites", "call"];
@@ -1546,17 +1497,16 @@ const EXCEPTION_SETTINGS = ["last_seen", "avatar", "phone_discovery", "group_inv
 // who never is, whatever the tier says.
 app.get("/api/privacy/exceptions", async (c) => {
   const { userId } = c.get("auth");
-  const rows = await c.env.DB.prepare(
-    `SELECT e.setting, e.peer_id, e.allow, u.username, u.display_name
-     FROM privacy_exceptions e JOIN users u ON u.id = e.peer_id
-     WHERE e.user_id = ?`
-  ).bind(userId).all<{
-    setting: string; peer_id: string; allow: number; username: string; display_name: string;
-  }>();
-  return json({ ok: true, exceptions: rows.results.map((r) => ({
-    setting: r.setting, peerId: r.peer_id, allow: r.allow === 1,
-    username: r.username, displayName: r.display_name,
-  })) });
+  const r = await userStub(c.env, userId).fetch("https://do/privacy-exceptions");
+  const { exceptions } = (await r.json()) as {
+    exceptions: Array<{ setting: string; peerId: string; allow: boolean }>;
+  };
+  // the list is shown by name, and a name is its owner's to hand out
+  const cards = await cardsFor(c.env, userId, [...new Set(exceptions.map((e) => e.peerId))]);
+  return json({ ok: true, exceptions: exceptions.flatMap((e) => {
+    const card = cards.get(e.peerId);
+    return card ? [{ ...e, username: card.username, displayName: card.display_name }] : [];
+  }) });
 });
 
 app.post("/api/privacy/exceptions", async (c) => {
@@ -1565,18 +1515,13 @@ app.post("/api/privacy/exceptions", async (c) => {
   if (!b.setting || !EXCEPTION_SETTINGS.includes(b.setting) || !b.peerId || b.peerId === userId) {
     return err("bad_exception");
   }
-  const peer = await c.env.DB.prepare("SELECT 1 FROM users WHERE id = ?").bind(b.peerId).first();
-  if (!peer) return err("not_found", 404);
-  if (b.allow === null || b.allow === undefined) {
-    await c.env.DB.prepare(
-      "DELETE FROM privacy_exceptions WHERE user_id = ? AND setting = ? AND peer_id = ?"
-    ).bind(userId, b.setting, b.peerId).run();
-  } else {
-    await c.env.DB.prepare(
-      `INSERT INTO privacy_exceptions (user_id, setting, peer_id, allow) VALUES (?,?,?,?)
-       ON CONFLICT(user_id, setting, peer_id) DO UPDATE SET allow = excluded.allow`
-    ).bind(userId, b.setting, b.peerId, b.allow ? 1 : 0).run();
-  }
+  if (!(await ownProfile(c.env, b.peerId))) return err("not_found", 404);
+  await userStub(c.env, userId).fetch("https://do/privacy-exception", {
+    method: "POST",
+    body: JSON.stringify({
+      setting: b.setting, peerId: b.peerId, allow: b.allow ?? null,
+    }),
+  });
   // an avatar override changes what this peer already holds from the last
   // profile frame; the broadcast is one card for all, so it only helps when
   // the change makes the card MORE hidden — an allowed peer refetches
@@ -1605,36 +1550,27 @@ app.post("/api/privacy", async (c) => {
       return err("bad_privacy");
     }
   }
-  const current = await readPrivacy(c.env.DB, userId);
-  const next = {
-    lastSeen: (b.lastSeen as LastSeenVisibility | undefined) ?? current.lastSeen,
-    avatar: (b.avatar as LastSeenVisibility | undefined) ?? current.avatar,
-    phoneDiscovery: (b.phoneDiscovery as LastSeenVisibility | undefined) ?? current.phoneDiscovery,
-    groupInvites: (b.groupInvites as LastSeenVisibility | undefined) ?? current.groupInvites,
-    callPrivacy: (b.callPrivacy as LastSeenVisibility | undefined) ?? current.callPrivacy,
-    readReceipts: b.readReceipts ?? current.readReceipts,
-    typing: b.typing ?? current.typing,
+  const wanted: Partial<PrivacySettings> = {};
+  if (b.lastSeen !== undefined) wanted.lastSeen = b.lastSeen as LastSeenVisibility;
+  if (b.avatar !== undefined) wanted.avatar = b.avatar as LastSeenVisibility;
+  if (b.phoneDiscovery !== undefined) wanted.phoneDiscovery = b.phoneDiscovery as LastSeenVisibility;
+  if (b.groupInvites !== undefined) wanted.groupInvites = b.groupInvites as LastSeenVisibility;
+  if (b.callPrivacy !== undefined) wanted.callPrivacy = b.callPrivacy as LastSeenVisibility;
+  if (b.readReceipts !== undefined) wanted.readReceipts = b.readReceipts;
+  if (b.typing !== undefined) wanted.typing = b.typing;
+  const w = await userStub(c.env, userId).fetch("https://do/privacy-write", {
+    method: "POST", body: JSON.stringify(wanted),
+  });
+  const res = (await w.json()) as {
+    privacy: PrivacySettings; avatarChanged: boolean; lastSeenChanged: boolean;
   };
-  await c.env.DB.prepare(
-    `INSERT INTO privacy_settings (user_id, last_seen, avatar_visibility, phone_discovery,
-       group_invites, call_privacy, read_receipts, typing, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?)
-     ON CONFLICT(user_id) DO UPDATE SET last_seen = excluded.last_seen,
-       avatar_visibility = excluded.avatar_visibility,
-       phone_discovery = excluded.phone_discovery,
-       group_invites = excluded.group_invites,
-       call_privacy = excluded.call_privacy,
-       read_receipts = excluded.read_receipts, typing = excluded.typing,
-       updated_at = excluded.updated_at`
-  ).bind(userId, next.lastSeen, next.avatar, next.phoneDiscovery, next.groupInvites,
-         next.callPrivacy, next.readReceipts ? 1 : 0, next.typing ? 1 : 0, Date.now()).run();
   // peers hold the card from the last profile frame, so a photo hidden or shown
   // again travels to them at once instead of waiting for a refetch
-  if (next.avatar !== current.avatar) await broadcastProfile(c.env, userId);
-  if (next.lastSeen !== current.lastSeen) {
+  if (res.avatarChanged) await broadcastProfile(c.env, userId);
+  if (res.lastSeenChanged) {
     await userStub(c.env, userId).fetch("https://do/presence-policy-changed", { method: "POST", body: "{}" });
   }
-  return json({ ok: true, privacy: next });
+  return json({ ok: true, privacy: res.privacy });
 });
 
 // --- stories ---
@@ -1729,10 +1665,7 @@ async function liveStories(env: Env, authorId: string, viewerId: string): Promis
 /// a direct chat shared.
 async function canWatchStories(env: Env, userId: string, authorId: string, audience: string): Promise<boolean> {
   if (authorId === userId) return true;
-  const block = await env.DB.prepare(
-    `SELECT 1 FROM blocks WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?)`
-  ).bind(userId, authorId, authorId, userId).first();
-  if (block) return false;
+  if (await blockedPair(env, userId, authorId)) return false;
   if (audience === "everyone") return true;
   const peers = await directPeers(env, userId);
   return peers.includes(authorId);
@@ -1754,21 +1687,13 @@ app.get("/api/stories", async (c) => {
   // the list is the viewer's own peers', the author included, minus anyone
   // with a block between them; every author's object is asked at once
   const peers = await directPeers(c.env, userId);
-  const blocked = await c.env.DB.prepare(
-    "SELECT user_id, blocked_id FROM blocks WHERE user_id = ? OR blocked_id = ?"
-  ).bind(userId, userId).all<{ user_id: string; blocked_id: string }>();
-  const hidden = new Set(blocked.results.flatMap((r) => [r.user_id, r.blocked_id]));
+  const br = await userStub(c.env, userId).fetch("https://do/blocks");
+  const bj = (await br.json()) as { blocked: string[]; blockedBy: string[] };
+  const hidden = new Set([...bj.blocked, ...bj.blockedBy]);
   const authors = [...new Set([userId, ...peers])].filter((id) => id === userId || !hidden.has(id));
   const perAuthor = await Promise.all(authors.map((a) => liveStories(c.env, a, userId)));
   const withStories = authors.filter((_, i) => perAuthor[i].length > 0);
-  const cards = new Map<string, { username: string; display_name: string; avatar_id: string | null }>();
-  if (withStories.length) {
-    const marks = withStories.map(() => "?").join(",");
-    const users = await c.env.DB.prepare(
-      `SELECT id, username, display_name, avatar_id FROM users WHERE id IN (${marks})`
-    ).bind(...withStories).all<{ id: string; username: string; display_name: string; avatar_id: string | null }>();
-    for (const u of users.results) cards.set(u.id, u);
-  }
+  const cards = await cardsFor(c.env, userId, withStories);
   const stories = authors.flatMap((authorId, i) => {
     const card = cards.get(authorId);
     if (!card) return [];
@@ -1824,15 +1749,7 @@ app.get("/api/stories/:id/viewers", async (c) => {
   const r = await storiesStub(c.env, userId).fetch(`https://do/viewers?storyId=${encodeURIComponent(id)}`);
   if (!r.ok) return new Response(r.body, r);
   const j = (await r.json()) as { viewers: Array<{ viewer_id: string; seen_at: number; liked: boolean }> };
-  const cards = new Map<string, { username: string; display_name: string; avatar_id: string | null }>();
-  if (j.viewers.length) {
-    const marks = j.viewers.map(() => "?").join(",");
-    const users = await c.env.DB.prepare(
-      `SELECT id, username, display_name, avatar_id FROM users WHERE id IN (${marks})`
-    ).bind(...j.viewers.map((v) => v.viewer_id))
-      .all<{ id: string; username: string; display_name: string; avatar_id: string | null }>();
-    for (const u of users.results) cards.set(u.id, u);
-  }
+  const cards = await cardsFor(c.env, userId, [...new Set(j.viewers.map((v) => v.viewer_id))]);
   const viewers = j.viewers.flatMap((v) => {
     const card = cards.get(v.viewer_id);
     return card ? [{ ...v, username: card.username, display_name: card.display_name, avatar_id: card.avatar_id }] : [];
@@ -1862,8 +1779,7 @@ export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (!env.PERF_LOG) return handle(req, env, ctx);
     const t0 = Date.now();
-    const counters = newCounters();
-    const res = await handle(req, { ...env, DB: wrapDB(env.DB, counters) }, ctx);
+    const res = await handle(req, env, ctx);
     // 101 has no body to read, and reading one would consume the socket
     let size = 0;
     let out = res;
@@ -1875,7 +1791,7 @@ export default {
     const u = new URL(req.url);
     console.log(`HTTP ${JSON.stringify({
       method: req.method, path: u.pathname, query: u.search.slice(1),
-      status: res.status, down: size, ms: Date.now() - t0, d1: counters.d1,
+      status: res.status, down: size, ms: Date.now() - t0,
     })}`);
     return out;
   },
@@ -1909,10 +1825,6 @@ async function handle(req: Request, env: Env, ctx: ExecutionContext): Promise<Re
       const fwd = new Request("https://do/ws", req);
       fwd.headers.set("x-user-id", auth.userId);
       fwd.headers.set("x-device-id", auth.deviceId);
-      ctx.waitUntil(
-        env.DB.prepare("UPDATE devices SET last_seen = ? WHERE id = ?")
-          .bind(Date.now(), auth.deviceId).run()
-      );
       return stub.fetch(fwd);
     }
 
