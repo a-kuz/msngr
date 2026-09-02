@@ -8,7 +8,7 @@ import Foundation
 /// puts the whole set onto the stand's service accounts.
 public enum ShaderGallery {
     public static let stickers: [ShaderDocument] = [
-        eye, eyeTired, eyeTender, eyeAsleep, eyeAngry, eyeScared, clock,
+        eye, eyeTired, eyeTender, eyeAsleep, eyeAngry, eyeScared, clock, cap,
     ]
     public static let backgrounds: [ShaderDocument] = [aurora, dusk, paper]
     public static let bubbles: [ShaderDocument] = [foil, ember]
@@ -1017,6 +1017,358 @@ public enum ShaderGallery {
             O = vec4(col * smoothstep(px, -px, r - face), a);
         }
         """, inputs: []),
+    ])
+
+    /// A militia peaked cap, raymarched: a navy crown raised at the front with
+    /// red piping along its edge, a red band, a lacquered visor with a green
+    /// underside, a twisted gold cord between two buttons, and a gold cockade
+    /// with a red enamel star. It sways on its own; a finger held on it turns
+    /// it, and a tap makes it hop and tip forward in greeting. Buffer S holds
+    /// when the last tap landed.
+    public static let cap = ShaderDocument(name: "Cap", passes: [
+        ShaderPass(id: "S", kind: .buffer, code: """
+        // Buffer S, one texel: x the tap count, z when the last tap landed,
+        // w = 2 once written.
+        void mainImage(out vec4 O, in vec2 F){
+            vec4 s = texelFetch(iChannel3, ivec2(0), 0);
+            if(s.w < 1.5) s = vec4(0.0, 0.0, -10.0, 2.0);
+            if(iMouse.w > 0.0) s = vec4(s.x + 1.0, 0.0, iTime, 2.0);
+            O = s;
+        }
+        """, inputs: [stateInput("S")]),
+        ShaderPass(id: ShaderPass.imageId, kind: .image, code: """
+        #define PI 3.14159265
+
+        // materials
+        #define M_CROWN  1.0
+        #define M_BAND   2.0
+        #define M_PIPE   3.0
+        #define M_VISOR  4.0
+        #define M_STRAP  5.0
+        #define M_GOLD   6.0
+        #define M_COCK   7.0
+
+        float hash21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7)))*43758.5453); }
+        float noise2(vec2 p){
+            vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+            return mix(mix(hash21(i), hash21(i+vec2(1,0)), f.x), mix(hash21(i+vec2(0,1)), hash21(i+vec2(1,1)), f.x), f.y);
+        }
+        float noise3(vec3 p){
+            // cheap 3d value noise from two 2d slices
+            float z = floor(p.z), f = fract(p.z); f = f*f*(3.0-2.0*f);
+            return mix(noise2(p.xy + z*17.3), noise2(p.xy + (z+1.0)*17.3), f);
+        }
+
+        float smin(float a, float b, float k){ float h = clamp(0.5 + 0.5*(b-a)/k, 0.0, 1.0); return mix(b, a, h) - k*h*(1.0-h); }
+
+        // signed distance to an ellipse, good enough away from the centre
+        float sdEllipse(vec2 p, vec2 r){
+            float k0 = length(p/r), k1 = length(p/(r*r));
+            return k0*(k0-1.0)/max(k1, 1e-4);
+        }
+        float sdEllipsoid(vec3 p, vec3 r){
+            float k0 = length(p/r), k1 = length(p/(r*r));
+            return k0*(k0-1.0)/max(k1, 1e-4);
+        }
+        float sdStar5(vec2 p, float r, float rf){
+            const vec2 k1 = vec2(0.809016994375, -0.587785252292);
+            const vec2 k2 = vec2(-k1.x, k1.y);
+            p.x = abs(p.x);
+            p -= 2.0*max(dot(k1, p), 0.0)*k1;
+            p -= 2.0*max(dot(k2, p), 0.0)*k2;
+            p.x = abs(p.x);
+            p.y -= r;
+            vec2 ba = rf*vec2(-k1.y, k1.x) - vec2(0, 1);
+            float h = clamp(dot(p, ba)/dot(ba, ba), 0.0, r);
+            return length(p - ba*h)*sign(p.y*ba.x - p.x*ba.y);
+        }
+
+        // ------------------------------------------------------------------ the cap
+        // The band is an elliptic cylinder around the origin, y in [-0.30, 0.05]; the
+        // crown sits over it, wider than the band and raised at the front; the visor
+        // hangs off the band's front edge and bends down.
+        const vec2 BAND = vec2(1.00, 0.90);
+        const float BAND_LO = -0.30, BAND_HI = 0.05;
+        const vec2 CROWN = vec2(1.52, 1.14);
+        const float CROWN_Y = 0.40;
+        const float RAISE = 0.22;                  // how much higher the crown rides at the front
+
+        float sdBand(vec3 p){
+            float d = sdEllipse(p.xz, BAND);
+            vec2 w = vec2(d, abs(p.y - 0.5*(BAND_LO+BAND_HI)) - 0.5*(BAND_HI-BAND_LO));
+            return min(max(w.x, w.y), 0.0) + length(max(w, 0.0));
+        }
+        // the crown: a squashed ellipsoid for the top, its underside blending down
+        // into the band through a flared wall
+        float sdCrown(vec3 p){
+            vec3 q = p;
+            q.y -= RAISE*q.z;                 // raised at the front
+            q.y -= CROWN_Y;
+            // the plate; the piping runs along its edge and is the edge
+            float top = sdEllipsoid(q, vec3(CROWN.x, 0.13, CROWN.y));
+            // the wall: from the band's rim up and out to the crown's rim, bellying
+            // outward the way stiffened cloth does
+            float t = clamp((p.y - BAND_HI)/(CROWN_Y - BAND_HI + RAISE*p.z), 0.0, 1.0);
+            vec2 r = mix(BAND, CROWN*0.97, sqrt(t));
+            float wall = sdEllipse(p.xz, r);
+            wall = max(wall, BAND_HI - p.y);
+            wall = max(wall, p.y - (CROWN_Y + RAISE*p.z - 0.05));
+            return smin(top, wall, 0.08);
+        }
+        float sdVisor(vec3 p){
+            // the plan: a disc pushed forward, its back inside the band
+            vec2 c = p.xz - vec2(0.0, 0.50);
+            float disc = sdEllipse(c, vec2(0.87, 0.82));
+            float band = sdEllipse(p.xz, BAND);
+            // the fall: the further out from the band, the lower
+            float out_ = max(band, 0.0);
+            float ys = BAND_LO + 0.03 - 0.70*out_*out_ - 0.04*out_;
+            vec2 w = vec2(disc, abs(p.y - ys) - 0.018);
+            // the slope of the fall makes the slab estimate optimistic; scaled down
+            // so the march never steps through it
+            return (min(max(w.x, w.y), 0.0) + length(max(w, 0.0)) - 0.008)*0.72;
+        }
+        const float CORD_Y = -0.23;               // BAND_LO + 0.07
+        float sdStrap(vec3 p){
+            // a twisted gold cord round the front of the band, button to button
+            float ring = sdEllipse(p.xz, BAND + 0.012);
+            float d = length(vec2(ring, p.y - CORD_Y)) - 0.036;
+            float front = -p.z + 0.32*abs(p.x) - 0.02;   // stops at the buttons
+            return max(d, front);
+        }
+        float sdButtons(vec3 p){
+            vec3 q = vec3(abs(p.x), p.y, p.z);
+            vec3 c = vec3(0.93, CORD_Y, 0.30);
+            return sdEllipsoid(q - c, vec3(0.055, 0.055, 0.03));
+        }
+        float sdCockade(vec3 p){
+            // the badge on the band's front: an oval shield in a wide gold wreath,
+            // both standing a little proud of the cloth
+            vec3 q = p - vec3(0.0, -0.12, BAND.y);
+            float shield = sdEllipsoid(q, vec3(0.13, 0.165, 0.040));
+            float wreath = sdEllipsoid(q - vec3(0.0, -0.03, 0.0), vec3(0.34, 0.135, 0.026));
+            wreath = max(wreath, -sdEllipsoid(q - vec3(0.0, 0.13, 0.0), vec3(0.27, 0.15, 0.10)));  // open at the top
+            return min(shield, wreath);
+        }
+        float sdPiping(vec3 p){
+            // the top rim of the crown and the band's upper edge
+            vec3 q = p; q.y -= RAISE*q.z;
+            float rim = length(vec2(sdEllipse(q.xz, CROWN - 0.012), q.y - CROWN_Y)) - 0.032;
+            float seam = length(vec2(sdEllipse(p.xz, BAND*1.005), p.y - BAND_HI)) - 0.022;
+            return min(rim, seam);
+        }
+
+        vec2 map(vec3 p){
+            vec2 res = vec2(sdCrown(p), M_CROWN);
+            float d = sdBand(p);       if(d < res.x) res = vec2(d, M_BAND);
+            d = sdPiping(p);           if(d < res.x) res = vec2(d, M_PIPE);
+            d = sdVisor(p);            if(d < res.x) res = vec2(d, M_VISOR);
+            d = sdStrap(p);            if(d < res.x) res = vec2(d, M_STRAP);
+            d = sdButtons(p);          if(d < res.x) res = vec2(d, M_GOLD);
+            d = sdCockade(p);          if(d < res.x) res = vec2(d, M_COCK);
+            return res;
+        }
+        float mapD(vec3 p){ return map(p).x; }
+
+        vec3 calcNormal(vec3 p){
+            vec2 k = vec2(1.0, -1.0); float e = 0.0015;
+            return normalize(k.xyy*mapD(p + k.xyy*e) + k.yyx*mapD(p + k.yyx*e) + k.yxy*mapD(p + k.yxy*e) + k.xxx*mapD(p + k.xxx*e));
+        }
+        float softShadow(vec3 ro, vec3 rd){
+            float res = 1.0, t = 0.02;
+            for(int i = 0; i < 28; i++){
+                float h = mapD(ro + rd*t);
+                res = min(res, 10.0*h/t);
+                t += clamp(h, 0.01, 0.12);
+                if(res < 0.003 || t > 4.0) break;
+            }
+            return clamp(res, 0.0, 1.0);
+        }
+        float calcAO(vec3 p, vec3 n){
+            float occ = 0.0, sca = 1.0;
+            for(int i = 0; i < 5; i++){
+                float h = 0.01 + 0.10*float(i)/4.0;
+                occ += (h - mapD(p + n*h))*sca;
+                sca *= 0.8;
+            }
+            return clamp(1.0 - 2.2*occ, 0.0, 1.0);
+        }
+
+        // a dim studio: a warm window to the left, a cool one to the right, and a
+        // wide soft light overhead and behind the cap, which is what the visor's
+        // lacquer throws back into the camera
+        vec3 env(vec3 d){
+            float up = clamp(d.y, -1.0, 1.0);
+            vec3 sky = mix(vec3(0.04, 0.045, 0.06), vec3(0.16, 0.17, 0.20), smoothstep(-0.3, 0.9, up));
+            float win = smoothstep(0.86, 0.975, dot(d, normalize(vec3(-0.55, 0.65, 0.55))));
+            sky += vec3(1.0, 0.95, 0.85)*win*2.6;
+            float win2 = smoothstep(0.93, 0.995, dot(d, normalize(vec3(0.7, 0.35, 0.6))));
+            sky += vec3(0.9, 0.95, 1.0)*win2*1.0;
+            float win3 = smoothstep(0.90, 0.995, dot(d, normalize(vec3(0.35, 0.8, -0.45))));
+            sky += vec3(0.95, 0.97, 1.0)*win3*2.4;
+            return sky;
+        }
+
+        mat3 rotX(float a){ float c = cos(a), s = sin(a); return mat3(1.0,0.0,0.0, 0.0,c,-s, 0.0,s,c); }
+        mat3 rotY(float a){ float c = cos(a), s = sin(a); return mat3(c,0.0,s, 0.0,1.0,0.0, -s,0.0,c); }
+        mat3 rotZ(float a){ float c = cos(a), s = sin(a); return mat3(c,-s,0.0, s,c,0.0, 0.0,0.0,1.0); }
+
+        void mainImage(out vec4 O, in vec2 F){
+            vec2 uv = (F - 0.5*iResolution.xy)/iResolution.y;
+
+            // ---------------------------------------------------------------- pose
+            vec4 S = texelFetch(iChannel3, ivec2(0), 0);
+            float since = iTime - S.z;
+            // a tap: the cap hops and tips forward in greeting, and settles back
+            float k = clamp(since/0.9, 0.0, 1.0);
+            float hop = sin(PI*k)*(1.0 - k)*0.55;
+            float tip = sin(PI*k)*0.55*(1.0 - 0.4*k);
+            float wob = sin(since*9.0)*exp(-since*3.0)*0.10*step(0.0, since);
+
+            float yaw = 0.42 + 0.22*sin(iTime*0.5) + 0.05*sin(iTime*1.3);
+            float roll = 0.03*sin(iTime*0.7);
+            if(iMouse.z > 0.0){
+                yaw = 0.42 + (iMouse.x - 0.5*iResolution.x)/iResolution.x*3.2;
+                roll += (iMouse.y - 0.5*iResolution.y)/iResolution.y*0.6;
+            }
+            mat3 R = rotY(yaw)*rotX(tip + wob)*rotZ(roll);   // local → world
+            mat3 Ri = transpose(R);
+            vec3 offset = vec3(0.0, hop - 0.12 + 0.02*sin(iTime*1.1), 0.0);
+
+            // camera: a little above, looking at the cap
+            vec3 ro = vec3(0.0, 1.15, 5.4);
+            vec3 ta = vec3(0.0, 0.0, 0.0);
+            vec3 fw = normalize(ta - ro);
+            vec3 rt = normalize(cross(fw, vec3(0.0, 1.0, 0.0)));
+            vec3 up = cross(rt, fw);
+            vec3 rd = normalize(uv.x*rt + uv.y*up + 1.7*fw);
+
+            // march in the cap's own frame
+            vec3 lro = Ri*(ro - offset), lrd = Ri*rd;
+            float t = 0.0, id = 0.0;
+            bool hit = false;
+            // bounding sphere first
+            {
+                vec3 oc = lro; float b = dot(oc, lrd), c = dot(oc, oc) - 2.2*2.2;
+                float h = b*b - c;
+                if(h < 0.0){ t = 100.0; } else { t = max(-b - sqrt(h), 0.0); }
+            }
+            if(t < 50.0){
+                for(int i = 0; i < 96; i++){
+                    vec2 r = map(lro + lrd*t);
+                    if(r.x < 0.0007*t){ hit = true; id = r.y; break; }
+                    if(t > 9.0) break;
+                    t += r.x*0.8;
+                }
+            }
+
+            vec3 col = vec3(0.0);
+            float a = 0.0;
+            if(hit){
+                vec3 lp = lro + lrd*t;
+                vec3 ln = calcNormal(lp);
+                vec3 n = R*ln;                       // world normal for the lights
+
+                // materials
+                vec3 alb; float rough, spec, met = 0.0;
+                if(id == M_CROWN){
+                    alb = vec3(0.045, 0.055, 0.125);
+                    // wool: a fine weave in the light, a few darker fibres
+                    float weave = noise3(lp*140.0)*0.5 + noise3(lp*70.0 + 3.0)*0.5;
+                    alb *= 0.90 + 0.22*weave;
+                    rough = 0.92; spec = 0.03;
+                } else if(id == M_BAND){
+                    alb = vec3(0.68, 0.06, 0.07);
+                    float weave = noise3(lp*140.0);
+                    alb *= 0.92 + 0.14*weave;
+                    rough = 0.85; spec = 0.06;
+                } else if(id == M_PIPE){
+                    alb = vec3(0.72, 0.07, 0.08);
+                    rough = 0.7; spec = 0.10;
+                } else if(id == M_VISOR){
+                    alb = vec3(0.015, 0.015, 0.018);
+                    rough = 0.08; spec = 0.9;
+                    // the underside is green cloth
+                    float under = smoothstep(0.1, -0.2, ln.y);
+                    alb = mix(alb, vec3(0.08, 0.26, 0.13)*(0.9 + 0.2*noise3(lp*120.0)), under);
+                    rough = mix(rough, 0.85, under); spec = mix(spec, 0.05, under);
+                } else if(id == M_STRAP){
+                    // the cord: two strands twisted, read as a helix of light and shade
+                    float along = atan(lp.x/BAND.x, lp.z/BAND.y)*BAND.x*0.5*(BAND.x + BAND.y);
+                    float around = atan(lp.y - CORD_Y, sdEllipse(lp.xz, BAND + 0.012));
+                    float twist = 0.5 + 0.5*sin(along*55.0 + around*2.0);
+                    alb = vec3(1.0, 0.78, 0.35)*(0.55 + 0.6*twist);
+                    rough = mix(0.22, 0.45, twist); spec = 1.0; met = 1.0;
+                } else if(id == M_GOLD){
+                    alb = vec3(1.0, 0.78, 0.35);
+                    rough = 0.25; spec = 1.0; met = 1.0;
+                } else {
+                    // the badge: a gold wreath of leaves either side, an oval shield
+                    // with a fluted gold rim round a dark enamel field and a red star
+                    vec2 c = (lp.xy - vec2(0.0, -0.12))/vec2(0.13, 0.165);
+                    float r = length(c);
+                    float ang = atan(c.y, c.x);
+                    float flute = 0.5 + 0.5*sin(ang*26.0);
+                    vec3 gold = vec3(1.0, 0.78, 0.35);
+                    // leaves: pairs of veins fanning out from the bottom centre
+                    vec2 w = lp.xy - vec2(0.0, -0.14);
+                    float leafA = atan(abs(w.x), w.y + 0.10);
+                    float leaf = 0.5 + 0.5*cos(leafA*18.0 + length(w)*30.0);
+                    vec3 wreathCol = gold*(0.55 + 0.6*leaf);
+                    vec3 rim = gold*(0.7 + 0.5*flute);
+                    vec3 field = vec3(0.06, 0.08, 0.16);
+                    float star = sdStar5(c*0.13, 0.085, 0.42);
+                    vec3 red = vec3(0.85, 0.05, 0.06);
+                    float bev = smoothstep(0.0, -0.02, star)*(0.8 + 0.5*(c.y - c.x));
+                    vec3 inside = mix(field, red*bev + vec3(0.25, 0.02, 0.02)*(1.0 - bev), smoothstep(0.004, -0.004, star));
+                    inside = mix(inside, gold*1.1, smoothstep(0.005, 0.0, abs(star) - 0.006)*0.7);
+                    float onShield = smoothstep(1.02, 0.98, r);
+                    float onRim = smoothstep(0.74, 0.80, r);
+                    vec3 shield = mix(inside, rim, onRim);
+                    alb = mix(wreathCol, shield, onShield);
+                    met = mix(1.0, onRim, onShield);
+                    rough = mix(0.3, mix(0.12, 0.3, onRim), onShield); spec = 1.0;
+                }
+
+                // lights
+                vec3 Lk = normalize(vec3(-0.55, 0.85, 0.60));
+                vec3 Lf = normalize(vec3(0.7, 0.25, 0.55));
+                float sh = softShadow(lp, Ri*Lk);
+                float ao = calcAO(lp, ln);
+                float ndl = clamp(dot(n, Lk), 0.0, 1.0);
+                float wrap = clamp((dot(n, Lk) + 0.4)/1.4, 0.0, 1.0);   // cloth wraps the light
+                float fill = clamp(dot(n, Lf), 0.0, 1.0);
+                float skyd = clamp(0.5 + 0.5*n.y, 0.0, 1.0);
+                vec3 h = normalize(Lk - rd);
+                float ndh = clamp(dot(n, h), 0.0, 1.0);
+                float pw = 2.0/(rough*rough) - 2.0;
+                float fres = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 5.0);
+                vec3 F0 = mix(vec3(0.04), alb, met);
+                vec3 Fr = F0 + (1.0 - F0)*fres;
+
+                vec3 diff = alb*(1.0 - met)*(mix(ndl, wrap, rough)*sh*vec3(1.0, 0.96, 0.90)*1.35
+                                              + fill*0.30*vec3(0.8, 0.85, 1.0)
+                                              + skyd*0.30*vec3(0.75, 0.8, 0.9)*ao);
+                vec3 specCol = Fr*pow(ndh, pw)*(pw + 8.0)/25.0*sh*spec;
+                vec3 refl = env(reflect(rd, n))*ao;
+                vec3 sheen = Fr*refl*spec*(1.0 - rough)*(1.0 - rough);   // a lacquer mirror; cloth takes none
+                col = diff + specCol + sheen;
+                col *= mix(0.6, 1.0, ao);
+                // a little subsurface warmth on the red where the light grazes
+                if(id == M_BAND || id == M_PIPE) col += vec3(0.25, 0.02, 0.0)*wrap*(1.0 - ndl)*sh*0.5;
+
+                col = col/(1.0 + col*0.4);              // soft roll-off
+                col = pow(clamp(col, 0.0, 1.0), vec3(0.4545));
+                a = 1.0;
+            }
+            // the shadow on the ground under the cap, thrown a little to the right
+            vec2 g = (uv - vec2(0.05, -0.43 - hop*0.02))*vec2(1.0, 3.2);
+            float shadow = smoothstep(0.52, 0.10, length(g))*0.42*(1.0 - 0.5*hop);
+            vec3 outc = col*a;
+            a = a + shadow*(1.0 - a);
+            O = vec4(outc, a);
+        }
+        """, inputs: [stateInput("S")]),
     ])
 
     // MARK: - Background

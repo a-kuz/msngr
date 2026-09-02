@@ -16,6 +16,7 @@ transpiler and the Metal compiler.
 | Sticker | Eye | follows the finger; a tap makes it perk up for a moment |
 | Sticker | Tired, Tender, Asleep, Angry, Scared | the same eye program with the lids, brow, gaze and skin set to a mood; a tap deepens the mood for a moment (the sleeper peeks) |
 | Sticker | Clock | the real time from the phone's clock; face and marks in the theme's colours |
+| Sticker | Cap | a raymarched militia cap that sways on its own; a held finger turns it, a tap makes it hop and tip in greeting |
 | Sticker | Sparkle | the bundled one: the sparkle plate that orbits under the finger |
 | Background | Aurora | night sky over mountains; leans with the phone's tilt; a pale dawn in the light theme |
 | Bubble | Foil | holographic foil behind a text; the bands shift as the bubble moves up the screen |
