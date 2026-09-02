@@ -6,6 +6,17 @@ with the commit that closed it.
 
 ## Open
 
+### The extension's coalescing window delays every banner when pushes arrive one at a time
+Found 2026-09-02 in the burst run on the simulator
+(qa/runs/2026-09-02-nse-simulator-run). Five pushes left the relay within one
+second; SpringBoard handed them to the extension strictly serially, each
+`received` ~10 ms after the previous `answered`, so no two pushes ever shared a
+window and each waited the full 1.5 s (`NotificationBurstGate.defaultWindow`)
+alone: five banners over eight seconds. The window exists for the case where
+`didReceive` is entered in parallel; whether a device does that is not known
+yet. If it does not, the window should close as soon as the one item in it has
+been written, or go. Needs a device measurement before the product changes.
+
 ### iPad with a hardware keyboard: a tap around the settings sheet crashes the app
 Found 2026-08-30 on the iPad Pro 11" simulator with ConnectHardwareKeyboard on
 (the Mac «Designed for iPad» case has a hardware keyboard always). Repro: open

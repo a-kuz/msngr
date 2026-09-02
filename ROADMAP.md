@@ -401,9 +401,11 @@ A ✅ goes in only together with a link to the evidence.
     multipass (Image + Buffer A–D, a pass reading its own previous frame)
     (qa/runs/2026-08-28-shader-messages-run; ShaderTranspilerTests compile the
     emitted MSL, including the owner's 300-line sample)
-  - ✅ a shader as the chat background, and «Set as background» from a
-    received shader message; local, no sync (`ShaderSurfaces`, the chat
-    info's «Фон» section, the message menu; seen by the owner 2026-08-28)
+  - ✅ a shader as the chat background, per chat over a default for every
+    chat, and «Set as background» from a received shader message; local, no
+    sync (`ShaderSurfaces`, `BackgroundPickerView` keyed by the chat, the chat
+    info's «Фон» section and Settings for the default, the message menu; seen
+    by the owner 2026-08-28)
   - ✅ a shader behind a text bubble, chosen by the sender (`bubbleShader`
     on a text message, the strip over the input field, white text under a
     shadow in the cell; seen by the owner 2026-08-28)
@@ -639,6 +641,11 @@ A ✅ goes in only together with a link to the evidence.
   after paging away the close falls back to the fade
   (qa/runs/2026-08-29-hero-viewer-run.md, mid-flight frames in
   qa/runs/2026-08-29-hero-viewer/)
+- ✅ the chat's attachments in one place: «Вложения» in the chat info opens a
+  media grid with tabs for files, voice messages and links, paged from the
+  chat's history with a count on every tab (`ChatGallery`, ChatGalleryTests;
+  qa/runs/2026-08-31-counts-run.md cases 2 and 4, the tabs at 834 pt in
+  qa/runs/2026-08-30-ipad-review-run.md)
 
 ## Marking up a picture before it is sent
 
@@ -855,9 +862,12 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   - ✅ the push carries seq and sentAt — the display order is built from them (smoke `push carries seq`, `push carries sentAt`)
   - 🟡 the coalescing window: the extension holds pushes back, plans a batch and answers by seq in a single chain
     (NotificationBurstTests, NotificationBurstGateTests units; single pushes run through the chain live on the
-    simulator — qa/runs/2026-09-02-nse-simulator-run. A burst through the extension is not seen live: three
-    sends a second apart reached the simulator ~1.8 s apart and each window had closed before the next push
-    came, so the batch path is held by the units until a device with a real avalanche)
+    simulator — qa/runs/2026-09-02-nse-simulator-run. A real burst was run too: five sends fired in
+    parallel left the relay within one second, and the simulator's SpringBoard handed them to the extension
+    one at a time — each `received` lands ~10 ms after the previous `answered`, so no two were ever in one
+    window and the 1.5 s window only delayed every banner by its length (five banners over 8 s). Whether a
+    device enters `didReceive` in parallel, which is what the window is for, is the one thing left to see on
+    a device; the batch path itself is held by the units)
   - ✅ one message, one banner: the claim to show is written into the database and taken by both the app and the extension
     (NotificationBurstStoreTests units, qa/runs/2026-08-15-push-burst for the app's banner; the extension's
     claim live 2026-09-02 — one banner per message with the app killed, qa/runs/2026-09-02-nse-simulator-run)

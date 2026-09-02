@@ -122,12 +122,17 @@ Every push was answered with the message written first; the rows were in
   banner «Bravo Service / Design / …2119» stands in the stack, the plain one
   does not.
 
-## Not run here
+- **A burst.** Five `msngrfixture send` processes fired in parallel from
+  alfa's free home to the killed charlie; the relay logged the five pushes
+  within one second (18:59:09–10 UTC). The journal shows the simulator's
+  SpringBoard handing them to the extension strictly one at a time: every
+  `received` is stamped ~10 ms after the previous `answered`, and each push
+  waited the full 1.5 s window alone before `stored → show`, five banners
+  over eight seconds, in seq order. On this platform the window buys nothing
+  and costs its length per banner; whether a device enters `didReceive` in
+  parallel is the one thing the batch path still needs a device for.
 
-- A burst through the extension (the coalescing window with several pushes
-  in flight): Apple's delivery to a backgrounded simulator is spread over
-  seconds to minutes, so the pushes never arrive close enough to meet in one
-  window. The window itself is covered by `NotificationBurstGateTests`.
+## Not run here
 - The group avatar and the sender's avatar in the banner: the fixture
   accounts carry no avatar. The sender's avatar was seen by the owner on
   their own account earlier the same day.
