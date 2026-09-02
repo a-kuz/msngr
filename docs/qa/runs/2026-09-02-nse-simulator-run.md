@@ -81,6 +81,25 @@ Every push was answered with the message written first; the rows were in
   expanded banner shows the picture. The collapsed row in the stack shows
   the text only.
 
+- **The group avatar.** The Design group got a picture through
+  `POST /api/avatar?chatId=` as alfa; charlie's app cached it on its next
+  launch, was killed, and bravo wrote to the group. The banner shows the
+  group's picture with the app icon in its corner, «Bravo Service» over
+  «Design» and the text; the extension's log has the intent image persisted.
+- **A request from a stranger.** `msngrfixture knock` from a fresh account to
+  charlie with the app killed: the journal answered `stored unknownChat` and
+  the banner was the neutral «Msngr / Новое сообщение» — the device had no
+  row for the chat or the person, and nothing to name them by. Fixed on both
+  sides: the user object keeps the roster's public names as the chat frames
+  carry them and puts `fromName` into the push (smoke «push carries the
+  sender's name»), and the extension writes an unknown direct chat between
+  this user and the author as the request it is, decrypts the message into it
+  and shows «<name> / Новая заявка» (`RequestPushAdoptionTests`). Re-run with
+  the stand on 0872a16 and the client rebuilt: a knock from «Echo Service» to
+  the killed app gave `received envelope → stored → show`, the row
+  `direct:… isRequest=1 iAccepted=0` with the author's name in `user`, and the
+  banner «Echo Service / Новая заявка».
+
 ## Not run here
 
 - A burst through the extension (the coalescing window with several pushes

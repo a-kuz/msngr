@@ -772,7 +772,11 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
   requester's next message arrives as an ordinary one
   (qa/runs/2026-08-28-offline-accept-run)
 - ✅ the recipient's presence is not given out before acceptance over the REST profile either (smoke `no presence before accept`)
-- ⬜ a push for a request with no preview: the server carries no plaintext, the NSE fills the text in from the shared database
+- ✅ a push for a request with no preview: the server carries no plaintext, only
+  the author's public name; the NSE writes the unknown chat as the request it
+  is and shows «<name> / Новая заявка» (smoke «push carries the sender's
+  name», `RequestPushAdoptionTests`; live 2026-09-02 on the simulator with the
+  app killed — qa/runs/2026-09-02-nse-simulator-run)
 
 ## Presence, typing, receipts
 
