@@ -34,14 +34,17 @@ deployed to the shared stand). The fixture trio was reseeded (alfa6, bravo6,
 charlie6); bravo is on gate-runner, charlie on `fable-charlie`
 (28CE558E-6C92-4220-8FC5-A762FCECB666), alfa is free in `.claude/fixtures`.
 Helper `d1-leftovers` finished on `run-d1-leftovers` (rework step 6): five
-commits, rebased on main, smoke green on its own stand (463 checks), live run
-in `docs/qa/runs/2026-09-02-d1-leftovers-run.md` (in the worktree). Not
-merged: migration 0022 drops every remaining D1 table and the objects start
-empty, so the merge needs the shared stand's `.wrangler/` wiped, the service
-restarted and the trio reseeded, and every account on the stand registers
-again — the owner's call, not mine. The bearer token format changes to
-`<userId>.<secret>` with it. The worktree and the `agents.tsv` row stay until
-that decision.
+commits, smoke green on its own stand (463 checks), live run in
+`docs/qa/runs/2026-09-02-d1-leftovers-run.md`. Merged into main as `b12ef44`
+on the owner's word («решение по стиранию стенда апрув»): migration 0022 drops
+every remaining D1 table, the bearer token is `<userId>.<secret>`, and the
+shared stand was stopped, its `.wrangler/` wiped, the code synced, migrations
+applied, the service restarted and the trio reseeded (`alfa`, `bravo`,
+`charlie` without the numeric suffix; bravo on gate-runner, charlie on
+`fable-charlie`). Every other account on the stand, the owner's `Akuz` on
+iPhone 17 dev included, has to register again. The smoke on the merged main
+was green before the deploy; the worktree, the branch and the registry rows
+are gone.
 
 Later still: a muted chat's push travels silent and flagged and the extension
 lets a mention or a reply through (`bcf2e68`, live on the simulator); the
