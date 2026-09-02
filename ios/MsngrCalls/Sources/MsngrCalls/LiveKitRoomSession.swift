@@ -41,23 +41,32 @@ public final class LiveKitRoomSession: NSObject, CallRoomSession, @unchecked Sen
         let options = RoomOptions(adaptiveStream: true, dynacast: true,
                                   encryptionOptions: .sharedKey(key))
         try await room.connect(url: url, token: token, roomOptions: options)
+        var micUp = false
         if micAllowed {
-            // the audio engine can refuse its input the first time (several
-            // simulators share the host's microphone); one more try a moment
-            // later, and a second refusal joins muted rather than failing
+            // the audio engine can refuse its input (on the simulator the
+            // host's microphone is held by one simulator at a time); one more
+            // try a moment later, and a second refusal joins muted rather
+            // than failing
             for attempt in 0..<2 {
-                do {
-                    try await room.localParticipant.setMicrophone(enabled: true)
-                    break
-                } catch {
-                    MsngrLog.call.error("room microphone publish failed attempt=\(attempt, privacy: .public) error=\(String(describing: error), privacy: .public)")
-                    try? await Task.sleep(nanoseconds: 1_000_000_000)
-                }
+                if await publishMicrophone() { micUp = true; break }
+                MsngrLog.call.error("room microphone publish failed attempt=\(attempt, privacy: .public)")
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
         }
         if video { await setVideo(enabled: true) }
+        continuation.yield(.microphone(available: micUp))
         continuation.yield(.connected)
         publishParticipants()
+    }
+
+    private func publishMicrophone() async -> Bool {
+        do {
+            try await room.localParticipant.setMicrophone(enabled: true)
+            return true
+        } catch {
+            MsngrLog.call.error("room microphone publish error=\(String(describing: error), privacy: .public)")
+            return false
+        }
     }
 
     private static func requestMicrophone() async -> Bool {
@@ -72,7 +81,14 @@ public final class LiveKitRoomSession: NSObject, CallRoomSession, @unchecked Sen
     }
 
     public func setMuted(_ muted: Bool) async {
-        guard let publication = room.localParticipant.firstAudioPublication as? LocalTrackPublication else { return }
+        guard let publication = room.localParticipant.firstAudioPublication as? LocalTrackPublication else {
+            // no microphone track went up at the join: unmuting is the
+            // moment to try the input again, and it stays muted if it fails
+            if !muted, !(await publishMicrophone()) {
+                continuation.yield(.microphone(available: false))
+            }
+            return
+        }
         if muted {
             try? await publication.mute()
         } else {

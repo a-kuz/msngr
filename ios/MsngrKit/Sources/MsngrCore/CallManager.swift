@@ -957,6 +957,10 @@ public actor CallManager {
         switch event {
         case .connected:
             state.reconnecting = false
+        case .microphone(let available):
+            // the control tells the truth: no microphone track means muted,
+            // and the unmute tap is what asks the room to try the input again
+            if !available { state.muted = true }
         case .reconnecting:
             state.reconnecting = true
         case .reconnected:

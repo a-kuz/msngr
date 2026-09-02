@@ -37,6 +37,9 @@ public struct CallParticipant: Equatable, Sendable, Identifiable {
 public enum CallRoomEvent: Sendable {
     /// this device is in the room; media flows as soon as someone else is
     case connected
+    /// whether this device's microphone went up: when it did not, the call
+    /// runs muted and the mute control shows it, and unmuting tries again
+    case microphone(available: Bool)
     /// the path to the SFU dropped; the session is trying to get it back
     case reconnecting
     case reconnected

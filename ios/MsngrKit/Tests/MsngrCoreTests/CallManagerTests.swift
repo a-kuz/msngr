@@ -838,6 +838,31 @@ final class CallManagerTests: XCTestCase {
         XCTAssertEqual(closed.all, ["c2"])
     }
 
+    /// A microphone the room could not open shows as muted, and the unmute
+    /// goes to the room, whose retry of the input is what unmutes.
+    func testMicrophoneRefusedByTheRoomShowsMuted() async {
+        let (manager, _, room, _, _, _, _) = makeRoomManager()
+        await manager.handle(event(CallSignal(type: .room, callId: "c1", key: "k1"),
+                                   chatId: "grp", from: "alice"))
+        await manager.accept()
+        room.emit(.microphone(available: false))
+        room.emit(.connected)
+        room.emit(.participants([CallParticipant(userId: "alice")]))
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        var state = await manager.current
+        XCTAssertTrue(state.muted)
+
+        await manager.setMuted(false)
+        state = await manager.current
+        XCTAssertFalse(state.muted)
+        XCTAssertEqual(room.muted, false)
+        // the room's input failed again: the control goes back to muted
+        room.emit(.microphone(available: false))
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        state = await manager.current
+        XCTAssertTrue(state.muted)
+    }
+
     /// A room left empty ends on its own after the timeout, and its card
     /// closes: the reader of a card whose call died with its last
     /// participant's app is not left standing in an empty room.
