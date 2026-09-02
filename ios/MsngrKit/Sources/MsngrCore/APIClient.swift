@@ -845,6 +845,21 @@ public final class APIClient: @unchecked Sendable {
     public func downloadMedia(_ mediaId: String) async throws -> Data {
         try await request("api/media/\(mediaId)")
     }
+    /// A slice of a blob, asked for with a Range header. A streaming player
+    /// reads a file this way: one request per block it needs, and the server
+    /// answers 206 with those bytes only. A 200 means the whole blob came back
+    /// anyway, so the slice is cut here.
+    public func downloadMediaRange(_ mediaId: String, offset: Int, length: Int) async throws -> Data {
+        var req = URLRequest(url: url(for: "api/media/\(mediaId)"))
+        if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        req.setValue("bytes=\(offset)-\(offset + length - 1)", forHTTPHeaderField: "Range")
+        let (data, resp) = try await session.data(for: req)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if status >= 400 { throw APIError(code: "http_\(status)", status: status) }
+        if status == 206 { return data }
+        guard offset + length <= data.count else { throw APIError(code: "short_media", status: status) }
+        return data.subdata(in: offset..<(offset + length))
+    }
     public func mediaURL(_ mediaId: String) -> URL {
         baseURL.appendingPathComponent("api/media/\(mediaId)")
     }

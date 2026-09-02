@@ -9,6 +9,12 @@ import MsngrCrypto
 public final class MediaManager: @unchecked Sendable {
     public enum MediaError: Error { case pendingFileMissing }
 
+    /// How a blob is sealed. `wholeBox` is one ChaChaPoly box over the file and
+    /// is what a small blob with no size of its own in `MediaInfo` (a video's
+    /// preview frame) uses; `blocks` is the format streaming reads, and it is
+    /// what every attachment of a message is uploaded in.
+    public enum MediaFormat: Int, Sendable { case wholeBox = 1, blocks = 2 }
+
     private let api: APIClient
     private let cacheDir: URL
     private let pendingDir: URL
@@ -102,9 +108,10 @@ public final class MediaManager: @unchecked Sendable {
 
     /// Uploads a local original; called by the outbox worker before it encrypts the envelope.
     public func uploadPending(localName: String, mime: String? = nil,
-                              progress: (@Sendable (Double) -> Void)? = nil) async throws -> (mediaId: String, key: String, hash: String, size: Int) {
+                              format: MediaFormat = .wholeBox,
+                              progress: (@Sendable (Double) -> Void)? = nil) async throws -> (mediaId: String, key: String, hash: String, size: Int, v: Int) {
         guard let url = pendingURL(for: localName) else { throw MediaError.pendingFileMissing }
-        return try await upload(try Data(contentsOf: url), mime: mime, progress: progress)
+        return try await upload(try Data(contentsOf: url), mime: mime, format: format, progress: progress)
     }
 
     public func removePending(localName: String) {
@@ -114,12 +121,22 @@ public final class MediaManager: @unchecked Sendable {
     /// Encrypts and uploads, returning the fields for MediaInfo. The plaintext goes into the
     /// cache right away so the sender sees their own media without a round trip.
     public func upload(_ plaintext: Data, mime: String? = nil,
-                       progress: (@Sendable (Double) -> Void)? = nil) async throws -> (mediaId: String, key: String, hash: String, size: Int) {
-        let enc = try MediaCrypto.encrypt(plaintext)
-        let res = try await api.uploadMedia(enc.ciphertext, progress: progress)
+                       format: MediaFormat = .wholeBox,
+                       progress: (@Sendable (Double) -> Void)? = nil) async throws -> (mediaId: String, key: String, hash: String, size: Int, v: Int) {
+        let blob: Data, key: Data, hash: Data
+        switch format {
+        case .wholeBox:
+            let enc = try MediaCrypto.encrypt(plaintext)
+            (blob, key, hash) = (enc.ciphertext, enc.key, enc.sha256)
+        case .blocks:
+            let enc = try MediaCrypto.encryptChunked(plaintext)
+            (blob, key, hash) = (enc.blob, enc.key, enc.root)
+        }
+        let res = try await api.uploadMedia(blob, progress: progress)
         let local = cacheDir.appendingPathComponent(cacheFileName(res.mediaId, mime: mime))
         try? plaintext.write(to: local, options: .atomic)
-        return (res.mediaId, enc.key.base64EncodedString(), enc.sha256.base64EncodedString(), plaintext.count)
+        return (res.mediaId, key.base64EncodedString(), hash.base64EncodedString(),
+                plaintext.count, format.rawValue)
     }
 
     /// Downloads, verifies the hash, decrypts and caches; concurrent requests are deduplicated.
@@ -147,8 +164,10 @@ public final class MediaManager: @unchecked Sendable {
                   let hash = Data(base64Encoded: media.hash) else {
                 throw CryptoError.invalidKey
             }
-            let ciphertext = try await self.api.downloadMedia(media.mediaId)
-            let plaintext = try MediaCrypto.decrypt(ciphertext, key: key, expectedSHA256: hash)
+            let blob = try await self.api.downloadMedia(media.mediaId)
+            let plaintext = media.v == MediaFormat.blocks.rawValue
+                ? try MediaCrypto.decryptChunked(blob, key: key, root: hash, plaintextSize: media.size)
+                : try MediaCrypto.decrypt(blob, key: key, expectedSHA256: hash)
             let url = self.cacheDir.appendingPathComponent(self.cacheFileName(media.mediaId, mime: media.mime))
             try plaintext.write(to: url, options: .atomic)
             self.enforceCacheCeiling()
@@ -157,6 +176,47 @@ public final class MediaManager: @unchecked Sendable {
         inflight[media.mediaId] = task
         lock.unlock()
         return try await task.value
+    }
+
+    // MARK: - Streaming
+
+    /// The stream of one blob, kept for as long as it plays: the resource
+    /// loader delegate is held weakly by the asset, and the partial file and
+    /// the blocks already opened belong to the stream.
+    private var streams: [String: MediaStream] = [:]
+
+    /// A stream for a block-format blob that is not in the cache yet, so a
+    /// player can start on the first blocks. Returns nil for anything that has
+    /// to be downloaded whole (an older format, no size, a local original).
+    public func stream(for media: MediaInfo) -> MediaStream? {
+        guard media.v == MediaFormat.blocks.rawValue, !media.mediaId.isEmpty else { return nil }
+        lock.lock()
+        if let existing = streams[media.mediaId] { lock.unlock(); return existing }
+        lock.unlock()
+        let partial = cacheDir.appendingPathComponent(media.mediaId + ".partial")
+        let final = cacheDir.appendingPathComponent(cacheFileName(media.mediaId, mime: media.mime))
+        let id = media.mediaId
+        guard let stream = try? MediaStream(media: media,
+                                            fetchRange: { [api] offset, length in
+                                                try await api.downloadMediaRange(id, offset: offset,
+                                                                                 length: length)
+                                            },
+                                            partialURL: partial,
+                                            finalURL: final,
+                                            onComplete: { [weak self] _ in self?.enforceCacheCeiling() })
+        else { return nil }
+        lock.lock(); streams[media.mediaId] = stream; lock.unlock()
+        return stream
+    }
+
+    /// Called when the player is gone: the stream stops asking for blocks. The
+    /// partial file stays, so opening the same video again picks up nothing
+    /// twice only because the blocks it holds are not remembered across runs.
+    public func releaseStream(_ mediaId: String) {
+        lock.lock()
+        let stream = streams.removeValue(forKey: mediaId)
+        lock.unlock()
+        stream?.cancel()
     }
 
     /// The picture for a notification banner, as a file of its own: the system
