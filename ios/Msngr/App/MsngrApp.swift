@@ -118,6 +118,12 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func application(_ application: UIApplication,
+                     didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        MsngrLog.session.error("push registration failed: \(String(describing: error), privacy: .public)")
+        Task { await AppState.shared.pushRegistrationFailed() }
+    }
+
+    func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         NotificationCoordinator.shared.setup()
         return true

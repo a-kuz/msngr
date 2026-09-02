@@ -180,7 +180,7 @@ export async function sendPush(
   const base = apnsBase(env, apnsEnv);
   const isApple = /\.push\.apple\.com$/.test(new URL(base).hostname);
   // a non-Apple host is the dev mock: it takes no JWT, so no p8 key is needed
-  const topic = env.APNS_TOPIC ?? (isApple ? null : "msngr.msngr");
+  const topic = env.APNS_TOPIC ?? (isApple ? null : "com.msngr.msngr");
   if (!topic) return { ok: false, status: 0, reason: "no_topic" };
 
   // The alert text is neutral: the payload carries ciphertext, and the

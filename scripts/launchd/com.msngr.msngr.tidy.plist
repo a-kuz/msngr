@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>ai.enface.msngr.tidy</string>
+    <string>com.msngr.msngr.tidy</string>
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>

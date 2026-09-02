@@ -60,7 +60,7 @@ A fixture home is a simulator mechanism; a phone joins as itself. Once:
 make device TEAM=<team id>        # builds, signs and installs on the connected phone
 ```
 
-(`TEAM` and `DEVICE_APP_ID` can live in `local.mk`; the app talks to the
+(`TEAM` can live in `local.mk`; the app talks to the
 shared stand by default.) On the phone, register any account — say `boss` —
 then dress it from here:
 

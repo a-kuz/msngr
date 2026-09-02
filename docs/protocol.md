@@ -735,9 +735,10 @@ mark). An approximation: muted chats enter the badge until they are read.
 Dev without an Apple account: `APNS_HOST` (in `server/.dev.vars` —
 `http://localhost:9871`) diverts pushes into the mock
 `server/tools/apns-mock.mjs`, which delivers them to the simulator through
-`xcrun simctl push` (apnsToken = the simulator's UDID). On a non-Apple host the
+`xcrun simctl push` (apnsToken = the simulator's UDID, which the app registers
+with env `dev-sim` only when APNs itself hands out no token). On a non-Apple host the
 request goes out without a JWT signature, no p8 key is needed, and `apns-topic`
-defaults to `msngr.msngr`. A limit of that channel: `simctl push` does not
+defaults to `com.msngr.msngr`. A limit of that channel: `simctl push` does not
 launch the Notification Service Extension — see
 `docs/research/nse-simulator-experiment.md`.
 

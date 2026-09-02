@@ -241,17 +241,9 @@ final class AppState: ObservableObject {
             ready = true
             objectWillChange.send()
             NotificationCoordinator.shared.attach(db: db, engine: engine, ownUserId: s.userId)
-            #if targetEnvironment(simulator)
-            // no APNs on the simulator: the dev stand delivers pushes with
-            // `simctl push` by UDID, and that UDID is registered on the server
-            // in place of an APNs token
-            let udid = ProcessInfo.processInfo.environment["SIMULATOR_UDID"] ?? "unknown-simulator"
-            try? await api.registerPushToken(udid, env: "dev-sim")
-            // with no push arriving, the app posts the background banner itself
-            NotificationCoordinator.shared.apnsAvailable = false
-            #else
+            // the simulator on Apple silicon holds a real sandbox token too;
+            // where APNs refuses it, `pushRegistrationFailed` falls back to the UDID
             UIApplication.shared.registerForRemoteNotifications()
-            #endif
         } catch AppDatabaseError.schemaFromNewerVersion(let applied) {
             // storage written by a newer build: it is left as it is, and the
             // screen offers the only thing this build can do about it
@@ -350,7 +342,19 @@ final class AppState: ObservableObject {
         #else
         let env = "production"
         #endif
+        NotificationCoordinator.shared.apnsAvailable = true
         try? await api?.registerPushToken(token, env: env)
+    }
+
+    /// APNs handed out no token: on a simulator the dev stand still delivers
+    /// pushes with `simctl push` by UDID, so the UDID stands in for the token
+    /// and the app posts its own background banner in place of the push.
+    func pushRegistrationFailed() async {
+        NotificationCoordinator.shared.apnsAvailable = false
+        #if targetEnvironment(simulator)
+        let udid = ProcessInfo.processInfo.environment["SIMULATOR_UDID"] ?? "unknown-simulator"
+        try? await api?.registerPushToken(udid, env: "dev-sim")
+        #endif
     }
 
     // MARK: - Lifecycle / lock

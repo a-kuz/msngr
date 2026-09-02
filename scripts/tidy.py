@@ -5,7 +5,7 @@
     scripts/tidy.py --apply    let it go
     scripts/tidy.py --report   write the escalation report whatever the free space
 
-Runs from launchd every five minutes (`ai.enface.msngr.tidy`). Everything it
+Runs from launchd every five minutes (`com.msngr.msngr.tidy`). Everything it
 removes on its own has been checked to belong to nobody: the agent that made it
 is gone, or no process is holding it. Nothing here waits for a simulator to be
 shut down first, because the shutdown was the dead agent's job and it never

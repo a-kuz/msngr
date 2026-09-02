@@ -1,6 +1,6 @@
 name: Msngr
 options:
-  bundleIdPrefix: msngr
+  bundleIdPrefix: com.msngr
   deploymentTarget:
     iOS: "26.0"
   createIntermediateGroups: true
@@ -87,9 +87,7 @@ targets:
           - CFBundleURLSchemes: [msngr]
     settings:
       base:
-        # msngr.msngr everywhere; a device build substitutes the signing
-        # team's own id (make device, local.mk)
-        PRODUCT_BUNDLE_IDENTIFIER: ${MSNGR_APP_ID}
+        PRODUCT_BUNDLE_IDENTIFIER: com.msngr.msngr
         SWIFT_VERSION: "5.9"
         # iPhone and iPad: the iPad layout is what a Mac runs as
         # «Designed for iPad», the MVP shape of the desktop client
@@ -111,7 +109,7 @@ targets:
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: true
-        PRODUCT_BUNDLE_IDENTIFIER: msngr.MsngrTests
+        PRODUCT_BUNDLE_IDENTIFIER: com.msngr.msngr.MsngrTests
 
   MsngrUITests:
     type: bundle.ui-testing
@@ -124,13 +122,15 @@ targets:
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: true
-        PRODUCT_BUNDLE_IDENTIFIER: msngr.MsngrUITests
+        PRODUCT_BUNDLE_IDENTIFIER: com.msngr.msngr.MsngrUITests
         TEST_TARGET_NAME: Msngr
 
   NotificationService:
     type: app-extension
     platform: iOS
-    sources: [NotificationService]
+    sources:
+      - NotificationService
+      - Msngr/App/CommunicationNotification.swift
     entitlements:
       path: NotificationService/NotificationService.entitlements
       properties:
@@ -149,7 +149,7 @@ targets:
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: ${MSNGR_APP_ID}.NotificationService
+        PRODUCT_BUNDLE_IDENTIFIER: com.msngr.msngr.NotificationService
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
@@ -186,7 +186,7 @@ targets:
               NSExtensionActivationSupportsText: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: ${MSNGR_APP_ID}.ShareExtension
+        PRODUCT_BUNDLE_IDENTIFIER: com.msngr.msngr.ShareExtension
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic

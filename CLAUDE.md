@@ -78,7 +78,7 @@ make check DEV_UDID=14C70E21-A23A-4492-8E6A-113AE0BC6B6D   # gate-runner
 ```
 
 Uninstall the app from the simulator before `make uicheck`
-(`xcrun simctl uninstall <udid> msngr.msngr`). The device keeps the
+(`xcrun simctl uninstall <udid> com.msngr.msngr`). The device keeps the
 migrations of whichever build ran on it last, and a branch that does not know the
 newest of them leaves the file closed and shows «Приложение устарело» in place of
 the chat list: every UI test then fails on a screen with no chats, as a wandering
@@ -115,8 +115,12 @@ own user, and the fixtures they need are on the stand, not on the device.
   on adad, :9872), which forwards to Apple's sandbox over HTTP/2 and signs the
   provider token itself — APNs is HTTP/2 only and workerd's fetch is HTTP/1.1,
   so a Worker never reaches Apple directly. The topic is `com.msngr.msngr`, the
-  device bundle id; simulator tokens get 400 BadDeviceToken there, so a
-  scenario that checks push delivery on a simulator needs a local stand.
+  one bundle id of every build. A simulator on Apple silicon holds a real
+  sandbox token, so the shared stand's pushes reach it: the banner arrives
+  with the neutral text, because the NSE does not run there. The app falls
+  back to registering its UDID (env `dev-sim`, what the mock pushes by) only
+  when APNs hands out no token, so a scenario on the mock needs a simulator
+  that gets no real token, or the token replaced by hand.
   `node test/smoke.mjs` brings up its own receiver on the mock's port,
   so a running mock has to be stopped before the smoke test. On your own stand
   the ports separate:
@@ -242,9 +246,9 @@ The sweep runs from launchd every five minutes and refreshes the snapshot as it
 goes; its output is in `.claude/tidy.log`. The job is installed with
 
 ```bash
-cp scripts/launchd/ai.enface.msngr.tidy.plist ~/Library/LaunchAgents/
-launchctl unload ~/Library/LaunchAgents/ai.enface.msngr.tidy.plist 2>/dev/null
-launchctl load ~/Library/LaunchAgents/ai.enface.msngr.tidy.plist
+cp scripts/launchd/com.msngr.msngr.tidy.plist ~/Library/LaunchAgents/
+launchctl unload ~/Library/LaunchAgents/com.msngr.msngr.tidy.plist 2>/dev/null
+launchctl load ~/Library/LaunchAgents/com.msngr.msngr.tidy.plist
 ```
 
 The sweep only takes what nothing alive is holding: a simulator whose agent has

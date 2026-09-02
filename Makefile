@@ -26,8 +26,7 @@ uicheck: gen build uitest
 	@echo "== make uicheck: all green =="
 
 MSNGR_DEVICE_SERVER ?=
-MSNGR_APP_ID ?= msngr.msngr
-export MSNGR_DEVICE_SERVER MSNGR_APP_ID
+export MSNGR_DEVICE_SERVER
 
 gen:
 	cd ios && xcodegen
@@ -45,15 +44,14 @@ uitest:
 	@test "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 $(MSNGR_SERVER)/api/me)" != "000" || (echo "wrangler dev is not running ($(MSNGR_SERVER)): npx wrangler dev"; exit 1)
 	MSNGR_SERVER=$(MSNGR_SERVER) $(XCODE) -scheme Msngr $(DEST) test -only-testing:MsngrUITests 2>&1 | tail -5 | grep -q "TEST SUCCEEDED"
 
-# Build and install on a physical iPhone. Signed with the team and bundle id
-# from local.mk (TEAM, DEVICE_APP_ID); automatic signing registers the App IDs
-# with push, the app group and Communication Notifications on the portal.
+# Build and install on a physical iPhone. Signed with the team from local.mk
+# (TEAM); automatic signing registers the App IDs with push, the app group and
+# Communication Notifications on the portal.
 #   make device [TEAM=…] [DEVICE=<udid>] [SERVER=…]
 DEVICE_APP := ios/build/device/Build/Products/Debug-iphoneos/Msngr.app
 device:
-	@test -n "$(TEAM)" || (echo "TEAM is not set: put TEAM and DEVICE_APP_ID into local.mk"; exit 1)
-	cd ios && MSNGR_APP_ID=$(or $(DEVICE_APP_ID),$(MSNGR_APP_ID)) \
-	  MSNGR_DEVICE_SERVER="$(or $(SERVER),https://msngr.a-kuz.online)" xcodegen
+	@test -n "$(TEAM)" || (echo "TEAM is not set: put TEAM into local.mk"; exit 1)
+	cd ios && MSNGR_DEVICE_SERVER="$(or $(SERVER),https://msngr.a-kuz.online)" xcodegen
 	$(SLOT) xcodebuild -project ios/Msngr.xcodeproj -scheme Msngr \
 	  -destination 'generic/platform=iOS' -derivedDataPath ios/build/device \
 	  -allowProvisioningUpdates -allowProvisioningDeviceRegistration \

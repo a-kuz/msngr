@@ -39,7 +39,7 @@ JSON
 done
 i=1
 while [ "$i" -le "$COUNT" ]; do
-  xcrun simctl push "$UDID" ai.enface.Msngr "$DIR/p$i.json" > /dev/null
+  xcrun simctl push "$UDID" com.msngr.msngr "$DIR/p$i.json" > /dev/null
   i=$((i + 1))
 done
 echo "pushed $COUNT"
