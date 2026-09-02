@@ -41,8 +41,12 @@ struct ChatListView: View {
     @State private var watchingStories: StoriesModel.Author?
     @ObservedObject private var stories = StoriesModel.shared
     /// The tray over the list is a row of small rings until the reader pulls
-    /// the list down; a scroll up folds it again.
-    @State private var storiesExpanded = false
+    /// the list down; a scroll up folds it again. The follower moves it with
+    /// the finger.
+    @StateObject private var tray = StoriesTrayFollower()
+    /// The folder bar's measured height: with the tray's resting height it is
+    /// the room the list keeps clear under the header.
+    @State private var folderBarHeight: CGFloat = 0
     @State private var path = NavigationPath()
     /// chat whose deletion is waiting for confirmation
     @State private var deleteCandidate: ChatListItem?
@@ -71,15 +75,25 @@ struct ChatListView: View {
         NavigationStack(path: $path) {
             Group {
                 if model.searchText.isEmpty {
-                    VStack(spacing: 0) {
-                        StoriesTray(expanded: storiesExpanded,
-                                    onCompose: { showStoryComposer = true },
-                                    onOpen: { watchingStories = $0 })
-                        ChatFolderBar(folders: model.folders, unread: model.folderUnread,
-                                      selection: tabSelection,
-                                      onManage: { showFolders = true },
-                                      onEdit: { editingFolder = $0 })
+                    // the header is drawn over the list, inside the room the
+                    // list keeps clear at its top: the list's frame then never
+                    // changes under a finger, and its own bounce carries the
+                    // tray open and shut
+                    ZStack(alignment: .top) {
                         folderPages
+                        VStack(spacing: 0) {
+                            StoriesTray(progress: tray.progress,
+                                        onCompose: { showStoryComposer = true },
+                                        onOpen: { watchingStories = $0 })
+                            ChatFolderBar(folders: model.folders, unread: model.folderUnread,
+                                          selection: tabSelection,
+                                          onManage: { showFolders = true },
+                                          onEdit: { editingFolder = $0 })
+                                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+                                    folderBarHeight = $0
+                                }
+                        }
+                        .background(Color(.systemBackground))
                     }
                 } else {
                     ChatSearchResults(list: model, search: search,
@@ -342,7 +356,10 @@ struct ChatListView: View {
                                   onDelete: { deleteCandidate = $0 },
                                   onNewFolder: { showFolders = true },
                                   onOpenStories: { watchingStories = $0 },
-                                  onScroll: trayFollows)
+                                  onScroll: { tray.didScroll($0) },
+                                  onWillEndDragging: { tray.willEndDragging($0, velocity: $1, target: $2) },
+                                  topInset: StoriesTray.foldedHeight
+                                      + (tray.expanded ? StoriesTray.unfoldDelta : 0) + folderBarHeight)
         .overlay {
             if model.loaded, let folder, items.isEmpty {
                 folderEmptyState(folder)
@@ -350,18 +367,6 @@ struct ChatListView: View {
                       model.requests.isEmpty, model.archived.isEmpty {
                 emptyState
             }
-        }
-    }
-
-    /// The tray unfolds when the list is pulled past its top by a finger and
-    /// folds once the list has scrolled a little way down, the way Telegram
-    /// keeps its stories out of the way until they are asked for.
-    private func trayFollows(_ scrollView: UIScrollView) {
-        let pull = -(scrollView.contentOffset.y + scrollView.adjustedContentInset.top)
-        if !storiesExpanded, pull > 48, scrollView.isTracking {
-            withAnimation(Theme.spring) { storiesExpanded = true }
-        } else if storiesExpanded, pull < -24 {
-            withAnimation(Theme.spring) { storiesExpanded = false }
         }
     }
 

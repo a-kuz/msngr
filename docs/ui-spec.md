@@ -534,9 +534,16 @@ in the feed as a group event once the server has accepted it.
 ## The chat list
 
 The title «Чаты» is inline in the bar, the same bar the calls list has. Under
-it runs the stories tray: folded, a row of 30 pt rings with nothing else;
-pulling the list down past 48 pt unfolds it into 56 pt pictures with names,
-and scrolling the list up a little folds it again.
+it runs the stories tray: folded, a 42 pt row of 30 pt rings with nothing
+else; unfolded, 48 pt taller, with 56 pt pictures and their names. The tray
+and the folder tabs are drawn over the list inside its top content inset, so
+the list's frame never changes under a finger and its own bounce carries the
+motion: a pull past the top grows the tray one for one with the finger, a
+release past half the delta moves the inset down and the bounce settles the
+rows on the open tray, a shorter pull springs it shut. Unfolded, a scroll up
+folds the tray at the scroll's own speed, like a first row; a release midway
+lands on the nearer state, and once folded whole the inset gives the delta
+back with nothing on screen moving (`StoriesTrayFollower`).
 
 A row holds a 54×54 avatar with an online dot, the title (the peer's name for a
 direct chat), the mute icon, the ticks of the last message (only when it is

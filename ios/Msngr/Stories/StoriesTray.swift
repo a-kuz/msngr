@@ -3,11 +3,12 @@ import MsngrCore
 
 /// The row of stories over the chat list: your own first, with the plus that
 /// starts a new one, then everyone with something live, the unwatched ones
-/// ahead. A ring around a picture means there is something to watch. Folded,
-/// the row is small rings and nothing else; unfolded, the pictures grow and
-/// take their names.
+/// ahead. A ring around a picture means there is something to watch. The row
+/// is drawn at a `progress` between folded (small rings and nothing else) and
+/// unfolded (full pictures with their names); `StoriesTrayFollower` moves the
+/// progress with the finger on the list.
 struct StoriesTray: View {
-    var expanded: Bool
+    var progress: CGFloat
     var onCompose: () -> Void
     var onOpen: (StoriesModel.Author) -> Void
 
@@ -16,16 +17,23 @@ struct StoriesTray: View {
     @ObservedObject private var stories = StoriesModel.shared
     @State private var me: User?
 
+    /// The folded row's height, and how much the unfolded one adds. Every
+    /// measure below is interpolated so these two stay exact at either end.
+    static let foldedHeight: CGFloat = 42
+    static let unfoldDelta: CGFloat = 48
+
     private var ownId: String { app.session?.userId ?? "" }
     private var mine: StoriesModel.Author? { stories.authors.first { $0.id == ownId } }
     private var others: [StoriesModel.Author] { stories.authors.filter { $0.id != ownId } }
 
-    /// The picture's side in the two states of the row.
-    private var side: CGFloat { expanded ? 56 : 30 }
+    private var p: CGFloat { min(1, max(0, progress)) }
+    private var side: CGFloat { 30 + 26 * p }
+    private var nameHeight: CGFloat { 18 * p }
+    private var verticalPad: CGFloat { 6 + 2 * p }
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .top, spacing: expanded ? 14 : 10) {
+            HStack(alignment: .top, spacing: 10 + 4 * p) {
                 ownCell
                 ForEach(others) { author in
                     Button { onOpen(author) } label: {
@@ -37,9 +45,10 @@ struct StoriesTray: View {
                 }
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, expanded ? 8 : 6)
+            .padding(.vertical, verticalPad)
         }
-        .scrollDisabled(!expanded && others.count < 8)
+        .frame(height: Self.foldedHeight + Self.unfoldDelta * p)
+        .scrollDisabled(p < 0.5 && others.count < 8)
         .accessibilityIdentifier("stories.tray")
         .task(id: app.ready) { await loadMe() }
         // the list is read again whenever the app comes to the front, and
@@ -60,7 +69,8 @@ struct StoriesTray: View {
     /// Your own picture: a tap watches what you have live, the plus adds to it
     /// or starts the first one.
     private var ownCell: some View {
-        Button {
+        let plus = 14 + 6 * p
+        return Button {
             if let mine { onOpen(mine) } else { onCompose() }
         } label: {
             cell(name: me?.displayName ?? "", avatarId: me?.avatarId,
@@ -72,42 +82,110 @@ struct StoriesTray: View {
         .overlay(alignment: .topTrailing) {
             Button(action: onCompose) {
                 Image(systemName: "plus")
-                    .font(.system(size: expanded ? 11 : 8, weight: .bold))
+                    .font(.system(size: 8 + 3 * p, weight: .bold))
                     .foregroundStyle(.white)
-                    .frame(width: expanded ? 20 : 14, height: expanded ? 20 : 14)
+                    .frame(width: plus, height: plus)
                     .background(Theme.accent, in: Circle())
-                    .overlay(Circle().stroke(Color(.systemBackground), lineWidth: expanded ? 2 : 1.5))
+                    .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 1.5 + 0.5 * p))
             }
-            .offset(x: expanded ? 2 : 3, y: expanded ? 40 : 18)
+            // the plus hangs off the picture's lower right, just past its edge
+            .offset(x: 3 - p, y: side - plus + 4)
             .accessibilityIdentifier("chatlist.newStory")
         }
     }
 
     private func cell(name: String, avatarId: String?, title: String,
                       ring: Bool, unseen: Bool) -> some View {
-        VStack(spacing: 5) {
+        VStack(spacing: 0) {
             AvatarView(name: name, avatarId: avatarId)
                 .frame(width: side, height: side)
                 .overlay {
                     if ring {
                         Circle()
                             .strokeBorder(Theme.accent.opacity(unseen ? 1 : 0.3),
-                                          lineWidth: expanded ? 2.5 : 2)
-                            .padding(expanded ? -4 : -3)
+                                          lineWidth: 2 + 0.5 * p)
+                            .padding(-3 - p)
                     }
                 }
-            if expanded {
-                Text(title)
-                    .font(.caption2)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                    .frame(width: 72)
-            }
+            // the name takes its room as the row unfolds and fades in with it
+            Text(title)
+                .font(.caption2)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .frame(width: 72, height: nameHeight, alignment: .bottom)
+                .opacity(p)
+                .clipped()
         }
     }
 
     private func loadMe() async {
         guard app.ready, let db = app.db else { return }
         me = try? await db.read { [id = ownId] dbc in try User.fetchOne(dbc, key: id) }
+    }
+}
+
+/// Moves the stories tray with the finger on the chat list, the way Telegram
+/// does. The tray and the folder tabs are drawn over the list, inside its top
+/// content inset, so the list's frame never changes under a finger — that is
+/// what lets the list's own bounce drive the whole motion. Folded, a pull past
+/// the top grows the tray one for one with the finger; let go past half its
+/// height the inset grows by the tray's delta and the bounce settles the rows
+/// on the open tray, short of that the bounce carries the tray shut. Unfolded,
+/// a scroll up folds the tray at the speed of the scroll, as if it were the
+/// first row; when it is folded whole the inset gives the delta back, which
+/// moves nothing on screen, and a release midway lands on the nearer state.
+@MainActor
+final class StoriesTrayFollower: ObservableObject {
+    /// How far the tray is unfolded right now, 0 to 1.
+    @Published private(set) var progress: CGFloat = 0
+    /// The state the list's inset is sized for.
+    @Published private(set) var expanded = false
+
+    private let delta = StoriesTray.unfoldDelta
+
+    /// The distance the list is pulled past its top; negative once it has scrolled.
+    private func pull(_ sv: UIScrollView) -> CGFloat {
+        -(sv.contentOffset.y + sv.adjustedContentInset.top)
+    }
+
+    func didScroll(_ sv: UIScrollView) {
+        let pull = pull(sv)
+        if !expanded {
+            set(progress: min(1, max(0, pull) / delta))
+        } else {
+            let scrolled = -pull
+            if scrolled >= delta {
+                // folded whole: the rows already stand where the folded rest
+                // is, so the inset shrinks and nothing on screen moves
+                expanded = false
+                sv.contentInset.top -= delta
+                sv.verticalScrollIndicatorInsets.top -= delta
+                set(progress: 0)
+            } else {
+                set(progress: 1 - max(0, scrolled) / delta)
+            }
+        }
+    }
+
+    func willEndDragging(_ sv: UIScrollView, velocity: CGPoint, target: UnsafeMutablePointer<CGPoint>) {
+        let pull = pull(sv)
+        if !expanded {
+            guard pull >= delta / 2, velocity.y <= 0 else { return }
+            // the rest moves down by the delta and the bounce takes the rows there
+            expanded = true
+            sv.contentInset.top += delta
+            sv.verticalScrollIndicatorInsets.top += delta
+        } else {
+            let scrolled = -pull
+            guard scrolled > 0, scrolled < delta else { return }
+            // midway through folding: the list settles on whichever state is
+            // nearer, and didScroll finishes the fold when it gets there
+            let fold = scrolled > delta / 2 || velocity.y > 0.3
+            target.pointee.y = -sv.adjustedContentInset.top + (fold ? delta : 0)
+        }
+    }
+
+    private func set(progress value: CGFloat) {
+        if abs(value - progress) > 0.001 { progress = value }
     }
 }

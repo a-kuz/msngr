@@ -19,9 +19,14 @@ struct ChatListCollection: UIViewRepresentable {
     var onNewFolder: () -> Void
     /// A tap on a ringed avatar: the author's stories instead of the chat.
     var onOpenStories: (StoriesModel.Author) -> Void
-    /// Every change of the list's offset: the stories tray over the list
-    /// unfolds on a pull and folds on a scroll.
+    /// Every change of the list's offset, and the end of every drag: the
+    /// stories tray over the list follows the finger through these.
     var onScroll: ((UIScrollView) -> Void)?
+    var onWillEndDragging: ((UIScrollView, CGPoint, UnsafeMutablePointer<CGPoint>) -> Void)?
+    /// The room under the header drawn over the list: the stories tray at its
+    /// resting size plus the folder tabs. The follower moves it directly while
+    /// a gesture is under way; this value is what a new page starts from.
+    var topInset: CGFloat = 0
 
     enum Row: Hashable {
         case request(String)
@@ -67,13 +72,26 @@ struct ChatListCollection: UIViewRepresentable {
         collection.delegate = coordinator
         coordinator.install(on: collection)
         coordinator.parent = self
+        Self.applyInset(topInset, to: collection)
         coordinator.apply(animated: false)
+        // a page opens with its rows under the header, at rest
+        collection.contentOffset.y = -collection.adjustedContentInset.top
         return collection
+    }
+
+    /// The inset is compared before it is written: the follower has usually
+    /// set the same value a frame earlier, and a write while the list settles
+    /// would restart its bounce.
+    private static func applyInset(_ top: CGFloat, to collection: UICollectionView) {
+        guard abs(collection.contentInset.top - top) > 0.5 else { return }
+        collection.contentInset.top = top
+        collection.verticalScrollIndicatorInsets.top = top
     }
 
     func updateUIView(_ collection: UICollectionView, context: Context) {
         let coordinator = context.coordinator
         coordinator.parent = self
+        Self.applyInset(topInset, to: collection)
         // a structural change arrives inside the reorder's withAnimation
         // transaction; content-only emissions come with no animation and are
         // applied as silent reconfigures
@@ -97,6 +115,11 @@ struct ChatListCollection: UIViewRepresentable {
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             parent.onScroll?(scrollView)
+        }
+
+        func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint,
+                                       targetContentOffset: UnsafeMutablePointer<CGPoint>) {
+            parent.onWillEndDragging?(scrollView, velocity, targetContentOffset)
         }
 
         private func item(for row: Row) -> ChatListItem? {
