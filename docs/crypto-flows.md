@@ -54,10 +54,16 @@ one that is already in it.
 2. The owner types the code on the old device. `POST /api/provision/lookup`
    returns the ephemeral public key and the device name, and the screen names
    exactly what is asking for access.
-3. The old device seals the account bundle (`userId`, username, display name, the
-   private identity DH and signing keys) to that ephemeral key:
-   X25519 → HKDF-SHA256 → ChaChaPoly, with `provisionId` as the salt and both
-   public keys in `info`. The server carries the result and cannot open it.
+3. The old device packs the history — the same payload a backup carries: chats,
+   messages, media, folders, settings — encrypts it the way an attachment is
+   encrypted (`MediaCrypto`, a random key, SHA-256 over the ciphertext) and
+   uploads it to `/api/media`. It then seals the account bundle (`userId`,
+   username, display name, the private identity DH and signing keys, and the
+   `history` pointer: the blob's media id, key, hash and size) to that
+   ephemeral key: X25519 → HKDF-SHA256 → ChaChaPoly, with `provisionId` as the
+   salt and both public keys in `info`. The server carries a blob and a bundle
+   it can open neither of. A history that cannot be packed or uploaded is left
+   out, and the bundle goes without it.
 4. The new device decrypts the bundle, shows the `@username` and asks for
    confirmation: a stranger's account could have approved the session if the code
    was guessed.
@@ -67,10 +73,15 @@ one that is already in it.
    `identity_mismatch`. An answer with a different `userId` is treated by the
    device as a refusal, and it wipes itself.
 
-The conversation history does not move over: the ratchet destroyed the keys of
-what was read, and what sits on the server is envelopes addressed to other
-devices. The new device gets the chat list and starts each chat at its current
-end (`DeviceLink.primeChats`); anything older does not exist for it.
+After the claim the new device fetches the history blob named in the bundle,
+verifies and decrypts it with the key from the bundle and writes the rows and
+the media cache (`HistoryTransfer`, `AccountBackup.apply`), then primes the
+chat list from the server snapshot (`DeviceLink.primeChats`) so its first sync
+starts at the end of each journal and pagination never asks the server for what
+the history already brought. What the ratchet destroyed is not asked for: the
+envelopes on the server are addressed to other devices, so the new device's
+sessions with every peer start fresh, and the seconds between packing and
+claiming are the only gap.
 
 While at least one device is in hand, access is not lost. Once none are left, the
 account cannot be recovered: there is no recovery phrase and no password.
