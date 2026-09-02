@@ -74,7 +74,6 @@ export class DirectoryDO implements DurableObject {
       case "/remove": {
         const b = (await req.json()) as { id: string };
         sql.exec("DELETE FROM people WHERE id = ?", b.id);
-        sql.exec("DELETE FROM phones WHERE user_id = ?", b.id);
         return json({ ok: true });
       }
 
