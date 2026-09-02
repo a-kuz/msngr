@@ -126,6 +126,10 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         NotificationCoordinator.shared.setup()
+        // the automatic iCloud backup: registered before launching finishes,
+        // as the system requires, and asked for whenever it is turned on
+        BackupScheduler.register { await BackupStore.runCloudBackup() }
+        if BackupStore.cloudEnabled { BackupScheduler.schedule() }
         return true
     }
 }

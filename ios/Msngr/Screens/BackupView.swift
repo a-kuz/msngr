@@ -59,6 +59,11 @@ struct BackupView: View {
     @State private var pendingSize: Int64 = 0
     @State private var lastAt: Date? = BackupStore.lastBackupAt
     @State private var lastSize: Int64 = BackupStore.lastBackupSize
+    @State private var cloudEnabled = BackupStore.cloudEnabled
+    @State private var cloudLastAt: Date? = BackupStore.cloudLastBackupAt
+    /// Whether an Apple ID is signed in and its private database reachable;
+    /// asked once when the screen appears.
+    @State private var cloudAvailable = false
 
     var body: some View {
         List {
@@ -161,8 +166,46 @@ struct BackupView: View {
                     Text("Each backup is exported as a file to save wherever you choose. It runs only when you ask.")
                 }
                 Section {
+                    Toggle(isOn: $cloudEnabled) {
+                        Label("iCloud, on its own", systemImage: "icloud")
+                    }
+                    .disabled(!cloudAvailable || busy)
+                    .accessibilityIdentifier("backup.cloud")
+                    .onChange(of: cloudEnabled) { _, on in
+                        BackupStore.cloudEnabled = on
+                        if on {
+                            Task {
+                                busy = true
+                                defer { busy = false }
+                                if await BackupStore.runCloudBackup() {
+                                    cloudLastAt = BackupStore.cloudLastBackupAt
+                                    lastSize = BackupStore.lastBackupSize
+                                } else {
+                                    error = String(localized: "Could not reach iCloud right now; the next run will try again.")
+                                }
+                                BackupScheduler.schedule()
+                            }
+                        } else {
+                            BackupScheduler.cancel()
+                        }
+                    }
+                    if !cloudAvailable {
+                        Text("iCloud is not available on this device.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("backup.cloudUnavailable")
+                    } else if let cloudLastAt {
+                        LabeledContent("Last iCloud backup", value: cloudLastAt.formatted(date: .abbreviated, time: .shortened))
+                    }
+                } footer: {
+                    Text("Runs once a day while the device charges on a network. Sealed under a key kept in your iCloud Keychain, so a new device signed into the same Apple ID restores it without a code.")
+                }
+                Section {
                     Button("Turn off backup", role: .destructive) {
                         BackupStore.isEnabled = false
+                        BackupStore.cloudEnabled = false
+                        cloudEnabled = false
+                        BackupScheduler.cancel()
                         stage = .off
                     }
                     .accessibilityIdentifier("backup.turnOff")
@@ -176,6 +219,7 @@ struct BackupView: View {
         }
         .navigationTitle("Backup")
         .navigationBarTitleDisplayMode(.inline)
+        .task { cloudAvailable = await CloudBackup.accountAvailable() }
         .fileExporter(isPresented: $showExporter, document: exportDocument,
                      contentType: .data, defaultFilename: defaultFilename) { result in
             switch result {
@@ -245,10 +289,53 @@ enum BackupStore {
     private static let enabledKey = "backup.enabled"
     private static let lastAtKey = "backup.lastAt"
     private static let lastSizeKey = "backup.lastSize"
+    private static let cloudKey = "backup.cloud"
+    private static let cloudLastAtKey = "backup.cloudLastAt"
 
     static var isEnabled: Bool {
         get { AppGroup.defaults.bool(forKey: enabledKey) }
         set { AppGroup.defaults.set(newValue, forKey: enabledKey) }
+    }
+    /// The backup also goes to iCloud on its own, sealed under the key in the
+    /// iCloud Keychain, whenever the device charges on a network.
+    static var cloudEnabled: Bool {
+        get { AppGroup.defaults.bool(forKey: cloudKey) }
+        set { AppGroup.defaults.set(newValue, forKey: cloudKey) }
+    }
+    static var cloudLastBackupAt: Date? {
+        get { (AppGroup.defaults.object(forKey: cloudLastAtKey) as? Double).map(Date.init(timeIntervalSince1970:)) }
+        set { AppGroup.defaults.set(newValue?.timeIntervalSince1970, forKey: cloudLastAtKey) }
+    }
+
+    /// One iCloud backup, from wherever it is asked for — the switch, the
+    /// scheduled task. False when there was nothing to upload or iCloud was not
+    /// reachable; the next run tries again.
+    @MainActor
+    static func runCloudBackup() async -> Bool {
+        let app = AppState.shared
+        guard cloudEnabled, let session = app.session, let store = app.store,
+              let db = app.db, let media = app.media else { return false }
+        guard await CloudBackup.accountAvailable() else { return false }
+        do {
+            let identity = try store.identity()
+            let me = try? await db.read { dbc in try User.fetchOne(dbc, key: session.userId) }
+            let payload = try await AccountBackup.buildPayload(
+                db: db, media: media, userId: session.userId, username: session.username,
+                displayName: (me ?? nil)?.displayName ?? session.username,
+                identityDH: identity.dh.rawRepresentation.base64urlEncodedString(),
+                identitySigning: identity.signing.rawRepresentation.base64urlEncodedString(),
+                palette: ThemeStore.shared.palette.rawValue,
+                showsMessageText: NotificationPreferences.showsMessageText(in: AppGroup.defaults))
+            let key = try CloudBackupKey.ensure(userId: session.userId)
+            let sealed = try BackupSeal.seal(payload, deviceKey: key)
+            let size = try await CloudBackup.upload(sealed, userId: session.userId)
+            cloudLastBackupAt = Date()
+            lastBackupSize = Int64(size)
+            return true
+        } catch {
+            MsngrLog.session.error("cloud backup failed: \(String(describing: error), privacy: .public)")
+            return false
+        }
     }
     static var lastBackupAt: Date? {
         get { (AppGroup.defaults.object(forKey: lastAtKey) as? Double).map(Date.init(timeIntervalSince1970:)) }

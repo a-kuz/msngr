@@ -88,8 +88,47 @@ public enum BackupSeal {
                             salt: Data(salt).base64urlEncodedString())
     }
 
-    /// Opens either version with whatever the person typed: the file itself
-    /// says whether that text is a recovery code or a passphrase.
+    // MARK: - A key nobody types
+
+    /// Bytes of the key an iCloud backup is sealed under: random, made once
+    /// when iCloud backup is turned on, and kept in the iCloud Keychain, so a
+    /// device signed into the same Apple ID opens the backup without asking
+    /// for anything. It goes through HKDF like the recovery code does.
+    public static let deviceKeyBytes = 32
+
+    public static func generateDeviceKey() -> Data {
+        var bytes = [UInt8](repeating: 0, count: deviceKeyBytes)
+        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        precondition(status == errSecSuccess, "SecRandomCopyBytes failed")
+        return Data(bytes)
+    }
+
+    private static func key(deviceKey: Data) throws -> SymmetricKey {
+        guard deviceKey.count == deviceKeyBytes else { throw Failure.badFormat }
+        return HKDF<SHA256>.deriveKey(inputKeyMaterial: SymmetricKey(data: deviceKey),
+                                      info: info, outputByteCount: 32)
+    }
+
+    /// `v: 3`: sealed under a key held in the iCloud Keychain rather than
+    /// anything a person saw or typed.
+    public static func seal<T: Encodable>(_ payload: T, deviceKey: Data) throws -> SealedBackup {
+        let box = try ChaChaPoly.seal(JSONEncoder().encode(payload), using: try key(deviceKey: deviceKey))
+        return SealedBackup(v: 3, ct: box.combined.base64urlEncodedString())
+    }
+
+    public static func open<T: Decodable>(_ sealed: SealedBackup, deviceKey: Data,
+                                          as type: T.Type) throws -> T {
+        guard sealed.v == 3 else { throw Failure.unsupportedVersion }
+        guard let ct = Data(base64urlEncoded: sealed.ct) else { throw Failure.badFormat }
+        guard let box = try? ChaChaPoly.SealedBox(combined: ct),
+              let plain = try? ChaChaPoly.open(box, using: try key(deviceKey: deviceKey))
+        else { throw Failure.decryptionFailed }
+        return try JSONDecoder().decode(T.self, from: plain)
+    }
+
+    /// Opens either typed version with whatever the person typed: the file
+    /// itself says whether that text is a recovery code or a passphrase. A
+    /// `v: 3` backup takes no text and is opened with `open(_:deviceKey:as:)`.
     public static func open<T: Decodable>(_ sealed: SealedBackup, recoveryCode: String,
                                           as type: T.Type) throws -> T {
         let key: SymmetricKey

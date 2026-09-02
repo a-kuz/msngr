@@ -1278,8 +1278,13 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     prekeys, exactly as a linked device does — sessions with every peer start
     over (live run 2026-08-30: messages sent from the restored device were
     decrypted and read by the peer, confirming a clean new session)
-  - 🟡 when it runs: manual only, from Settings → Backup → "Back up now". Not
-    done: running on its own on a charger over Wi-Fi
+  - 🟡 when it runs: by hand from Settings → Backup → "Back up now" as a file,
+    and on its own to iCloud once a day while the device charges on a network
+    (`BackupScheduler`, a BGProcessingTask with external power and network
+    required; `BackupStore.runCloudBackup`). Built and the screen seen live on
+    the simulator, where the switch is off with «iCloud недоступен на этом
+    устройстве» because no Apple ID is signed in; the run itself needs an
+    Apple ID on a simulator or a device
   - ✅ restoring during registration: `RestoreFromBackupView`, a third path off
     the registration screen. A restore that fails partway (bad recovery code,
     a claim the server refuses) leaves the container wiped and the screen on
@@ -1294,10 +1299,17 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     bytes (`BackupSeal.SealedBackup`) don't know or care which transport carries
     them, so a CloudKit private-database uploader can be added later without
     touching `AccountBackup`/`BackupSeal`; nothing about that path is verified yet
-  - ⬜ no password at all, for iCloud only (the owner's ask, 2026-08-30): a
-    random key held in the iCloud Keychain instead of anything typed, so a
-    restore on a signed-in device asks for nothing — lands together with the
-    CloudKit transport, since only the keychain makes it safe
+  - 🟡 no password at all, for iCloud only (the owner's ask, 2026-08-30): a
+    random 32-byte key made once per account and kept in the iCloud Keychain
+    (`CloudBackupKey`, `kSecAttrSynchronizable`), the backup sealed under it as
+    `v: 3` (`BackupSeal.seal(_:deviceKey:)`, BackupSealDeviceKeyTests) and
+    stored as one record with an asset in the account's private CloudKit
+    database (`CloudBackup`, container `iCloud.com.msngr.msngr`); the
+    registration screen offers «Восстановить из iCloud» when an Apple ID is
+    signed in and opens the newest record with the keychain's key, asking for
+    nothing. Built and unit-tested; the round trip through iCloud itself is
+    not watched: no simulator here has an Apple ID, and the container has to
+    exist on the developer portal for the owner's team
   - server: `/api/restore/start` and `/api/restore/:id/claim` add a device to an
     existing account with no other device online to approve it, by having the
     claim sign a server-issued nonce with the account's Ed25519 identity key

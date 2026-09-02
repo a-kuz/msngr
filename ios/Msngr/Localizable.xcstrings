@@ -2211,6 +2211,105 @@
         }
       }
     },
+    "iCloud, on its own" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud, автоматически"
+          }
+        }
+      }
+    },
+    "iCloud is not available on this device." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iCloud недоступен на этом устройстве."
+          }
+        }
+      }
+    },
+    "Last iCloud backup" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Последняя копия в iCloud"
+          }
+        }
+      }
+    },
+    "Runs once a day while the device charges on a network. Sealed under a key kept in your iCloud Keychain, so a new device signed into the same Apple ID restores it without a code." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выполняется раз в день, пока устройство на зарядке и в сети. Запечатана ключом из вашей Связки ключей iCloud, поэтому новое устройство с тем же Apple ID восстановит её без кода."
+          }
+        }
+      }
+    },
+    "Could not reach iCloud right now; the next run will try again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сейчас iCloud недоступен; следующий запуск попробует снова."
+          }
+        }
+      }
+    },
+    "Restore from iCloud" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановить из iCloud"
+          }
+        }
+      }
+    },
+    "No iCloud backup for this Apple ID." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для этого Apple ID нет копии в iCloud."
+          }
+        }
+      }
+    },
+    "The key to this backup has not reached this device's iCloud Keychain yet." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ключ от этой копии ещё не пришёл в Связку ключей iCloud на этом устройстве."
+          }
+        }
+      }
+    },
+    "Could not reach iCloud" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось связаться с iCloud"
+          }
+        }
+      }
+    },
     "Sound: mentions and replies" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -39,6 +39,10 @@ targets:
         com.apple.security.application-groups: [group.com.msngr.msngr]
         # sender avatar and name in the banner (Communication Notifications)
         com.apple.developer.usernotifications.communication: true
+        # the sealed backup in the account's private CloudKit database, its
+        # key in the iCloud Keychain
+        com.apple.developer.icloud-container-identifiers: [iCloud.com.msngr.msngr]
+        com.apple.developer.icloud-services: [CloudKit]
         # the APNs environment of a development build; Xcode swaps it for
         # production when it exports for distribution
         aps-environment: development
@@ -79,7 +83,10 @@ targets:
         NSContactsUsageDescription: "Поиск знакомых, которые уже в Msngr"
         NSFaceIDUsageDescription: "Разблокировка приложения"
         NSSpeechRecognitionUsageDescription: "Транскрипт голосовых сообщений на устройстве"
-        UIBackgroundModes: [remote-notification]
+        UIBackgroundModes: [remote-notification, processing]
+        # the automatic iCloud backup: a processing task the system runs on a
+        # charger with a network (BackupScheduler)
+        BGTaskSchedulerPermittedIdentifiers: [com.msngr.msngr.backup]
         NSUserActivityTypes: [INSendMessageIntent]
         ITSAppUsesNonExemptEncryption: false
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]

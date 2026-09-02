@@ -29,6 +29,8 @@ struct RestoreFromBackupView: View {
     /// The file itself says how it was sealed: v1 asks for the recovery code,
     /// v2 for the password the user picked.
     @State private var sealedWithPassphrase = false
+    /// An Apple ID is signed in: the backup iCloud holds for it can be offered.
+    @State private var cloudAvailable = false
 
     var body: some View {
         VStack(spacing: 24) {
@@ -73,6 +75,32 @@ struct RestoreFromBackupView: View {
             Button("Choose file…") { showImporter = true }
                 .buttonStyle(.primaryAction)
                 .accessibilityIdentifier("restore.pickFile")
+            // the backup iCloud holds for this Apple ID, opened with the key
+            // the iCloud Keychain carried over: nothing to type
+            if cloudAvailable {
+                Button("Restore from iCloud") { Task { await restoreFromCloud() } }
+                    .accessibilityIdentifier("restore.cloud")
+            }
+        }
+        .task { cloudAvailable = await CloudBackup.accountAvailable() }
+    }
+
+    private func restoreFromCloud() async {
+        stage = .restoring
+        do {
+            let backups = try await CloudBackup.fetchAll()
+            guard let newest = backups.first else {
+                stage = .failed(String(localized: "No iCloud backup for this Apple ID."))
+                return
+            }
+            guard newest.sealed.v == 3, let key = try CloudBackupKey.read(userId: newest.userId) else {
+                stage = .failed(String(localized: "The key to this backup has not reached this device's iCloud Keychain yet."))
+                return
+            }
+            let payload = try BackupSeal.open(newest.sealed, deviceKey: key, as: BackupPayload.self)
+            await restore(payload: payload)
+        } catch {
+            stage = .failed(String(localized: "Could not reach iCloud"))
         }
     }
 
@@ -130,10 +158,21 @@ struct RestoreFromBackupView: View {
     private func restore() async {
         guard let pickedData else { return }
         stage = .restoring
+        let payload: BackupPayload
         do {
             let sealed = try JSONDecoder().decode(BackupSeal.SealedBackup.self, from: pickedData)
-            let payload = try BackupSeal.open(sealed, recoveryCode: recoveryCode, as: BackupPayload.self)
+            payload = try BackupSeal.open(sealed, recoveryCode: recoveryCode, as: BackupPayload.self)
+        } catch {
+            stage = .failed(String(localized: "That recovery code does not open this backup."))
+            return
+        }
+        await restore(payload: payload)
+    }
 
+    /// The account out of an opened payload, whichever way it was opened: the
+    /// claim first, the rows after it.
+    private func restore(payload: BackupPayload) async {
+        do {
             // an incoming account replaces whatever this container held
             let storage = AppState.storage
             let db = try StorageOwnership.openOwned(at: storage, expectedUserId: nil,
