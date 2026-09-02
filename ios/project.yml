@@ -61,6 +61,8 @@ targets:
       properties:
         CFBundleDisplayName: Msngr
         UILaunchScreen: {}
+        # a ProMotion screen holds UIKit at 60 Hz until the app asks for the full rate
+        CADisableMinimumFrameDurationOnPhone: true
         NSMicrophoneUsageDescription: "Запись голосовых сообщений"
         NSCameraUsageDescription: "Фото и видео для отправки в чаты"
         # a shader that reads iLocation asks for this the first time it runs

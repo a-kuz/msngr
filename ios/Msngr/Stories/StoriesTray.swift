@@ -87,6 +87,8 @@ struct StoriesTray: View {
                     .frame(width: plus, height: plus)
                     .background(Theme.accent, in: Circle())
                     .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 1.5 + 0.5 * p))
+                    // the badge is small to look at and a finger's width to touch
+                    .contentShape(Circle().inset(by: -14 + 4 * p))
             }
             // the plus hangs off the picture's lower right, just past its edge
             .offset(x: 3 - p, y: side - plus + 4)

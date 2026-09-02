@@ -6,9 +6,11 @@ import MsngrCore
 
 /// Composing a story the way every story editor works: the screen opens on the
 /// front camera with a shutter and the library a tap away; the shot or picked
-/// frame then fills the screen, the tools lie over it, the text is typed and
-/// dragged straight onto the picture, and the frames the story is made of run
-/// as a filmstrip along the bottom. Every step is one undo away.
+/// frame then fills the screen and the tools lie over it. Text and emoji are
+/// laid on as layers that move, pinch and turn under the fingers, strokes go
+/// straight onto the picture or the clip, and every step is one undo away.
+/// What leaves is the canvas as it stands, baked into the picture or burnt into
+/// the clip, so the viewer and the public page show exactly what was composed.
 ///
 /// The screen says plainly what a story costs before it goes out: a story is
 /// not encrypted, and who may see it is an access rule the server keeps rather
@@ -19,7 +21,7 @@ struct StoryComposerView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var picked: [PhotosPickerItem] = []
-    @State private var frames: [Frame] = []
+    @State private var frames: [StoryFrame] = []
     @State private var current = 0
     @State private var importing = 0
     @State private var audience = "contacts"
@@ -30,62 +32,50 @@ struct StoryComposerView: View {
     @State private var showPicker = false
     /// The camera is up over a story that already has frames: another take.
     @State private var capturing = false
-    @State private var markup = false
+    @State private var tool: Tool = .arrange
+    @State private var showStickers = false
     /// The story as it stood before each step, newest last; undo pops one.
     @State private var history: [Snapshot] = []
-    /// The text tool is open: the keyboard is up and the words go onto the frame.
-    @State private var typing = false
+    @State private var canvasSize: CGSize = .zero
+    /// A layer is being dragged, and whether it hangs over the bin.
+    @State private var dragging = false
+    @State private var overBin = false
+    @State private var brush: StoryStroke.Brush = .pen
+    @State private var brushColor = "#ffffff"
+    /// As a fraction of the canvas width, the unit strokes are kept in.
+    @State private var brushWidth: CGFloat = 0.012
     @FocusState private var textFocused: Bool
-    /// Where the text was before the finger moved it, so the drag adds to it.
-    @State private var dragStart: CGPoint?
+    /// The text tool has finished coming up: the field grows into place.
+    @State private var editorShown = false
+
+    enum Tool: Equatable {
+        case arrange
+        /// The text tool is open on this layer: the keyboard is up.
+        case text(UUID)
+        case draw
+    }
 
     struct Snapshot: Equatable {
-        var frames: [Frame]
+        var frames: [StoryFrame]
         var current: Int
     }
 
-    struct Frame: Identifiable, Equatable {
-        let id = UUID()
-        var image: UIImage
-        var data: Data
-        var isVideo: Bool
-        var duration: Double?
-        var text: String = ""
-        var textColor: String = "#ffffff"
-        var plate: Plate = .dark
-        /// The text's centre, as a fraction of the frame's width and height.
-        var tx: Double = 0.5
-        var ty: Double = 0.5
-    }
-
-    /// The plate behind the text, in the units the public page draws it in.
-    enum Plate: String, CaseIterable {
-        case dark = "rgba(0,0,0,.35)"
-        case light = "rgba(255,255,255,.35)"
-        case none = "rgba(0,0,0,0)"
-
-        var next: Plate {
-            switch self {
-            case .dark: return .light
-            case .light: return .none
-            case .none: return .dark
-            }
-        }
-        var color: Color {
-            switch self {
-            case .dark: return .black.opacity(0.35)
-            case .light: return .white.opacity(0.35)
-            case .none: return .clear
-            }
-        }
-    }
-
-    private static let textColors = ["#ffffff", "#000000", "#ffd60a", "#ff453a", "#30d158", "#0a84ff", "#bf5af2"]
-    /// The simulator has no camera: the take tool is not drawn there.
+    static let colors = ["#ffffff", "#000000", "#ff3b30", "#ff9500", "#ffcc00", "#34c759",
+                         "#00c7be", "#30b0ff", "#5856d6", "#af52de", "#ff2d55", "#a2845e",
+                         "#8e8e93", "#ffd1dc", "#c7f9cc", "#b4e1ff"]
     private static let cameraAvailable = AVCaptureDevice.default(for: .video) != nil
-    private var showingCamera: Bool { frames.isEmpty || capturing }
 
-    private var frame: Frame? { current < frames.count ? frames[current] : nil }
+    private var showingCamera: Bool { frames.isEmpty || capturing }
+    private var frame: StoryFrame? { current < frames.count ? frames[current] : nil }
+    private var editingLayer: UUID? {
+        if case .text(let id) = tool { return id }
+        return nil
+    }
+    private var editing: StoryLayer? {
+        guard let id = editingLayer else { return nil }
+        return frame?.layers.first { $0.id == id }
+    }
+    private var chromeHidden: Bool { editingLayer != nil || dragging }
 
     var body: some View {
         ZStack {
@@ -101,11 +91,22 @@ struct StoryComposerView: View {
             } else {
                 canvas
             }
+            if let editing {
+                textEditor(editing)
+                    .transition(.opacity)
+                    .onAppear { withAnimation(.spring(duration: 0.35)) { editorShown = true } }
+                    .onDisappear { editorShown = false }
+            }
             VStack(spacing: 0) {
                 topBar
                 Spacer()
-                if !showingCamera && !typing { bottomBar }
+                if tool == .draw {
+                    drawBar
+                } else if !showingCamera && !chromeHidden {
+                    bottomBar
+                }
             }
+            if dragging { bin }
         }
         .statusBarHidden()
         .photosPicker(isPresented: $showPicker, selection: $picked, maxSelectionCount: 10,
@@ -114,179 +115,247 @@ struct StoryComposerView: View {
             guard !items.isEmpty else { return }
             Task { await load(items) }
         }
-        .fullScreenCover(isPresented: $markup) {
-            if let frame {
-                MarkupEditorScreen(image: frame.image) { edited in
-                    if let jpeg = edited.jpegData(compressionQuality: 0.85) {
-                        remember()
-                        frames[current].image = edited
-                        frames[current].data = jpeg
-                    }
-                    markup = false
-                } onCancel: {
-                    markup = false
-                }
-                .ignoresSafeArea()
+        .sheet(isPresented: $showStickers) {
+            StoryStickerSheet { emoji in
+                showStickers = false
+                addSticker(emoji)
             }
+            .presentationDetents([.medium, .large])
+            .presentationBackground(.thinMaterial)
         }
     }
 
-    // MARK: - The frame
+    // MARK: - The canvas
 
     private var canvas: some View {
         GeometryReader { geo in
-            ZStack {
-                if let frame {
-                    // a frame that does not fill the screen stands over its
-                    // own blurred copy rather than over black bars
-                    Image(uiImage: frame.image)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .clipped()
-                        .blur(radius: 40)
-                        .opacity(0.7)
-                        .accessibilityHidden(true)
-                    Image(uiImage: frame.image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .accessibilityIdentifier("story.canvas")
-                    if frame.isVideo {
-                        Image(systemName: "play.fill")
-                            .font(.system(size: 44))
-                            .foregroundStyle(.white.opacity(0.8))
-                            .shadow(radius: 8)
-                            .accessibilityHidden(true)
-                    }
-                    if typing {
-                        Color.black.opacity(0.4)
-                            .onTapGesture { finishTyping() }
-                        typingField(in: geo.size)
-                    } else if !frame.text.isEmpty {
-                        textLabel(frame)
-                            .position(x: frame.tx * geo.size.width, y: frame.ty * geo.size.height)
-                            .gesture(dragText(in: geo.size))
-                            .onTapGesture { startTyping() }
-                    }
-                }
+            if let frame {
+                StoryCanvasView(
+                    frame: frame,
+                    mode: tool == .draw ? .draw(brush: brush, color: brushColor, width: brushWidth) : .arrange,
+                    hiddenLayer: editingLayer,
+                    paused: showStickers || posting,
+                    onBegin: { remember() },
+                    onCommit: { updated in
+                        if current < frames.count { frames[current] = updated }
+                    },
+                    onTapLayer: { id in
+                        guard tool == .arrange, let layer = frame.layers.first(where: { $0.id == id }) else { return }
+                        if !layer.isEmoji { startTyping(id) }
+                    },
+                    onTapEmpty: { point in
+                        guard tool == .arrange else { return }
+                        addText(at: point)
+                    },
+                    onDragging: { active, near in
+                        dragging = active
+                        overBin = near
+                    })
+                .onAppear { canvasSize = geo.size }
+                .onChange(of: geo.size) { _, size in canvasSize = size }
+                .accessibilityIdentifier("story.canvas")
+                // a swipe over the frame walks the filmstrip, the way it does in a viewer
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 60)
+                        .onEnded { value in
+                            guard tool == .arrange, !dragging,
+                                  abs(value.translation.width) > abs(value.translation.height) * 2 else { return }
+                            let next = current + (value.translation.width < 0 ? 1 : -1)
+                            if frames.indices.contains(next) { withAnimation { current = next } }
+                        }
+                )
             }
-            // a swipe over the frame walks the filmstrip, the way it does in a viewer
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 40)
-                    .onEnded { value in
-                        guard !typing, abs(value.translation.width) > abs(value.translation.height) else { return }
-                        let next = current + (value.translation.width < 0 ? 1 : -1)
-                        if frames.indices.contains(next) { withAnimation { current = next } }
-                    }
-            )
         }
         .ignoresSafeArea()
     }
 
-    private func textLabel(_ frame: Frame) -> some View {
-        Text(frame.text)
-            .font(.title2.weight(.semibold))
-            .multilineTextAlignment(.center)
-            .foregroundStyle(Color(hex: frame.textColor))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(frame.plate.color, in: RoundedRectangle(cornerRadius: 12))
-            .frame(maxWidth: 320)
-            .accessibilityIdentifier("story.text")
-    }
-
-    private func dragText(in size: CGSize) -> some Gesture {
-        DragGesture(minimumDistance: 2)
-            .onChanged { value in
-                guard frame != nil else { return }
-                if dragStart == nil {
-                    remember()
-                    dragStart = CGPoint(x: frames[current].tx, y: frames[current].ty)
-                }
-                let start = dragStart ?? CGPoint(x: 0.5, y: 0.5)
-                frames[current].tx = min(max(start.x + value.translation.width / size.width, 0.08), 0.92)
-                frames[current].ty = min(max(start.y + value.translation.height / size.height, 0.08), 0.92)
-            }
-            .onEnded { _ in dragStart = nil }
-    }
-
-    /// The text tool: the words are typed straight onto the frame, with the
-    /// colour and the plate one tap away above the keyboard.
-    private func typingField(in size: CGSize) -> some View {
+    /// Where a dragged layer is let go to be thrown away.
+    private var bin: some View {
         VStack {
             Spacer()
-            TextField("", text: Binding(
-                get: { frame?.text ?? "" },
-                set: { if frame != nil { frames[current].text = $0 } }
-            ), prompt: Text("Type something…").foregroundStyle(.white.opacity(0.5)),
-               axis: .vertical)
+            Image(systemName: "trash")
                 .font(.title2.weight(.semibold))
-                .multilineTextAlignment(.center)
-                .foregroundStyle(Color(hex: frame?.textColor ?? "#ffffff"))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background((frame?.plate ?? .dark).color, in: RoundedRectangle(cornerRadius: 12))
-                .frame(maxWidth: 320)
-                .focused($textFocused)
-                .submitLabel(.done)
-                .onSubmit { finishTyping() }
-                .accessibilityIdentifier("story.textField")
-            Spacer()
-            HStack(spacing: 12) {
+                .foregroundStyle(.white)
+                .frame(width: StoryCanvas.binRadius * 2, height: StoryCanvas.binRadius * 2)
+                .background(overBin ? Color.red : Color.black.opacity(0.45), in: Circle())
+                .scaleEffect(overBin ? 1.15 : 1)
+                .animation(.spring(duration: 0.2), value: overBin)
+                .padding(.bottom, StoryCanvas.binBottomInset - StoryCanvas.binRadius)
+        }
+        .ignoresSafeArea()
+        .transition(.scale.combined(with: .opacity))
+        .accessibilityIdentifier("story.bin")
+    }
+
+    // MARK: - The text tool
+
+    /// The words are typed straight onto the frame in the style they will
+    /// keep, with the fonts, the alignment, the plate and the colours one tap
+    /// away above the keyboard.
+    private func textEditor(_ layer: StoryLayer) -> some View {
+        let font = layer.font.uiFont(size: StoryRenderer.textBase * max(canvasSize.width, 1) * layer.scale)
+        return ZStack {
+            Color.black.opacity(0.45)
+                .ignoresSafeArea()
+                .onTapGesture { finishTyping() }
+            let alignment: TextAlignment = layer.alignment == .left ? .leading
+                : layer.alignment == .right ? .trailing : .center
+            VStack(spacing: 0) {
+                Spacer()
+                // the plate hugs the words: an unseen copy of the text sets the
+                // width, and the field fills it
+                ZStack {
+                    Text(layer.text.isEmpty ? String(localized: "Type something…") : layer.text)
+                        .font(Font(font as CTFont))
+                        .multilineTextAlignment(alignment)
+                        .foregroundStyle(.white.opacity(layer.text.isEmpty ? 0.5 : 0))
+                        .accessibilityHidden(true)
+                    TextField("", text: Binding(
+                        get: { editing?.text ?? "" },
+                        set: { value in
+                            // the keyboard's Done key lands as a newline in a
+                            // growing field: it closes the tool instead
+                            if value.hasSuffix("\n") {
+                                editLayer { $0.kind = .text(String(value.dropLast())) }
+                                finishTyping()
+                            } else {
+                                editLayer { $0.kind = .text(value) }
+                            }
+                        }
+                    ), axis: .vertical)
+                        .font(Font(font as CTFont))
+                        .multilineTextAlignment(alignment)
+                        .foregroundStyle(Color(hex: layer.color))
+                        .focused($textFocused)
+                        .submitLabel(.done)
+                        .onSubmit { finishTyping() }
+                        // the field is not in the hierarchy on the tick the tool
+                        // opens, so it takes the focus when it arrives
+                        .onAppear { textFocused = true }
+                        .accessibilityIdentifier("story.textField")
+                }
+                .padding(.horizontal, font.pointSize * 0.42)
+                .padding(.vertical, font.pointSize * 0.22)
+                .background(layer.plate.uiColor.map { Color(uiColor: $0) } ?? .clear,
+                            in: RoundedRectangle(cornerRadius: font.pointSize * 0.3, style: .continuous))
+                .frame(maxWidth: canvasSize.width * 0.86 * layer.scale)
+                .scaleEffect(editorShown ? 1 : 0.7)
+                .opacity(editorShown ? 1 : 0)
+                Spacer()
+                textTools(layer)
+                    .offset(y: editorShown ? 0 : 40)
+                    .opacity(editorShown ? 1 : 0)
+            }
+        }
+    }
+
+    private func textTools(_ layer: StoryLayer) -> some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Button {
-                    guard frame != nil else { return }
-                    remember()
-                    frames[current].plate = frames[current].plate.next
+                    editLayer { $0.alignment = $0.alignment == .center ? .left : $0.alignment == .left ? .right : .center }
                 } label: {
-                    Image(systemName: "character.textbox")
+                    Image(systemName: layer.alignment == .left ? "text.alignleft"
+                          : layer.alignment == .right ? "text.alignright" : "text.aligncenter")
                         .font(.title3)
                         .foregroundStyle(.white)
                         .frame(width: 36, height: 36)
-                        .background((frame?.plate ?? .dark).color, in: RoundedRectangle(cornerRadius: 8))
+                        .background(.white.opacity(0.18), in: RoundedRectangle(cornerRadius: 8))
+                }
+                .accessibilityIdentifier("story.align")
+                Button {
+                    editLayer { $0.plate = $0.plate.next }
+                } label: {
+                    Image(systemName: "character.textbox")
+                        .font(.title3)
+                        .foregroundStyle(layer.plate == .light ? .black : .white)
+                        .frame(width: 36, height: 36)
+                        .background(layer.plate.uiColor.map { Color(uiColor: $0) } ?? .white.opacity(0.18),
+                                    in: RoundedRectangle(cornerRadius: 8))
                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.6), lineWidth: 1))
                 }
                 .accessibilityIdentifier("story.plate")
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        ForEach(Self.textColors, id: \.self) { hex in
-                            Circle()
-                                .fill(Color(hex: hex))
-                                .frame(width: 28, height: 28)
-                                .overlay {
-                                    Circle().stroke(.white, lineWidth: frame?.textColor == hex ? 3 : 1)
-                                }
-                                .onTapGesture {
-                                    guard frame != nil, frames[current].textColor != hex else { return }
-                                    remember()
-                                    frames[current].textColor = hex
-                                }
-                                .accessibilityIdentifier("story.color.\(hex.dropFirst())")
+                    HStack(spacing: 8) {
+                        ForEach(StoryFont.allCases, id: \.self) { font in
+                            Button {
+                                editLayer { $0.font = font }
+                            } label: {
+                                Text(String(localized: String.LocalizationValue(font.name)))
+                                    .font(Font(font.uiFont(size: 15) as CTFont))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 7)
+                                    .background(.white.opacity(layer.font == font ? 0.35 : 0.15), in: Capsule())
+                            }
+                            .accessibilityIdentifier("story.font.\(font.name)")
                         }
                     }
-                    .padding(.horizontal, 4)
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 10)
+            palette(selected: layer.color) { hex in editLayer { $0.color = hex } }
         }
-        .padding(.top, 60)
+        .padding(.horizontal, 14)
+        .padding(.bottom, 10)
     }
 
-    /// The words as they stood when the tool opened, so the whole typing lands
-    /// as one step.
-    private func startTyping() {
+    private func palette(selected: String, pick: @escaping (String) -> Void) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(Self.colors, id: \.self) { hex in
+                    Button { pick(hex) } label: {
+                        Circle()
+                            .fill(Color(hex: hex))
+                            .frame(width: 30, height: 30)
+                            .overlay {
+                                Circle().stroke(.white, lineWidth: selected == hex ? 3 : 1)
+                            }
+                            .scaleEffect(selected == hex ? 1.15 : 1)
+                            .animation(.spring(duration: 0.2), value: selected == hex)
+                    }
+                    .accessibilityIdentifier("story.color.\(hex.dropFirst())")
+                }
+            }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 4)
+        }
+    }
+
+    /// Rewrites the layer under the text tool; the snapshot taken when the tool
+    /// opened is what the undo step holds.
+    private func editLayer(_ change: (inout StoryLayer) -> Void) {
+        guard let id = editingLayer, current < frames.count,
+              let i = frames[current].layers.firstIndex(where: { $0.id == id }) else { return }
+        change(&frames[current].layers[i])
+    }
+
+    private func addText(at point: CGPoint) {
+        guard current < frames.count else { return }
         remember()
-        typing = true
+        var layer = StoryLayer(kind: .text(""))
+        layer.center = CGPoint(x: min(max(point.x, 0.15), 0.85), y: min(max(point.y, 0.15), 0.85))
+        frames[current].layers.append(layer)
+        withAnimation(.easeOut(duration: 0.2)) { tool = .text(layer.id) }
+        textFocused = true
+    }
+
+    private func startTyping(_ id: UUID) {
+        remember()
+        withAnimation(.easeOut(duration: 0.2)) { tool = .text(id) }
         textFocused = true
     }
 
     private func finishTyping() {
+        guard let id = editingLayer else { return }
         textFocused = false
-        typing = false
-        if frame != nil {
-            frames[current].text = frames[current].text.trimmingCharacters(in: .whitespacesAndNewlines)
+        withAnimation(.easeOut(duration: 0.2)) { tool = .arrange }
+        if current < frames.count, let i = frames[current].layers.firstIndex(where: { $0.id == id }) {
+            let trimmed = frames[current].layers[i].text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                frames[current].layers.remove(at: i)
+            } else {
+                frames[current].layers[i].kind = .text(trimmed)
+            }
         }
         // a tool opened and closed with nothing changed is not a step
         if let last = history.last, last == Snapshot(frames: frames, current: current) {
@@ -294,20 +363,53 @@ struct StoryComposerView: View {
         }
     }
 
-    // MARK: - Undo
-
-    /// Keeps the story as it stands, to be brought back by the undo button.
-    private func remember() {
-        let now = Snapshot(frames: frames, current: current)
-        if history.last != now { history.append(now) }
+    private func addSticker(_ emoji: String) {
+        guard current < frames.count else { return }
+        remember()
+        var layer = StoryLayer(kind: .emoji(emoji))
+        // each new sticker lands a little off the last, so a run of them does
+        // not stack into one
+        let n = Double(frames[current].layers.filter(\.isEmoji).count)
+        layer.center = CGPoint(x: 0.5 + (n.truncatingRemainder(dividingBy: 3) - 1) * 0.08,
+                               y: 0.45 + (n / 3).rounded(.down).truncatingRemainder(dividingBy: 3) * 0.08)
+        frames[current].layers.append(layer)
     }
 
-    private func undo() {
-        guard let previous = history.popLast() else { return }
-        if typing { textFocused = false; typing = false }
-        frames = previous.frames
-        current = min(previous.current, max(frames.count - 1, 0))
-        capturing = false
+    // MARK: - The drawing tool
+
+    private var drawBar: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                ForEach(StoryStroke.Brush.allCases, id: \.self) { b in
+                    Button { brush = b } label: {
+                        Image(systemName: b == .pen ? "pencil.tip" : b == .marker ? "highlighter" : "sparkles")
+                            .font(.title3)
+                            .foregroundStyle(.white)
+                            .frame(width: 40, height: 36)
+                            .background(.white.opacity(brush == b ? 0.35 : 0.15), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    .accessibilityIdentifier("story.brush.\(b)")
+                }
+                Slider(value: Binding(get: { Double(brushWidth) }, set: { brushWidth = CGFloat($0) }),
+                       in: 0.004...0.04)
+                    .tint(.white)
+                    .accessibilityIdentifier("story.brushWidth")
+                Circle()
+                    .fill(Color(hex: brushColor))
+                    .frame(width: max(6, brushWidth * canvasSize.width * 1.5),
+                           height: max(6, brushWidth * canvasSize.width * 1.5))
+                    .frame(width: 44, height: 44)
+                    .background(.white.opacity(0.15), in: Circle())
+            }
+            palette(selected: brushColor) { brushColor = $0 }
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 12)
+        .background(
+            LinearGradient(colors: [.clear, .black.opacity(0.6)], startPoint: .top, endPoint: .bottom)
+                .padding(.top, -40)
+                .ignoresSafeArea()
+        )
     }
 
     // MARK: - Chrome
@@ -315,33 +417,38 @@ struct StoryComposerView: View {
     private var topBar: some View {
         HStack(alignment: .top) {
             Button {
-                if typing {
+                if editingLayer != nil {
                     finishTyping()
+                } else if tool == .draw {
+                    tool = .arrange
                 } else if capturing && !frames.isEmpty {
                     capturing = false
                 } else {
                     dismiss()
                 }
             } label: {
-                Image(systemName: typing ? "checkmark" : "xmark")
+                Image(systemName: editingLayer != nil || tool == .draw ? "checkmark" : "xmark")
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(.white)
                     .frame(width: 40, height: 40)
                     .background(.black.opacity(0.35), in: Circle())
             }
-            .accessibilityIdentifier(typing ? "story.textDone" : "story.close")
+            .accessibilityIdentifier(editingLayer != nil ? "story.textDone" : tool == .draw ? "story.drawDone" : "story.close")
             Spacer()
-            if !history.isEmpty && !showingCamera {
+            if !history.isEmpty && !showingCamera && !dragging {
                 tool("arrow.uturn.backward", id: "story.undo") { undo() }
                     .padding(.trailing, 14)
             }
-            if !showingCamera && !typing {
+            if !showingCamera && !chromeHidden && tool != .draw {
                 VStack(spacing: 14) {
-                    tool("textformat", id: "story.addText") { startTyping() }
-                    if frame?.isVideo == false {
-                        // the same tools a picture gets before it is sent, so
-                        // there is one set and not two
-                        tool("pencil.tip.crop.circle", id: "story.edit") { markup = true }
+                    tool("textformat", id: "story.addText") { addText(at: CGPoint(x: 0.5, y: 0.45)) }
+                    tool("scribble.variable", id: "story.draw") { tool = .draw }
+                    tool("face.smiling", id: "story.stickers") { showStickers = true }
+                    if frame?.isVideo == true {
+                        tool(frame?.muted == true ? "speaker.slash.fill" : "speaker.wave.2.fill", id: "story.mute") {
+                            remember()
+                            frames[current].muted.toggle()
+                        }
                     }
                     if Self.cameraAvailable {
                         tool("camera", id: "story.camera") { capturing = true }
@@ -484,6 +591,23 @@ struct StoryComposerView: View {
         }
     }
 
+    // MARK: - Undo
+
+    /// Keeps the story as it stands, to be brought back by the undo button.
+    private func remember() {
+        let now = Snapshot(frames: frames, current: current)
+        if history.last != now { history.append(now) }
+    }
+
+    private func undo() {
+        guard let previous = history.popLast() else { return }
+        if editingLayer != nil { textFocused = false }
+        tool = .arrange
+        frames = previous.frames
+        current = min(previous.current, max(frames.count - 1, 0))
+        capturing = false
+    }
+
     // MARK: - Frames in and out
 
     private func removeCurrent() {
@@ -504,30 +628,34 @@ struct StoryComposerView: View {
                     await addVideo(at: movie.url)
                 }
             } else if let data = try? await item.loadTransferable(type: Data.self),
-                      let prepared = ImageProcessor.prepareForSending(data, maxDimension: 1280),
+                      let prepared = ImageProcessor.prepareForSending(data, maxDimension: 1600),
                       let image = UIImage(data: prepared.data) {
-                append(Frame(image: image, data: prepared.data, isVideo: false))
+                append(StoryFrame(image: image, isVideo: false))
             }
         }
     }
 
-    /// A video goes out as a progressive mp4 with a poster taken from its first
-    /// moment; the poster is what the composer and the filmstrip show.
-    private func addVideo(at url: URL) async {
-        defer { try? FileManager.default.removeItem(at: url) }
-        guard let ready = await StoryVideo.prepare(url) else { return }
-        append(Frame(image: ready.poster, data: ready.data, isVideo: true, duration: ready.duration))
-    }
-
     /// A picture from the camera, cut down the way a picked one is.
     private func addPhoto(_ image: UIImage) {
-        guard let jpeg = image.jpegData(compressionQuality: 0.9),
-              let prepared = ImageProcessor.prepareForSending(jpeg, maxDimension: 1280),
+        guard let jpeg = image.jpegData(compressionQuality: 0.92),
+              let prepared = ImageProcessor.prepareForSending(jpeg, maxDimension: 1600),
               let ready = UIImage(data: prepared.data) else { return }
-        append(Frame(image: ready, data: prepared.data, isVideo: false))
+        append(StoryFrame(image: ready, isVideo: false))
     }
 
-    private func append(_ frame: Frame) {
+    /// A clip stays on disk as it came until the story goes out: the overlay
+    /// is burnt in once, at publish, over the whole of what was drawn.
+    private func addVideo(at url: URL) async {
+        let asset = AVURLAsset(url: url)
+        let gen = AVAssetImageGenerator(asset: asset)
+        gen.appliesPreferredTrackTransform = true
+        gen.maximumSize = CGSize(width: 1280, height: 1280)
+        guard let cg = try? await gen.image(at: CMTime(seconds: 0.1, preferredTimescale: 600)).image else { return }
+        let duration = (try? await asset.load(.duration))?.seconds ?? 0
+        append(StoryFrame(image: UIImage(cgImage: cg), isVideo: true, videoURL: url, duration: min(duration, 60)))
+    }
+
+    private func append(_ frame: StoryFrame) {
         remember()
         frames.append(frame)
         current = frames.count - 1
@@ -535,25 +663,39 @@ struct StoryComposerView: View {
     }
 
     private func publish() async {
-        guard !frames.isEmpty else { return }
+        guard !frames.isEmpty, canvasSize.width > 0 else { return }
         posting = true
         failed = false
         defer { posting = false }
         var built: [APIClient.StoryFrame] = []
         for frame in frames {
-            guard let uploaded = try? await app.api.uploadMedia(frame.data) else {
+            let data: Data
+            let size: CGSize
+            var duration: Double?
+            if frame.isVideo {
+                guard let exported = await StoryRenderer.renderVideo(frame, canvas: canvasSize) else {
+                    failed = true
+                    return
+                }
+                data = exported.data
+                size = exported.size
+                duration = exported.duration
+            } else {
+                let rendered = StoryRenderer.renderPhoto(frame, canvas: canvasSize)
+                guard let jpeg = rendered.jpegData(compressionQuality: 0.88) else {
+                    failed = true
+                    return
+                }
+                data = jpeg
+                size = rendered.size
+            }
+            guard let uploaded = try? await app.api.uploadMedia(data) else {
                 failed = true
                 return
             }
-            let hasText = !frame.text.isEmpty
             built.append(APIClient.StoryFrame(
                 mediaId: uploaded.mediaId, type: frame.isVideo ? "video" : "photo",
-                w: Int(frame.image.size.width), h: Int(frame.image.size.height),
-                dur: frame.duration,
-                text: hasText ? frame.text : nil,
-                textColor: hasText ? frame.textColor : nil,
-                plateColor: hasText ? frame.plate.rawValue : nil,
-                tx: hasText ? frame.tx : nil, ty: hasText ? frame.ty : nil))
+                w: Int(size.width), h: Int(size.height), dur: duration))
         }
         guard let posted = try? await app.api.postStory(frames: built, audience: audience,
                                                         hours: hours, link: wantsLink) else {
@@ -561,52 +703,55 @@ struct StoryComposerView: View {
             return
         }
         Haptics.success()
+        for frame in frames { if let url = frame.videoURL { try? FileManager.default.removeItem(at: url) } }
         await StoriesModel.shared.load()
         onPosted(posted.link)
         dismiss()
     }
 }
 
-/// A picked or shot video made ready for a story: compressed the way a chat
-/// video is, with a poster frame and its length.
-enum StoryVideo {
-    struct Ready {
-        let data: Data
-        let poster: UIImage
-        let duration: Double
-    }
+/// Emoji to lay on a frame as stickers, the common ones in a grid and the
+/// keyboard's own set a search away.
+struct StoryStickerSheet: View {
+    let onPick: (String) -> Void
+    @State private var typed = ""
 
-    static func prepare(_ url: URL) async -> Ready? {
-        let asset = AVURLAsset(url: url)
-        let gen = AVAssetImageGenerator(asset: asset)
-        gen.appliesPreferredTrackTransform = true
-        gen.maximumSize = CGSize(width: 1280, height: 1280)
-        guard let cg = try? gen.copyCGImage(at: .init(seconds: 0.1, preferredTimescale: 600), actualTime: nil)
-        else { return nil }
-        let poster = UIImage(cgImage: cg)
-        let duration = (try? await asset.load(.duration))?.seconds ?? 0
-        guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset1280x720) else {
-            return nil
+    private static let emoji: [String] = Array(
+        "😀😂🥹😍🥰😎🤩😘😜🤪🥳😇🙃😏😢😭😱🤯🥶🔥✨💫⭐️🌈☀️🌙⚡️❄️🎉🎈🎁🎂🍕🍔🍟🌮🍩🍦🍓🍒🍉🥑☕️🍺🥂❤️🧡💛💚💙💜🖤🤍💔💯👍👎👏🙌🤝🙏💪👀👋🤙✌️🤞🐶🐱🐭🐹🐰🦊🐻🐼🐨🐯🦁🐸🐵🦄🐙🦋🌸🌻🌹🌵🌴🍀🏀⚽️🎾🎮🎧🎸🎤📸💻📱✈️🚗🏠🌍🕶️👑💎💰🔑🔔💤💬"
+    ).map(String.init)
+
+    var body: some View {
+        VStack(spacing: 12) {
+            TextField("Search emoji", text: $typed)
+                .textFieldStyle(.roundedBorder)
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
+                .onChange(of: typed) { _, value in
+                    // whatever emoji the keyboard produced is the sticker
+                    guard value.unicodeScalars.contains(where: { $0.properties.isEmojiPresentation }) else { return }
+                    onPick(value)
+                    typed = ""
+                }
+                .accessibilityIdentifier("story.stickerSearch")
+            ScrollView {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 14) {
+                    ForEach(Self.emoji, id: \.self) { e in
+                        Button { onPick(e) } label: {
+                            Text(e).font(.system(size: 38))
+                        }
+                        .accessibilityIdentifier("story.sticker.\(e)")
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 20)
+            }
         }
-        let out = FileManager.default.temporaryDirectory.appendingPathComponent("story-\(UUID().uuidString).mp4")
-        export.outputURL = out
-        export.outputFileType = .mp4
-        export.shouldOptimizeForNetworkUse = true
-        await export.export()
-        defer { try? FileManager.default.removeItem(at: out) }
-        guard export.status == .completed, let data = try? Data(contentsOf: out) else { return nil }
-        return Ready(data: data, poster: poster, duration: duration)
     }
 }
 
 extension Color {
-    /// "#rrggbb", the way a story frame carries its colour.
+    /// "#rrggbb", the way a story layer carries its colour.
     init(hex: String) {
-        let cleaned = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
-        let value = UInt32(cleaned, radix: 16) ?? 0xffffff
-        self.init(.sRGB,
-                  red: Double((value >> 16) & 0xff) / 255,
-                  green: Double((value >> 8) & 0xff) / 255,
-                  blue: Double(value & 0xff) / 255)
+        self.init(UIColor(hex: hex))
     }
 }
