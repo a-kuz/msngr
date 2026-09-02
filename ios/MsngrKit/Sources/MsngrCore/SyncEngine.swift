@@ -1164,6 +1164,25 @@ public actor SyncEngine {
         }) ?? []
     }
 
+    /// The deferred envelope standing at each chat's newest seq: one row per
+    /// chat at most, whatever the size of the pile.
+    private func newestPendingEnvelopes() async -> [PendingEnvelope] {
+        (try? await db.read { dbc in
+            try Row.fetchAll(dbc, sql: """
+                SELECT p.* FROM pendingDecrypt p
+                JOIN chat c ON c.id = p.chatId AND c.lastSeq = p.seq
+                ORDER BY p.chatId
+                """).map {
+                PendingEnvelope(chatId: $0["chatId"], seq: $0["seq"],
+                                from: $0["fromUserId"], fromDevice: $0["fromDevice"],
+                                sentAt: $0["sentAt"], ts: $0["ts"], body: $0["body"],
+                                reason: $0["reason"], attempts: $0["attempts"],
+                                firstSeenAt: $0["firstSeenAt"], lastTriedAt: $0["lastTriedAt"],
+                                repairAttempts: $0["repairAttempts"], repairAskedAt: $0["repairAskedAt"])
+            }
+        }) ?? []
+    }
+
     /// Envelopes one arriving key replays on the spot. This runs inside the
     /// drain of incoming frames and under the crypto gate, and a replay that
     /// fails walks the ratchet forward key by key before it says so — with
@@ -1209,9 +1228,19 @@ public actor SyncEngine {
         // the pass has a ceiling and the passes walk the pile in turn, so a
         // debt of thousands is worked through without any one pass holding the
         // engine for as long as the whole of it takes
-        let batch = await pendingEnvelopes(chatId: nil, limit: Self.sweepBudget,
-                                           offset: sweepOffset)
-        sweepOffset = batch.count < Self.sweepBudget ? 0 : sweepOffset + Self.sweepBudget
+        let window = await pendingEnvelopes(chatId: nil, limit: Self.sweepBudget,
+                                            offset: sweepOffset)
+        sweepOffset = window.count < Self.sweepBudget ? 0 : sweepOffset + Self.sweepBudget
+        // the envelope standing at a chat's newest seq is what the reader is
+        // waiting for right now, so every pass takes it ahead of the window:
+        // in a pile of thousands the window reaches the end of a chat once in
+        // many passes, and a message that had just arrived over a broken
+        // session waited that long before the sender was asked for it
+        let newest = await newestPendingEnvelopes()
+        let taken = Set(newest.map { Message.feedId(chatId: $0.chatId, seq: $0.seq) })
+        let batch = newest + window.filter {
+            !taken.contains(Message.feedId(chatId: $0.chatId, seq: $0.seq))
+        }
         for pending in batch {
             // ahead of the retry gate: a buried envelope needs no attempt,
             // no repair request and no week of waiting

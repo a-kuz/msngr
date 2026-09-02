@@ -165,6 +165,40 @@ final class MessageRepairTests: XCTestCase {
         XCTAssertTrue(outbox.isEmpty, "a request went out over the per-peer ceiling")
     }
 
+    /// A pile deeper than one pass's window: the envelope at the chat's newest
+    /// seq is asked for by the first sweep all the same, instead of waiting for
+    /// the window to come round to the end of the chat.
+    func testNewestEnvelopeIsAskedForAheadOfTheWindow() async throws {
+        let db = try AppDatabase.openInMemory()
+        try await makeDirectChat(db)
+        let engine = try makeEngine(db: db)
+        let top = SyncEngine.sweepBudget + 50
+        let now = Date().timeIntervalSince1970
+        try await db.write { dbc in
+            try dbc.execute(sql: "UPDATE chat SET lastSeq = ? WHERE id = 'c1'", arguments: [top])
+            for seq in 1...top {
+                // past the grace, replayed a moment ago, never asked about
+                try dbc.execute(sql: """
+                    INSERT INTO pendingDecrypt (chatId, seq, fromUserId, fromDevice, sentAt, ts,
+                                                body, reason, attempts, firstSeenAt, lastTriedAt,
+                                                repairAttempts, repairAskedAt)
+                    VALUES ('c1', ?, 'peer', 'd1', 1, 1, x'00', 'no_session', 1, 1, ?, 0, 0)
+                    """, arguments: [seq, now])
+            }
+        }
+
+        await engine.sweepUnreadable()
+
+        let outbox = try await outboxContents(db)
+        let asked = outbox.compactMap { $0.content.kind == "repairRequest" ? $0.content.repairSeq : nil }
+        XCTAssertTrue(asked.contains(top), "the newest seq was not asked for: \(asked)")
+        let row = try await db.read { dbc in
+            try Int.fetchOne(dbc, sql: "SELECT repairAttempts FROM pendingDecrypt WHERE chatId = 'c1' AND seq = ?",
+                             arguments: [top])
+        }
+        XCTAssertEqual(row, 1)
+    }
+
     /// Twenty repairs on the same sender have spent every attempt: they are not
     /// in flight — nothing will ever answer them — so a fresh unreadable frame
     /// still gets its request instead of waiting a week for them to expire.
