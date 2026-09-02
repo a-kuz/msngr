@@ -3,8 +3,8 @@ import AVFoundation
 import MsngrCore
 
 /// Watching stories: one author fills the screen, and a horizontal swipe pages
-/// to the next author — both pages move together under the finger, each
-/// already showing its frame, the one leaving shrinking and dimming a little.
+/// to the next author — the pages are the faces of a cube turning under the
+/// finger, each already showing its frame, the face turned away in shadow.
 /// A pull down shrinks the viewer towards the list behind it and closes it.
 /// Within an author a tap on the right half moves on, a tap on the left goes
 /// back, and a finger held anywhere stops the clock until it is lifted. What
@@ -22,6 +22,8 @@ struct StoryViewerView: View {
     @StateObject private var preloader = StoryPreloader()
     /// How far a finger has pulled the viewer down towards closing it.
     @State private var pull: CGFloat = 0
+    /// The pages are moving between authors: no frame's clock runs meanwhile.
+    @State private var turning = false
 
     var body: some View {
         GeometryReader { geo in
@@ -30,6 +32,7 @@ struct StoryViewerView: View {
                     ForEach(authors) { author in
                         StoryAuthorPage(author: author,
                                         active: position == author.id,
+                                        turning: turning,
                                         startStoryId: author.id == start.id ? startStoryId : nil,
                                         preloader: preloader,
                                         onNext: { advance(from: author) },
@@ -37,12 +40,23 @@ struct StoryViewerView: View {
                                         onClose: onFinished)
                             .containerRelativeFrame([.horizontal, .vertical])
                             .clipShape(RoundedRectangle(cornerRadius: pull > 0 ? 24 : 0, style: .continuous))
-                            // the page under the finger shrinks a little and
-                            // dims as it leaves, and the next one grows in
+                            // the pages are the faces of a cube turning under
+                            // the finger: the one leaving hinges on the screen
+                            // edge it leaves by and swings into depth, the next
+                            // swings in on the other edge, and the face turned
+                            // away is in shadow
                             .scrollTransition(.interactive, axis: .horizontal) { content, phase in
                                 content
-                                    .scaleEffect(1 - abs(phase.value) * 0.08)
-                                    .brightness(-abs(phase.value) * 0.35)
+                                    // the page gone off to the left is at a
+                                    // negative phase: it hinges on its trailing
+                                    // edge, where it meets the next page, and its
+                                    // free edge swings back; the page coming in
+                                    // from the right hinges on its leading edge
+                                    .rotation3DEffect(.degrees(phase.value * 90),
+                                                      axis: (x: 0, y: 1, z: 0),
+                                                      anchor: phase.value < 0 ? .trailing : .leading,
+                                                      perspective: 0.4)
+                                    .brightness(-abs(phase.value) * 0.5)
                             }
                             .id(author.id)
                     }
@@ -51,6 +65,8 @@ struct StoryViewerView: View {
             }
             .scrollTargetBehavior(.paging)
             .scrollPosition(id: $position)
+            // the clock stands still while the cube is turning under the finger
+            .onScrollPhaseChange { _, phase in turning = phase != .idle }
             .scrollIndicators(.hidden)
             .scrollBounceBehavior(.basedOnSize)
             // pulled down, the viewer shrinks towards the list behind it and
@@ -147,6 +163,8 @@ struct StoryAuthorPage: View {
     let author: StoriesModel.Author
     /// This page is the one on screen: its clock runs and its clip plays.
     let active: Bool
+    /// The viewer is mid-swipe between authors: the clock waits.
+    var turning = false
     /// The story to open on, when the viewer was asked for one in particular.
     var startStoryId: String? = nil
     let preloader: StoryPreloader
@@ -164,6 +182,8 @@ struct StoryAuthorPage: View {
     /// The reply is being typed: the frame waits for it.
     @FocusState private var replyFocused: Bool
     @State private var frameURL: URL?
+    /// The picture of the frame, decoded once when it arrives.
+    @State private var image: UIImage?
     @State private var reply = ""
     @State private var showViewers = false
     @State private var link: String?
@@ -202,7 +222,7 @@ struct StoryAuthorPage: View {
                         StoryVideoPlayer(url: frameURL, paused: paused || !active)
                             .frame(width: geo.size.width, height: geo.size.height)
                             .accessibilityIdentifier("story.frame")
-                    } else if let frameURL, let image = UIImage(contentsOfFile: frameURL.path) {
+                    } else if let image {
                         Image(uiImage: image)
                             .resizable()
                             .scaledToFill()
@@ -216,7 +236,8 @@ struct StoryAuthorPage: View {
                             .scaledToFit()
                             .frame(width: geo.size.width, height: geo.size.height)
                             .accessibilityIdentifier("story.frame")
-                    } else {
+                    }
+                    if frameURL == nil {
                         ProgressView().tint(.white)
                             .frame(width: geo.size.width, height: geo.size.height)
                     }
@@ -230,7 +251,11 @@ struct StoryAuthorPage: View {
                 footer
             }
         }
-        .task(id: "\(index)-\(active)") { await showFrame() }
+        // the frame is fetched once per slide; whether the page is the active
+        // one changes what is done around it, never what it shows — a page
+        // swiped past keeps its picture instead of flashing a spinner
+        .task(id: index) { await showFrame() }
+        .task(id: "\(index)-\(active)-\(frameURL?.path ?? "")") { await frameShown() }
         .onReceive(tick) { _ in advanceClock() }
         .onChange(of: active) { _, isActive in
             if isActive {
@@ -359,7 +384,7 @@ struct StoryAuthorPage: View {
 
     /// The clock stands while a finger is down or something of the author's
     /// is open over the frame.
-    private var paused: Bool { held || showActions || showViewers || replyFocused }
+    private var paused: Bool { held || turning || showActions || showViewers || replyFocused }
 
     /// Under the frame: the author's counts, or a viewer's reply field with
     /// the heart beside it.
@@ -483,18 +508,32 @@ struct StoryAuthorPage: View {
     private func showFrame() async {
         progress = 0
         frameURL = nil
+        image = nil
         guard let slide, let media = app.media else { return }
         // a story's bytes were never encrypted: the frame comes back as it lies
-        frameURL = try? await media.fetchPlain(mediaId: slide.frame.mediaId,
-                                               mime: slide.frame.type == "video" ? "video/mp4" : "image/jpeg")
-        guard active else { return }
+        let url = try? await media.fetchPlain(mediaId: slide.frame.mediaId,
+                                              mime: slide.frame.type == "video" ? "video/mp4" : "image/jpeg")
+        guard !Task.isCancelled else { return }
+        if let url, slide.frame.type != "video" {
+            // decoded once, off the main thread: the body is drawn on every
+            // tick of a swipe and must not open the file each time
+            let path = url.path
+            image = await Task.detached(priority: .userInitiated) {
+                UIImage(contentsOfFile: path)?.preparingForDisplay()
+            }.value
+        }
+        guard !Task.isCancelled else { return }
+        frameURL = url
+    }
+
+    /// What a frame standing on the active page sets in motion.
+    private func frameShown() async {
+        guard active, frameURL != nil, let slide else { return }
         // what follows this frame is fetched while it stands
         preloader.prefetch(Array(slides[(index + 1)...].prefix(3).map(\.frame)))
-        if isMine {
-            // the author's counts are as fresh as the last read of the list:
-            // their own story on screen is the moment to read it again
-            await model.load()
-        } else {
+        // the author's own counts move by frames from their object as people
+        // watch; only someone else's story has a watch to record
+        if !isMine {
             await model.markSeen(slide.story.id)
         }
     }
