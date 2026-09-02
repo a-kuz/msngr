@@ -1060,21 +1060,21 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
         switch items[indexPath.item] {
         case .dateSeparator(_, let label):
             return CGSize(width: cv.bounds.width,
-                          height: FeedNote.height(label, width: cv.bounds.width, padding: 20) + 10)
+                          height: FeedNote.height(label, width: cv.bounds.width, padding: 20) + 2 * FeedNote.air)
         case .unreadMarker(_, let count):
             return CGSize(width: cv.bounds.width,
                           height: FeedNote.height(UnreadMarkerCell.title(count: count),
-                                                  width: cv.bounds.width, padding: 12) + 14)
+                                                  width: cv.bounds.width, padding: 12) + 2 * FeedNote.air)
         case .unreadable(_, let count):
             return CGSize(width: cv.bounds.width,
                           height: FeedNote.height(SystemCell.unreadableText(count: count),
-                                                  width: cv.bounds.width) + 12)
+                                                  width: cv.bounds.width) + 2 * FeedNote.air)
         case .message(let msg, let tightGap, let showTail, let showName, let authorName, let replyAuthorName,
                       let avatar):
             if msg.kind == .system {
                 return CGSize(width: cv.bounds.width,
                               height: FeedNote.height(SystemCell.text(for: msg, ownUserId: ownUserId),
-                                                      width: cv.bounds.width) + 12)
+                                                      width: cv.bounds.width) + 2 * FeedNote.air)
             }
             let plan = BubbleLayout.plan(for: msg, width: cv.bounds.width, tightGap: tightGap,
                                          showTail: showTail, showName: showName, authorName: authorName,
@@ -1130,6 +1130,13 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
 /// one role, so one measurement serves the layout and the cells.
 enum FeedNote {
     static var font: UIFont { Theme.Text.feedNote.uiFont }
+    /// The air a note row keeps above and below its content.
+    static let air: CGFloat = 6
+    /// The message just newer than a note row (below it on screen) is the
+    /// first of its series and carries `BubbleLayout.normalGap` between itself
+    /// and the row, while the older message above adjoins the row directly.
+    /// Half that gap moves the content down, so the air on both sides matches.
+    static let gapShift: CGFloat = BubbleLayout.normalGap / 2
 
     /// Height the text needs at this width, wrapping onto as many lines as the
     /// current text size demands.
@@ -1168,19 +1175,17 @@ final class DateCapsuleView: UIView {
         let size = label.sizeThatFits(CGSize(width: maxW, height: .greatestFiniteMagnitude))
         bounds.size = CGSize(width: min(maxW, size.width) + 2 * inset, height: max(0, height))
         layer.cornerRadius = bounds.height / 2
-        label.frame = bounds.insetBy(dx: inset, dy: 0)
+        // the label centres its line box, whose top holds room for accents the
+        // lowercase of a month name never uses: the text is raised so the
+        // x-height and the digits share the capsule's middle
+        let lift = (label.font.capHeight - label.font.xHeight) / 2
+        label.frame = bounds.insetBy(dx: inset, dy: 0).offsetBy(dx: 0, dy: -lift)
     }
 }
 
 final class DateSeparatorCell: UICollectionViewCell {
     private let capsule = DateCapsuleView()
     private var text = ""
-
-    /// The first message of the day carries its own series gap
-    /// (`BubbleLayout.normalGap`) between itself and the capsule, while the last
-    /// message of the previous day adjoins the cell directly. Half that gap
-    /// moves the capsule toward the older day, so the air on both sides matches.
-    static let olderSideShift: CGFloat = BubbleLayout.normalGap / 2
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1193,9 +1198,9 @@ final class DateSeparatorCell: UICollectionViewCell {
     func configure(_ text: String) {
         self.text = text
         capsule.set(text: text, maxWidth: contentView.bounds.width - 40,
-                    height: contentView.bounds.height - 10)
+                    height: contentView.bounds.height - 2 * FeedNote.air)
         capsule.center = CGPoint(x: contentView.bounds.midX,
-                                 y: contentView.bounds.midY + Self.olderSideShift)
+                                 y: contentView.bounds.midY + FeedNote.gapShift)
     }
 
     override func layoutSubviews() {
@@ -1309,9 +1314,9 @@ final class UnreadMarkerCell: UICollectionViewCell {
     }
 
     private func layoutBand() {
-        band.frame = CGRect(x: 0, y: 5, width: contentView.bounds.width,
-                            height: max(0, contentView.bounds.height - 10))
-        label.frame = band.bounds.insetBy(dx: 12, dy: 0)
+        band.frame = CGRect(x: 0, y: FeedNote.air / 2, width: contentView.bounds.width,
+                            height: max(0, contentView.bounds.height - FeedNote.air))
+        label.frame = band.bounds.insetBy(dx: 12, dy: 0).offsetBy(dx: 0, dy: FeedNote.gapShift)
     }
 
     /// "N unread messages" in the plural forms of the current locale.
@@ -1357,11 +1362,15 @@ final class SystemCell: UICollectionViewCell {
     func configure(text: String) {
         label.font = FeedNote.font
         label.text = text
-        label.frame = contentView.bounds.insetBy(dx: 32, dy: 0)
+        label.frame = Self.labelFrame(in: contentView.bounds)
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        label.frame = contentView.bounds.insetBy(dx: 32, dy: 0)
+        label.frame = Self.labelFrame(in: contentView.bounds)
+    }
+
+    private static func labelFrame(in bounds: CGRect) -> CGRect {
+        bounds.insetBy(dx: 32, dy: 0).offsetBy(dx: 0, dy: FeedNote.gapShift)
     }
 }

@@ -142,32 +142,75 @@ final class BubbleLayoutTests: XCTestCase {
         XCTAssertLessThanOrEqual(p.statusFrame.maxX, p.bubbleFrame.width)
     }
 
-    /// A reaction must not shift the time and the ticks: the status keeps the same
-    /// insets from the bubble's right and bottom edges as it does without reactions.
+    /// A reaction must not shift the time and the ticks: the status keeps its
+    /// inset from the bubble's right edge, and sits where it would without the
+    /// reactions — on the text's baseline while it shares the text's line, on
+    /// the bubble's bottom padding once the capsules have rows of their own.
     func testReactionKeepsStatusInsetsOfPlainBubble() {
-        let cases: [(name: String, text: String, reactions: [String: [String]])] = [
-            ("short text, one reaction", "OK", ["👍": ["u1"]]),
+        let cases: [(name: String, text: String, reactions: [String: [String]], inline: Bool)] = [
+            ("short text, one reaction", "OK", ["👍": ["u1"]], true),
             ("multiline text, two reactions",
              "A fairly long message that is certain to take up several lines in a row",
-             ["😂": ["u1", "u2"], "🔥": ["u3"]]),
+             ["😂": ["u1", "u2"], "🔥": ["u3"]], false),
             ("reactions over several rows", "Text",
              ["😂": ["u1"], "🔥": ["u2"], "❤️": ["u3"], "👍": ["u4"], "😮": ["u5"],
-              "😢": ["u6"], "🎉": ["u7"], "🙏": ["u8"], "👏": ["u9"], "💯": ["u10"]]),
+              "😢": ["u6"], "🎉": ["u7"], "🙏": ["u8"], "👏": ["u9"], "💯": ["u10"]], false),
         ]
         for c in cases {
             let plain = plan(c.text)
             let withR = withReactions(c.text, c.reactions)
             XCTAssertEqual(rightInset(plain), rightInset(withR), accuracy: 0.5,
                            "\(c.name): the time's inset on the right")
-            XCTAssertEqual(bottomInset(plain), bottomInset(withR), accuracy: 0.5,
-                           "\(c.name): the time's inset at the bottom")
-            XCTAssertEqual(bottomInset(withR), BubbleLayout.vPadding, accuracy: 0.5,
-                           "\(c.name): the time sits on the bubble's bottom padding")
+            if c.inline {
+                XCTAssertEqual(statusBaseline(withR), textBaseline(withR), accuracy: 0.5,
+                               "\(c.name): the time shares the text's baseline")
+            } else {
+                XCTAssertEqual(bottomInset(withR), BubbleLayout.vPadding, accuracy: 0.5,
+                               "\(c.name): the time sits on the bubble's bottom padding")
+            }
         }
+    }
+
+    /// Beside the last line, the digits of the time stand on the same baseline
+    /// as the words. Pushed onto a line of its own, the time keeps the distance
+    /// to the bubble's bottom that a line of text keeps: its baseline sits a
+    /// text descender above the bottom padding.
+    func testTimeSitsOnTheTextBaseline() {
+        let base = "A fairly long message that is certain to take up several lines in a row"
+        var inline = 0, ownLine = 0
+        for text in ["OK", base, base + " and", base + " and a few more words", base + " " + base] {
+            let p = plan(text)
+            let tf = try! XCTUnwrap(p.textFrame)
+            if p.statusFrame.minY < tf.maxY - 2 {
+                inline += 1
+                XCTAssertEqual(statusBaseline(p), textBaseline(p), accuracy: 0.5,
+                               "\(text): the time's baseline is the text's")
+            } else {
+                ownLine += 1
+                let font = BubbleLayout.textFont
+                XCTAssertEqual(p.bubbleFrame.height - statusBaseline(p),
+                               BubbleLayout.vPadding + (font.lineHeight - font.ascender), accuracy: 0.5,
+                               "\(text): the time on its own line keeps the text's distance to the bottom")
+            }
+        }
+        XCTAssertGreaterThan(inline, 0, "some text leaves room for the time on its last line")
+        XCTAssertGreaterThan(ownLine, 0, "some text pushes the time onto its own line")
     }
 
     private func rightInset(_ p: BubbleLayoutPlan) -> CGFloat { p.bubbleFrame.width - p.statusFrame.maxX }
     private func bottomInset(_ p: BubbleLayoutPlan) -> CGFloat { p.bubbleFrame.height - p.statusFrame.maxY }
+    /// The baseline of the time in the bubble: the label centres its line box in the status frame.
+    private func statusBaseline(_ p: BubbleLayoutPlan) -> CGFloat {
+        let f = BubbleLayout.timeFont
+        return p.statusFrame.minY + (p.statusFrame.height - f.lineHeight) / 2 + f.ascender
+    }
+    private func textBaseline(_ p: BubbleLayoutPlan) -> CGFloat {
+        let tf = try! XCTUnwrap(p.textFrame)
+        let text = try! XCTUnwrap(p.text)
+        // the same content width the plan wraps the text to
+        let maxContent = floor(width * Theme.bubbleMaxWidthRatio) - 2 * BubbleLayout.hPadding
+        return tf.minY + BubbleLayout.lastLineBaseline(text, maxWidth: maxContent)
+    }
 
     /// The bubble never collapses narrower than the time it has to show.
     func testBubbleNotNarrowerThanStatus() {

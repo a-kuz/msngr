@@ -19,6 +19,9 @@ struct ChatListCollection: UIViewRepresentable {
     var onNewFolder: () -> Void
     /// A tap on a ringed avatar: the author's stories instead of the chat.
     var onOpenStories: (StoriesModel.Author) -> Void
+    /// Every change of the list's offset: the stories tray over the list
+    /// unfolds on a pull and folds on a scroll.
+    var onScroll: ((UIScrollView) -> Void)?
 
     enum Row: Hashable {
         case request(String)
@@ -59,6 +62,8 @@ struct ChatListCollection: UIViewRepresentable {
         let collection = UICollectionView(frame: .zero,
                                           collectionViewLayout: coordinator.makeLayout())
         collection.backgroundColor = .clear
+        // a short list still gives way to a pull: the pull is what unfolds the stories
+        collection.alwaysBounceVertical = true
         collection.delegate = coordinator
         coordinator.install(on: collection)
         coordinator.parent = self
@@ -88,6 +93,10 @@ struct ChatListCollection: UIViewRepresentable {
 
         init(_ parent: ChatListCollection) {
             self.parent = parent
+        }
+
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            parent.onScroll?(scrollView)
         }
 
         private func item(for row: Row) -> ChatListItem? {

@@ -64,8 +64,10 @@ between the text and the status.
    capsules take their own rows and the status joins the end of the last row if
    it fits, dropping to a line of its own if it does not.
 3. **Text with no reactions** — if `last line width + 6 + status width` is
-   within the content width, the status stays on the last line; otherwise it is
-   pushed onto its own.
+   within the content width, the status stays on the last line, its digits on
+   the same baseline as the words; otherwise it is pushed onto its own line,
+   and that line keeps the distance to the bubble's bottom that a line of text
+   keeps.
 4. **Voice and files with no reactions** — the status sits in the bottom right
    of the same row.
 
@@ -99,7 +101,11 @@ messages and only in a group (`members.count > 2`); its colour is a stable hash
 of the userId over a palette of seven. There are no avatars in the feed.
 
 Date separators are ordinary cells («Сегодня», «Вчера», otherwise the date), a
-capsule 22 high on translucent black. Nothing is sticky.
+capsule 22 high on translucent black with the text raised half the difference
+between the cap height and the x-height, so a lowercase month name sits in the
+capsule's middle. Every note row — the date, a system line, the unread band —
+keeps the same 6 pt of air on both sides and shifts half a series gap toward
+the newer message, which brings the other half of that gap itself.
 
 ## The unread banner
 
@@ -235,8 +241,10 @@ is drawn (a 0.05 s timer over `averagePower` from −60 to 0 dB, keeping the las
 recording, after which a cancel button and a send button appear.
 
 The message carries a waveform of 100 buckets valued 0 to 31, computed from the
-finished file. The voice bubble is fixed at 220×42 with a 40×40 play button, a
-waveform 22 high and the duration beneath it. Tapping or panning the waveform
+finished file. The voice bubble is fixed at 220×42 with a 40×40 play button
+whose glyph fills the slot, a waveform 22 high and the duration beneath it.
+The transcript button at the end of the wave is a quiet plate in the bubble's
+tint at 12 % (30 % while the transcript is unfolded), with no border. Tapping or panning the waveform
 seeks, along the wave only: a drag that goes up or down over the bubble is the
 reader scrolling the feed. The file bubble uses the same slot: up to 240 wide,
 42 high.
@@ -399,7 +407,9 @@ handler sends typing notifications, throttled to 3 s.
 
 ## The chat screen
 
-The header carries a 40×40 avatar, the title, and a subtitle that is one of
+The header is a glass capsule of the toolbar's own height beside the back
+chevron, so the chevron, the name and the trailing glyphs read as one set of
+three. It carries a 34×34 avatar, the title, and a subtitle that is one of
 «подключение…», «печатает…» (with a name, in a group), «N участников», «в сети»
 or «был(а) …».
 
@@ -471,7 +481,9 @@ peer's stream fills the screen, one's own preview floats in a corner with a
 front/back flip button, and turning the camera off reaches the peer as a state
 change, not a frozen frame.
 
-The person glyph on an active call invites a third participant: the call
+The corner buttons of the call screen (minimize, invite) are white glyphs on
+dark translucent discs, so they stand on the gradient and on video alike. The
+person glyph on an active call invites a third participant: the call
 becomes a mesh of exactly three, everyone hears everyone, and the invited
 person's chat gets an «invited you to a call» row. A participant leaving drops
 only their leg.
@@ -494,8 +506,9 @@ push, but it does move the chat up the list, and its preview there reads
 
 The phone glyph on the chat list opens the calls list: every call the device
 knows of, newest first — who it was with (named as the address book names
-them), the direction glyph, the outcome or duration, and when. A tap dials
-the person again.
+them), the direction glyph, the outcome or duration, and when. The rows take
+the chat list's metrics (a 54×54 avatar, the same gap). A tap dials the
+person again.
 
 ## Chat info
 
@@ -519,6 +532,11 @@ section, and a swipe over a member row offers nothing. Every change is announced
 in the feed as a group event once the server has accepted it.
 
 ## The chat list
+
+The title «Чаты» is inline in the bar, the same bar the calls list has. Under
+it runs the stories tray: folded, a row of 30 pt rings with nothing else;
+pulling the list down past 48 pt unfolds it into 56 pt pictures with names,
+and scrolling the list up a little folds it again.
 
 A row holds a 54×54 avatar with an online dot, the title (the peer's name for a
 direct chat), the mute icon, the ticks of the last message (only when it is

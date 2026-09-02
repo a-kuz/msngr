@@ -75,6 +75,18 @@ enum BubbleLayout {
 
     /// Height of the time/ticks line.
     static var statusHeight: CGFloat { ceil(timeFont.lineHeight) + 4 }
+    /// Where the status frame starts for the time's baseline to land on
+    /// `baseline`: the label centres its text box in the frame, and the
+    /// baseline sits an ascender below the top of that box.
+    static func statusY(baseline: CGFloat) -> CGFloat {
+        baseline - ((statusHeight - timeFont.lineHeight) / 2 + timeFont.ascender)
+    }
+    /// The baseline a line of text ending at `lineBottom` would have: the time
+    /// on a line of its own keeps the distance to the bubble's bottom that the
+    /// last line of text keeps.
+    static func statusY(lineBottom: CGFloat) -> CGFloat {
+        statusY(baseline: lineBottom - (textFont.lineHeight - textFont.ascender))
+    }
     /// A bot's button: tall enough for a comfortable tap, and it grows with the
     /// reader's text size like everything else in the bubble.
     static var buttonHeight: CGFloat { ceil(textFont.lineHeight) + 16 }
@@ -442,8 +454,11 @@ enum BubbleLayout {
                 // the time hugs the bottom of the line, the same as in a bubble without
                 // reactions: there the status ends with the text and vPadding remains to the
                 // bubble's bottom. Centering on the capsule gave a different inset
+                let statusY = (textFrame != nil && attrText != nil && lastLine > 0)
+                    ? Self.statusY(baseline: baseY + Self.lastLineBaseline(attrText!, maxWidth: maxContent))
+                    : baseY + lineH - statusH
                 statusFrame = CGRect(x: hPadding + contentWidth - statusWidth,
-                                     y: baseY + lineH - statusH, width: statusWidth, height: statusH)
+                                     y: statusY, width: statusWidth, height: statusH)
                 y = baseY + lineH
                 reactionsHeight = 0
             } else {
@@ -482,18 +497,23 @@ enum BubbleLayout {
             if linkFrame != nil {
                 // the card fills the bubble's bottom, so the time goes under it
                 statusFrame = CGRect(x: hPadding + contentWidth - statusWidth,
-                                     y: y + 2, width: statusWidth, height: statusH)
+                                     y: Self.statusY(lineBottom: y + 2 + statusH),
+                                     width: statusWidth, height: statusH)
                 y += statusH + 2
             } else if lastLineWidth + gap + statusWidth <= maxContent {
-                // placement 1 of 3: the status sits in the last line of the text
+                // placement 1 of 3: the status sits in the last line of the text,
+                // its digits on the same baseline as the words
                 let bubbleContentW = max(contentWidth, lastLineWidth + gap + statusWidth)
                 contentWidth = bubbleContentW
                 statusFrame = CGRect(x: hPadding + bubbleContentW - statusWidth,
-                                     y: tf.maxY - statusH, width: statusWidth, height: statusH)
+                                     y: Self.statusY(baseline: tf.minY + Self.lastLineBaseline(at, maxWidth: maxContent)),
+                                     width: statusWidth, height: statusH)
             } else {
-                // placement 2: the status is pushed onto a line of its own
+                // placement 2: the status is pushed onto a line of its own, and
+                // that line ends where a line of text would
                 statusFrame = CGRect(x: hPadding + contentWidth - statusWidth,
-                                     y: y + 2, width: statusWidth, height: statusH)
+                                     y: Self.statusY(lineBottom: y + 2 + statusH),
+                                     width: statusWidth, height: statusH)
                 y += statusH + 2
             }
         } else if voiceFrame != nil {
@@ -661,6 +681,17 @@ enum BubbleLayout {
             storage.addLayoutManager(manager)
             manager.ensureLayout(for: container)
         }
+    }
+
+    /// The baseline of the last line, measured from the top of the text: the
+    /// time beside that line sits on it.
+    static func lastLineBaseline(_ attr: NSAttributedString, maxWidth: CGFloat) -> CGFloat {
+        let stack = TextKitStack(attr, maxWidth: maxWidth)
+        let glyphRange = stack.manager.glyphRange(for: stack.container)
+        guard glyphRange.length > 0 else { return 0 }
+        let lastGlyph = glyphRange.upperBound - 1
+        let lineRect = stack.manager.lineFragmentRect(forGlyphAt: lastGlyph, effectiveRange: nil)
+        return lineRect.minY + stack.manager.location(forGlyphAt: lastGlyph).y
     }
 
     /// Width of the last line, which decides where the time goes.

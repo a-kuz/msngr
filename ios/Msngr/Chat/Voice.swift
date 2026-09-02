@@ -463,7 +463,6 @@ final class VoiceMessageView: UIView {
         transcriptButton.accessibilityLabel = String(localized: "Transcript")
         transcriptButton.addTarget(self, action: #selector(tapTranscript), for: .touchUpInside)
         transcriptButton.layer.cornerRadius = 8
-        transcriptButton.layer.borderWidth = 1
         // a long press on the button recognizes afresh, replacing the cache;
         // the cell knows to keep its context menu off this button
         let redo = UILongPressGestureRecognizer(target: self, action: #selector(handleTranscriptLongPress(_:)))
@@ -540,10 +539,10 @@ final class VoiceMessageView: UIView {
         rateButton.isHidden = true
         fileIcon.isHidden = isVoice
         fileName.isHidden = isVoice
+        // a quiet plate in the bubble's own tint, so the button belongs to the
+        // plate instead of shouting over the wave; the unfolded state is denser
         transcriptButton.tintColor = tint
-        transcriptButton.layer.borderColor = tint.withAlphaComponent(0.5).cgColor
-        // the unfolded state reads as a pressed button
-        transcriptButton.backgroundColor = msg.transcriptShown ? tint.withAlphaComponent(0.25) : .clear
+        transcriptButton.backgroundColor = tint.withAlphaComponent(msg.transcriptShown ? 0.3 : 0.12)
         transcriptSpinner.color = tint
         if isVoice { TranscriptWork.shared.probeIfNeeded() }
         applyTranscriptWork(inFlight: TranscriptWork.shared.inFlight,
@@ -688,6 +687,10 @@ final class VoiceMessageView: UIView {
         let h = bounds.height
         let button = min(40, h - 2)
         playButton.frame = CGRect(x: 0, y: (h - button) / 2, width: button, height: button)
+        // the glyph fills its slot: at the default symbol size the circle was
+        // half the slot and read as a small control
+        playButton.setPreferredSymbolConfiguration(UIImage.SymbolConfiguration(pointSize: button * 0.82),
+                                                   forImageIn: .normal)
         let left = button + 8
         let labelH = ceil(durationLabel.font.lineHeight)
         let waveH = h - labelH - 5
