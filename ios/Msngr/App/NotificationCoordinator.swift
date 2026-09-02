@@ -119,13 +119,12 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
             let groupAvatar = info.isGroup
                 ? await AvatarCache.shared.ensure(info.chatAvatarId, api: api)
                 : nil
+            var shaped = content
+            shaped.groupMembers = info.groupMembers
             let built = CommunicationNotification.content(
-                content,
-                sender: info.sender,
+                shaped,
                 ownUserId: AppState.shared.session?.userId ?? "",
-                isGroup: info.isGroup,
                 avatarFile: avatar,
-                groupMembers: info.groupMembers,
                 groupAvatarFile: groupAvatar,
                 userInfo: ["chatId": chatId, "seq": seq])
             try? await UNUserNotificationCenter.current().add(

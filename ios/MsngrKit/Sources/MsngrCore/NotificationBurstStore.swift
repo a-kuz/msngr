@@ -161,14 +161,30 @@ public enum NotificationBurstStore {
             displayName: sender?.displayName ?? "",
             avatarId: sender?.avatarId)
         let chatInfo = NotificationContentBuilder.ChatInfo(
-            chatId: chat.id, isGroup: chat.kind == .group, title: chat.title)
+            chatId: chat.id, isGroup: chat.kind == .group, title: chat.title, avatarId: chat.avatarId)
         if ChatPrivacy.hidesContent(chat) {
-            return .built(NotificationContentBuilder.requestContent(chat: chatInfo, sender: senderInfo))
+            var built = NotificationContentBuilder.requestContent(chat: chatInfo, sender: senderInfo)
+            if chatInfo.isGroup { built.groupMembers = try groupMembers(dbc, chatId: chat.id) }
+            return .built(built)
         }
         guard let message else { return .fromPush }
-        guard let built = NotificationContentBuilder.build(
+        guard var built = NotificationContentBuilder.build(
             message: message, chat: chatInfo, sender: senderInfo,
             showsMessageText: showsMessageText) else { return .silent }
+        if chatInfo.isGroup { built.groupMembers = try groupMembers(dbc, chatId: chat.id) }
         return .built(built)
+    }
+
+    /// Every member of a group with their name: the recipients of a
+    /// Communication Notification, which is how the system tells a group
+    /// conversation from a direct one.
+    public static func groupMembers(_ dbc: GRDB.Database, chatId: String) throws
+        -> [NotificationContentBuilder.SenderInfo] {
+        try Row.fetchAll(dbc, sql: """
+            SELECT m.userId AS id, u.displayName AS name
+            FROM member m LEFT JOIN user u ON u.id = m.userId
+            WHERE m.chatId = ?
+            """, arguments: [chatId])
+            .map { NotificationContentBuilder.SenderInfo(userId: $0["id"], displayName: $0["name"] ?? "") }
     }
 }

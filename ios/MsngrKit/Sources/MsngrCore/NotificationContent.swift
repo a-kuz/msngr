@@ -9,12 +9,22 @@ public struct NotificationContent: Equatable, Sendable {
     public var body: String
     /// notifications of one chat are grouped by chatId
     public var threadIdentifier: String
+    /// who the banner is from: the Communication Notification draws their avatar
+    public var sender: NotificationContentBuilder.SenderInfo?
+    public var chat: NotificationContentBuilder.ChatInfo?
+    /// every member of a group chat; the system tells a group conversation by
+    /// the number of recipients
+    public var groupMembers: [NotificationContentBuilder.SenderInfo] = []
 
-    public init(title: String, subtitle: String?, body: String, threadIdentifier: String) {
+    public init(title: String, subtitle: String?, body: String, threadIdentifier: String,
+                sender: NotificationContentBuilder.SenderInfo? = nil,
+                chat: NotificationContentBuilder.ChatInfo? = nil) {
         self.title = title
         self.subtitle = subtitle
         self.body = body
         self.threadIdentifier = threadIdentifier
+        self.sender = sender
+        self.chat = chat
     }
 }
 
@@ -27,11 +37,13 @@ public enum NotificationContentBuilder {
         public var chatId: String
         public var isGroup: Bool
         public var title: String?
+        public var avatarId: String?
 
-        public init(chatId: String, isGroup: Bool, title: String?) {
+        public init(chatId: String, isGroup: Bool, title: String?, avatarId: String? = nil) {
             self.chatId = chatId
             self.isGroup = isGroup
             self.title = title
+            self.avatarId = avatarId
         }
     }
 
@@ -83,7 +95,8 @@ public enum NotificationContentBuilder {
             subtitle: chat.isGroup
                 ? (groupTitle?.isEmpty == false ? groupTitle : CoreStrings.string("Group")) : nil,
             body: showsMessageText ? preview(payload) : hiddenTextBody,
-            threadIdentifier: chat.chatId)
+            threadIdentifier: chat.chatId,
+            sender: sender, chat: chat)
     }
 
     /// A peer reacted to your message: the sender's name in the title, the
@@ -107,7 +120,8 @@ public enum NotificationContentBuilder {
             body: showsMessageText
                 ? CoreStrings.string("Reacted \(emoji) to “\(quote)”")
                 : CoreStrings.string("Reacted \(emoji) to your message"),
-            threadIdentifier: chat.chatId)
+            threadIdentifier: chat.chatId,
+            sender: sender, chat: chat)
     }
 
     /// A request before it is accepted: sender name and avatar stay, content does not.
@@ -117,7 +131,8 @@ public enum NotificationContentBuilder {
             title: name.isEmpty ? "Msngr" : name,
             subtitle: nil,
             body: ChatPrivacy.requestPlaceholder,
-            threadIdentifier: chat.chatId)
+            threadIdentifier: chat.chatId,
+            sender: sender, chat: chat)
     }
 
     /// The same builder over a message row from the local database, already decrypted.

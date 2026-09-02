@@ -152,7 +152,8 @@ final class NotificationService: UNNotificationServiceExtension {
         if let envelope { envelopes.put(envelope, key: item.key) }
         journal?.record(.received, chatId: item.chatId, seq: item.seq,
                         detail: envelope == nil ? "no-envelope" : "envelope")
-        let answer = PushAnswer(content: content, handler: contentHandler)
+        let answer = PushAnswer(content: content, ownUserId: decryption?.ownUserId ?? "",
+                                handler: contentHandler)
         Task {
             await burstGate.submit(item) { answer.answer($0) }
         }
@@ -198,10 +199,13 @@ final class NotificationService: UNNotificationServiceExtension {
 /// what keeps the notification content and the handler to a single thread.
 private final class PushAnswer: @unchecked Sendable {
     private let content: UNMutableNotificationContent
+    private let ownUserId: String
     private let handler: (UNNotificationContent) -> Void
 
-    init(content: UNMutableNotificationContent, handler: @escaping (UNNotificationContent) -> Void) {
+    init(content: UNMutableNotificationContent, ownUserId: String,
+         handler: @escaping (UNNotificationContent) -> Void) {
         self.content = content
+        self.ownUserId = ownUserId
         self.handler = handler
     }
 
@@ -209,14 +213,17 @@ private final class PushAnswer: @unchecked Sendable {
         switch step.outcome {
         case .show:
             journal?.record(.answered, chatId: step.item.chatId, seq: step.item.seq, detail: "show")
-            if let built = step.content {
-                content.title = built.title
-                content.subtitle = built.subtitle ?? ""
-                content.body = built.body
-                content.threadIdentifier = built.threadIdentifier
-                content.categoryIdentifier = NotificationCategory.message
+            guard let built = step.content else {
+                handler(content)
+                return
             }
-            handler(content)
+            // the sender's avatar from the shared cache: the app fetched it
+            // ahead of time, the extension only reads the file
+            let avatar = CommunicationNotification.cachedAvatarFile(built.sender?.avatarId)
+            let groupAvatar = built.chat?.isGroup == true
+                ? CommunicationNotification.cachedAvatarFile(built.chat?.avatarId) : nil
+            handler(CommunicationNotification.apply(to: content, built: built, ownUserId: ownUserId,
+                                                    avatarFile: avatar, groupAvatarFile: groupAvatar))
         case .skip(let reason):
             journal?.record(.answered, chatId: step.item.chatId, seq: step.item.seq,
                             detail: "skip:" + reason.rawValue)
@@ -233,6 +240,6 @@ private final class PushAnswer: @unchecked Sendable {
 
 enum AppGroup {
     static let identifier = AppContainer.appGroupIdentifier
-    static let keychainGroup = "msngr.msngr.shared"
+    static let keychainGroup = "com.msngr.msngr.shared"
     static let defaults = UserDefaults(suiteName: identifier) ?? .standard
 }
