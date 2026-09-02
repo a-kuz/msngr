@@ -1,10 +1,11 @@
+import { DurableObject } from "cloudflare:workers";
 import type {
   Env, ClientFrame, ServerFrame, PublicUser, PrivacySettings, LastSeenVisibility, StoryItem,
 } from "../types";
 import type { StoryDelivery } from "./StoriesDO";
 import { DELETE_SEQS_PER_CALL } from "./ConversationDO";
 import {
-  json, err, nowSec, shouldArmAlarm, ulid, PRIVACY_DEFAULTS, type PrivacySetting,
+  DOError, nowSec, shouldArmAlarm, ulid, PRIVACY_DEFAULTS, type PrivacySetting,
 } from "../util";
 import { sendPush, envelopeForDevice } from "../push/apns";
 import { PROTOCOL_VERSION, MIN_CLIENT_PROTOCOL } from "../version";
@@ -221,9 +222,9 @@ interface PushJob {
 }
 
 // One object per user: the sockets of all their devices, the chat list, presence, pushes.
-export class UserDO implements DurableObject {
+export class UserDO extends DurableObject<Env> {
   private userId: string | null = null;
-  /// Dev test hook (/dev-fault): how many frame deliveries to reject next.
+  /// Dev test hook (devFault): how many frame deliveries to reject next.
   private devFailEvents = 0;
   /// True while alarm() runs. setAlarm during a running alarm handler cancels
   /// the handler mid-await (workerd), so while it runs, arming requests
@@ -234,29 +235,30 @@ export class UserDO implements DurableObject {
   /// dev measurement (PERF_LOG); never installed otherwise
   private perf: PerfCounters | null = null;
 
-  constructor(private state: DurableObjectState, private env: Env) {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
     if (env.PERF_LOG) {
       this.perf = newCounters();
-      this.state = wrapState(state, this.perf);
+      this.ctx = wrapState(this.ctx, this.perf);
     }
   }
 
   private async getUserId(): Promise<string | null> {
-    if (!this.userId) this.userId = (await this.state.storage.get<string>("userId")) ?? null;
+    if (!this.userId) this.userId = (await this.ctx.storage.get<string>("userId")) ?? null;
     return this.userId;
   }
 
   private convStub(chatId: string) {
     const stub = this.env.CONV_DO.get(this.env.CONV_DO.idFromName(chatId));
-    return this.perf ? wrapStub(stub, this.perf) : stub;
+    return wrapStub(stub, this.perf);
   }
 
   private userStub(userId: string) {
     const stub = this.env.USER_DO.get(this.env.USER_DO.idFromName(userId));
-    return this.perf ? wrapStub(stub, this.perf) : stub;
+    return wrapStub(stub, this.perf);
   }
 
-  /// Wraps one invocation (a fetch or a client frame) in a PERF line.
+  /// Wraps one invocation (an RPC call or a client frame) in a PERF line.
   private async measured<T>(op: string, body: () => Promise<T>, extra?: object): Promise<T> {
     if (!this.perf) return body();
     const before = snapshot(this.perf);
@@ -270,7 +272,7 @@ export class UserDO implements DurableObject {
   }
 
   private sockets(): WebSocket[] {
-    return this.state.getWebSockets();
+    return this.ctx.getWebSockets();
   }
 
   private send(ws: WebSocket, frame: ServerFrame) {
@@ -305,9 +307,9 @@ export class UserDO implements DurableObject {
     }
     const now = Date.now();
     const at = Math.max(atMs, now + 1);
-    const pending = await this.state.storage.getAlarm();
+    const pending = await this.ctx.storage.getAlarm();
     if (!shouldArmAlarm(pending, at, now)) return;
-    await this.state.storage.setAlarm(at);
+    await this.ctx.storage.setAlarm(at);
   }
 
   /// Schedules the freshness check the presence TTL asks for. The deadline is
@@ -315,26 +317,26 @@ export class UserDO implements DurableObject {
   /// not read as the TTL running out.
   private async armPresenceCheck() {
     const at = Date.now() + PRESENCE_TTL_MS;
-    await this.state.storage.put("presenceCheckAt", at);
+    await this.ctx.storage.put("presenceCheckAt", at);
     await this.armAlarm(at);
   }
 
   /// Lifts a mute whose deadline has passed and returns the chat's current flags.
   private async clearExpiredMute(chatId: string): Promise<ChatFlags | undefined> {
     const key = "chat:" + chatId;
-    const flags = await this.state.storage.get<ChatFlags>(key);
+    const flags = await this.ctx.storage.get<ChatFlags>(key);
     if (!muteExpired(flags, nowSec())) return flags;
     flags!.muted = false;
     delete flags!.mutedUntil;
-    await this.state.storage.put(key, flags!);
+    await this.ctx.storage.put(key, flags!);
     return flags;
   }
 
   /// Puts a chat back on the list with default flags when it is not there.
   private async relistChat(chatId: string) {
     const key = "chat:" + chatId;
-    if (await this.state.storage.get<ChatFlags>(key)) return;
-    await this.state.storage.put(key, {
+    if (await this.ctx.storage.get<ChatFlags>(key)) return;
+    await this.ctx.storage.put(key, {
       pinned: false, muted: false, archived: false, joinedAt: nowSec(),
     } satisfies ChatFlags);
   }
@@ -342,8 +344,8 @@ export class UserDO implements DurableObject {
   /// The inbox of stories delivered to this user, oldest first; the ones
   /// whose time is over go out of it as they are met. The inbox is bounded by
   /// the peers' output over a week, and the list is capped past that.
-  private async storiesInbox(): Promise<StoryItem[]> {
-    const listed = await this.state.storage.list<StoryItem>({ prefix: STORY_PREFIX, limit: 2000 });
+  private async storiesInboxList(): Promise<StoryItem[]> {
+    const listed = await this.ctx.storage.list<StoryItem>({ prefix: STORY_PREFIX, limit: 2000 });
     const now = Date.now();
     const stories: StoryItem[] = [];
     const expired: string[] = [];
@@ -352,32 +354,32 @@ export class UserDO implements DurableObject {
     }
     // one storage delete takes at most 128 keys
     for (let i = 0; i < expired.length; i += 128) {
-      await this.state.storage.delete(expired.slice(i, i + 128));
+      await this.ctx.storage.delete(expired.slice(i, i + 128));
     }
     stories.sort((a, b) => a.createdAt - b.createdAt);
     return stories;
   }
 
   private async chatIds(): Promise<string[]> {
-    const listed = await this.state.storage.list<ChatFlags>({ prefix: "chat:" });
+    const listed = await this.ctx.storage.list<ChatFlags>({ prefix: "chat:" });
     return [...listed.keys()].map((k) => k.slice(5));
   }
 
   /// A presence flip: the new state goes to every subscriber allowed to see it.
   private async broadcastPresence(online: boolean) {
     const lastSeen = nowSec();
-    const stamp = ((await this.state.storage.get<number>("presenceStamp")) ?? 0) + 1;
-    await this.state.storage.put({ lastSeen, presenceStamp: stamp });
+    const stamp = ((await this.ctx.storage.get<number>("presenceStamp")) ?? 0) + 1;
+    await this.ctx.storage.put({ lastSeen, presenceStamp: stamp });
     await this.pushPresence(await this.subscribers(), { online, lastSeen, stamp });
   }
 
   private async subscribers(): Promise<string[]> {
-    const listed = await this.state.storage.list<Reasons>({ prefix: SUB_PREFIX });
+    const listed = await this.ctx.storage.list<Reasons>({ prefix: SUB_PREFIX });
     return [...listed.keys()].map((k) => k.slice(SUB_PREFIX.length));
   }
 
   private async ownPresence(): Promise<PeerPresence> {
-    const got = await this.state.storage.get<number>(["lastSeen", "presenceStamp"]);
+    const got = await this.ctx.storage.get<number>(["lastSeen", "presenceStamp"]);
     return {
       online: this.presenceFresh(),
       lastSeen: got.get("lastSeen") ?? 0,
@@ -391,11 +393,11 @@ export class UserDO implements DurableObject {
   private async visibleSubscribers(ids: string[]): Promise<Set<string>> {
     const userId = await this.getUserId();
     if (!userId || !ids.length) return new Set();
-    const open = await this.state.storage.list<true>({ prefix: ACC_PREFIX });
+    const open = await this.ctx.storage.list<true>({ prefix: ACC_PREFIX });
     const openChats = new Set([...open.keys()].map((k) => k.slice(ACC_PREFIX.length)));
     const candidates: string[] = [];
     for (const id of ids) {
-      const reasons = await this.state.storage.get<Reasons>(SUB_PREFIX + id);
+      const reasons = await this.ctx.storage.get<Reasons>(SUB_PREFIX + id);
       if (reasons && Object.keys(reasons).some((chatId) => !openChats.has(chatId))) candidates.push(id);
     }
     // the last-seen rule, blocks in either direction and the address book are
@@ -407,7 +409,7 @@ export class UserDO implements DurableObject {
     const out = new Set<string>();
     for (const v of candidates) {
       if (v === userId) continue;
-      const { byMe, byPeer } = await this.blockPair(v);
+      const { byMe, byPeer } = await this.blockPairInternal(v);
       if (byMe || byPeer) continue;
       if (await this.mayView(v, "last_seen", privacy)) out.add(v);
     }
@@ -419,14 +421,14 @@ export class UserDO implements DurableObject {
     const held = new Set<string>();
     for (let i = 0; i < hashes.length; i += STORAGE_BATCH) {
       const part = hashes.slice(i, i + STORAGE_BATCH);
-      const got = await this.state.storage.get(part.map((h) => `ct:${h}`));
+      const got = await this.ctx.storage.get(part.map((h) => `ct:${h}`));
       for (const h of part) if (got.has(`ct:${h}`)) held.add(h);
     }
     return held;
   }
 
   private async privacy(): Promise<PrivacySettings> {
-    return (await this.state.storage.get<PrivacySettings>("privacy")) ?? PRIVACY_DEFAULTS;
+    return (await this.ctx.storage.get<PrivacySettings>("privacy")) ?? PRIVACY_DEFAULTS;
   }
 
   /// The tier a setting is governed by.
@@ -445,9 +447,7 @@ export class UserDO implements DurableObject {
   /// a number registering or changing hands needs no propagation.
   private async peerPhoneHash(userId: string): Promise<string | null> {
     try {
-      const r = await this.userStub(userId).fetch("https://do/phone-hash");
-      if (!r.ok) return null;
-      return ((await r.json()) as { phoneHash: string | null }).phoneHash;
+      return (await this.userStub(userId).phoneHash()).phoneHash;
     } catch (e) {
       console.warn(`phone hash of ${userId} failed: ${e}`);
       return null;
@@ -462,7 +462,7 @@ export class UserDO implements DurableObject {
   ): Promise<boolean> {
     const self = await this.getUserId();
     if (viewerId === self) return true;
-    const exception = await this.state.storage.get<number>(`${PEX_PREFIX}${setting}:${viewerId}`);
+    const exception = await this.ctx.storage.get<number>(`${PEX_PREFIX}${setting}:${viewerId}`);
     if (exception !== undefined) return exception === 1;
     const tier = this.tierOf(privacy ?? (await this.privacy()), setting);
     if (tier === "everyone") return true;
@@ -473,8 +473,8 @@ export class UserDO implements DurableObject {
 
   /// This user's card as `viewerId` may see it: the photo and the bio go only
   /// as far as the avatar rule lets them.
-  private async cardFor(viewerId: string): Promise<PublicUser | null> {
-    const p = await this.state.storage.get<Profile>("profile");
+  private async cardForInternal(viewerId: string): Promise<PublicUser | null> {
+    const p = await this.ctx.storage.get<Profile>("profile");
     if (!p) return null;
     const card: PublicUser = {
       id: p.id, username: p.username, display_name: p.display_name,
@@ -486,8 +486,8 @@ export class UserDO implements DurableObject {
   }
 
   /// Whether a block stands between this user and `peer`, either way.
-  private async blockPair(peer: string): Promise<{ byMe: boolean; byPeer: boolean }> {
-    const got = await this.state.storage.get([BLOCK_PREFIX + peer, BLOCKED_BY_PREFIX + peer]);
+  private async blockPairInternal(peer: string): Promise<{ byMe: boolean; byPeer: boolean }> {
+    const got = await this.ctx.storage.get([BLOCK_PREFIX + peer, BLOCKED_BY_PREFIX + peer]);
     return {
       byMe: got.get(BLOCK_PREFIX + peer) !== undefined,
       byPeer: got.get(BLOCKED_BY_PREFIX + peer) !== undefined,
@@ -507,9 +507,9 @@ export class UserDO implements DurableObject {
     const calls: Array<() => Promise<void>> = [];
     for (const id of ids) {
       if (visible.has(id)) {
-        calls.push(() => this.tell(id, "/peer-presence", { userId, ...p }));
+        calls.push(() => this.tellPeerPresence(id, userId, p));
       } else if (dropHidden) {
-        calls.push(() => this.tell(id, "/peer-drop", { userId }));
+        calls.push(() => this.tellPeerDrop(id, userId));
       }
     }
     for (let i = 0; i < calls.length; i += PRESENCE_FAN) {
@@ -523,25 +523,54 @@ export class UserDO implements DurableObject {
   private async pushCards(ids: string[]) {
     const userId = await this.getUserId();
     if (!userId || !ids.length) return;
-    if (!(await this.state.storage.get<Profile>("profile"))) return;
+    if (!(await this.ctx.storage.get<Profile>("profile"))) return;
     for (let i = 0; i < ids.length; i += PRESENCE_FAN) {
       await Promise.all(ids.slice(i, i + PRESENCE_FAN).map(async (id) => {
-        const card = await this.cardFor(id);
-        if (card) await this.tell(id, "/peer-card", { userId, card });
+        const card = await this.cardForInternal(id);
+        if (card) await this.tellPeerCard(id, userId, card);
       }));
     }
   }
 
   /// One call to another user's object; a failure is logged and not retried —
   /// a lost presence is superseded by the next flip.
-  private async tell(userId: string, path: string, body: unknown) {
+  private async tellPeerPresence(userId: string, from: string, p: PeerPresence) {
     try {
-      const res = await this.userStub(userId).fetch(`https://do${path}`, {
-        method: "POST", body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error(`status ${res.status}`);
+      await this.userStub(userId).peerPresence(from, p.online, p.lastSeen, p.stamp);
     } catch (e) {
-      console.warn(`${path} to ${userId} failed: ${e}`);
+      console.warn(`peerPresence to ${userId} failed: ${e}`);
+    }
+  }
+
+  private async tellPeerDrop(userId: string, from: string) {
+    try {
+      await this.userStub(userId).peerDrop(from);
+    } catch (e) {
+      console.warn(`peerDrop to ${userId} failed: ${e}`);
+    }
+  }
+
+  private async tellPeerCard(userId: string, from: string, card: PublicUser) {
+    try {
+      await this.userStub(userId).peerCard(from, card);
+    } catch (e) {
+      console.warn(`peerCard to ${userId} failed: ${e}`);
+    }
+  }
+
+  private async tellPeerRefresh(userId: string, subscriber: string) {
+    try {
+      await this.userStub(userId).peerRefresh(subscriber);
+    } catch (e) {
+      console.warn(`peerRefresh to ${userId} failed: ${e}`);
+    }
+  }
+
+  private async tellPeerGone(userId: string, from: string) {
+    try {
+      await this.userStub(userId).peerGone(from);
+    } catch (e) {
+      console.warn(`peerGone to ${userId} failed: ${e}`);
     }
   }
 
@@ -550,10 +579,10 @@ export class UserDO implements DurableObject {
     for (let i = 0; i < peers.length; i += STORAGE_BATCH / 2) {
       const part = peers.slice(i, i + STORAGE_BATCH / 2);
       const keys = part.flatMap((p) => [WATCH_PREFIX + p, SUB_PREFIX + p]);
-      const got = await this.state.storage.get<Reasons>(keys);
+      const got = await this.ctx.storage.get<Reasons>(keys);
       const put: Record<string, Reasons> = {};
       for (const k of keys) put[k] = { ...(got.get(k) ?? {}), [chatId]: true };
-      await this.state.storage.put(put);
+      await this.ctx.storage.put(put);
     }
   }
 
@@ -563,7 +592,7 @@ export class UserDO implements DurableObject {
     for (let i = 0; i < peers.length; i += STORAGE_BATCH / 2) {
       const part = peers.slice(i, i + STORAGE_BATCH / 2);
       const keys = part.flatMap((p) => [WATCH_PREFIX + p, SUB_PREFIX + p]);
-      const got = await this.state.storage.get<Reasons>(keys);
+      const got = await this.ctx.storage.get<Reasons>(keys);
       const put: Record<string, Reasons> = {};
       const del: string[] = [];
       for (const p of part) {
@@ -577,1032 +606,971 @@ export class UserDO implements DurableObject {
           }
         }
       }
-      if (Object.keys(put).length) await this.state.storage.put(put);
+      if (Object.keys(put).length) await this.ctx.storage.put(put);
       // a peer losing its last link frees up to four keys, so `del` outgrows
       // the batch limit before `part` does
       for (let j = 0; j < del.length; j += STORAGE_BATCH) {
-        await this.state.storage.delete(del.slice(j, j + STORAGE_BATCH));
+        await this.ctx.storage.delete(del.slice(j, j + STORAGE_BATCH));
       }
     }
   }
 
   /// The subscribers who watch this user through `chatId`.
   private async subscribersVia(chatId: string): Promise<string[]> {
-    const listed = await this.state.storage.list<Reasons>({ prefix: SUB_PREFIX });
+    const listed = await this.ctx.storage.list<Reasons>({ prefix: SUB_PREFIX });
     return [...listed].filter(([, r]) => r[chatId]).map(([k]) => k.slice(SUB_PREFIX.length));
   }
 
   /// Every presence copy this user holds, as frames for a socket that just
   /// connected: the client's picture of who is online starts full.
   private async sendPeerPresence(ws: WebSocket) {
-    const listed = await this.state.storage.list<PeerPresence>({ prefix: PEER_PREFIX });
+    const listed = await this.ctx.storage.list<PeerPresence>({ prefix: PEER_PREFIX });
     for (const [k, p] of listed) {
       this.send(ws, { t: "presence", userId: k.slice(PEER_PREFIX.length), online: p.online, lastSeen: p.lastSeen });
     }
   }
 
+  /// The WebSocket upgrade: the one path that cannot be an RPC method.
   async fetch(req: Request): Promise<Response> {
-    return this.measured(new URL(req.url).pathname, () => this.handleFetch(req));
+    const url = new URL(req.url);
+    if (url.pathname !== "/ws") return new Response("not_found", { status: 404 });
+
+    const userId = req.headers.get("x-user-id")!;
+    const deviceId = req.headers.get("x-device-id")!;
+    await this.ctx.storage.put("userId", userId);
+    this.userId = userId;
+    // the session list shows when each device was last here, and this is
+    // when: the connection is the device saying so
+    const rec = await this.ctx.storage.get<DeviceRecord>(DEV_PREFIX + deviceId);
+    if (rec) {
+      rec.lastSeen = Date.now();
+      await this.ctx.storage.put(DEV_PREFIX + deviceId, rec);
+    }
+
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
+    this.ctx.acceptWebSocket(server);
+    server.serializeAttachment({ deviceId, lastPing: nowSec() } satisfies SocketAttachment);
+    // the handshake names both bounds: what this server speaks and how far
+    // down it still serves
+    this.send(server, {
+      t: "hello", serverTime: nowSec(),
+      protocol: PROTOCOL_VERSION, minProtocol: MIN_CLIENT_PROTOCOL,
+    });
+
+    await this.sendPeerPresence(server);
+    await this.armPresenceCheck();
+    if (this.sockets().length === 1) {
+      await this.broadcastPresence(true);
+    }
+    return new Response(null, { status: 101, webSocket: client });
   }
 
-  private async handleFetch(req: Request): Promise<Response> {
-    const url = new URL(req.url);
-    const path = url.pathname;
+  // MARK: - RPC surface
 
-    if (path === "/ws") {
-      const userId = req.headers.get("x-user-id")!;
-      const deviceId = req.headers.get("x-device-id")!;
-      await this.state.storage.put("userId", userId);
+  async event(frame: ServerFrame): Promise<{ dupe?: boolean }> {
+    return this.measured("event", () => this.eventInternal(frame));
+  }
+
+  private async eventInternal(frame: ServerFrame): Promise<{ dupe?: boolean }> {
+    if (this.devFailEvents > 0) {
+      this.devFailEvents--;
+      throw new DOError("dev_fault", 500);
+    }
+    // The delivery is idempotent: the chat's seq orders its msg frames and
+    // they arrive per chat in order, so anything at or below the mark has
+    // been applied already — a retry of a delivery that in fact succeeded
+    // is answered "already have it", and never costs a second push.
+    // Receipts and marks are monotonic and chat/presence frames are
+    // snapshots, so they need no mark.
+    let inboxKey: string | undefined;
+    if (frame.t === "msg" && typeof frame.seq === "number") {
+      inboxKey = "in:" + frame.chatId;
+      const applied = (await this.ctx.storage.get<number>(inboxKey)) ?? 0;
+      if (frame.seq <= applied) return { dupe: true };
+    }
+    for (const ws of this.sockets()) this.send(ws, frame);
+    if (frame.t === "chat" && frame.users?.length) {
+      // the roster's public names, kept for the pushes of these people:
+      // a push names its author for a device that has no row for them yet
+      const names: Record<string, string> = {};
+      for (const u of frame.users) names[NAME_PREFIX + u.id] = u.display_name;
+      await this.putBatched(names);
+    }
+    if (frame.t === "msg" && !frame.service) {
+      // a chat this user deleted comes back on the next message written to
+      // it; a service frame does not bring it back, having nothing to show
+      await this.relistChat(frame.chatId);
+      // a content message moves the chat's unread, so the cached badge is stale
+      await this.invalidateUnread(frame.chatId);
+      const flags = await this.clearExpiredMute(frame.chatId);
+      const muted = muteActive(flags, nowSec());
+      const userId = await this.getUserId();
+      const isOwnEcho = userId !== null && frame.from === userId;
+      // the push leaves through the object's own queue: this delivery is
+      // acknowledged now, and APNs' latency paces no chat. A muted chat
+      // pushes too, silent and flagged: the server cannot see a mention
+      // or a reply in the encrypted text, so the extension is the one
+      // that lets those through and swallows the rest
+      if (!isOwnEcho) {
+        await this.enqueuePush({ ...frame, muted });
+      }
+    } else if (frame.t === "msg" && frame.service && (frame.notify || frame.notifyUser)) {
+      // a service frame that still notifies — a missed-call record for
+      // everyone, a reaction for the author of the message it landed on:
+      // the push goes out, but the chat is not relisted and unread stays put
+      const flags = await this.clearExpiredMute(frame.chatId);
+      const muted = muteActive(flags, nowSec());
+      const userId = await this.getUserId();
+      const isOwnEcho = userId !== null && frame.from === userId;
+      const addressed = frame.notify || frame.notifyUser === userId;
+      if (!muted && !isOwnEcho && addressed) {
+        await this.enqueuePush(frame);
+      }
+    }
+    if (inboxKey && frame.t === "msg") {
+      await this.ctx.storage.put(inboxKey, frame.seq);
+    }
+    return {};
+  }
+
+  /// From ConversationDO: this user is in the chat. `peers` are the other
+  /// members, who watch this user from now on and are watched back;
+  /// `accepted: false` is a direct request still to be accepted, which
+  /// withholds this user's presence from the one who sent it.
+  async chatAdded(chatId: string, accepted?: boolean, peers?: string[]): Promise<void> {
+    const existing = await this.ctx.storage.get<ChatFlags>("chat:" + chatId);
+    if (!existing) {
+      await this.ctx.storage.put("chat:" + chatId, {
+        pinned: false, muted: false, archived: false, joinedAt: nowSec(),
+      } satisfies ChatFlags);
+    }
+    if (accepted === false) await this.ctx.storage.put(ACC_PREFIX + chatId, true);
+    const self = await this.getUserId();
+    const relatedPeers = (peers ?? []).filter((p) => p !== self);
+    if (relatedPeers.length) {
+      await this.relate(chatId, relatedPeers);
+      await this.pushPresence(relatedPeers);
+      await this.pushCards(relatedPeers);
+    }
+  }
+
+  async chatRemoved(chatId: string, peers?: string[]): Promise<void> {
+    await this.ctx.storage.delete(["chat:" + chatId, ACC_PREFIX + chatId]);
+    // the badge sums the listed chats, and a count left in the cache would
+    // be counted again the day the chat comes back
+    await this.invalidateUnread(chatId);
+    if (peers?.length) await this.unrelate(chatId, peers);
+  }
+
+  /// From ConversationDO: the roster of a chat this user stays in moved.
+  async peersChanged(chatId: string, added?: string[], removed?: string[]): Promise<void> {
+    if (removed?.length) await this.unrelate(chatId, removed);
+    if (added?.length) {
+      await this.relate(chatId, added);
+      await this.pushPresence(added);
+      await this.pushCards(added);
+    }
+  }
+
+  /// This user accepted a direct request: the sender may see them now.
+  async chatAccepted(chatId: string): Promise<void> {
+    await this.ctx.storage.delete(ACC_PREFIX + chatId);
+    await this.pushPresence(await this.subscribersVia(chatId));
+  }
+
+  /// From a source this user watches: its presence, as it lets this user
+  /// see it. Kept even before this object's own roster call has landed —
+  /// a chat's members are told at once, and the source's snapshot can
+  /// arrive first.
+  async peerPresence(userId: string, online: boolean, lastSeen: number, stamp: number): Promise<void> {
+    // hiding your own last seen blinds you to everyone else's: the copy is
+    // refused here rather than filtered at every source
+    if ((await this.privacy()).lastSeen === "nobody") return;
+    const held = await this.ctx.storage.get<PeerPresence>(PEER_PREFIX + userId);
+    if (held && held.stamp > stamp) return;
+    await this.ctx.storage.put(PEER_PREFIX + userId, { online, lastSeen, stamp } satisfies PeerPresence);
+    this.broadcast({ t: "presence", userId, online, lastSeen });
+  }
+
+  /// From a source this user watches: its card, as it lets this user see
+  /// it. The chat list is answered out of these copies.
+  async peerCard(userId: string, card: PublicUser): Promise<void> {
+    await this.ctx.storage.put({
+      [PCARD_PREFIX + userId]: card,
+      // the name a push writes is the same name: a rename reaches it here
+      // rather than waiting for the next roster frame
+      [NAME_PREFIX + userId]: card.display_name,
+    });
+  }
+
+  /// Every card copy this user holds, for the chat list.
+  async peerCards(): Promise<{ cards: PublicUser[] }> {
+    const listed = await this.ctx.storage.list<PublicUser>({ prefix: PCARD_PREFIX });
+    return { cards: [...listed.values()] };
+  }
+
+  /// A source took its presence away from this user: the copy goes.
+  async peerDrop(userId: string): Promise<void> {
+    await this.ctx.storage.delete(PEER_PREFIX + userId);
+  }
+
+  async peerPresenceRead(peer: string): Promise<{ presence: PeerPresence | null }> {
+    const p = await this.ctx.storage.get<PeerPresence>(PEER_PREFIX + peer);
+    return { presence: p ?? null };
+  }
+
+  /// The last-seen tier or one of its exceptions changed: every subscriber
+  /// is pushed the presence or told to forget it.
+  async presencePolicyChanged(): Promise<void> {
+    await this.pushPresence(await this.subscribers(), undefined, true);
+    // and the other half of the rule: a user who has just hidden their own
+    // last seen holds no more copies, and one who stopped hiding it asks
+    // for the copies back
+    const self = await this.getUserId();
+    const watched = await this.ctx.storage.list<Reasons>({ prefix: WATCH_PREFIX });
+    const peers = [...watched.keys()].map((k) => k.slice(WATCH_PREFIX.length));
+    if ((await this.privacy()).lastSeen === "nobody") {
+      for (let i = 0; i < peers.length; i += STORAGE_BATCH) {
+        await this.ctx.storage.delete(
+          peers.slice(i, i + STORAGE_BATCH).map((p) => PEER_PREFIX + p));
+      }
+    } else if (self) {
+      for (let i = 0; i < peers.length; i += PRESENCE_FAN) {
+        await Promise.all(peers.slice(i, i + PRESENCE_FAN).map(
+          (p) => this.tellPeerRefresh(p, self)));
+      }
+    }
+  }
+
+  async peerRefresh(subscriber: string): Promise<void> {
+    await this.pushPresence([subscriber]);
+    await this.pushCards([subscriber]);
+  }
+
+  /// An account this user was related to is deleted.
+  async peerGone(userId: string): Promise<void> {
+    await this.ctx.storage.delete([
+      SUB_PREFIX + userId, WATCH_PREFIX + userId, PEER_PREFIX + userId,
+      PCARD_PREFIX + userId, BLOCK_PREFIX + userId, BLOCKED_BY_PREFIX + userId,
+    ]);
+  }
+
+  async chats(): Promise<{ chats: Record<string, ChatFlags> }> {
+    const listed = await this.ctx.storage.list<ChatFlags>({ prefix: "chat:" });
+    const now = nowSec();
+    const out: Record<string, ChatFlags> = {};
+    for (const [k, v] of listed) {
+      const chatId = k.slice(5);
+      out[chatId] = muteExpired(v, now)
+        ? (await this.clearExpiredMute(chatId)) ?? v
+        : v;
+    }
+    return { chats: out };
+  }
+
+  async flagsRead(chatId: string): Promise<{ flags: ChatFlags }> {
+    const flags = await this.ctx.storage.get<ChatFlags>("chat:" + chatId);
+    if (!flags) throw new DOError("chat_not_found", 404);
+    return { flags };
+  }
+
+  async flags(b: {
+    chatId: string; pinned?: boolean; muted?: boolean;
+    mutedUntil?: number | null; archived?: boolean; sound?: string | null;
+  }): Promise<void> {
+    const key = "chat:" + b.chatId;
+    const flags = await this.ctx.storage.get<ChatFlags>(key);
+    if (!flags) throw new DOError("chat_not_found", 404);
+    if (b.sound !== undefined) {
+      if (b.sound === null || b.sound === "default") delete flags.sound;
+      else if (SOUND_NAME.test(b.sound)) flags.sound = b.sound;
+      else throw new DOError("bad_sound");
+    }
+    if (b.pinned !== undefined) flags.pinned = b.pinned;
+    // a deadline lives only with the mute that set it: muted with no mutedUntil
+    // (or a null one) is indefinite, muted:false lifts it
+    if (b.muted !== undefined) {
+      flags.muted = b.muted;
+      delete flags.mutedUntil;
+    }
+    if (b.mutedUntil != null && flags.muted) flags.mutedUntil = b.mutedUntil;
+    if (b.archived !== undefined) flags.archived = b.archived;
+    await this.ctx.storage.put(key, flags);
+  }
+
+  async personSound(userId: string, sound?: string | null, read?: boolean): Promise<{ sound?: string | null }> {
+    if (read) {
+      const s = await this.ctx.storage.get<string>(`usnd:${userId}`);
+      return { sound: s ?? null };
+    }
+    if (sound === null || sound === undefined || sound === "default") {
+      await this.ctx.storage.delete(`usnd:${userId}`);
+    } else if (SOUND_NAME.test(sound)) {
+      await this.ctx.storage.put(`usnd:${userId}`, sound);
+    } else {
+      throw new DOError("bad_sound");
+    }
+    return {};
+  }
+
+  async notifySoundsRead(): Promise<{ sounds: NotifySounds }> {
+    const sounds = (await this.ctx.storage.get<NotifySounds>("notifySounds")) ?? {};
+    return { sounds };
+  }
+
+  async notifySoundsWrite(b: { direct?: string | null; group?: string | null }): Promise<{ sounds: NotifySounds }> {
+    const sounds = (await this.ctx.storage.get<NotifySounds>("notifySounds")) ?? {};
+    for (const shape of ["direct", "group"] as const) {
+      const v = b[shape];
+      if (v === undefined) continue;
+      if (v === null || v === "default") delete sounds[shape];
+      else if (SOUND_NAME.test(v)) sounds[shape] = v;
+      else throw new DOError("bad_sound");
+    }
+    await this.ctx.storage.put("notifySounds", sounds);
+    return { sounds };
+  }
+
+  /// The account is being deleted: close every socket and erase the
+  /// object whole — keys, chat flags, sounds, the address book, tokens.
+  async accountWipe(): Promise<void> {
+    for (const ws of this.sockets()) {
+      try { ws.close(1000, "account_deleted"); } catch { /* already gone */ }
+    }
+    // whoever watched this user, or was watched by them, drops the relation
+    const userId = await this.getUserId();
+    if (userId) {
+      const watched = await this.ctx.storage.list<Reasons>({ prefix: WATCH_PREFIX });
+      const blocked = await this.ctx.storage.list({ prefix: BLOCK_PREFIX });
+      const blockedBy = await this.ctx.storage.list({ prefix: BLOCKED_BY_PREFIX });
+      const related = new Set([
+        ...(await this.subscribers()),
+        ...[...watched.keys()].map((k) => k.slice(WATCH_PREFIX.length)),
+        ...[...blocked.keys()].map((k) => k.slice(BLOCK_PREFIX.length)),
+        ...[...blockedBy.keys()].map((k) => k.slice(BLOCKED_BY_PREFIX.length)),
+      ]);
+      const calls = [...related].map((id) => () => this.tellPeerGone(id, userId));
+      for (let i = 0; i < calls.length; i += PRESENCE_FAN) {
+        await Promise.all(calls.slice(i, i + PRESENCE_FAN).map((c) => c()));
+      }
+    }
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+    this.userId = null;
+  }
+
+  async soundExceptions(): Promise<{
+    chats: Array<{ chatId: string; sound: string }>;
+    people: Array<{ userId: string; sound: string }>;
+  }> {
+    const chats: { chatId: string; sound: string }[] = [];
+    for (const [k, v] of await this.ctx.storage.list<ChatFlags>({ prefix: "chat:" })) {
+      if (v.sound) chats.push({ chatId: k.slice("chat:".length), sound: v.sound });
+    }
+    const people: { userId: string; sound: string }[] = [];
+    for (const [k, v] of await this.ctx.storage.list<string>({ prefix: "usnd:" })) {
+      people.push({ userId: k.slice("usnd:".length), sound: v });
+    }
+    return { chats, people };
+  }
+
+  async pushToken(deviceId: string, apnsToken: string, env: string, userId?: string): Promise<void> {
+    // unreadCount needs the userId even before the first WS connection
+    if (userId) {
+      await this.ctx.storage.put("userId", userId);
       this.userId = userId;
-      // the session list shows when each device was last here, and this is
-      // when: the connection is the device saying so
-      const rec = await this.state.storage.get<DeviceRecord>(DEV_PREFIX + deviceId);
-      if (rec) {
-        rec.lastSeen = Date.now();
-        await this.state.storage.put(DEV_PREFIX + deviceId, rec);
-      }
+    }
+    const tokens =
+      (await this.ctx.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
+    tokens[deviceId] = { token: apnsToken, env };
+    await this.ctx.storage.put("apns", tokens);
+  }
 
-      const pair = new WebSocketPair();
-      const [client, server] = Object.values(pair);
-      this.state.acceptWebSocket(server);
-      server.serializeAttachment({ deviceId, lastPing: nowSec() } satisfies SocketAttachment);
-      // the handshake names both bounds: what this server speaks and how far
-      // down it still serves
-      this.send(server, {
-        t: "hello", serverTime: nowSec(),
-        protocol: PROTOCOL_VERSION, minProtocol: MIN_CLIENT_PROTOCOL,
+  /// A push that is not a chat message: it carries a ready alert, no
+  /// envelope, and leaves the badge at the current unread total.
+  async notifyPlain(chatId: string, title: string, body: string, userId?: string): Promise<void> {
+    if (userId) {
+      await this.ctx.storage.put("userId", userId);
+      this.userId = userId;
+    }
+    await this.pushPlain(chatId, { title, body });
+  }
+
+  async revokeDevice(deviceId: string, userId?: string): Promise<void> {
+    if (userId) {
+      await this.ctx.storage.put("userId", userId);
+      this.userId = userId;
+    }
+    for (const ws of this.sockets()) {
+      const att = ws.deserializeAttachment() as SocketAttachment | null;
+      if (att?.deviceId !== deviceId) continue;
+      try { ws.close(4401, "revoked"); } catch { /* already closed */ }
+    }
+    const tokens =
+      (await this.ctx.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
+    if (deviceId in tokens) {
+      delete tokens[deviceId];
+      await this.ctx.storage.put("apns", tokens);
+    }
+    // the session, its token and its keys go together: the token stops
+    // authenticating, the next send builds no box for the device and its
+    // prekeys stop being handed out
+    const rec = await this.ctx.storage.get<DeviceRecord>(DEV_PREFIX + deviceId);
+    const otps = await this.ctx.storage.list({ prefix: otpPrefix(deviceId) });
+    const gone = [
+      ikKey(deviceId), DEV_PREFIX + deviceId,
+      ...(rec ? [TOKEN_PREFIX + rec.tokenHash] : []),
+      ...otps.keys(),
+    ];
+    for (let i = 0; i < gone.length; i += STORAGE_BATCH) {
+      await this.ctx.storage.delete(gone.slice(i, i + STORAGE_BATCH));
+    }
+    const version = ((await this.ctx.storage.get<number>("devicesVersion")) ?? 1) + 1;
+    await this.ctx.storage.put("devicesVersion", version);
+    await this.broadcastDevicesChanged(version);
+    if (this.sockets().length === 0) await this.broadcastPresence(false);
+  }
+
+  // --- the E2EE device set: identity keys, prekeys, the set's version ---
+
+  async keysRegister(b: {
+    userId: string; deviceId: string;
+    identityKey: string; identitySignKey: string; identityKeySig: string;
+    signedPrekey: { id: number; key: string; sig: string };
+    oneTimePrekeys?: PrekeyUpload[];
+    /// a linked device changes the set an existing account's peers hold;
+    /// the first registration starts it and nobody holds a copy yet
+    bump?: boolean;
+    /// the card a registration opens the account with; a device joining
+    /// an account that already exists sends none
+    profile?: Profile;
+    /// the session this device speaks for from now on
+    device?: { deviceId: string; name: string | null; tokenHash: string };
+  }): Promise<{ version: number }> {
+    await this.ctx.storage.put("userId", b.userId);
+    this.userId = b.userId;
+    let version = (await this.ctx.storage.get<number>("devicesVersion")) ?? 1;
+    if (b.bump) version++;
+    const puts: Record<string, unknown> = {
+      [ikKey(b.deviceId)]: {
+        identityKey: b.identityKey,
+        identitySignKey: b.identitySignKey,
+        identityKeySig: b.identityKeySig,
+        signedPrekeyId: b.signedPrekey.id,
+        signedPrekey: b.signedPrekey.key,
+        signedPrekeySig: b.signedPrekey.sig,
+      } satisfies IdentityRecord,
+      // The identity belongs to the account, not to any device row:
+      // revoking the last device drops its keys, and this record is what
+      // a backup restore still has to verify its signature against.
+      accountIdentity: {
+        identityKey: b.identityKey,
+        identitySignKey: b.identitySignKey,
+      },
+      devicesVersion: version,
+    };
+    for (const k of (b.oneTimePrekeys ?? []).slice(0, 200)) {
+      puts[otpKey(b.deviceId, k.id)] = k.key;
+    }
+    // the card and the session go in the same write as the keys: an
+    // account is either whole here or was never opened
+    if (b.profile) puts["profile"] = b.profile;
+    if (b.device) {
+      puts[DEV_PREFIX + b.device.deviceId] = {
+        name: b.device.name, tokenHash: b.device.tokenHash,
+        createdAt: Date.now(), lastSeen: null,
+      } satisfies DeviceRecord;
+      puts[TOKEN_PREFIX + b.device.tokenHash] = b.device.deviceId;
+    }
+    await this.putBatched(puts);
+    if (b.bump) await this.broadcastDevicesChanged(version);
+    return { version };
+  }
+
+  async keysTopup(deviceId: string, oneTimePrekeys?: PrekeyUpload[]): Promise<void> {
+    const wanted = (oneTimePrekeys ?? []).slice(0, 200);
+    const names = wanted.map((k) => otpKey(deviceId, k.id));
+    const existing = new Set<string>();
+    for (let i = 0; i < names.length; i += STORAGE_BATCH) {
+      const got = await this.ctx.storage.get(names.slice(i, i + STORAGE_BATCH));
+      for (const k of got.keys()) existing.add(k);
+    }
+    // a key id already uploaded keeps its first value: a retry of the same
+    // top-up must not replace a key a bundle may have handed out meanwhile
+    const puts: Record<string, unknown> = {};
+    wanted.forEach((k, i) => {
+      if (!existing.has(names[i])) puts[names[i]] = k.key;
+    });
+    if (Object.keys(puts).length) await this.putBatched(puts);
+  }
+
+  async keysCount(deviceId: string): Promise<{ count: number }> {
+    const listed = await this.ctx.storage.list({ prefix: otpPrefix(deviceId) });
+    return { count: listed.size };
+  }
+
+  /// X3DH bundles for every device; the one-time prekey with the lowest id
+  /// is consumed here, inside the object, so two senders never draw the same one.
+  async keysPrekeys(): Promise<{ bundles: Array<{
+    deviceId: string; identityKey: string; identitySignKey: string; identityKeySig: string;
+    signedPrekey: { id: number; key: string; sig: string };
+    oneTimePrekey: { id: number; key: string } | null;
+  }> }> {
+    const iks = await this.ctx.storage.list<IdentityRecord>({ prefix: IK_PREFIX });
+    const bundles = [];
+    for (const [key, d] of iks) {
+      const deviceId = key.slice(IK_PREFIX.length);
+      const prefix = otpPrefix(deviceId);
+      const otps = await this.ctx.storage.list<string>({ prefix, limit: 1 });
+      let oneTimePrekey: { id: number; key: string } | null = null;
+      for (const [otpName, otpVal] of otps) {
+        oneTimePrekey = { id: Number(otpName.slice(prefix.length)), key: otpVal };
+        await this.ctx.storage.delete(otpName);
+      }
+      bundles.push({
+        deviceId,
+        identityKey: d.identityKey,
+        identitySignKey: d.identitySignKey,
+        identityKeySig: d.identityKeySig,
+        signedPrekey: { id: d.signedPrekeyId, key: d.signedPrekey, sig: d.signedPrekeySig },
+        oneTimePrekey,
       });
-
-      await this.sendPeerPresence(server);
-      await this.armPresenceCheck();
-      if (this.sockets().length === 1) {
-        await this.broadcastPresence(true);
-      }
-      return new Response(null, { status: 101, webSocket: client });
     }
-
-    switch (path) {
-      case "/event": {
-        if (this.devFailEvents > 0) {
-          this.devFailEvents--;
-          return err("dev_fault", 500);
-        }
-        const frame = (await req.json()) as ServerFrame;
-        // The delivery is idempotent: the chat's seq orders its msg frames and
-        // they arrive per chat in order, so anything at or below the mark has
-        // been applied already — a retry of a delivery that in fact succeeded
-        // is answered "already have it", and never costs a second push.
-        // Receipts and marks are monotonic and chat/presence frames are
-        // snapshots, so they need no mark.
-        let inboxKey: string | undefined;
-        if (frame.t === "msg" && typeof frame.seq === "number") {
-          inboxKey = "in:" + frame.chatId;
-          const applied = (await this.state.storage.get<number>(inboxKey)) ?? 0;
-          if (frame.seq <= applied) return json({ ok: true, dupe: true });
-        }
-        for (const ws of this.sockets()) this.send(ws, frame);
-        if (frame.t === "chat" && frame.users?.length) {
-          // the roster's public names, kept for the pushes of these people:
-          // a push names its author for a device that has no row for them yet
-          const names: Record<string, string> = {};
-          for (const u of frame.users) names[NAME_PREFIX + u.id] = u.display_name;
-          await this.putBatched(names);
-        }
-        if (frame.t === "msg" && !frame.service) {
-          // a chat this user deleted comes back on the next message written to
-          // it; a service frame does not bring it back, having nothing to show
-          await this.relistChat(frame.chatId);
-          // a content message moves the chat's unread, so the cached badge is stale
-          await this.invalidateUnread(frame.chatId);
-          const flags = await this.clearExpiredMute(frame.chatId);
-          const muted = muteActive(flags, nowSec());
-          const userId = await this.getUserId();
-          const isOwnEcho = userId !== null && frame.from === userId;
-          // the push leaves through the object's own queue: this delivery is
-          // acknowledged now, and APNs' latency paces no chat. A muted chat
-          // pushes too, silent and flagged: the server cannot see a mention
-          // or a reply in the encrypted text, so the extension is the one
-          // that lets those through and swallows the rest
-          if (!isOwnEcho) {
-            await this.enqueuePush({ ...frame, muted });
-          }
-        } else if (frame.t === "msg" && frame.service && (frame.notify || frame.notifyUser)) {
-          // a service frame that still notifies — a missed-call record for
-          // everyone, a reaction for the author of the message it landed on:
-          // the push goes out, but the chat is not relisted and unread stays put
-          const flags = await this.clearExpiredMute(frame.chatId);
-          const muted = muteActive(flags, nowSec());
-          const userId = await this.getUserId();
-          const isOwnEcho = userId !== null && frame.from === userId;
-          const addressed = frame.notify || frame.notifyUser === userId;
-          if (!muted && !isOwnEcho && addressed) {
-            await this.enqueuePush(frame);
-          }
-        }
-        if (inboxKey && frame.t === "msg") {
-          await this.state.storage.put(inboxKey, frame.seq);
-        }
-        return json({ ok: true });
-      }
-
-      case "/chat-added": {
-        // from ConversationDO: this user is in the chat. `peers` are the other
-        // members, who watch this user from now on and are watched back;
-        // `accepted: false` is a direct request still to be accepted, which
-        // withholds this user's presence from the one who sent it
-        const b = (await req.json()) as { chatId: string; accepted?: boolean; peers?: string[] };
-        const existing = await this.state.storage.get<ChatFlags>("chat:" + b.chatId);
-        if (!existing) {
-          await this.state.storage.put("chat:" + b.chatId, {
-            pinned: false, muted: false, archived: false, joinedAt: nowSec(),
-          } satisfies ChatFlags);
-        }
-        if (b.accepted === false) await this.state.storage.put(ACC_PREFIX + b.chatId, true);
-        const self = await this.getUserId();
-        const peers = (b.peers ?? []).filter((p) => p !== self);
-        if (peers.length) {
-          await this.relate(b.chatId, peers);
-          await this.pushPresence(peers);
-          await this.pushCards(peers);
-        }
-        return json({ ok: true });
-      }
-
-      case "/chat-removed": {
-        const b = (await req.json()) as { chatId: string; peers?: string[] };
-        await this.state.storage.delete(["chat:" + b.chatId, ACC_PREFIX + b.chatId]);
-        // the badge sums the listed chats, and a count left in the cache would
-        // be counted again the day the chat comes back
-        await this.invalidateUnread(b.chatId);
-        if (b.peers?.length) await this.unrelate(b.chatId, b.peers);
-        return json({ ok: true });
-      }
-
-      case "/peers-changed": {
-        // from ConversationDO: the roster of a chat this user stays in moved
-        const b = (await req.json()) as { chatId: string; added?: string[]; removed?: string[] };
-        if (b.removed?.length) await this.unrelate(b.chatId, b.removed);
-        if (b.added?.length) {
-          await this.relate(b.chatId, b.added);
-          await this.pushPresence(b.added);
-          await this.pushCards(b.added);
-        }
-        return json({ ok: true });
-      }
-
-      case "/chat-accepted": {
-        // this user accepted a direct request: the sender may see them now
-        const b = (await req.json()) as { chatId: string };
-        await this.state.storage.delete(ACC_PREFIX + b.chatId);
-        await this.pushPresence(await this.subscribersVia(b.chatId));
-        return json({ ok: true });
-      }
-
-      case "/peer-presence": {
-        // from a source this user watches: its presence, as it lets this user
-        // see it. Kept even before this object's own roster call has landed —
-        // a chat's members are told at once, and the source's snapshot can
-        // arrive first
-        const b = (await req.json()) as PeerPresence & { userId: string };
-        // hiding your own last seen blinds you to everyone else's: the copy is
-        // refused here rather than filtered at every source
-        if ((await this.privacy()).lastSeen === "nobody") return json({ ok: true });
-        const held = await this.state.storage.get<PeerPresence>(PEER_PREFIX + b.userId);
-        if (held && held.stamp > b.stamp) return json({ ok: true });
-        await this.state.storage.put(PEER_PREFIX + b.userId,
-          { online: b.online, lastSeen: b.lastSeen, stamp: b.stamp } satisfies PeerPresence);
-        this.broadcast({ t: "presence", userId: b.userId, online: b.online, lastSeen: b.lastSeen });
-        return json({ ok: true });
-      }
-
-      case "/peer-card": {
-        // from a source this user watches: its card, as it lets this user see
-        // it. The chat list is answered out of these copies
-        const b = (await req.json()) as { userId: string; card: PublicUser };
-        await this.state.storage.put({
-          [PCARD_PREFIX + b.userId]: b.card,
-          // the name a push writes is the same name: a rename reaches it here
-          // rather than waiting for the next roster frame
-          [NAME_PREFIX + b.userId]: b.card.display_name,
-        });
-        return json({ ok: true });
-      }
-
-      /// Every card copy this user holds, for the chat list.
-      case "/peer-cards": {
-        const listed = await this.state.storage.list<PublicUser>({ prefix: PCARD_PREFIX });
-        return json({ ok: true, cards: [...listed.values()] });
-      }
-
-      case "/peer-drop": {
-        // a source took its presence away from this user: the copy goes
-        const b = (await req.json()) as { userId: string };
-        await this.state.storage.delete(PEER_PREFIX + b.userId);
-        return json({ ok: true });
-      }
-
-      case "/peer-presence-read": {
-        const peer = url.searchParams.get("peer") ?? "";
-        const p = await this.state.storage.get<PeerPresence>(PEER_PREFIX + peer);
-        return json({ ok: true, presence: p ?? null });
-      }
-
-      case "/presence-policy-changed": {
-        // the last-seen tier or one of its exceptions changed: every
-        // subscriber is pushed the presence or told to forget it
-        await this.pushPresence(await this.subscribers(), undefined, true);
-        // and the other half of the rule: a user who has just hidden their own
-        // last seen holds no more copies, and one who stopped hiding it asks
-        // for the copies back
-        const self = await this.getUserId();
-        const watched = await this.state.storage.list<Reasons>({ prefix: WATCH_PREFIX });
-        const peers = [...watched.keys()].map((k) => k.slice(WATCH_PREFIX.length));
-        if ((await this.privacy()).lastSeen === "nobody") {
-          for (let i = 0; i < peers.length; i += STORAGE_BATCH) {
-            await this.state.storage.delete(
-              peers.slice(i, i + STORAGE_BATCH).map((p) => PEER_PREFIX + p));
-          }
-        } else if (self) {
-          for (let i = 0; i < peers.length; i += PRESENCE_FAN) {
-            await Promise.all(peers.slice(i, i + PRESENCE_FAN).map(
-              (p) => this.tell(p, "/peer-refresh", { subscriber: self })));
-          }
-        }
-        return json({ ok: true });
-      }
-
-      case "/peer-refresh": {
-        const b = (await req.json()) as { subscriber: string };
-        await this.pushPresence([b.subscriber]);
-        await this.pushCards([b.subscriber]);
-        return json({ ok: true });
-      }
-
-      case "/peer-gone": {
-        // an account this user was related to is deleted
-        const b = (await req.json()) as { userId: string };
-        await this.state.storage.delete([
-          SUB_PREFIX + b.userId, WATCH_PREFIX + b.userId, PEER_PREFIX + b.userId,
-          PCARD_PREFIX + b.userId, BLOCK_PREFIX + b.userId, BLOCKED_BY_PREFIX + b.userId,
-        ]);
-        return json({ ok: true });
-      }
-
-      case "/chats": {
-        const listed = await this.state.storage.list<ChatFlags>({ prefix: "chat:" });
-        const now = nowSec();
-        const out: Record<string, ChatFlags> = {};
-        for (const [k, v] of listed) {
-          const chatId = k.slice(5);
-          out[chatId] = muteExpired(v, now)
-            ? (await this.clearExpiredMute(chatId)) ?? v
-            : v;
-        }
-        return json({ ok: true, chats: out });
-      }
-
-      case "/flags-read": {
-        const b = (await req.json()) as { chatId: string };
-        const flags = await this.state.storage.get<ChatFlags>("chat:" + b.chatId);
-        if (!flags) return err("chat_not_found", 404);
-        return json({ ok: true, flags });
-      }
-
-      case "/flags": {
-        const b = (await req.json()) as {
-          chatId: string; pinned?: boolean; muted?: boolean;
-          mutedUntil?: number | null; archived?: boolean; sound?: string | null;
-        };
-        const key = "chat:" + b.chatId;
-        const flags = await this.state.storage.get<ChatFlags>(key);
-        if (!flags) return err("chat_not_found", 404);
-        if (b.sound !== undefined) {
-          if (b.sound === null || b.sound === "default") delete flags.sound;
-          else if (SOUND_NAME.test(b.sound)) flags.sound = b.sound;
-          else return err("bad_sound");
-        }
-        if (b.pinned !== undefined) flags.pinned = b.pinned;
-        // a deadline lives only with the mute that set it: muted with no mutedUntil
-        // (or a null one) is indefinite, muted:false lifts it
-        if (b.muted !== undefined) {
-          flags.muted = b.muted;
-          delete flags.mutedUntil;
-        }
-        if (b.mutedUntil != null && flags.muted) flags.mutedUntil = b.mutedUntil;
-        if (b.archived !== undefined) flags.archived = b.archived;
-        await this.state.storage.put(key, flags);
-        return json({ ok: true });
-      }
-
-      case "/person-sound": {
-        const b = (await req.json()) as { userId?: string; sound?: string | null; read?: boolean };
-        if (!b.userId) return err("bad_request");
-        if (b.read) {
-          const sound = await this.state.storage.get<string>(`usnd:${b.userId}`);
-          return json({ ok: true, sound: sound ?? null });
-        }
-        if (b.sound === null || b.sound === undefined || b.sound === "default") {
-          await this.state.storage.delete(`usnd:${b.userId}`);
-        } else if (SOUND_NAME.test(b.sound)) {
-          await this.state.storage.put(`usnd:${b.userId}`, b.sound);
-        } else {
-          return err("bad_sound");
-        }
-        return json({ ok: true });
-      }
-
-      case "/notify-sounds": {
-        if (req.method === "GET" || url.searchParams.get("read") === "1") {
-          const sounds = (await this.state.storage.get<NotifySounds>("notifySounds")) ?? {};
-          return json({ ok: true, sounds });
-        }
-        const b = (await req.json()) as { direct?: string | null; group?: string | null };
-        const sounds = (await this.state.storage.get<NotifySounds>("notifySounds")) ?? {};
-        for (const shape of ["direct", "group"] as const) {
-          const v = b[shape];
-          if (v === undefined) continue;
-          if (v === null || v === "default") delete sounds[shape];
-          else if (SOUND_NAME.test(v)) sounds[shape] = v;
-          else return err("bad_sound");
-        }
-        await this.state.storage.put("notifySounds", sounds);
-        return json({ ok: true, sounds });
-      }
-
-      case "/account-wipe": {
-        // the account is being deleted: close every socket and erase the
-        // object whole — keys, chat flags, sounds, the address book, tokens
-        for (const ws of this.sockets()) {
-          try { ws.close(1000, "account_deleted"); } catch { /* already gone */ }
-        }
-        // whoever watched this user, or was watched by them, drops the relation
-        const userId = await this.getUserId();
-        if (userId) {
-          const watched = await this.state.storage.list<Reasons>({ prefix: WATCH_PREFIX });
-          const blocked = await this.state.storage.list({ prefix: BLOCK_PREFIX });
-          const blockedBy = await this.state.storage.list({ prefix: BLOCKED_BY_PREFIX });
-          const related = new Set([
-            ...(await this.subscribers()),
-            ...[...watched.keys()].map((k) => k.slice(WATCH_PREFIX.length)),
-            ...[...blocked.keys()].map((k) => k.slice(BLOCK_PREFIX.length)),
-            ...[...blockedBy.keys()].map((k) => k.slice(BLOCKED_BY_PREFIX.length)),
-          ]);
-          const calls = [...related].map((id) => () => this.tell(id, "/peer-gone", { userId }));
-          for (let i = 0; i < calls.length; i += PRESENCE_FAN) {
-            await Promise.all(calls.slice(i, i + PRESENCE_FAN).map((c) => c()));
-          }
-        }
-        await this.state.storage.deleteAlarm();
-        await this.state.storage.deleteAll();
-        this.userId = null;
-        return json({ ok: true });
-      }
-
-      case "/sound-exceptions": {
-        const chats: { chatId: string; sound: string }[] = [];
-        for (const [k, v] of await this.state.storage.list<ChatFlags>({ prefix: "chat:" })) {
-          if (v.sound) chats.push({ chatId: k.slice("chat:".length), sound: v.sound });
-        }
-        const people: { userId: string; sound: string }[] = [];
-        for (const [k, v] of await this.state.storage.list<string>({ prefix: "usnd:" })) {
-          people.push({ userId: k.slice("usnd:".length), sound: v });
-        }
-        return json({ ok: true, chats, people });
-      }
-
-      case "/push-token": {
-        const b = (await req.json()) as {
-          deviceId: string; apnsToken: string; env: string; userId?: string;
-        };
-        // /unread-count needs the userId even before the first WS connection
-        if (b.userId) {
-          await this.state.storage.put("userId", b.userId);
-          this.userId = b.userId;
-        }
-        const tokens =
-          (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
-        tokens[b.deviceId] = { token: b.apnsToken, env: b.env };
-        await this.state.storage.put("apns", tokens);
-        return json({ ok: true });
-      }
-
-      case "/notify-plain": {
-        // A push that is not a chat message: it carries a ready alert, no
-        // envelope, and leaves the badge at the current unread total.
-        const b = (await req.json()) as {
-          chatId: string; title: string; body: string; userId?: string;
-        };
-        if (b.userId) {
-          await this.state.storage.put("userId", b.userId);
-          this.userId = b.userId;
-        }
-        await this.pushPlain(b.chatId, { title: b.title, body: b.body });
-        return json({ ok: true });
-      }
-
-      case "/revoke-device": {
-        const b = (await req.json()) as { deviceId: string; userId?: string };
-        if (b.userId) {
-          await this.state.storage.put("userId", b.userId);
-          this.userId = b.userId;
-        }
-        for (const ws of this.sockets()) {
-          const att = ws.deserializeAttachment() as SocketAttachment | null;
-          if (att?.deviceId !== b.deviceId) continue;
-          try { ws.close(4401, "revoked"); } catch { /* already closed */ }
-        }
-        const tokens =
-          (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
-        if (b.deviceId in tokens) {
-          delete tokens[b.deviceId];
-          await this.state.storage.put("apns", tokens);
-        }
-        // the session, its token and its keys go together: the token stops
-        // authenticating, the next send builds no box for the device and its
-        // prekeys stop being handed out
-        const rec = await this.state.storage.get<DeviceRecord>(DEV_PREFIX + b.deviceId);
-        const otps = await this.state.storage.list({ prefix: otpPrefix(b.deviceId) });
-        const gone = [
-          ikKey(b.deviceId), DEV_PREFIX + b.deviceId,
-          ...(rec ? [TOKEN_PREFIX + rec.tokenHash] : []),
-          ...otps.keys(),
-        ];
-        for (let i = 0; i < gone.length; i += STORAGE_BATCH) {
-          await this.state.storage.delete(gone.slice(i, i + STORAGE_BATCH));
-        }
-        const version = ((await this.state.storage.get<number>("devicesVersion")) ?? 1) + 1;
-        await this.state.storage.put("devicesVersion", version);
-        await this.broadcastDevicesChanged(version);
-        if (this.sockets().length === 0) await this.broadcastPresence(false);
-        return json({ ok: true });
-      }
-
-      // --- the E2EE device set: identity keys, prekeys, the set's version ---
-
-      case "/keys-register": {
-        const b = (await req.json()) as {
-          userId: string; deviceId: string;
-          identityKey: string; identitySignKey: string; identityKeySig: string;
-          signedPrekey: { id: number; key: string; sig: string };
-          oneTimePrekeys?: PrekeyUpload[];
-          /// a linked device changes the set an existing account's peers hold;
-          /// the first registration starts it and nobody holds a copy yet
-          bump?: boolean;
-          /// the card a registration opens the account with; a device joining
-          /// an account that already exists sends none
-          profile?: Profile;
-          /// the session this device speaks for from now on
-          device?: { deviceId: string; name: string | null; tokenHash: string };
-        };
-        await this.state.storage.put("userId", b.userId);
-        this.userId = b.userId;
-        let version = (await this.state.storage.get<number>("devicesVersion")) ?? 1;
-        if (b.bump) version++;
-        const puts: Record<string, unknown> = {
-          [ikKey(b.deviceId)]: {
-            identityKey: b.identityKey,
-            identitySignKey: b.identitySignKey,
-            identityKeySig: b.identityKeySig,
-            signedPrekeyId: b.signedPrekey.id,
-            signedPrekey: b.signedPrekey.key,
-            signedPrekeySig: b.signedPrekey.sig,
-          } satisfies IdentityRecord,
-          // The identity belongs to the account, not to any device row:
-          // revoking the last device drops its keys, and this record is what
-          // a backup restore still has to verify its signature against.
-          accountIdentity: {
-            identityKey: b.identityKey,
-            identitySignKey: b.identitySignKey,
-          },
-          devicesVersion: version,
-        };
-        for (const k of (b.oneTimePrekeys ?? []).slice(0, 200)) {
-          puts[otpKey(b.deviceId, k.id)] = k.key;
-        }
-        // the card and the session go in the same write as the keys: an
-        // account is either whole here or was never opened
-        if (b.profile) puts["profile"] = b.profile;
-        if (b.device) {
-          puts[DEV_PREFIX + b.device.deviceId] = {
-            name: b.device.name, tokenHash: b.device.tokenHash,
-            createdAt: Date.now(), lastSeen: null,
-          } satisfies DeviceRecord;
-          puts[TOKEN_PREFIX + b.device.tokenHash] = b.device.deviceId;
-        }
-        await this.putBatched(puts);
-        if (b.bump) await this.broadcastDevicesChanged(version);
-        return json({ ok: true, version });
-      }
-
-      case "/keys-topup": {
-        const b = (await req.json()) as { deviceId: string; oneTimePrekeys?: PrekeyUpload[] };
-        const wanted = (b.oneTimePrekeys ?? []).slice(0, 200);
-        const names = wanted.map((k) => otpKey(b.deviceId, k.id));
-        const existing = new Set<string>();
-        for (let i = 0; i < names.length; i += STORAGE_BATCH) {
-          const got = await this.state.storage.get(names.slice(i, i + STORAGE_BATCH));
-          for (const k of got.keys()) existing.add(k);
-        }
-        // a key id already uploaded keeps its first value: a retry of the same
-        // top-up must not replace a key a bundle may have handed out meanwhile
-        const puts: Record<string, unknown> = {};
-        wanted.forEach((k, i) => {
-          if (!existing.has(names[i])) puts[names[i]] = k.key;
-        });
-        if (Object.keys(puts).length) await this.putBatched(puts);
-        return json({ ok: true });
-      }
-
-      case "/keys-count": {
-        const deviceId = url.searchParams.get("deviceId") ?? "";
-        const listed = await this.state.storage.list({ prefix: otpPrefix(deviceId) });
-        return json({ ok: true, count: listed.size });
-      }
-
-      case "/keys-prekeys": {
-        // X3DH bundles for every device; the one-time prekey with the lowest id
-        // is consumed here, inside the object, so two senders never draw the same one
-        const iks = await this.state.storage.list<IdentityRecord>({ prefix: IK_PREFIX });
-        const bundles = [];
-        for (const [key, d] of iks) {
-          const deviceId = key.slice(IK_PREFIX.length);
-          const prefix = otpPrefix(deviceId);
-          const otps = await this.state.storage.list<string>({ prefix, limit: 1 });
-          let oneTimePrekey: { id: number; key: string } | null = null;
-          for (const [otpName, otpVal] of otps) {
-            oneTimePrekey = { id: Number(otpName.slice(prefix.length)), key: otpVal };
-            await this.state.storage.delete(otpName);
-          }
-          bundles.push({
-            deviceId,
-            identityKey: d.identityKey,
-            identitySignKey: d.identitySignKey,
-            identityKeySig: d.identityKeySig,
-            signedPrekey: { id: d.signedPrekeyId, key: d.signedPrekey, sig: d.signedPrekeySig },
-            oneTimePrekey,
-          });
-        }
-        return json({ ok: true, bundles });
-      }
-
-      case "/keys-devices": {
-        const iks = await this.state.storage.list<IdentityRecord>({ prefix: IK_PREFIX });
-        const version = (await this.state.storage.get<number>("devicesVersion")) ?? null;
-        const devices = [...iks].map(([key, d]) => ({
-          deviceId: key.slice(IK_PREFIX.length),
-          identityKey: d.identityKey,
-          identitySignKey: d.identitySignKey,
-          identityKeySig: d.identityKeySig,
-        }));
-        const account = (await this.state.storage.get<{
-          identityKey: string; identitySignKey: string;
-        }>("accountIdentity")) ?? null;
-        return json({ ok: true, devices, account, version });
-      }
-
-      case "/keys-version": {
-        // null: no device ever registered here, so the user is unknown
-        const version = (await this.state.storage.get<number>("devicesVersion")) ?? null;
-        return json({ ok: true, version });
-      }
-
-      case "/keys-update": {
-        const b = (await req.json()) as {
-          deviceId: string; identityKey: string; identitySignKey: string; identityKeySig: string;
-        };
-        const rec = await this.state.storage.get<IdentityRecord>(ikKey(b.deviceId));
-        if (!rec) return err("not_found", 404);
-        rec.identityKey = b.identityKey;
-        rec.identitySignKey = b.identitySignKey;
-        rec.identityKeySig = b.identityKeySig;
-        await this.state.storage.put(ikKey(b.deviceId), rec);
-        await this.state.storage.put("accountIdentity", {
-          identityKey: b.identityKey,
-          identitySignKey: b.identitySignKey,
-        });
-        // a rotated identity is a changed device set: peers holding the old
-        // key by version must drop the cache, or per-send TOFU keeps trusting
-        // the key this update just replaced
-        const version = ((await this.state.storage.get<number>("devicesVersion")) ?? 1) + 1;
-        await this.state.storage.put("devicesVersion", version);
-        await this.broadcastDevicesChanged(version);
-        return json({ ok: true, version });
-      }
-
-      case "/keys-republish": {
-        // The device found out its published bundle is stale: peers build
-        // X3DH sessions it cannot open (its own prekey private halves are
-        // missing). It hands in a fresh signed prekey and a fresh set of
-        // one-time prekeys; the old one-times are dropped whole — every one
-        // of them is from the generation that does not open.
-        const b = (await req.json()) as {
-          deviceId: string;
-          signedPrekey: { id: number; key: string; sig: string };
-          oneTimePrekeys?: PrekeyUpload[];
-        };
-        const rec = await this.state.storage.get<IdentityRecord>(ikKey(b.deviceId));
-        if (!rec) return err("not_found", 404);
-        rec.signedPrekeyId = b.signedPrekey.id;
-        rec.signedPrekey = b.signedPrekey.key;
-        rec.signedPrekeySig = b.signedPrekey.sig;
-        const stale = [...(await this.state.storage.list({ prefix: otpPrefix(b.deviceId) })).keys()];
-        for (let i = 0; i < stale.length; i += STORAGE_BATCH) {
-          await this.state.storage.delete(stale.slice(i, i + STORAGE_BATCH));
-        }
-        const puts: Record<string, unknown> = { [ikKey(b.deviceId)]: rec };
-        for (const k of (b.oneTimePrekeys ?? []).slice(0, 200)) {
-          puts[otpKey(b.deviceId, k.id)] = k.key;
-        }
-        await this.putBatched(puts);
-        // peers holding a cached device set would keep building sessions on
-        // the stale bundle; the bump makes them refetch
-        const version = ((await this.state.storage.get<number>("devicesVersion")) ?? 1) + 1;
-        await this.state.storage.put("devicesVersion", version);
-        await this.broadcastDevicesChanged(version);
-        return json({ ok: true, version });
-      }
-
-      // --- the address book: a set of phone hashes under `ct:<hash>`.
-      // Contact-ness is answered against the peer's current hash at the
-      // moment of the question, so a number registering or changing hands
-      // needs no propagation into anyone's book.
-
-      case "/contacts-sync": {
-        const b = (await req.json()) as { hashes?: string[]; remove?: string[] };
-        const hashes = [...new Set(b.hashes ?? [])].slice(0, CONTACTS_SYNC_MAX);
-        const remove = [...new Set(b.remove ?? [])].slice(0, CONTACTS_SYNC_MAX);
-        for (let i = 0; i < hashes.length; i += STORAGE_BATCH) {
-          const batch: Record<string, number> = {};
-          for (const hash of hashes.slice(i, i + STORAGE_BATCH)) batch[`ct:${hash}`] = 1;
-          await this.state.storage.put(batch);
-        }
-        for (let i = 0; i < remove.length; i += STORAGE_BATCH) {
-          await this.state.storage.delete(remove.slice(i, i + STORAGE_BATCH).map((h) => `ct:${h}`));
-        }
-        return json({ ok: true });
-      }
-
-      case "/contact-of": {
-        const hash = url.searchParams.get("hash") ?? "";
-        const held = hash !== "" &&
-          (await this.state.storage.get(`ct:${hash}`)) !== undefined;
-        return json({ ok: true, contact: held });
-      }
-
-      // --- the account itself: who may speak for it, its card, its rules ---
-
-      case "/auth": {
-        // the hash covers the whole token, the account id included, so a
-        // secret lifted from one account proves nothing on another
-        const hash = url.searchParams.get("hash") ?? "";
-        const deviceId = hash === "" ? undefined
-          : await this.state.storage.get<string>(TOKEN_PREFIX + hash);
-        if (!deviceId) return err("unauthorized", 401);
-        return json({ ok: true, deviceId });
-      }
-
-      /// A bot account opening: a card and a session, and no keys at all —
-      /// which is exactly what makes every chat it joins readable.
-      case "/bot-register": {
-        const b = (await req.json()) as {
-          userId: string; profile: Profile;
-          device: { deviceId: string; name: string | null; tokenHash: string };
-        };
-        this.userId = b.userId;
-        await this.state.storage.put({
-          userId: b.userId,
-          profile: b.profile,
-          [DEV_PREFIX + b.device.deviceId]: {
-            name: b.device.name, tokenHash: b.device.tokenHash,
-            createdAt: Date.now(), lastSeen: null,
-          } satisfies DeviceRecord,
-          [TOKEN_PREFIX + b.device.tokenHash]: b.device.deviceId,
-        });
-        return json({ ok: true });
-      }
-
-      /// The bots this account runs. There is no index from an owner back to
-      /// their bots anywhere else, so the owner's object keeps the list.
-      case "/bot-owned": {
-        if (req.method === "GET") {
-          const listed = await this.state.storage.list({ prefix: BOT_PREFIX });
-          return json({ ok: true, botIds: [...listed.keys()].map((k) => k.slice(BOT_PREFIX.length)) });
-        }
-        const b = (await req.json()) as { botId: string; add: boolean };
-        if (b.add) await this.state.storage.put(BOT_PREFIX + b.botId, Date.now());
-        else await this.state.storage.delete(BOT_PREFIX + b.botId);
-        return json({ ok: true });
-      }
-
-      case "/device-add": {
-        const b = (await req.json()) as {
-          deviceId: string; name: string | null; tokenHash: string;
-        };
-        await this.state.storage.put({
-          [DEV_PREFIX + b.deviceId]: {
-            name: b.name, tokenHash: b.tokenHash, createdAt: Date.now(), lastSeen: null,
-          } satisfies DeviceRecord,
-          [TOKEN_PREFIX + b.tokenHash]: b.deviceId,
-        });
-        return json({ ok: true });
-      }
-
-      /// A fresh token for a device that already exists: the old one stops
-      /// working in the same write.
-      case "/device-retoken": {
-        const b = (await req.json()) as { deviceId?: string; tokenHash: string };
-        const listed = await this.state.storage.list<DeviceRecord>({ prefix: DEV_PREFIX });
-        const target = b.deviceId
-          ? ([...listed].find(([k]) => k === DEV_PREFIX + b.deviceId))
-          : [...listed][0];
-        if (!target) return err("device_not_found", 404);
-        const [key, rec] = target;
-        await this.state.storage.delete(TOKEN_PREFIX + rec.tokenHash);
-        rec.tokenHash = b.tokenHash;
-        await this.state.storage.put({ [key]: rec, [TOKEN_PREFIX + b.tokenHash]: key.slice(DEV_PREFIX.length) });
-        return json({ ok: true });
-      }
-
-      case "/sessions": {
-        const listed = await this.state.storage.list<DeviceRecord>({ prefix: DEV_PREFIX });
-        const tokens =
-          (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
-        const sessions = [...listed].map(([k, d]) => ({
-          deviceId: k.slice(DEV_PREFIX.length),
-          name: d.name, createdAt: d.createdAt, lastSeen: d.lastSeen,
-          hasPushToken: (k.slice(DEV_PREFIX.length) in tokens),
-        })).sort((a, b2) => a.createdAt - b2.createdAt);
-        return json({ ok: true, sessions });
-      }
-
-      case "/profile-read": {
-        const p = await this.state.storage.get<Profile>("profile");
-        return p ? json({ ok: true, profile: p }) : err("not_found", 404);
-      }
-
-      /// A field left out is left alone. `username` is written only after the
-      /// handle object has granted the claim.
-      case "/profile-write": {
-        const b = (await req.json()) as {
-          displayName?: string; bio?: string; avatarId?: string; username?: string;
-          botCommands?: string;
-        };
-        const p = await this.state.storage.get<Profile>("profile");
-        if (!p) return err("not_found", 404);
-        if (b.displayName !== undefined) p.display_name = b.displayName.trim();
-        if (b.bio !== undefined) p.bio = b.bio;
-        if (b.avatarId !== undefined) p.avatar_id = b.avatarId;
-        if (b.username !== undefined) p.username = b.username;
-        if (b.botCommands !== undefined) p.bot_commands = b.botCommands;
-        await this.state.storage.put("profile", p);
-        return json({ ok: true, profile: p });
-      }
-
-      case "/card": {
-        const card = await this.cardFor(url.searchParams.get("viewer") ?? "");
-        return card ? json({ ok: true, user: card }) : err("not_found", 404);
-      }
-
-      /// The half of the card that is public whoever asks: the name, the
-      /// handle and whether this is a bot. The photo and the bio are per-viewer
-      /// and are not in it, so a chat may hold this copy for its whole roster.
-      case "/card-public": {
-        const p = await this.state.storage.get<Profile>("profile");
-        if (!p) return err("not_found", 404);
-        return json({ ok: true, user: {
-          id: p.id, username: p.username, display_name: p.display_name,
-          bio: null, avatar_id: null,
-          bot_owner: p.bot_owner ?? null, bot_commands: p.bot_commands ?? null,
-        } satisfies PublicUser });
-      }
-
-      case "/phone-hash": {
-        const p = await this.state.storage.get<Profile>("profile");
-        return json({ ok: true, phoneHash: p?.phone_hash ?? null });
-      }
-
-      case "/phone": {
-        const b = (await req.json()) as { phoneHash: string | null };
-        const p = await this.state.storage.get<Profile>("profile");
-        if (!p) return err("not_found", 404);
-        const was = p.phone_hash;
-        p.phone_hash = b.phoneHash;
-        await this.state.storage.put("profile", p);
-        return json({ ok: true, was });
-      }
-
-      case "/privacy-read": {
-        return json({ ok: true, privacy: await this.privacy() });
-      }
-
-      case "/privacy-write": {
-        const b = (await req.json()) as Partial<PrivacySettings>;
-        const current = await this.privacy();
-        const next: PrivacySettings = { ...current, ...b };
-        await this.state.storage.put("privacy", next);
-        return json({
-          ok: true, privacy: next,
-          avatarChanged: next.avatar !== current.avatar,
-          lastSeenChanged: next.lastSeen !== current.lastSeen,
-        });
-      }
-
-      case "/privacy-check": {
-        const b = (await req.json()) as { viewerId: string; settings: PrivacySetting[] };
-        const privacy = await this.privacy();
-        const allow: Record<string, boolean> = {};
-        for (const s of b.settings) allow[s] = await this.mayView(b.viewerId, s, privacy);
-        return json({ ok: true, allow });
-      }
-
-      case "/privacy-exceptions": {
-        const listed = await this.state.storage.list<number>({ prefix: PEX_PREFIX });
-        const exceptions = [...listed].map(([k, allow]) => {
-          const rest = k.slice(PEX_PREFIX.length);
-          const cut = rest.indexOf(":");
-          return { setting: rest.slice(0, cut), peerId: rest.slice(cut + 1), allow: allow === 1 };
-        });
-        return json({ ok: true, exceptions });
-      }
-
-      case "/privacy-exception": {
-        const b = (await req.json()) as {
-          setting: string; peerId: string; allow: boolean | null;
-        };
-        const key = `${PEX_PREFIX}${b.setting}:${b.peerId}`;
-        if (b.allow === null) await this.state.storage.delete(key);
-        else await this.state.storage.put(key, b.allow ? 1 : 0);
-        return json({ ok: true });
-      }
-
-      // --- blocks: this user's own list, and the mirror of who blocked them ---
-
-      case "/blocks": {
-        const mine = await this.state.storage.list<number>({ prefix: BLOCK_PREFIX });
-        const theirs = await this.state.storage.list<number>({ prefix: BLOCKED_BY_PREFIX });
-        return json({
-          ok: true,
-          blocked: [...mine.keys()].map((k) => k.slice(BLOCK_PREFIX.length)),
-          blockedBy: [...theirs.keys()].map((k) => k.slice(BLOCKED_BY_PREFIX.length)),
-        });
-      }
-
-      case "/block-pair": {
-        return json({ ok: true, ...(await this.blockPair(url.searchParams.get("peer") ?? "")) });
-      }
-
-      case "/block": {
-        // the mirror in the peer's object is what lets either side answer for
-        // the pair without a second call on the send path
-        const b = (await req.json()) as { peer: string; blocked: boolean };
-        const userId = await this.getUserId();
-        if (b.blocked) await this.state.storage.put(BLOCK_PREFIX + b.peer, Date.now());
-        else await this.state.storage.delete(BLOCK_PREFIX + b.peer);
-        if (userId) {
-          await this.tell(b.peer, "/blocked-by", { peer: userId, blocked: b.blocked });
-        }
-        if (b.blocked) {
-          await this.state.storage.delete([PEER_PREFIX + b.peer, PCARD_PREFIX + b.peer]);
-          if (userId) await this.tell(b.peer, "/peer-drop", { userId });
-        } else {
-          await this.pushPresence([b.peer]);
-          await this.pushCards([b.peer]);
-          if (userId) await this.tell(b.peer, "/peer-refresh", { subscriber: userId });
-        }
-        return json({ ok: true });
-      }
-
-      case "/blocked-by": {
-        const b = (await req.json()) as { peer: string; blocked: boolean };
-        if (b.blocked) {
-          await this.state.storage.put(BLOCKED_BY_PREFIX + b.peer, Date.now());
-          // nothing of theirs is held any more, name and photo included
-          await this.state.storage.delete([PEER_PREFIX + b.peer, PCARD_PREFIX + b.peer]);
-        } else {
-          await this.state.storage.delete(BLOCKED_BY_PREFIX + b.peer);
-        }
-        return json({ ok: true });
-      }
-
-      /// A report the person filed. Nothing reads these back yet; they are
-      /// kept with the account that made them.
-      case "/report": {
-        const b = await req.json();
-        await this.state.storage.put(REPORT_PREFIX + ulid(), b);
-        return json({ ok: true });
-      }
-
-      case "/dev-fault": {
-        const b = (await req.json()) as { failEvents?: number };
-        this.devFailEvents = Math.max(0, Math.floor(b.failEvents ?? 0));
-        return json({ ok: true, failEvents: this.devFailEvents });
-      }
-
-      case "/presence-info": {
-        const lastSeen = (await this.state.storage.get<number>("lastSeen")) ?? 0;
-        const online = this.presenceFresh();
-        return json({ ok: true, online, lastSeen });
-      }
-
-      /// A story delivered by its author's object: kept in this user's inbox
-      /// and told to their sockets. `new` adds it, `removed` takes it out,
-      /// `stats` moves the counts on this user's own story. The inbox is what
-      /// GET /api/stories reads — one object, nothing asked of the authors.
-      case "/story-event": {
-        const d = (await req.json()) as StoryDelivery;
-        const key = STORY_PREFIX + d.storyId;
-        if (d.kind === "new" && d.story) {
-          const me = await this.getUserId();
-          const mine = d.authorId === me;
-          const item: StoryItem = {
-            id: d.storyId, authorId: d.authorId,
-            username: d.story.author?.username ?? "", displayName: d.story.author?.display_name ?? "",
-            avatarId: d.story.author?.avatar_id ?? null,
-            createdAt: d.story.createdAt, expiresAt: d.story.expiresAt,
-            frames: d.story.frames, audience: d.story.audience, link: d.story.link,
-            seen: false, liked: false, views: mine ? 0 : null, likes: mine ? 0 : null,
-          };
-          // a delivery repeated after a failure that in fact landed changes nothing
-          const had = await this.state.storage.get<StoryItem>(key);
-          if (had) return json({ ok: true, dupe: true });
-          await this.state.storage.put(key, item);
-          this.broadcast({ t: "story", event: "new", storyId: d.storyId, story: item });
-        } else if (d.kind === "removed") {
-          const had = await this.state.storage.get<StoryItem>(key);
-          await this.state.storage.delete(key);
-          if (had) this.broadcast({ t: "story", event: "removed", storyId: d.storyId });
-        } else if (d.kind === "stats") {
-          const item = await this.state.storage.get<StoryItem>(key);
-          if (item) {
-            item.views = d.views ?? item.views;
-            item.likes = d.likes ?? item.likes;
-            await this.state.storage.put(key, item);
-            this.broadcast({ t: "story", event: "stats", storyId: d.storyId,
-              views: item.views ?? 0, likes: item.likes ?? 0 });
-          }
-        }
-        return json({ ok: true });
-      }
-
-      /// This user's own state on a story — watched, hearted, or a new link on
-      /// their own — written into the inbox row and told to their other devices.
-      case "/story-mark": {
-        const b = (await req.json()) as { storyId: string; seen?: boolean; liked?: boolean; link?: string | null };
-        const key = STORY_PREFIX + b.storyId;
-        const item = await this.state.storage.get<StoryItem>(key);
-        if (!item) return json({ ok: true, missing: true });
-        if (b.seen !== undefined) item.seen = b.seen;
-        if (b.liked !== undefined) item.liked = b.liked;
-        if (b.link !== undefined) item.link = b.link;
-        await this.state.storage.put(key, item);
-        this.broadcast({ t: "story", event: "mark", storyId: b.storyId, seen: item.seen, liked: item.liked });
-        return json({ ok: true });
-      }
-
-      /// ?id= → whether the story was delivered to this user: one read, the
-      /// whole of the right to act on it.
-      case "/story-has": {
-        const item = await this.state.storage.get<StoryItem>(STORY_PREFIX + (url.searchParams.get("id") ?? ""));
-        return json({ ok: true, has: !!item && item.expiresAt > Date.now() });
-      }
-
-      /// Every live story delivered to this user, oldest first.
-      case "/stories-inbox": {
-        return json({ ok: true, stories: await this.storiesInbox() });
-      }
-
-      case "/profile-changed": {
-        // the card travels the same road as presence: out through every chat
-        // this user is in, and to their own other devices
-        // `peerUser` is the card as other users may see it: the worker blanks a
-        // hidden photo and bio there, while the user's own devices get it whole
-        const b = (await req.json()) as { user: PublicUser; peerUser?: PublicUser };
-        const peerUser = b.peerUser ?? b.user;
-        this.broadcast({ t: "profile", user: b.user });
-        // the subscribers' copies are rewritten each as that subscriber may
-        // see the card, which is more than the one frame below can carry
-        await this.pushCards(await this.subscribers());
-        const ids = await this.chatIds();
-        const results = await Promise.allSettled(
-          ids.map(async (chatId) => {
-            const res = await this.convStub(chatId).fetch("https://do/profile", {
-              method: "POST",
-              body: JSON.stringify({ userId: b.user.id, user: peerUser }),
-            });
-            if (!res.ok) throw new Error(`status ${res.status}`);
-          })
-        );
-        results.forEach((r, i) => {
-          if (r.status === "rejected") {
-            console.warn(`profile of ${b.user.id} in ${ids[i]} failed: ${r.reason}`);
-          }
-        });
-        return json({ ok: true });
-      }
-
-      default:
-        return err("unknown_path", 404);
+    return { bundles };
+  }
+
+  async keysDevices(): Promise<{
+    devices: Array<{ deviceId: string; identityKey: string; identitySignKey: string; identityKeySig: string }>;
+    account: { identityKey: string; identitySignKey: string } | null;
+    version: number | null;
+  }> {
+    const iks = await this.ctx.storage.list<IdentityRecord>({ prefix: IK_PREFIX });
+    const version = (await this.ctx.storage.get<number>("devicesVersion")) ?? null;
+    const devices = [...iks].map(([key, d]) => ({
+      deviceId: key.slice(IK_PREFIX.length),
+      identityKey: d.identityKey,
+      identitySignKey: d.identitySignKey,
+      identityKeySig: d.identityKeySig,
+    }));
+    const account = (await this.ctx.storage.get<{
+      identityKey: string; identitySignKey: string;
+    }>("accountIdentity")) ?? null;
+    return { devices, account, version };
+  }
+
+  /// null: no device ever registered here, so the user is unknown.
+  async keysVersion(): Promise<{ version: number | null }> {
+    const version = (await this.ctx.storage.get<number>("devicesVersion")) ?? null;
+    return { version };
+  }
+
+  async keysUpdate(b: {
+    deviceId: string; identityKey: string; identitySignKey: string; identityKeySig: string;
+  }): Promise<{ version: number }> {
+    const rec = await this.ctx.storage.get<IdentityRecord>(ikKey(b.deviceId));
+    if (!rec) throw new DOError("not_found", 404);
+    rec.identityKey = b.identityKey;
+    rec.identitySignKey = b.identitySignKey;
+    rec.identityKeySig = b.identityKeySig;
+    await this.ctx.storage.put(ikKey(b.deviceId), rec);
+    await this.ctx.storage.put("accountIdentity", {
+      identityKey: b.identityKey,
+      identitySignKey: b.identitySignKey,
+    });
+    // a rotated identity is a changed device set: peers holding the old
+    // key by version must drop the cache, or per-send TOFU keeps trusting
+    // the key this update just replaced
+    const version = ((await this.ctx.storage.get<number>("devicesVersion")) ?? 1) + 1;
+    await this.ctx.storage.put("devicesVersion", version);
+    await this.broadcastDevicesChanged(version);
+    return { version };
+  }
+
+  /// The device found out its published bundle is stale: peers build
+  /// X3DH sessions it cannot open (its own prekey private halves are
+  /// missing). It hands in a fresh signed prekey and a fresh set of
+  /// one-time prekeys; the old one-times are dropped whole — every one
+  /// of them is from the generation that does not open.
+  async keysRepublish(b: {
+    deviceId: string;
+    signedPrekey: { id: number; key: string; sig: string };
+    oneTimePrekeys?: PrekeyUpload[];
+  }): Promise<{ version: number }> {
+    const rec = await this.ctx.storage.get<IdentityRecord>(ikKey(b.deviceId));
+    if (!rec) throw new DOError("not_found", 404);
+    rec.signedPrekeyId = b.signedPrekey.id;
+    rec.signedPrekey = b.signedPrekey.key;
+    rec.signedPrekeySig = b.signedPrekey.sig;
+    const stale = [...(await this.ctx.storage.list({ prefix: otpPrefix(b.deviceId) })).keys()];
+    for (let i = 0; i < stale.length; i += STORAGE_BATCH) {
+      await this.ctx.storage.delete(stale.slice(i, i + STORAGE_BATCH));
     }
+    const puts: Record<string, unknown> = { [ikKey(b.deviceId)]: rec };
+    for (const k of (b.oneTimePrekeys ?? []).slice(0, 200)) {
+      puts[otpKey(b.deviceId, k.id)] = k.key;
+    }
+    await this.putBatched(puts);
+    // peers holding a cached device set would keep building sessions on
+    // the stale bundle; the bump makes them refetch
+    const version = ((await this.ctx.storage.get<number>("devicesVersion")) ?? 1) + 1;
+    await this.ctx.storage.put("devicesVersion", version);
+    await this.broadcastDevicesChanged(version);
+    return { version };
+  }
+
+  // --- the address book: a set of phone hashes under `ct:<hash>`.
+  // Contact-ness is answered against the peer's current hash at the
+  // moment of the question, so a number registering or changing hands
+  // needs no propagation into anyone's book.
+
+  async contactsSync(hashes?: string[], remove?: string[]): Promise<void> {
+    const wantedHashes = [...new Set(hashes ?? [])].slice(0, CONTACTS_SYNC_MAX);
+    const wantedRemove = [...new Set(remove ?? [])].slice(0, CONTACTS_SYNC_MAX);
+    for (let i = 0; i < wantedHashes.length; i += STORAGE_BATCH) {
+      const batch: Record<string, number> = {};
+      for (const hash of wantedHashes.slice(i, i + STORAGE_BATCH)) batch[`ct:${hash}`] = 1;
+      await this.ctx.storage.put(batch);
+    }
+    for (let i = 0; i < wantedRemove.length; i += STORAGE_BATCH) {
+      await this.ctx.storage.delete(wantedRemove.slice(i, i + STORAGE_BATCH).map((h) => `ct:${h}`));
+    }
+  }
+
+  async contactOf(hash: string): Promise<{ contact: boolean }> {
+    const held = hash !== "" &&
+      (await this.ctx.storage.get(`ct:${hash}`)) !== undefined;
+    return { contact: held };
+  }
+
+  // --- the account itself: who may speak for it, its card, its rules ---
+
+  /// The hash covers the whole token, the account id included, so a
+  /// secret lifted from one account proves nothing on another.
+  async auth(hash: string): Promise<{ deviceId: string }> {
+    const deviceId = hash === "" ? undefined
+      : await this.ctx.storage.get<string>(TOKEN_PREFIX + hash);
+    if (!deviceId) throw new DOError("unauthorized", 401);
+    return { deviceId };
+  }
+
+  /// A bot account opening: a card and a session, and no keys at all —
+  /// which is exactly what makes every chat it joins readable.
+  async botRegister(b: {
+    userId: string; profile: Profile;
+    device: { deviceId: string; name: string | null; tokenHash: string };
+  }): Promise<void> {
+    this.userId = b.userId;
+    await this.ctx.storage.put({
+      userId: b.userId,
+      profile: b.profile,
+      [DEV_PREFIX + b.device.deviceId]: {
+        name: b.device.name, tokenHash: b.device.tokenHash,
+        createdAt: Date.now(), lastSeen: null,
+      } satisfies DeviceRecord,
+      [TOKEN_PREFIX + b.device.tokenHash]: b.device.deviceId,
+    });
+  }
+
+  /// The bots this account runs. There is no index from an owner back to
+  /// their bots anywhere else, so the owner's object keeps the list.
+  async botOwnedRead(): Promise<{ botIds: string[] }> {
+    const listed = await this.ctx.storage.list({ prefix: BOT_PREFIX });
+    return { botIds: [...listed.keys()].map((k) => k.slice(BOT_PREFIX.length)) };
+  }
+
+  async botOwnedWrite(botId: string, add: boolean): Promise<void> {
+    if (add) await this.ctx.storage.put(BOT_PREFIX + botId, Date.now());
+    else await this.ctx.storage.delete(BOT_PREFIX + botId);
+  }
+
+  async deviceAdd(deviceId: string, name: string | null, tokenHash: string): Promise<void> {
+    await this.ctx.storage.put({
+      [DEV_PREFIX + deviceId]: {
+        name, tokenHash, createdAt: Date.now(), lastSeen: null,
+      } satisfies DeviceRecord,
+      [TOKEN_PREFIX + tokenHash]: deviceId,
+    });
+  }
+
+  /// A fresh token for a device that already exists: the old one stops
+  /// working in the same write.
+  async deviceRetoken(deviceId: string | undefined, tokenHash: string): Promise<void> {
+    const listed = await this.ctx.storage.list<DeviceRecord>({ prefix: DEV_PREFIX });
+    const target = deviceId
+      ? ([...listed].find(([k]) => k === DEV_PREFIX + deviceId))
+      : [...listed][0];
+    if (!target) throw new DOError("device_not_found", 404);
+    const [key, rec] = target;
+    await this.ctx.storage.delete(TOKEN_PREFIX + rec.tokenHash);
+    rec.tokenHash = tokenHash;
+    await this.ctx.storage.put({ [key]: rec, [TOKEN_PREFIX + tokenHash]: key.slice(DEV_PREFIX.length) });
+  }
+
+  async sessions(): Promise<{ sessions: Array<{
+    deviceId: string; name: string | null; createdAt: number; lastSeen: number | null; hasPushToken: boolean;
+  }> }> {
+    const listed = await this.ctx.storage.list<DeviceRecord>({ prefix: DEV_PREFIX });
+    const tokens =
+      (await this.ctx.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
+    const sessions = [...listed].map(([k, d]) => ({
+      deviceId: k.slice(DEV_PREFIX.length),
+      name: d.name, createdAt: d.createdAt, lastSeen: d.lastSeen,
+      hasPushToken: (k.slice(DEV_PREFIX.length) in tokens),
+    })).sort((a, b2) => a.createdAt - b2.createdAt);
+    return { sessions };
+  }
+
+  async profileRead(): Promise<{ profile: Profile }> {
+    const p = await this.ctx.storage.get<Profile>("profile");
+    if (!p) throw new DOError("not_found", 404);
+    return { profile: p };
+  }
+
+  /// A field left out is left alone. `username` is written only after the
+  /// handle object has granted the claim.
+  async profileWrite(b: {
+    displayName?: string; bio?: string; avatarId?: string; username?: string;
+    botCommands?: string;
+  }): Promise<{ profile: Profile }> {
+    const p = await this.ctx.storage.get<Profile>("profile");
+    if (!p) throw new DOError("not_found", 404);
+    if (b.displayName !== undefined) p.display_name = b.displayName.trim();
+    if (b.bio !== undefined) p.bio = b.bio;
+    if (b.avatarId !== undefined) p.avatar_id = b.avatarId;
+    if (b.username !== undefined) p.username = b.username;
+    if (b.botCommands !== undefined) p.bot_commands = b.botCommands;
+    await this.ctx.storage.put("profile", p);
+    return { profile: p };
+  }
+
+  async card(viewer: string): Promise<{ user: PublicUser }> {
+    const card = await this.cardForInternal(viewer);
+    if (!card) throw new DOError("not_found", 404);
+    return { user: card };
+  }
+
+  /// The half of the card that is public whoever asks: the name, the
+  /// handle and whether this is a bot. The photo and the bio are per-viewer
+  /// and are not in it, so a chat may hold this copy for its whole roster.
+  async cardPublic(): Promise<{ user: PublicUser }> {
+    const p = await this.ctx.storage.get<Profile>("profile");
+    if (!p) throw new DOError("not_found", 404);
+    return { user: {
+      id: p.id, username: p.username, display_name: p.display_name,
+      bio: null, avatar_id: null,
+      bot_owner: p.bot_owner ?? null, bot_commands: p.bot_commands ?? null,
+    } satisfies PublicUser };
+  }
+
+  async phoneHash(): Promise<{ phoneHash: string | null }> {
+    const p = await this.ctx.storage.get<Profile>("profile");
+    return { phoneHash: p?.phone_hash ?? null };
+  }
+
+  async phone(phoneHash: string | null): Promise<{ was: string | null }> {
+    const p = await this.ctx.storage.get<Profile>("profile");
+    if (!p) throw new DOError("not_found", 404);
+    const was = p.phone_hash;
+    p.phone_hash = phoneHash;
+    await this.ctx.storage.put("profile", p);
+    return { was };
+  }
+
+  async privacyRead(): Promise<{ privacy: PrivacySettings }> {
+    return { privacy: await this.privacy() };
+  }
+
+  async privacyWrite(b: Partial<PrivacySettings>): Promise<{
+    privacy: PrivacySettings; avatarChanged: boolean; lastSeenChanged: boolean;
+  }> {
+    const current = await this.privacy();
+    const next: PrivacySettings = { ...current, ...b };
+    await this.ctx.storage.put("privacy", next);
+    return {
+      privacy: next,
+      avatarChanged: next.avatar !== current.avatar,
+      lastSeenChanged: next.lastSeen !== current.lastSeen,
+    };
+  }
+
+  async privacyCheck(viewerId: string, settings: PrivacySetting[]): Promise<{ allow: Record<string, boolean> }> {
+    const privacy = await this.privacy();
+    const allow: Record<string, boolean> = {};
+    for (const s of settings) allow[s] = await this.mayView(viewerId, s, privacy);
+    return { allow };
+  }
+
+  async privacyExceptions(): Promise<{
+    exceptions: Array<{ setting: string; peerId: string; allow: boolean }>;
+  }> {
+    const listed = await this.ctx.storage.list<number>({ prefix: PEX_PREFIX });
+    const exceptions = [...listed].map(([k, allow]) => {
+      const rest = k.slice(PEX_PREFIX.length);
+      const cut = rest.indexOf(":");
+      return { setting: rest.slice(0, cut), peerId: rest.slice(cut + 1), allow: allow === 1 };
+    });
+    return { exceptions };
+  }
+
+  async privacyException(setting: string, peerId: string, allow: boolean | null): Promise<void> {
+    const key = `${PEX_PREFIX}${setting}:${peerId}`;
+    if (allow === null) await this.ctx.storage.delete(key);
+    else await this.ctx.storage.put(key, allow ? 1 : 0);
+  }
+
+  // --- blocks: this user's own list, and the mirror of who blocked them ---
+
+  async blocks(): Promise<{ blocked: string[]; blockedBy: string[] }> {
+    const mine = await this.ctx.storage.list<number>({ prefix: BLOCK_PREFIX });
+    const theirs = await this.ctx.storage.list<number>({ prefix: BLOCKED_BY_PREFIX });
+    return {
+      blocked: [...mine.keys()].map((k) => k.slice(BLOCK_PREFIX.length)),
+      blockedBy: [...theirs.keys()].map((k) => k.slice(BLOCKED_BY_PREFIX.length)),
+    };
+  }
+
+  async blockPair(peer: string): Promise<{ byMe: boolean; byPeer: boolean }> {
+    return this.blockPairInternal(peer);
+  }
+
+  /// The mirror in the peer's object is what lets either side answer for
+  /// the pair without a second call on the send path.
+  async block(peer: string, blocked: boolean): Promise<void> {
+    const userId = await this.getUserId();
+    if (blocked) await this.ctx.storage.put(BLOCK_PREFIX + peer, Date.now());
+    else await this.ctx.storage.delete(BLOCK_PREFIX + peer);
+    if (userId) {
+      await this.tellBlockedBy(peer, userId, blocked);
+    }
+    if (blocked) {
+      await this.ctx.storage.delete([PEER_PREFIX + peer, PCARD_PREFIX + peer]);
+      if (userId) await this.tellPeerDrop(peer, userId);
+    } else {
+      await this.pushPresence([peer]);
+      await this.pushCards([peer]);
+      if (userId) await this.tellPeerRefresh(peer, userId);
+    }
+  }
+
+  private async tellBlockedBy(userId: string, from: string, blocked: boolean) {
+    try {
+      await this.userStub(userId).blockedBy(from, blocked);
+    } catch (e) {
+      console.warn(`blockedBy to ${userId} failed: ${e}`);
+    }
+  }
+
+  async blockedBy(peer: string, blocked: boolean): Promise<void> {
+    if (blocked) {
+      await this.ctx.storage.put(BLOCKED_BY_PREFIX + peer, Date.now());
+      // nothing of theirs is held any more, name and photo included
+      await this.ctx.storage.delete([PEER_PREFIX + peer, PCARD_PREFIX + peer]);
+    } else {
+      await this.ctx.storage.delete(BLOCKED_BY_PREFIX + peer);
+    }
+  }
+
+  /// A report the person filed. Nothing reads these back yet; they are
+  /// kept with the account that made them.
+  async report(rec: Record<string, unknown>): Promise<void> {
+    await this.ctx.storage.put(REPORT_PREFIX + ulid(), rec);
+  }
+
+  async devFault(failEvents?: number): Promise<{ failEvents: number }> {
+    this.devFailEvents = Math.max(0, Math.floor(failEvents ?? 0));
+    return { failEvents: this.devFailEvents };
+  }
+
+  async presenceInfo(): Promise<{ online: boolean; lastSeen: number }> {
+    const lastSeen = (await this.ctx.storage.get<number>("lastSeen")) ?? 0;
+    return { online: this.presenceFresh(), lastSeen };
+  }
+
+  /// A story delivered by its author's object: kept in this user's inbox
+  /// and told to their sockets. `new` adds it, `removed` takes it out,
+  /// `stats` moves the counts on this user's own story. The inbox is what
+  /// GET /api/stories reads — one object, nothing asked of the authors.
+  async storyEvent(d: StoryDelivery): Promise<{ dupe?: boolean }> {
+    const key = STORY_PREFIX + d.storyId;
+    if (d.kind === "new" && d.story) {
+      const me = await this.getUserId();
+      const mine = d.authorId === me;
+      const item: StoryItem = {
+        id: d.storyId, authorId: d.authorId,
+        username: d.story.author?.username ?? "", displayName: d.story.author?.display_name ?? "",
+        avatarId: d.story.author?.avatar_id ?? null,
+        createdAt: d.story.createdAt, expiresAt: d.story.expiresAt,
+        frames: d.story.frames, audience: d.story.audience, link: d.story.link,
+        seen: false, liked: false, views: mine ? 0 : null, likes: mine ? 0 : null,
+      };
+      // a delivery repeated after a failure that in fact landed changes nothing
+      const had = await this.ctx.storage.get<StoryItem>(key);
+      if (had) return { dupe: true };
+      await this.ctx.storage.put(key, item);
+      this.broadcast({ t: "story", event: "new", storyId: d.storyId, story: item });
+    } else if (d.kind === "removed") {
+      const had = await this.ctx.storage.get<StoryItem>(key);
+      await this.ctx.storage.delete(key);
+      if (had) this.broadcast({ t: "story", event: "removed", storyId: d.storyId });
+    } else if (d.kind === "stats") {
+      const item = await this.ctx.storage.get<StoryItem>(key);
+      if (item) {
+        item.views = d.views ?? item.views;
+        item.likes = d.likes ?? item.likes;
+        await this.ctx.storage.put(key, item);
+        this.broadcast({ t: "story", event: "stats", storyId: d.storyId,
+          views: item.views ?? 0, likes: item.likes ?? 0 });
+      }
+    }
+    return {};
+  }
+
+  /// This user's own state on a story — watched, hearted, or a new link on
+  /// their own — written into the inbox row and told to their other devices.
+  async storyMark(storyId: string, seen?: boolean, liked?: boolean, link?: string | null): Promise<{ missing?: boolean }> {
+    const key = STORY_PREFIX + storyId;
+    const item = await this.ctx.storage.get<StoryItem>(key);
+    if (!item) return { missing: true };
+    if (seen !== undefined) item.seen = seen;
+    if (liked !== undefined) item.liked = liked;
+    if (link !== undefined) item.link = link;
+    await this.ctx.storage.put(key, item);
+    this.broadcast({ t: "story", event: "mark", storyId, seen: item.seen, liked: item.liked });
+    return {};
+  }
+
+  /// Whether the story was delivered to this user: one read, the whole of
+  /// the right to act on it.
+  async storyHas(id: string): Promise<{ has: boolean }> {
+    const item = await this.ctx.storage.get<StoryItem>(STORY_PREFIX + id);
+    return { has: !!item && item.expiresAt > Date.now() };
+  }
+
+  /// Every live story delivered to this user, oldest first.
+  async storiesInbox(): Promise<{ stories: StoryItem[] }> {
+    return { stories: await this.storiesInboxList() };
+  }
+
+  /// The card travels the same road as presence: out through every chat
+  /// this user is in, and to their own other devices. `peerUser` is the
+  /// card as other users may see it: the worker blanks a hidden photo and
+  /// bio there, while the user's own devices get it whole.
+  async profileChanged(user: PublicUser, peerUser?: PublicUser): Promise<void> {
+    const peer = peerUser ?? user;
+    this.broadcast({ t: "profile", user });
+    // the subscribers' copies are rewritten each as that subscriber may
+    // see the card, which is more than the one frame below can carry
+    await this.pushCards(await this.subscribers());
+    const ids = await this.chatIds();
+    const results = await Promise.allSettled(
+      ids.map((chatId) => this.convStub(chatId).profile(user.id, peer))
+    );
+    results.forEach((r, i) => {
+      if (r.status === "rejected") {
+        console.warn(`profile of ${user.id} in ${ids[i]} failed: ${r.reason}`);
+      }
+    });
   }
 
   /// A device was linked or revoked: whoever encrypts to this user must drop
@@ -1614,13 +1582,7 @@ export class UserDO implements DurableObject {
     this.broadcast({ t: "devices", userId, version });
     const ids = await this.chatIds();
     const results = await Promise.allSettled(
-      ids.map(async (chatId) => {
-        const res = await this.convStub(chatId).fetch("https://do/devices", {
-          method: "POST",
-          body: JSON.stringify({ userId, version }),
-        });
-        if (!res.ok) throw new Error(`status ${res.status}`);
-      })
+      ids.map((chatId) => this.convStub(chatId).devices(userId, version))
     );
     results.forEach((r, i) => {
       if (r.status === "rejected") {
@@ -1635,39 +1597,35 @@ export class UserDO implements DurableObject {
     for (let i = 0; i < keys.length; i += STORAGE_BATCH) {
       const chunk: Record<string, unknown> = {};
       for (const k of keys.slice(i, i + STORAGE_BATCH)) chunk[k] = entries[k];
-      await this.state.storage.put(chunk);
+      await this.ctx.storage.put(chunk);
     }
   }
 
   // --- badge: unread summed over the chats ---
   // Per-chat unread is cached in storage ("unreadCache") and invalidated by an incoming
   // msg or by this user's own read. Recount is lazy, through ConversationDO
-  // /unread-count at push time, and only for the chats whose entry was dropped.
+  // unreadCount() at push time, and only for the chats whose entry was dropped.
 
   private async invalidateUnread(chatId: string) {
     const cache =
-      (await this.state.storage.get<Record<string, number>>("unreadCache")) ?? {};
+      (await this.ctx.storage.get<Record<string, number>>("unreadCache")) ?? {};
     if (chatId in cache) {
       delete cache[chatId];
-      await this.state.storage.put("unreadCache", cache);
+      await this.ctx.storage.put("unreadCache", cache);
     }
   }
 
   private async totalUnread(): Promise<number> {
     const userId = await this.getUserId();
     const cache =
-      (await this.state.storage.get<Record<string, number>>("unreadCache")) ?? {};
+      (await this.ctx.storage.get<Record<string, number>>("unreadCache")) ?? {};
     let changed = false;
     let total = 0;
     for (const chatId of await this.chatIds()) {
       let n = cache[chatId];
       if (n === undefined) {
         try {
-          const r = await this.convStub(chatId).fetch(
-            `https://do/unread-count?userId=${userId ?? ""}`
-          );
-          const j = (await r.json()) as { ok: boolean; unread?: number };
-          n = j.ok ? j.unread ?? 0 : 0;
+          n = (await this.convStub(chatId).unreadCount(userId ?? "")).unread;
         } catch {
           n = 0;
         }
@@ -1676,7 +1634,7 @@ export class UserDO implements DurableObject {
       }
       total += n;
     }
-    if (changed) await this.state.storage.put("unreadCache", cache);
+    if (changed) await this.ctx.storage.put("unreadCache", cache);
     return total;
   }
 
@@ -1685,20 +1643,20 @@ export class UserDO implements DurableObject {
   /// it bumps per push round says exactly which of two counts is the newer one
   /// — which is all a device needs to ignore a push that overtook another.
   private async nextBadgeStamp(): Promise<number> {
-    const next = ((await this.state.storage.get<number>("badgeStamp")) ?? 0) + 1;
-    await this.state.storage.put("badgeStamp", next);
+    const next = ((await this.ctx.storage.get<number>("badgeStamp")) ?? 0) + 1;
+    await this.ctx.storage.put("badgeStamp", next);
     return next;
   }
 
   /// Queues a push for the alarm loop and wakes it.
   private async enqueuePush(frame: PushJob) {
-    const id = (await this.state.storage.get<number>("pqNext")) ?? 1;
+    const id = (await this.ctx.storage.get<number>("pqNext")) ?? 1;
     const job: PushJob = {
       chatId: frame.chatId, seq: frame.seq, sentAt: frame.sentAt,
       from: frame.from, fromDevice: frame.fromDevice, ts: frame.ts, body: frame.body,
       ...(frame.muted ? { muted: true } : {}),
     };
-    await this.state.storage.put({ [pushKey(id)]: job, pqNext: id + 1 });
+    await this.ctx.storage.put({ [pushKey(id)]: job, pqNext: id + 1 });
     await this.armAlarm(Date.now());
   }
 
@@ -1706,7 +1664,7 @@ export class UserDO implements DurableObject {
   /// and asks to be woken again for the rest: at once when ready jobs remain,
   /// at the nearest deadline when the head of the queue is waiting one out.
   private async drainPushes() {
-    const listed = await this.state.storage.list<PushJob>({
+    const listed = await this.ctx.storage.list<PushJob>({
       prefix: PUSH_PREFIX,
       limit: PUSH_DRAIN + 1,
     });
@@ -1726,34 +1684,28 @@ export class UserDO implements DurableObject {
       const owed = await this.pushToDevices(job, job.pushed ?? []);
       sent++;
       if (!owed.length) {
-        await this.state.storage.delete(key);
+        await this.ctx.storage.delete(key);
         continue;
       }
       const attempt = (job.attempt ?? 0) + 1;
       const retryMs = PUSH_RETRY_MS[Math.min(attempt - 1, PUSH_RETRY_MS.length - 1)];
       const nextAt = Date.now() + retryMs;
       const tokens =
-        (await this.state.storage.get<Record<string, unknown>>("apns")) ?? {};
+        (await this.ctx.storage.get<Record<string, unknown>>("apns")) ?? {};
       const pushed = Object.keys(tokens).filter((d) => !owed.includes(d));
-      await this.state.storage.put(key, { ...job, attempt, nextAt, pushed });
+      await this.ctx.storage.put(key, { ...job, attempt, nextAt, pushed });
       nextWake = nextWake === undefined ? nextAt : Math.min(nextWake, nextAt);
     }
     if (skippedReady) await this.armAlarm(Date.now());
     else if (nextWake !== undefined) await this.armAlarm(nextWake);
   }
 
-  /// The push carries the message itself, addressed to the device it goes to:
-  /// the extension decrypts it and writes it, so the chat holds what the banner
-  /// showed even if the socket never comes up. Returns the devices still owed
-  /// their push — the ones that failed in transit and are worth another try. A
-  /// refusal APNs actually pronounced is final: retrying the same payload buys
-  /// nothing, and a dead token is dropped here.
   /// A single informational push to every device of this user (added to a
   /// group, and the like). No envelope, no seq; the badge stays at the current
   /// unread total. A dead token is dropped the same way the message path does.
   private async pushPlain(chatId: string, alert: { title: string; body: string }): Promise<void> {
     const tokens =
-      (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
+      (await this.ctx.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
     const devices = Object.entries(tokens);
     if (!devices.length) return;
     const badge = await this.totalUnread();
@@ -1774,9 +1726,15 @@ export class UserDO implements DurableObject {
     if (dead.length) await this.dropPushTokens(dead);
   }
 
+  /// The push carries the message itself, addressed to the device it goes to:
+  /// the extension decrypts it and writes it, so the chat holds what the banner
+  /// showed even if the socket never comes up. Returns the devices still owed
+  /// their push — the ones that failed in transit and are worth another try. A
+  /// refusal APNs actually pronounced is final: retrying the same payload buys
+  /// nothing, and a dead token is dropped here.
   private async pushToDevices(frame: PushJob, skip: string[] = []): Promise<string[]> {
     const tokens =
-      (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
+      (await this.ctx.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
     const devices = Object.entries(tokens).filter(([d]) => !skip.includes(d));
     if (!devices.length) return [];
     const badge = await this.totalUnread();
@@ -1784,13 +1742,13 @@ export class UserDO implements DurableObject {
     const userId = await this.getUserId();
     // the chat's own sound wins; then the sender's personal sound wherever
     // they write; then the user's default for the chat's shape
-    const flags = await this.state.storage.get<ChatFlags>("chat:" + frame.chatId);
+    const flags = await this.ctx.storage.get<ChatFlags>("chat:" + frame.chatId);
     const personal = frame.from
-      ? await this.state.storage.get<string>(`usnd:${frame.from}`) : undefined;
-    const defaults = (await this.state.storage.get<NotifySounds>("notifySounds")) ?? {};
+      ? await this.ctx.storage.get<string>(`usnd:${frame.from}`) : undefined;
+    const defaults = (await this.ctx.storage.get<NotifySounds>("notifySounds")) ?? {};
     const sound = flags?.sound ?? personal ?? defaults[chatShape(frame.chatId)];
     const fromName = frame.from
-      ? await this.state.storage.get<string>(NAME_PREFIX + frame.from) : undefined;
+      ? await this.ctx.storage.get<string>(NAME_PREFIX + frame.from) : undefined;
     // Every device is handled independently: one failure neither cancels the
     // others nor fails the frame delivery that already went over the socket.
     const results = await Promise.all(
@@ -1827,7 +1785,7 @@ export class UserDO implements DurableObject {
   /// session, it just has no push address any more.
   private async dropPushTokens(deviceIds: string[]) {
     const tokens =
-      (await this.state.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
+      (await this.ctx.storage.get<Record<string, { token: string; env: string }>>("apns")) ?? {};
     let changed = false;
     for (const id of deviceIds) {
       if (id in tokens) {
@@ -1835,7 +1793,7 @@ export class UserDO implements DurableObject {
         changed = true;
       }
     }
-    if (changed) await this.state.storage.put("apns", tokens);
+    if (changed) await this.ctx.storage.put("apns", tokens);
   }
 
   // --- Catch-up after a reconnect ---
@@ -1866,18 +1824,16 @@ export class UserDO implements DurableObject {
       }
       chats--;
       const limit = Math.min(SYNC_PAGE, share, budget);
-      const res = await this.convStub(chatId).fetch(
-        `https://do/history?fromSeq=${from}&limit=${limit}&userId=${userId}`
-      );
-      const r = (await res.json()) as {
-        ok: boolean; msgs?: Array<Record<string, unknown>>;
-        scanned?: number; lastScannedSeq?: number | null; error?: string;
-      };
-      if (!r.ok) {
+      let r: { msgs?: Array<Record<string, unknown>>; scanned?: number; lastScannedSeq?: number | null };
+      try {
+        r = await this.convStub(chatId).history({ userId, fromSeq: from, limit }) as typeof r;
+      } catch (e) {
         // removed from the chat while the client was offline: it missed the live chat
         // frame and the journal is no longer served to it, so say so outright, otherwise
         // the chat would stay with it forever
-        if (r.error === "not_member") this.send(ws, { t: "chat", chatId, event: "removed" });
+        if (DOError.from(e)?.error === "not_member") {
+          this.send(ws, { t: "chat", chatId, event: "removed" });
+        }
         // the chat is gone: nothing to catch up on, and the cursor stays where it was
         this.send(ws, { t: "syncState", chatId, cursor: from, more: false });
         continue;
@@ -1917,16 +1873,18 @@ export class UserDO implements DurableObject {
   /// up with: what happened to the chat itself and to already delivered messages
   /// while it was offline.
   private async sendChatTail(ws: WebSocket, userId: string, chatId: string) {
-    const er = await this.convStub(chatId).fetch(`https://do/events?userId=${userId}`);
-    const e = (await er.json()) as {
-      ok: boolean;
+    let e: {
       deleted?: Array<{ seq: number; by: string }>;
       readMarks?: Record<string, number>;
       deliveredMarks?: Record<string, number>;
       state?: unknown;
       users?: unknown[];
     };
-    if (!e.ok) return;
+    try {
+      e = await this.convStub(chatId).events(userId) as typeof e;
+    } catch {
+      return;
+    }
     if (e.state) {
       this.send(ws, { t: "chat", chatId, event: "sync", state: e.state, users: e.users } as ServerFrame);
     }
@@ -1995,25 +1953,21 @@ export class UserDO implements DurableObject {
       }
 
       case "send": {
-        const res = await this.convStub(frame.chatId).fetch("https://do/send", {
-          method: "POST",
-          body: JSON.stringify({
+        try {
+          const r = await this.convStub(frame.chatId).send({
             from: userId, fromDevice: att.deviceId,
             clientMsgId: frame.clientMsgId, sentAt: frame.sentAt, body: frame.body,
             service: frame.service ?? false,
             ...(frame.notify ? { notify: true } : {}),
             ...(frame.notifyUser ? { notifyUser: frame.notifyUser } : {}),
-          }),
-        });
-        const r = (await res.json()) as { ok: boolean; seq?: number; ts?: number; error?: string };
-        if (r.ok && r.seq) {
+          });
           this.send(ws, {
             t: "sent", chatId: frame.chatId, clientMsgId: frame.clientMsgId,
-            seq: r.seq, ts: r.ts!,
+            seq: r.seq, ts: r.ts,
           });
-        } else {
+        } catch (e) {
           this.send(ws, {
-            t: "error", error: r.error ?? "send_failed",
+            t: "error", error: DOError.from(e)?.error ?? "send_failed",
             chatId: frame.chatId, clientMsgId: frame.clientMsgId,
           });
         }
@@ -2021,31 +1975,27 @@ export class UserDO implements DurableObject {
       }
 
       case "defer": {
-        const res = await this.convStub(frame.chatId).fetch("https://do/defer", {
-          method: "POST",
-          body: JSON.stringify({
+        try {
+          const r = await this.convStub(frame.chatId).defer({
             from: userId, fromDevice: att.deviceId,
             clientMsgId: frame.clientMsgId, sentAt: frame.sentAt,
             body: frame.body, dueAt: frame.dueAt,
-          }),
-        });
-        const r = (await res.json()) as {
-          ok: boolean; dueAt?: number; seq?: number; ts?: number; error?: string;
-        };
-        if (r.ok && r.seq) {
-          // the journal already holds this clientMsgId: answer the way a resend is answered
-          this.send(ws, {
-            t: "sent", chatId: frame.chatId, clientMsgId: frame.clientMsgId,
-            seq: r.seq, ts: r.ts!,
           });
-        } else if (r.ok) {
+          if (r.seq) {
+            // the journal already holds this clientMsgId: answer the way a resend is answered
+            this.send(ws, {
+              t: "sent", chatId: frame.chatId, clientMsgId: frame.clientMsgId,
+              seq: r.seq, ts: r.ts!,
+            });
+          } else {
+            this.send(ws, {
+              t: "deferred", chatId: frame.chatId, clientMsgId: frame.clientMsgId,
+              dueAt: r.dueAt!,
+            });
+          }
+        } catch (e) {
           this.send(ws, {
-            t: "deferred", chatId: frame.chatId, clientMsgId: frame.clientMsgId,
-            dueAt: r.dueAt!,
-          });
-        } else {
-          this.send(ws, {
-            t: "error", error: r.error ?? "defer_failed",
+            t: "error", error: DOError.from(e)?.error ?? "defer_failed",
             chatId: frame.chatId, clientMsgId: frame.clientMsgId,
           });
         }
@@ -2053,40 +2003,26 @@ export class UserDO implements DurableObject {
       }
 
       case "deferCancel":
-        await this.convStub(frame.chatId).fetch("https://do/defer-cancel", {
-          method: "POST",
-          body: JSON.stringify({ from: userId, clientMsgId: frame.clientMsgId }),
-        });
+        await this.convStub(frame.chatId).deferCancel(userId, frame.clientMsgId);
         return;
 
       case "recv":
-        await this.convStub(frame.chatId).fetch("https://do/recv", {
-          method: "POST",
-          body: JSON.stringify({ userId, seqs: frame.seqs }),
-        });
+        await this.convStub(frame.chatId).recv(userId, frame.seqs);
         return;
 
       case "read":
-        await this.convStub(frame.chatId).fetch("https://do/read", {
-          method: "POST",
-          body: JSON.stringify({ userId, upToSeq: frame.upToSeq }),
-        });
+        await this.convStub(frame.chatId).read(userId, frame.upToSeq);
         // this user's own read moves the chat's unread, so the cached badge is stale
         await this.invalidateUnread(frame.chatId);
         return;
 
       case "typing":
-        await this.convStub(frame.chatId).fetch("https://do/typing", {
-          method: "POST",
-          body: JSON.stringify({ userId, kind: frame.kind }),
-        });
+        await this.convStub(frame.chatId).typing(userId, frame.kind);
         return;
 
       case "callRelay":
-        await this.convStub(frame.chatId).fetch("https://do/call-relay", {
-          method: "POST",
-          body: JSON.stringify({ userId, deviceId: att.deviceId,
-                                 sentAt: frame.sentAt, body: frame.body }),
+        await this.convStub(frame.chatId).callRelay({
+          userId, deviceId: att.deviceId, sentAt: frame.sentAt, body: frame.body,
         });
         return;
 
@@ -2095,12 +2031,8 @@ export class UserDO implements DurableObject {
         // as many calls, each tombstoned and fanned out on its own
         const seqs = Array.isArray(frame.seqs) ? frame.seqs : [];
         for (let i = 0; i < seqs.length; i += DELETE_SEQS_PER_CALL) {
-          await this.convStub(frame.chatId).fetch("https://do/delete", {
-            method: "POST",
-            body: JSON.stringify({
-              userId, seqs: seqs.slice(i, i + DELETE_SEQS_PER_CALL), forAll: frame.forAll,
-            }),
-          });
+          await this.convStub(frame.chatId).delete(
+            userId, seqs.slice(i, i + DELETE_SEQS_PER_CALL), frame.forAll);
         }
         return;
       }
@@ -2121,11 +2053,10 @@ export class UserDO implements DurableObject {
               try {
                 let v: number | null;
                 if (id === userId) {
-                  // own object: read storage directly, a self-fetch has no answer
-                  v = (await this.state.storage.get<number>("devicesVersion")) ?? null;
+                  // own object: read storage directly, a self-call has no answer
+                  v = (await this.ctx.storage.get<number>("devicesVersion")) ?? null;
                 } else {
-                  const r = await this.userStub(id).fetch("https://do/keys-version");
-                  v = ((await r.json()) as { version: number | null }).version;
+                  v = (await this.userStub(id).keysVersion()).version;
                 }
                 if (v !== null) versions[id] = v;
               } catch (e) {
@@ -2138,19 +2069,20 @@ export class UserDO implements DurableObject {
         if (frame.t === "sync") {
           // the stories inbox as it stands: a story frame sent while the socket
           // was down is gone, and this is what stands in for it
-          this.send(ws, { t: "stories", stories: await this.storiesInbox() });
+          this.send(ws, { t: "stories", stories: await this.storiesInboxList() });
           // chats the client does not know yet, created or joined while it was offline:
           // send the state and replay the history from zero
           const known = new Set(Object.keys(frame.cursors));
-          const listed = await this.state.storage.list<unknown>({ prefix: "chat:" });
+          const listed = await this.ctx.storage.list<unknown>({ prefix: "chat:" });
           for (const key of listed.keys()) {
             const chatId = key.slice(5);
             if (known.has(chatId)) continue;
-            const sr = await this.convStub(chatId).fetch("https://do/state");
-            const sj = (await sr.json()) as { ok: boolean; state?: unknown; users?: unknown[] };
-            if (sj.ok && sj.state) {
+            try {
+              const sj = await this.convStub(chatId).state();
               this.send(ws, { t: "chat", chatId, event: "sync", state: sj.state, users: sj.users } as ServerFrame);
               cursors[chatId] = 0; // history replayed below
+            } catch {
+              // the chat is gone; nothing to replay
             }
           }
         }
@@ -2169,13 +2101,13 @@ export class UserDO implements DurableObject {
     this.rearmAt = undefined;
     try {
       await this.drainPushes();
-      const checkAt = await this.state.storage.get<number>("presenceCheckAt");
+      const checkAt = await this.ctx.storage.get<number>("presenceCheckAt");
       if (checkAt !== undefined) {
         if (Date.now() >= checkAt) {
           if (this.presenceFresh()) {
             await this.armPresenceCheck();
           } else {
-            await this.state.storage.delete("presenceCheckAt");
+            await this.ctx.storage.delete("presenceCheckAt");
             await this.broadcastPresence(false);
           }
         } else {

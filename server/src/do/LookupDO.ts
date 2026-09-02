@@ -1,5 +1,7 @@
+import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../types";
-import { json, err } from "../util";
+import { DOError } from "../util";
+import { wrapStub } from "../perf";
 
 /// One object per lookup key, for the three things a client names before it
 /// has an account to name: the provisioning session of a device being linked,
@@ -12,94 +14,92 @@ import { json, err } from "../util";
 /// what a spent session is recognised by: an expired record reads as absent,
 /// so a code coming round again finds nothing in the way and nothing has to
 /// sweep the objects.
-export class LookupDO implements DurableObject {
-  constructor(private state: DurableObjectState, private env: Env) {}
+export class LookupDO extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+  }
 
   private async live(): Promise<Record<string, unknown> | null> {
-    const rec = await this.state.storage.get<Record<string, unknown>>("rec");
+    const rec = await this.ctx.storage.get<Record<string, unknown>>("rec");
     if (!rec) return null;
     const expiresAt = (rec.expiresAt as number) ?? 0;
     if (expiresAt && expiresAt <= Date.now()) return null;
     return rec;
   }
 
-  async fetch(req: Request): Promise<Response> {
-    switch (new URL(req.url).pathname) {
-      /// Writes the record whatever was there.
-      case "/put": {
-        await this.state.storage.put("rec", await req.json());
-        return json({ ok: true });
-      }
+  /// Writes the record whatever was there.
+  async put(rec: Record<string, unknown>): Promise<void> {
+    await this.ctx.storage.put("rec", rec);
+  }
 
-      /// Writes the record only while the key is free — an expired record
-      /// counts as free. 409 says someone else holds it.
-      case "/claim": {
-        if (await this.live()) return err("taken", 409);
-        await this.state.storage.put("rec", await req.json());
-        return json({ ok: true });
-      }
+  /// Writes the record only while the key is free — an expired record
+  /// counts as free. Throws taken (409) when someone else holds it.
+  async claim(rec: Record<string, unknown>): Promise<void> {
+    if (await this.live()) throw new DOError("taken", 409);
+    await this.ctx.storage.put("rec", rec);
+  }
 
-      /// The record as it stands, expired or not: whoever asked knows what an
-      /// expiry means for their own answer, and «this session has run out» is
-      /// not the same reply as «there is no such session».
-      case "/get": {
-        const rec = await this.state.storage.get<Record<string, unknown>>("rec");
-        return rec ? json({ ok: true, rec }) : err("not_found", 404);
-      }
+  /// The record as it stands, expired or not: whoever asked knows what an
+  /// expiry means for their own answer, and «this session has run out» is
+  /// not the same reply as «there is no such session».
+  async get(): Promise<{ rec: Record<string, unknown> }> {
+    const rec = await this.ctx.storage.get<Record<string, unknown>>("rec");
+    if (!rec) throw new DOError("not_found", 404);
+    return { rec };
+  }
 
-      /// Merges fields into a live record, but only while every field named in
-      /// `unless` is still absent: that is how one approval and one claim of
-      /// the same session are settled between two racing requests.
-      case "/patch": {
-        const b = (await req.json()) as { set: Record<string, unknown>; unless?: string[] };
-        const rec = await this.live();
-        if (!rec) return err("not_found", 404);
-        for (const field of b.unless ?? []) {
-          if (rec[field] !== undefined && rec[field] !== null) return err("taken", 409);
-        }
-        await this.state.storage.put("rec", { ...rec, ...b.set });
-        return json({ ok: true, rec: { ...rec, ...b.set } });
-      }
-
-      case "/del": {
-        await this.state.storage.deleteAll();
-        return json({ ok: true });
-      }
-
-      default:
-        return err("not_found", 404);
+  /// Merges fields into a live record, but only while every field named in
+  /// `unless` is still absent: that is how one approval and one claim of
+  /// the same session are settled between two racing requests.
+  async patch(
+    set: Record<string, unknown>, unless?: string[],
+  ): Promise<{ rec: Record<string, unknown> }> {
+    const rec = await this.live();
+    if (!rec) throw new DOError("not_found", 404);
+    for (const field of unless ?? []) {
+      if (rec[field] !== undefined && rec[field] !== null) throw new DOError("taken", 409);
     }
+    const next = { ...rec, ...set };
+    await this.ctx.storage.put("rec", next);
+    return { rec: next };
+  }
+
+  async del(): Promise<void> {
+    await this.ctx.storage.deleteAll();
   }
 }
 
 function stub(env: Env, kind: string, key: string) {
-  return env.LOOKUP_DO.get(env.LOOKUP_DO.idFromName(`${kind}:${key}`));
+  return wrapStub(env.LOOKUP_DO.get(env.LOOKUP_DO.idFromName(`${kind}:${key}`)));
 }
 
 export async function lookupPut(
   env: Env, kind: string, key: string, rec: object,
 ): Promise<void> {
-  await stub(env, kind, key).fetch("https://do/put", {
-    method: "POST", body: JSON.stringify(rec),
-  });
+  await stub(env, kind, key).put(rec as Record<string, unknown>);
 }
 
 /// True when the key was free and is now this record's.
 export async function lookupClaim(
   env: Env, kind: string, key: string, rec: object,
 ): Promise<boolean> {
-  const r = await stub(env, kind, key).fetch("https://do/claim", {
-    method: "POST", body: JSON.stringify(rec),
-  });
-  return r.ok;
+  try {
+    await stub(env, kind, key).claim(rec as Record<string, unknown>);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function lookupGet<T>(
   env: Env, kind: string, key: string,
 ): Promise<T | null> {
-  const r = await stub(env, kind, key).fetch("https://do/get");
-  if (!r.ok) return null;
-  return ((await r.json()) as { rec: T }).rec;
+  try {
+    const r = await stub(env, kind, key).get() as { rec: Record<string, unknown> };
+    return r.rec as T;
+  } catch {
+    return null;
+  }
 }
 
 /// Merges `set` into the record unless one of `unless` is already filled in.
@@ -108,13 +108,14 @@ export async function lookupPatch<T>(
   env: Env, kind: string, key: string,
   set: Record<string, unknown>, unless?: string[],
 ): Promise<T | null> {
-  const r = await stub(env, kind, key).fetch("https://do/patch", {
-    method: "POST", body: JSON.stringify({ set, unless }),
-  });
-  if (!r.ok) return null;
-  return ((await r.json()) as { rec: T }).rec;
+  try {
+    const r = await stub(env, kind, key).patch(set, unless) as { rec: Record<string, unknown> };
+    return r.rec as T;
+  } catch {
+    return null;
+  }
 }
 
 export async function lookupDelete(env: Env, kind: string, key: string): Promise<void> {
-  await stub(env, kind, key).fetch("https://do/del", { method: "POST" });
+  await stub(env, kind, key).del();
 }

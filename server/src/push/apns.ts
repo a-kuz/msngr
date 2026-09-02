@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { b64url, sha256hex } from "../util";
+import { wrapStub } from "../perf";
 
 async function importP8(p8: string): Promise<CryptoKey> {
   const body = p8
@@ -34,10 +35,12 @@ export async function mintApnsJwt(env: Env, iat: number): Promise<string | null>
 
 async function apnsJwt(env: Env, force: boolean): Promise<string | null> {
   if (!env.APNS_KEY_P8 || !env.APNS_KEY_ID || !env.APNS_TEAM_ID) return null;
-  const stub = env.APNS_DO.get(env.APNS_DO.idFromName("apns-jwt"));
-  const r = await stub.fetch(`https://do/jwt${force ? "?force=1" : ""}`);
-  const j = (await r.json()) as { ok: boolean; token?: string };
-  return j.ok ? j.token ?? null : null;
+  const stub = wrapStub(env.APNS_DO.get(env.APNS_DO.idFromName("apns-jwt")));
+  try {
+    return (await stub.jwt(force)).token;
+  } catch {
+    return null;
+  }
 }
 
 export interface PushPayload {

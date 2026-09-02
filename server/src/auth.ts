@@ -19,8 +19,10 @@ export async function authenticate(env: Env, req: Request): Promise<AuthCtx | nu
   const userId = tokenOwner(token);
   if (!userId) return null;
   const hash = await sha256hex(token);
-  const res = await userStub(env, userId).fetch(`https://do/auth?hash=${hash}`);
-  if (!res.ok) return null;
-  const j = (await res.json()) as { deviceId?: string };
-  return j.deviceId ? { userId, deviceId: j.deviceId } : null;
+  try {
+    const { deviceId } = await userStub(env, userId).auth(hash);
+    return deviceId ? { userId, deviceId } : null;
+  } catch {
+    return null;
+  }
 }

@@ -1,5 +1,7 @@
+import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../types";
-import { json, err, USERNAME_QUARANTINE_MS } from "../util";
+import { DOError, USERNAME_QUARANTINE_MS } from "../util";
+import { wrapStub } from "../perf";
 
 /// One object per username, addressed by `idFromName(username.toLowerCase())`:
 /// the authority on who owns the handle. Uniqueness comes from the addressing
@@ -16,55 +18,47 @@ interface Released {
   at: number;
 }
 
-export class HandleDO implements DurableObject {
-  constructor(private state: DurableObjectState, private env: Env) {}
+export class HandleDO extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+  }
 
-  async fetch(req: Request): Promise<Response> {
-    const path = new URL(req.url).pathname;
-    const storage = this.state.storage;
-    switch (path) {
-      /// {userId} → ok, or 409 username_taken. The same owner claiming again
-      /// is a no-op.
-      case "/claim": {
-        const b = (await req.json()) as { userId: string };
-        const now = Date.now();
-        const owner = await storage.get<string>("owner");
-        if (owner === b.userId) return json({ ok: true });
-        if (owner) return err("username_taken", 409);
-        const released = await storage.get<Released>("released");
-        if (released && released.by !== b.userId && now - released.at < USERNAME_QUARANTINE_MS) {
-          return err("username_taken", 409);
-        }
-        await storage.put("owner", b.userId);
-        await storage.delete("released");
-        return json({ ok: true });
-      }
-
-      /// {userId, quarantine} → the handle is free again. A rename quarantines
-      /// it; an account deletion frees it outright. Someone else's handle is
-      /// left alone: the release is a no-op that still answers ok.
-      case "/release": {
-        const b = (await req.json()) as { userId: string; quarantine: boolean };
-        const owner = await storage.get<string>("owner");
-        if (owner !== b.userId) return json({ ok: true, released: false });
-        await storage.delete("owner");
-        if (b.quarantine) {
-          await storage.put("released", { by: b.userId, at: Date.now() } satisfies Released);
-        } else {
-          await storage.delete("released");
-        }
-        return json({ ok: true, released: true });
-      }
-
-      /// Who holds the handle, if anyone.
-      case "/resolve": {
-        const owner = (await storage.get<string>("owner")) ?? null;
-        return json({ ok: true, ownerId: owner });
-      }
-
-      default:
-        return err("not_found", 404);
+  /// {userId} → ok, or throws username_taken (409). The same owner claiming
+  /// again is a no-op.
+  async claim(userId: string): Promise<void> {
+    const storage = this.ctx.storage;
+    const now = Date.now();
+    const owner = await storage.get<string>("owner");
+    if (owner === userId) return;
+    if (owner) throw new DOError("username_taken", 409);
+    const released = await storage.get<Released>("released");
+    if (released && released.by !== userId && now - released.at < USERNAME_QUARANTINE_MS) {
+      throw new DOError("username_taken", 409);
     }
+    await storage.put("owner", userId);
+    await storage.delete("released");
+  }
+
+  /// The handle is free again. A rename quarantines it; an account deletion
+  /// frees it outright. Someone else's handle is left alone: the release is a
+  /// no-op that still answers released:false.
+  async release(userId: string, quarantine: boolean): Promise<{ released: boolean }> {
+    const storage = this.ctx.storage;
+    const owner = await storage.get<string>("owner");
+    if (owner !== userId) return { released: false };
+    await storage.delete("owner");
+    if (quarantine) {
+      await storage.put("released", { by: userId, at: Date.now() } satisfies Released);
+    } else {
+      await storage.delete("released");
+    }
+    return { released: true };
+  }
+
+  /// Who holds the handle, if anyone.
+  async resolve(): Promise<{ ownerId: string | null }> {
+    const owner = (await this.ctx.storage.get<string>("owner")) ?? null;
+    return { ownerId: owner };
   }
 }
 
@@ -72,26 +66,24 @@ export class HandleDO implements DurableObject {
 /// D1 index that guarded them was NOCASE, so the object is named by the folded
 /// form: `Alice` and `alice` are one handle.
 export function handleStub(env: Env, username: string) {
-  return env.HANDLE_DO.get(env.HANDLE_DO.idFromName(username.toLowerCase()));
+  return wrapStub(env.HANDLE_DO.get(env.HANDLE_DO.idFromName(username.toLowerCase())));
 }
 
 export async function claimHandle(env: Env, username: string, userId: string): Promise<boolean> {
-  const r = await handleStub(env, username).fetch("https://do/claim", {
-    method: "POST", body: JSON.stringify({ userId }),
-  });
-  return r.ok;
+  try {
+    await handleStub(env, username).claim(userId);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function releaseHandle(
   env: Env, username: string, userId: string, quarantine: boolean,
 ): Promise<void> {
-  await handleStub(env, username).fetch("https://do/release", {
-    method: "POST", body: JSON.stringify({ userId, quarantine }),
-  });
+  await handleStub(env, username).release(userId, quarantine);
 }
 
 export async function resolveHandle(env: Env, username: string): Promise<string | null> {
-  const r = await handleStub(env, username).fetch("https://do/resolve");
-  const j = (await r.json()) as { ownerId: string | null };
-  return j.ownerId;
+  return (await handleStub(env, username).resolve()).ownerId;
 }
