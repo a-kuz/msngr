@@ -85,13 +85,17 @@ struct ChatListView: View {
                             StoriesTray(progress: tray.progress,
                                         onCompose: { showStoryComposer = true },
                                         onOpen: { watchingStories = $0 })
-                            ChatFolderBar(folders: model.folders, unread: model.folderUnread,
-                                          selection: tabSelection,
-                                          onManage: { showFolders = true },
-                                          onEdit: { editingFolder = $0 })
-                                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
-                                    folderBarHeight = $0
-                                }
+                            // with no folders there are no tabs to show: the first
+                            // folder is made from a row's context menu
+                            if !model.folders.isEmpty {
+                                ChatFolderBar(folders: model.folders, unread: model.folderUnread,
+                                              selection: tabSelection,
+                                              onManage: { showFolders = true },
+                                              onEdit: { editingFolder = $0 })
+                                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+                                        folderBarHeight = $0
+                                    }
+                            }
                         }
                         .background(Color(.systemBackground))
                     }
@@ -365,7 +369,8 @@ struct ChatListView: View {
                                   onScroll: { tray.didScroll($0) },
                                   onWillEndDragging: { tray.willEndDragging($0, velocity: $1, target: $2) },
                                   topInset: StoriesTray.foldedHeight
-                                      + (tray.expanded ? StoriesTray.unfoldDelta : 0) + folderBarHeight)
+                                      + (tray.expanded ? StoriesTray.unfoldDelta : 0)
+                                      + (model.folders.isEmpty ? 0 : folderBarHeight))
         .overlay {
             if model.loaded, let folder, items.isEmpty {
                 folderEmptyState(folder)
