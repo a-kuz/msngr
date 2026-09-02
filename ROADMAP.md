@@ -929,10 +929,14 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     2026-09-02 on the simulator with the app killed — the delivered banner of
     a reply to charlie's message carries `chime3.caf` —
     qa/runs/2026-09-02-nse-simulator-run)
-  - ⬜ a mention in a muted chat with the app closed: the server sends no push
-    for a muted chat at all, so the extension never gets to decide; needs the
-    push to travel silent and flagged for the extension to lift the mute on a
-    mention
+  - ✅ a mention or a reply in a muted chat with the app closed: a muted chat's
+    push travels silent and flagged (`muted: 1`, no sound field), the extension
+    writes the message and shows it only when it speaks to this user, swallowing
+    the rest as a badge-only answer (smoke «muted chat push is silent /
+    flagged / keeps the extension's alert», «push after mute expired sounds»;
+    live 2026-09-02: a plain message into charlie's muted Design answered
+    `skip:muted` with no banner, a reply to charlie's message in the same chat
+    answered `show` — qa/runs/2026-09-02-nse-simulator-run)
   - ✅ a muted chat still notifying on a mention or a reply to you
     (qa/runs/2026-08-28-mute-reply; NotificationDecisionTests,
     MentionMarkdownTests `mentionsUser`; the mention live run in

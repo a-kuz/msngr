@@ -114,6 +114,14 @@ Every push was answered with the message written first; the rows were in
   banner with sound `chime3.caf`, the default of the new «Sound: mentions and
   replies» setting; the plain messages before it carry the push's own sound.
 
+- **A muted chat with the app closed.** Charlie muted Design (server flag
+  and local row) and was killed. Bravo's plain message reached the relay as
+  a push with no sound field and `muted: 1`; the journal answered
+  `stored → skip:muted`, no banner, the row in the database. Bravo's reply to
+  charlie's «Same here.» in the same muted chat answered `stored → show`: the
+  banner «Bravo Service / Design / …2119» stands in the stack, the plain one
+  does not.
+
 ## Not run here
 
 - A burst through the extension (the coalescing window with several pushes
