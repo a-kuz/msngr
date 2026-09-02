@@ -2533,7 +2533,7 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
   cbot.ws.close(); cuser.ws.close();
 }
 
-// --- stories: an access rule instead of a key, and a page outside the app
+// --- stories: delivered into each viewer's own inbox and followed over the socket
 {
   const upload = async (token, bytes) => {
     const r = await fetch(BASE + "/api/media", {
@@ -2544,6 +2544,9 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
     return (await r.json()).mediaId;
   };
   const photo = await upload(alice.token, new Uint8Array([1, 2, 3, 4]));
+  const sa = new Client("alice-stories", alice.token); await sa.connect();
+  const sb = new Client("bob-stories", bob.token); await sb.connect();
+  const mA = sa.mark(), mB = sb.mark();
   const posted = await api("/api/stories", { token: alice.token, body: {
     frames: [{ mediaId: photo, type: "photo", text: "первый кадр", textColor: "#fff",
                tx: 0.5, ty: 0.8 }],
@@ -2559,36 +2562,48 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
     body: { frames: [{ mediaId: photo, type: "photo" }], audience: "the world" } });
   check("an audience nobody defined is refused", badAudience.status === 400,
     String(badAudience.status));
+  const everyone = await apiRaw("/api/stories", { token: alice.token,
+    body: { frames: [{ mediaId: photo, type: "photo" }], audience: "everyone" } });
+  check("there is no story for everyone", everyone.status === 400, String(everyone.status));
 
-  // bob shares a direct chat with alice, carol does not
+  // the story travels to its people: bob shares a direct chat with alice and
+  // hears of it on his socket without asking; carol does not
+  const bobFrame = await sb.waitAfter(mB, (f) => f.t === "story" && f.event === "new"
+    && f.storyId === posted.storyId);
+  check("a story reaches a peer's socket as it is posted",
+    bobFrame?.story?.authorId === alice.userId && bobFrame?.story?.seen === false
+    && bobFrame?.story?.views === null, JSON.stringify(bobFrame));
+  const aliceFrame = await sa.waitAfter(mA, (f) => f.t === "story" && f.event === "new"
+    && f.storyId === posted.storyId);
+  check("the author's own devices get it with the counts and the link",
+    aliceFrame?.story?.views === 0 && aliceFrame?.story?.likes === 0
+    && (aliceFrame?.story?.link ?? "").includes("/s/"), JSON.stringify(aliceFrame?.story));
   const bobSees = await api("/api/stories", { token: bob.token });
-  check("someone with a direct chat sees it",
-    bobSees.stories?.some((s) => s.id === posted.storyId), JSON.stringify(bobSees.stories?.length));
+  check("the list is the inbox the frames filled",
+    bobSees.stories?.some((s) => s.id === posted.storyId
+      && s.displayName === "Alice" && s.frames?.length === 1),
+    JSON.stringify(bobSees.stories));
   const carolSees = await api("/api/stories", { token: carol.token });
   check("a stranger does not see a contacts-only story",
     !carolSees.stories?.some((s) => s.id === posted.storyId), JSON.stringify(carolSees.stories));
-  const open = await api("/api/stories", { token: alice.token, body: {
-    frames: [{ mediaId: photo, type: "photo" }], audience: "everyone",
-  } });
-  // there is no feed of the whole service: a stranger's list still holds only
-  // their own peers' stories, while a story open to everyone lets a stranger
-  // who reached it act on it
-  const carolOpen = await api("/api/stories", { token: carol.token });
-  check("a story for everyone is not a feed for strangers",
-    !carolOpen.stories?.some((s) => s.id === open.storyId), JSON.stringify(carolOpen.stories?.length));
-  const strangerSeen = await apiRaw(`/api/stories/${open.storyId}/seen`, { token: carol.token, body: {} });
-  check("a stranger who reached an open story may watch it", strangerSeen.status === 200,
-    String(strangerSeen.status));
   const strangerClosed = await apiRaw(`/api/stories/${posted.storyId}/seen`, { token: carol.token, body: {} });
-  check("a contacts-only story refuses a stranger's watch", strangerClosed.status === 404,
+  check("a story refuses a stranger's watch", strangerClosed.status === 404,
     String(strangerClosed.status));
 
-  // who watched belongs to the author
+  // who watched belongs to the author, and the author hears it as it happens
   const beforeSeen = bobSees.stories.find((s) => s.id === posted.storyId);
   check("a story arrives unwatched", beforeSeen?.seen === false, JSON.stringify(beforeSeen?.seen));
+  const mA2 = sa.mark(), mB2 = sb.mark();
   await api(`/api/stories/${posted.storyId}/seen`, { token: bob.token, body: {} });
   // the author looking at their own story is not a viewer
   await api(`/api/stories/${posted.storyId}/seen`, { token: alice.token, body: {} });
+  const statsSeen = await sa.waitAfter(mA2, (f) => f.t === "story" && f.event === "stats"
+    && f.storyId === posted.storyId);
+  check("the author's socket gets the counts on a watch",
+    statsSeen?.views === 1 && statsSeen?.likes === 0, JSON.stringify(statsSeen));
+  const marked = await sb.waitAfter(mB2, (f) => f.t === "story" && f.event === "mark"
+    && f.storyId === posted.storyId);
+  check("the viewer's own devices hear the watch", marked?.seen === true, JSON.stringify(marked));
   const afterSeen = await api("/api/stories", { token: bob.token });
   check("watching it is remembered",
     afterSeen.stories.find((s) => s.id === posted.storyId)?.seen === true);
@@ -2604,21 +2619,19 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
   check("a story arrives without a heart and tells a viewer no counts",
     bobBefore?.liked === false && bobBefore?.views === null && bobBefore?.likes === null,
     JSON.stringify(bobBefore));
+  const mA3 = sa.mark();
   const liked = await api(`/api/stories/${posted.storyId}/like`, { token: bob.token, body: { on: true } });
   check("a heart is put on", liked.liked === true, JSON.stringify(liked));
   const ownHeart = await apiRaw(`/api/stories/${posted.storyId}/like`, { token: alice.token, body: { on: true } });
   check("the author cannot like their own", ownHeart.status === 400, String(ownHeart.status));
   const strangerHeart = await apiRaw(`/api/stories/${posted.storyId}/like`, { token: carol.token, body: { on: true } });
-  check("a stranger cannot like a contacts-only story", strangerHeart.status === 404,
-    String(strangerHeart.status));
-  // liking is watching: carol's heart on the open story counts her as a viewer too
-  await api(`/api/stories/${open.storyId}/like`, { token: carol.token, body: {} });
+  check("a stranger cannot like a story", strangerHeart.status === 404, String(strangerHeart.status));
+  const statsLike = await sa.waitAfter(mA3, (f) => f.t === "story" && f.event === "stats"
+    && f.storyId === posted.storyId && f.likes === 1);
+  check("the author's socket gets the heart as a count", !!statsLike, JSON.stringify(statsLike));
   const aliceList = await api("/api/stories", { token: alice.token });
   const mine = aliceList.stories.find((s) => s.id === posted.storyId);
-  check("the author sees the counts", mine?.views === 1 && mine?.likes === 1, JSON.stringify(mine));
-  const openMine = aliceList.stories.find((s) => s.id === open.storyId);
-  check("a heart alone counts as a view", openMine?.views === 1 && openMine?.likes === 1,
-    JSON.stringify(openMine));
+  check("the author's list carries the counts", mine?.views === 1 && mine?.likes === 1, JSON.stringify(mine));
   const bobAfter = (await api("/api/stories", { token: bob.token })).stories
     .find((s) => s.id === posted.storyId);
   check("the viewer sees their own heart", bobAfter?.liked === true, JSON.stringify(bobAfter));
@@ -2626,14 +2639,18 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
   check("the viewers list marks the heart",
     hearted.viewers?.length === 1 && hearted.viewers[0].liked === true,
     JSON.stringify(hearted.viewers));
+  const mA4 = sa.mark();
   await api(`/api/stories/${posted.storyId}/like`, { token: bob.token, body: { on: false } });
   const unhearted = await api(`/api/stories/${posted.storyId}/viewers`, { token: alice.token });
   check("a heart taken off leaves the view",
     unhearted.viewers?.length === 1 && unhearted.viewers[0].liked === false,
     JSON.stringify(unhearted.viewers));
+  const statsUnlike = await sa.waitAfter(mA4, (f) => f.t === "story" && f.event === "stats"
+    && f.storyId === posted.storyId && f.likes === 0);
+  check("the like count follows on the socket", statsUnlike?.views === 1, JSON.stringify(statsUnlike));
   const countsAfter = (await api("/api/stories", { token: alice.token })).stories
     .find((s) => s.id === posted.storyId);
-  check("the like count follows", countsAfter?.likes === 0 && countsAfter?.views === 1,
+  check("the like count follows in the list", countsAfter?.likes === 0 && countsAfter?.views === 1,
     JSON.stringify(countsAfter));
 
   // the page outside the app
@@ -2666,15 +2683,23 @@ cd.ws.close(); cd2.ws.close(); cer.ws.close();
   const again = await api(`/api/stories/${posted.storyId}`, { token: alice.token,
     body: { link: true } });
   check("a new link is a new code", !again.link.endsWith(code), again.link);
+  const relinked = (await api("/api/stories", { token: alice.token })).stories
+    .find((s) => s.id === posted.storyId);
+  check("the author's list carries the new link", relinked?.link === again.link, JSON.stringify(relinked?.link));
 
-  // taking the story down
-  await api(`/api/stories/${posted.storyId}`, { token: alice.token, body: { takeDown: true } });
-  const gone = await api("/api/stories", { token: bob.token });
-  check("a story taken down is gone for everyone",
-    !gone.stories?.some((s) => s.id === posted.storyId), JSON.stringify(gone.stories?.length));
-  const notMine = await apiRaw(`/api/stories/${open.storyId}`, { token: bob.token,
+  // taking the story down reaches everyone it was delivered to
+  const notMine = await apiRaw(`/api/stories/${posted.storyId}`, { token: bob.token,
     body: { takeDown: true } });
   check("only the author takes a story down", notMine.status === 403, String(notMine.status));
+  const mB5 = sb.mark();
+  await api(`/api/stories/${posted.storyId}`, { token: alice.token, body: { takeDown: true } });
+  const removed = await sb.waitAfter(mB5, (f) => f.t === "story" && f.event === "removed"
+    && f.storyId === posted.storyId);
+  check("a story taken down leaves a viewer's socket on its own", !!removed, JSON.stringify(removed));
+  const gone = await api("/api/stories", { token: bob.token });
+  check("a story taken down is gone from the list",
+    !gone.stories?.some((s) => s.id === posted.storyId), JSON.stringify(gone.stories?.length));
+  sa.ws.close(); sb.ws.close();
 }
 
 cmal.ws.close(); ctre.ws.close();

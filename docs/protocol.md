@@ -133,33 +133,50 @@ GET  /api/chats/:id/search        ?q=&limit= → {hits:[{seq, from, ts, text}]} 
                                   Every other kind answers `not_channel`
 POST /api/stories                 {frames:[{mediaId, type:"photo"|"video", w?, h?, dur?,
                                   text?, textColor?, plateColor?, tx?, ty?}], audience:
-                                  "contacts"|"everyone", hours?≤168, link?} → {storyId, link}
+                                  "contacts", hours?≤168, link?} → {storyId, link}
                                   a story is plaintext: the frames are ordinary media
                                   uploads and who may see it is a rule, not a key. `tx`/`ty`
                                   are the text's centre as a fraction of the frame.
                                   Stories live in the author's StoriesDO (the story, who
-                                  watched, who liked, the link codes); `storyId` starts with
-                                  the author's id and a `~`, which is how every request
-                                  finds the object. A link code is random — the public page
-                                  must not name the author — and an object of the same
-                                  class named by the code points at the author. `audience` is who may
-                                  act on a story once they reached the author: `contacts`
-                                  needs a shared direct chat, `everyone` needs nothing;
-                                  neither is a feed of the whole service
-GET  /api/stories                 the caller's peers' live stories, own included, each
-                                  author's object asked at once: [{id, authorId,
-                                  displayName, avatarId, createdAt, expiresAt, frames,
-                                  audience, link, seen, liked, views, likes}]; `views` and
-                                  `likes` are counts on the caller's own stories and null
-                                  on everyone else's
-POST /api/stories/:id/seen        remembers the watch; the author's own is not counted
+                                  watched, who liked, the link codes, the fan-out queue);
+                                  `storyId` starts with the author's id and a `~`, which is
+                                  how every request finds the object. A link code is random
+                                  — the public page must not name the author — and an
+                                  object of the same class named by the code points at the
+                                  author. The recipients are named once, at publishing:
+                                  the author and everyone they share a direct chat with,
+                                  minus blocks. The author's object delivers the story into
+                                  each recipient's UserDO from a storage-backed queue (an
+                                  alarm, growing pauses, never given up); the UserDO keeps
+                                  it as `story:<id>` and sends its sockets
+                                  `{t:"story", event:"new", storyId, story}`. Nothing is
+                                  offered to anyone who was not on the list
+GET  /api/stories                 the caller's inbox — the stories delivered to them, own
+                                  included, read from their own object alone: [{id,
+                                  authorId, username, displayName, avatarId, createdAt,
+                                  expiresAt, frames, audience, link, seen, liked, views,
+                                  likes}]; `views` and `likes` are counts on the caller's
+                                  own stories and null on everyone else's. A client reads
+                                  it once per connection and follows the `story` frames:
+                                  `new`, `removed` (taken down), `stats` (the author's
+                                  counts moved: views, likes), `mark` (this user's own
+                                  seen/liked, for their other devices). Expired rows go
+                                  out of the inbox as the read meets them
+POST /api/stories/:id/seen        remembers the watch in the author's object; the author's
+                                  own is not counted. A first watch sends the author a
+                                  `stats` frame; the viewer's inbox row is marked and their
+                                  devices get `mark`
 POST /api/stories/:id/like        {on?:bool} puts a heart on (default) or takes it off;
                                   a heart counts as a view too. `own_story` for the
-                                  author, 404 for anyone the story is not shown to
+                                  author, 404 for anyone the story was not delivered to.
+                                  The author gets `stats`, the viewer's devices `mark`
 GET  /api/stories/:id/viewers     the author's alone → {viewers:[{viewer_id, seen_at,
                                   liked, …}]}, hearts first
 POST /api/stories/:id             {takeDown:true} or {link:bool} → {link?}; a revoked
-                                  link is never handed out again, asking again mints a new code
+                                  link is never handed out again, asking again mints a new
+                                  code. A take-down leaves as `removed` to everyone the
+                                  story was delivered to; a new link is written into the
+                                  author's own inbox row
 GET  /s/:code                     the public page: media, text over it, no names; a
                                   revoked or expired code says the story is gone
 GET  /s/:code/m/:index            one frame's bytes through the link, nothing else of the

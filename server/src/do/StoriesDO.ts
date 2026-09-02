@@ -1,15 +1,20 @@
-import type { Env } from "../types";
-import { json, err, ulid, b64url } from "../util";
+import type { Env, PublicUser } from "../types";
+import { json, err, ulid, b64url, shouldArmAlarm } from "../util";
 
 /// One object per author, addressed by `idFromName(userId)`: their stories,
-/// who watched each, who left a heart, and the public link codes. A story is
-/// not end-to-end encrypted — who may see one is an access rule the Worker
-/// applies before it asks here — so the object holds the frames as the
-/// composer built them and hands them out unchanged.
+/// who watched each, who left a heart, the public link codes, and the fan-out
+/// queue that carries every story to the people it is for. A story is not
+/// end-to-end encrypted — who may see one is an access rule — so the object
+/// holds the frames as the composer built them and hands them out unchanged.
 ///
-/// Every write of a watch or a heart lands in the author's own object, so the
-/// hottest path stories have is spread over as many objects as there are
-/// authors, and the counts are read where they are written.
+/// Nothing about a story is asked for at read time. When one is published the
+/// Worker names its recipients, and this object delivers the story into each
+/// recipient's own UserDO, which keeps it in an inbox and tells that person's
+/// sockets. A watch or a heart lands here, in the author's object, and the
+/// new counts leave for the author's UserDO the same way; a story taken down
+/// leaves as a removal to everyone who got it. Each delivery is a row in a
+/// queue pumped by this object's alarm: a failure moves the row's deadline out
+/// on a growing pause and is never given up.
 
 /// A story as the object keeps it.
 export interface StoryRecord {
@@ -22,6 +27,23 @@ export interface StoryRecord {
   link_revoked: number;
   taken_down: number;
 }
+
+/// A queued delivery to one recipient's UserDO.
+interface Delivery {
+  id: number;
+  story_id: string;
+  user_id: string;
+  kind: "new" | "removed" | "stats";
+  attempt: number;
+  next_at: number;
+}
+
+/// Pause before the next try of a delivery that failed, by the tries already
+/// failed; the last value repeats until it lands.
+const RETRY_MS = [1_000, 5_000, 15_000, 60_000, 300_000];
+/// Deliveries one alarm run sends before re-arming for the rest.
+const DRAIN = 50;
+const DELIVERY_TIMEOUT_MS = 5_000;
 
 /// A story's id carries the author in front of a `~`, so any request naming
 /// one finds the object without an index. A public link's code carries
@@ -60,7 +82,24 @@ export async function authorOfLink(env: Env, code: string): Promise<string | nul
   return ((await r.json()) as { author: string }).author;
 }
 
+/// What a recipient's UserDO is handed: the story as the recipient will keep
+/// it, with the author's card so the frame names them without a lookup.
+export interface StoryDelivery {
+  kind: "new" | "removed" | "stats";
+  storyId: string;
+  authorId: string;
+  story?: {
+    createdAt: number; expiresAt: number; frames: unknown[]; audience: string; link: string | null;
+    author: PublicUser;
+  };
+  views?: number;
+  likes?: number;
+}
+
 export class StoriesDO implements DurableObject {
+  private alarmRunning = false;
+  private rearmDelay: number | undefined;
+
   constructor(private state: DurableObjectState, private env: Env) {
     const sql = this.state.storage.sql;
     sql.exec(`
@@ -72,8 +111,16 @@ export class StoriesDO implements DurableObject {
         audience TEXT NOT NULL,
         link_code TEXT,
         link_revoked INTEGER NOT NULL DEFAULT 0,
-        taken_down INTEGER NOT NULL DEFAULT 0
+        taken_down INTEGER NOT NULL DEFAULT 0,
+        author_card TEXT,
+        origin TEXT
       )`);
+    // an object created before these two columns existed grows them here;
+    // SQLite has no "add column if absent", so the failure of an add that
+    // finds the column is the normal case
+    for (const column of ["author_card TEXT", "origin TEXT"]) {
+      try { sql.exec(`ALTER TABLE stories ADD COLUMN ${column}`); } catch { /* already there */ }
+    }
     sql.exec(`
       CREATE TABLE IF NOT EXISTS views (
         story_id TEXT NOT NULL,
@@ -88,6 +135,22 @@ export class StoriesDO implements DurableObject {
         liked_at INTEGER NOT NULL,
         PRIMARY KEY (story_id, user_id)
       )`);
+    // who each story was delivered to: a removal goes exactly there
+    sql.exec(`
+      CREATE TABLE IF NOT EXISTS recipients (
+        story_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        PRIMARY KEY (story_id, user_id)
+      )`);
+    sql.exec(`
+      CREATE TABLE IF NOT EXISTS deliveries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        story_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        attempt INTEGER NOT NULL DEFAULT 0,
+        next_at INTEGER NOT NULL
+      )`);
   }
 
   /// The story if it is still there to be watched: not taken down, its time
@@ -99,55 +162,149 @@ export class StoriesDO implements DurableObject {
     return row ?? null;
   }
 
+  private counts(storyId: string): { views: number; likes: number } {
+    const sql = this.state.storage.sql;
+    const views = sql.exec("SELECT COUNT(*) AS n FROM views WHERE story_id = ?", storyId)
+      .toArray()[0] as unknown as { n: number };
+    const likes = sql.exec("SELECT COUNT(*) AS n FROM likes WHERE story_id = ?", storyId)
+      .toArray()[0] as unknown as { n: number };
+    return { views: views.n, likes: likes.n };
+  }
+
+  // MARK: - The fan-out queue
+
+  /// Queues one delivery per recipient and starts the pump behind the request.
+  private async enqueue(storyId: string, users: string[], kind: Delivery["kind"]) {
+    const sql = this.state.storage.sql;
+    const now = Date.now();
+    for (const u of users) {
+      sql.exec(
+        "INSERT INTO deliveries (story_id, user_id, kind, attempt, next_at) VALUES (?,?,?,0,?)",
+        storyId, u, kind, now,
+      );
+    }
+    // strictly in the future, so the write is never mistaken for the alarm
+    // that is running right now
+    await this.arm(1);
+  }
+
+  private async arm(delayMs: number) {
+    if (this.alarmRunning) {
+      this.rearmDelay = this.rearmDelay === undefined ? delayMs : Math.min(this.rearmDelay, delayMs);
+      return;
+    }
+    const now = Date.now();
+    const at = now + Math.max(delayMs, 1);
+    const pending = await this.state.storage.getAlarm();
+    if (!shouldArmAlarm(pending, at, now)) return;
+    await this.state.storage.setAlarm(at);
+  }
+
+  /// What one delivery carries, built from the story as it stands now.
+  private payload(d: Delivery, authorId: string): StoryDelivery | null {
+    const sql = this.state.storage.sql;
+    if (d.kind === "removed") return { kind: "removed", storyId: d.story_id, authorId };
+    const row = sql.exec("SELECT * FROM stories WHERE id = ?", d.story_id)
+      .toArray()[0] as unknown as (StoryRecord & { author_card: string | null; origin: string | null }) | undefined;
+    if (!row) return null;
+    if (d.kind === "stats") return { kind: "stats", storyId: d.story_id, authorId, ...this.counts(d.story_id) };
+    // a story taken down before its delivery went out is not delivered
+    if (row.taken_down) return null;
+    return {
+      kind: "new", storyId: d.story_id, authorId,
+      story: {
+        createdAt: row.created_at, expiresAt: row.expires_at,
+        frames: JSON.parse(row.frames), audience: row.audience,
+        link: row.link_code && !row.link_revoked ? `${row.origin ?? ""}/s/${row.link_code}` : null,
+        author: JSON.parse(row.author_card ?? "null") as PublicUser,
+      },
+    };
+  }
+
+  private async deliver(d: Delivery): Promise<void> {
+    const authorId = authorOf(d.story_id) ?? "";
+    const body = this.payload(d, authorId);
+    if (!body) return;
+    const abort = new AbortController();
+    const deadline = setTimeout(() => abort.abort(), DELIVERY_TIMEOUT_MS);
+    try {
+      const stub = this.env.USER_DO.get(this.env.USER_DO.idFromName(d.user_id));
+      const res = await stub.fetch("https://do/story-event", {
+        method: "POST", body: JSON.stringify(body), signal: abort.signal,
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+    } finally {
+      clearTimeout(deadline);
+    }
+  }
+
+  /// Sends what is due, oldest first; a failure keeps the row and moves its
+  /// deadline out. Returns when to come back, or undefined when the queue is
+  /// empty.
+  private async pump(): Promise<number | undefined> {
+    const sql = this.state.storage.sql;
+    const now = Date.now();
+    const due = sql.exec(
+      "SELECT * FROM deliveries WHERE next_at <= ? ORDER BY id LIMIT ?", now, DRAIN,
+    ).toArray() as unknown as Delivery[];
+    for (const d of due) {
+      try {
+        await this.deliver(d);
+        sql.exec("DELETE FROM deliveries WHERE id = ?", d.id);
+      } catch (e) {
+        const pause = RETRY_MS[Math.min(d.attempt, RETRY_MS.length - 1)];
+        sql.exec("UPDATE deliveries SET attempt = attempt + 1, next_at = ? WHERE id = ?",
+          Date.now() + pause, d.id);
+        console.warn(`stories: delivery ${d.kind} of ${d.story_id} to ${d.user_id} failed: ${e}`);
+      }
+    }
+    const next = sql.exec("SELECT MIN(next_at) AS at FROM deliveries")
+      .toArray()[0] as unknown as { at: number | null };
+    return next.at ?? undefined;
+  }
+
+  async alarm() {
+    this.alarmRunning = true;
+    let next: number | undefined;
+    try {
+      next = await this.pump();
+    } finally {
+      this.alarmRunning = false;
+    }
+    const delays: number[] = [];
+    if (next !== undefined) delays.push(next - Date.now());
+    if (this.rearmDelay !== undefined) delays.push(this.rearmDelay);
+    this.rearmDelay = undefined;
+    if (delays.length) await this.arm(Math.min(...delays));
+  }
+
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const sql = this.state.storage.sql;
     const now = Date.now();
     switch (url.pathname) {
-      /// {authorId, frames, audience, hours, link} → {id, code}
+      /// {authorId, frames, audience, hours, link, recipients, author, origin} → {id, code}.
+      /// The story is kept and leaves for every recipient through the queue;
+      /// `origin` is what a public link is minted under.
       case "/publish": {
         const b = (await req.json()) as {
           authorId: string; frames: unknown[]; audience: string; hours: number; link: boolean;
+          recipients: string[]; author: PublicUser; origin: string;
         };
         const id = `${b.authorId}~${ulid(now)}`;
         const code = b.link ? await mintLinkCode(this.env, b.authorId) : null;
         sql.exec(
-          `INSERT INTO stories (id, created_at, expires_at, frames, audience, link_code)
-           VALUES (?,?,?,?,?,?)`,
+          `INSERT INTO stories (id, created_at, expires_at, frames, audience, link_code, author_card, origin)
+           VALUES (?,?,?,?,?,?,?,?)`,
           id, now, now + b.hours * 3600_000, JSON.stringify(b.frames), b.audience, code,
+          JSON.stringify(b.author), b.origin,
         );
+        const users = [...new Set(b.recipients)];
+        for (const u of users) {
+          sql.exec("INSERT OR IGNORE INTO recipients (story_id, user_id) VALUES (?,?)", id, u);
+        }
+        await this.enqueue(id, users, "new");
         return json({ ok: true, id, code });
-      }
-
-      /// ?viewer= → the author's live stories as this viewer sees them: their
-      /// own watch and heart on each, and — for the author alone — how many
-      /// watched and how many liked.
-      case "/live": {
-        const viewer = url.searchParams.get("viewer") ?? "";
-        const mine = url.searchParams.get("author") === viewer;
-        const rows = sql.exec(
-          `SELECT s.*,
-                  EXISTS(SELECT 1 FROM views v WHERE v.story_id = s.id AND v.viewer_id = ?) AS seen,
-                  EXISTS(SELECT 1 FROM likes l WHERE l.story_id = s.id AND l.user_id = ?) AS liked,
-                  (SELECT COUNT(*) FROM views v WHERE v.story_id = s.id) AS views,
-                  (SELECT COUNT(*) FROM likes l WHERE l.story_id = s.id) AS likes
-           FROM stories s
-           WHERE s.taken_down = 0 AND s.expires_at > ?
-           ORDER BY s.created_at`,
-          viewer, viewer, now,
-        ).toArray() as unknown as Array<StoryRecord & {
-          seen: number; liked: number; views: number; likes: number;
-        }>;
-        return json({
-          ok: true,
-          stories: rows.map((r) => ({
-            id: r.id, createdAt: r.created_at, expiresAt: r.expires_at,
-            frames: JSON.parse(r.frames), audience: r.audience,
-            code: r.link_code && !r.link_revoked ? r.link_code : null,
-            seen: r.seen === 1, liked: r.liked === 1,
-            views: mine ? r.views : null, likes: mine ? r.likes : null,
-          })),
-        });
       }
 
       /// ?id= → the live story's access facts, for the Worker to decide with.
@@ -157,23 +314,29 @@ export class StoriesDO implements DurableObject {
         return json({ ok: true, audience: story.audience });
       }
 
-      /// {storyId, viewer} → the watch is remembered once.
+      /// {storyId, viewer} → the watch is remembered once; a first watch sends
+      /// the author their new counts.
       case "/seen": {
         const b = (await req.json()) as { storyId: string; viewer: string };
         if (!this.live(b.storyId, now)) return err("not_found", 404);
+        const before = this.counts(b.storyId).views;
         sql.exec(
           `INSERT INTO views (story_id, viewer_id, seen_at) VALUES (?,?,?)
            ON CONFLICT(story_id, viewer_id) DO NOTHING`,
           b.storyId, b.viewer, now,
         );
+        if (this.counts(b.storyId).views !== before) {
+          await this.enqueue(b.storyId, [authorOf(b.storyId) ?? ""], "stats");
+        }
         return json({ ok: true });
       }
 
       /// {storyId, user, on} → the heart goes on or comes off. A heart is a
-      /// watch too.
+      /// watch too. The author hears the counts move.
       case "/like": {
         const b = (await req.json()) as { storyId: string; user: string; on: boolean };
         if (!this.live(b.storyId, now)) return err("not_found", 404);
+        const before = this.counts(b.storyId);
         if (b.on) {
           sql.exec(
             `INSERT INTO views (story_id, viewer_id, seen_at) VALUES (?,?,?)
@@ -187,6 +350,10 @@ export class StoriesDO implements DurableObject {
           );
         } else {
           sql.exec("DELETE FROM likes WHERE story_id = ? AND user_id = ?", b.storyId, b.user);
+        }
+        const after = this.counts(b.storyId);
+        if (after.views !== before.views || after.likes !== before.likes) {
+          await this.enqueue(b.storyId, [authorOf(b.storyId) ?? ""], "stats");
         }
         return json({ ok: true, liked: b.on });
       }
@@ -211,7 +378,8 @@ export class StoriesDO implements DurableObject {
       }
 
       /// {authorId, storyId, takeDown?, link?} → the story taken down, or its
-      /// link minted or revoked. A revoked code is never handed out again.
+      /// link minted or revoked. A revoked code is never handed out again. A
+      /// take-down leaves for everyone the story was delivered to.
       case "/update": {
         const b = (await req.json()) as {
           authorId: string; storyId: string; takeDown?: boolean; link?: boolean;
@@ -221,6 +389,9 @@ export class StoriesDO implements DurableObject {
         if (!story) return err("not_found", 404);
         if (b.takeDown) {
           sql.exec("UPDATE stories SET taken_down = 1 WHERE id = ?", b.storyId);
+          const users = (sql.exec("SELECT user_id FROM recipients WHERE story_id = ?", b.storyId)
+            .toArray() as unknown as Array<{ user_id: string }>).map((r) => r.user_id);
+          await this.enqueue(b.storyId, users, "removed");
           return json({ ok: true });
         }
         if (b.link === true) {
@@ -261,10 +432,18 @@ export class StoriesDO implements DurableObject {
         return author ? json({ ok: true, author }) : err("not_found", 404);
       }
 
+      /// How the queue stands, for the smoke test.
+      case "/queue": {
+        const n = sql.exec("SELECT COUNT(*) AS n FROM deliveries").toArray()[0] as unknown as { n: number };
+        return json({ ok: true, pending: n.n });
+      }
+
       /// The account is gone: so is everything here.
       case "/wipe": {
         sql.exec("DELETE FROM likes");
         sql.exec("DELETE FROM views");
+        sql.exec("DELETE FROM recipients");
+        sql.exec("DELETE FROM deliveries");
         sql.exec("DELETE FROM stories");
         return json({ ok: true });
       }

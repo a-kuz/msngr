@@ -87,6 +87,14 @@ export interface PrivacySettings {
 }
 
 /// A user card as everyone may see it: what GET /api/users/:id serves.
+/// A story as a viewer's list carries it: the same shape whether it comes
+/// from GET /api/stories or in a `story` frame.
+export interface StoryItem {
+  id: string; authorId: string; username: string; displayName: string; avatarId: string | null;
+  createdAt: number; expiresAt: number; frames: unknown[]; audience: string; link: string | null;
+  seen: boolean; liked: boolean; views: number | null; likes: number | null;
+}
+
 export interface PublicUser {
   id: string;
   username: string;
@@ -112,6 +120,11 @@ export type ServerFrame =
   | { t: "typing"; chatId: string; from: string; kind: string | null }
   | { t: "callRelay"; chatId: string; from: string; fromDevice: string; sentAt: number; body: unknown }
   | { t: "presence"; userId: string; online: boolean; lastSeen: number }
+  /// a story moved: `new` carries the whole story as the list would, `removed`
+  /// names one taken down or gone, `stats` brings the author their counts, and
+  /// `mark` tells this user's other devices what they watched or liked
+  | { t: "story"; event: "new" | "removed" | "stats" | "mark"; storyId: string;
+      story?: StoryItem; views?: number; likes?: number; seen?: boolean; liked?: boolean }
   /// someone's card changed: name, bio, avatar or username. The profile is
   /// public, so the frame carries the whole row rather than a hint to refetch
   | { t: "profile"; user: PublicUser }

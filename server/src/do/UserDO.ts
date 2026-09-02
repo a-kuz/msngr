@@ -1,6 +1,7 @@
 import type {
-  Env, ClientFrame, ServerFrame, PublicUser, PrivacySettings, LastSeenVisibility,
+  Env, ClientFrame, ServerFrame, PublicUser, PrivacySettings, LastSeenVisibility, StoryItem,
 } from "../types";
+import type { StoryDelivery } from "./StoriesDO";
 import {
   json, err, nowSec, shouldArmAlarm, ulid, PRIVACY_DEFAULTS, type PrivacySetting,
 } from "../util";
@@ -23,6 +24,8 @@ import {
 const SUB_PREFIX = "sub:";
 const WATCH_PREFIX = "watch:";
 const PEER_PREFIX = "peer:";
+/// `story:<storyId>`: a live story delivered to this user, as their list shows it.
+const STORY_PREFIX = "story:";
 /// `name:<userId>`: the public display name of somebody this user shares a
 /// chat with, as the roster frame carried it; a push names its author by it.
 /// Every chat fills it, however large the roster.
@@ -1475,6 +1478,87 @@ export class UserDO implements DurableObject {
         const lastSeen = (await this.state.storage.get<number>("lastSeen")) ?? 0;
         const online = this.presenceFresh();
         return json({ ok: true, online, lastSeen });
+      }
+
+      /// A story delivered by its author's object: kept in this user's inbox
+      /// and told to their sockets. `new` adds it, `removed` takes it out,
+      /// `stats` moves the counts on this user's own story. The inbox is what
+      /// GET /api/stories reads — one object, nothing asked of the authors.
+      case "/story-event": {
+        const d = (await req.json()) as StoryDelivery;
+        const key = STORY_PREFIX + d.storyId;
+        if (d.kind === "new" && d.story) {
+          const me = await this.getUserId();
+          const mine = d.authorId === me;
+          const item: StoryItem = {
+            id: d.storyId, authorId: d.authorId,
+            username: d.story.author?.username ?? "", displayName: d.story.author?.display_name ?? "",
+            avatarId: d.story.author?.avatar_id ?? null,
+            createdAt: d.story.createdAt, expiresAt: d.story.expiresAt,
+            frames: d.story.frames, audience: d.story.audience, link: d.story.link,
+            seen: false, liked: false, views: mine ? 0 : null, likes: mine ? 0 : null,
+          };
+          // a delivery repeated after a failure that in fact landed changes nothing
+          const had = await this.state.storage.get<StoryItem>(key);
+          if (had) return json({ ok: true, dupe: true });
+          await this.state.storage.put(key, item);
+          this.broadcast({ t: "story", event: "new", storyId: d.storyId, story: item });
+        } else if (d.kind === "removed") {
+          const had = await this.state.storage.get<StoryItem>(key);
+          await this.state.storage.delete(key);
+          if (had) this.broadcast({ t: "story", event: "removed", storyId: d.storyId });
+        } else if (d.kind === "stats") {
+          const item = await this.state.storage.get<StoryItem>(key);
+          if (item) {
+            item.views = d.views ?? item.views;
+            item.likes = d.likes ?? item.likes;
+            await this.state.storage.put(key, item);
+            this.broadcast({ t: "story", event: "stats", storyId: d.storyId,
+              views: item.views ?? 0, likes: item.likes ?? 0 });
+          }
+        }
+        return json({ ok: true });
+      }
+
+      /// This user's own state on a story — watched, hearted, or a new link on
+      /// their own — written into the inbox row and told to their other devices.
+      case "/story-mark": {
+        const b = (await req.json()) as { storyId: string; seen?: boolean; liked?: boolean; link?: string | null };
+        const key = STORY_PREFIX + b.storyId;
+        const item = await this.state.storage.get<StoryItem>(key);
+        if (!item) return json({ ok: true, missing: true });
+        if (b.seen !== undefined) item.seen = b.seen;
+        if (b.liked !== undefined) item.liked = b.liked;
+        if (b.link !== undefined) item.link = b.link;
+        await this.state.storage.put(key, item);
+        this.broadcast({ t: "story", event: "mark", storyId: b.storyId, seen: item.seen, liked: item.liked });
+        return json({ ok: true });
+      }
+
+      /// ?id= → whether the story was delivered to this user: one read, the
+      /// whole of the right to act on it.
+      case "/story-has": {
+        const item = await this.state.storage.get<StoryItem>(STORY_PREFIX + (url.searchParams.get("id") ?? ""));
+        return json({ ok: true, has: !!item && item.expiresAt > Date.now() });
+      }
+
+      /// Every live story delivered to this user, oldest first; the ones whose
+      /// time is over go out of the inbox as they are met. The inbox is bounded
+      /// by the peers' output over a week, and the list is capped past that.
+      case "/stories-inbox": {
+        const listed = await this.state.storage.list<StoryItem>({ prefix: STORY_PREFIX, limit: 2000 });
+        const now = Date.now();
+        const stories: StoryItem[] = [];
+        const expired: string[] = [];
+        for (const [k, item] of listed) {
+          if (item.expiresAt <= now) expired.push(k); else stories.push(item);
+        }
+        // one storage delete takes at most 128 keys
+        for (let i = 0; i < expired.length; i += 128) {
+          await this.state.storage.delete(expired.slice(i, i + 128));
+        }
+        stories.sort((a, b) => a.createdAt - b.createdAt);
+        return json({ ok: true, stories });
       }
 
       case "/profile-changed": {

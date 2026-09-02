@@ -326,6 +326,25 @@ func answer(dir: URL, base: URL, name: String, text: String, seconds: Double) as
 /// one-simulator scenario can receive a message it did not ask for. With
 /// `shader` (a file: Shadertoy GLSL or a JSON export) the message carries
 /// that document instead, as `kind` — "shader" or "sticker".
+/// Posts a story of one photo frame per file, for everyone who follows, live
+/// for a day: what a viewer needs a second and third author for.
+func postStory(dir: URL, base: URL, name: String, photos: [URL]) async throws {
+    let display = cast.first(where: { $0.name == name })?.display ?? name
+    guard FileManager.default.fileExists(atPath: dir.appendingPathComponent(name).appendingPathComponent("meta.json").path) else {
+        throw FixtureError("unknown account \(name)")
+    }
+    let p = try await openPerson(name: name, display: display, dir: dir, base: base)
+    var frames: [APIClient.StoryFrame] = []
+    for photo in photos {
+        let bytes = try Data(contentsOf: photo)
+        let uploaded = try await p.api.uploadMedia(bytes)
+        frames.append(APIClient.StoryFrame(mediaId: uploaded.mediaId, type: "photo", w: 1080, h: 1920, dur: nil))
+    }
+    let posted = try await p.api.postStory(frames: frames, audience: "contacts", hours: 24, link: false)
+    print("· \(name) posted a story of \(frames.count) frame(s): \(posted.storyId)")
+    try await sealHome(p)
+}
+
 func send(dir: URL, base: URL, name: String, peer: String, text: String, repeatCount: Int = 1,
           shader: URL? = nil, kind: String = "shader", video: URL? = nil,
           poster: URL? = nil, photo: URL? = nil) async throws {
@@ -922,6 +941,12 @@ do {
             video: (try? arg("video")).map { URL(fileURLWithPath: $0) },
             poster: (try? arg("poster")).map { URL(fileURLWithPath: $0) },
             photo: (try? arg("photo")).map { URL(fileURLWithPath: $0) })
+    case "story":
+        try await postStory(
+            dir: URL(fileURLWithPath: try arg("dir")),
+            base: URL(string: try arg("base", default: "http://localhost:8787"))!,
+            name: try arg("as", default: "bravo"),
+            photos: try arg("photo").split(separator: ",").map { URL(fileURLWithPath: String($0)) })
     case "react":
         try await react(
             dir: URL(fileURLWithPath: try arg("dir")),

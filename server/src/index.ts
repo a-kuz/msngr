@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { Env, AuthCtx, ChatState, ChatKind, PublicUser, PrivacySettings } from "./types";
+import type { Env, AuthCtx, ChatState, ChatKind, PublicUser, PrivacySettings, StoryItem } from "./types";
 import { authenticate } from "./auth";
 import {
   ulid, newToken, sha256hex, json, err, directChatName, b64url, provisionCode,
@@ -1582,16 +1582,10 @@ app.post("/api/privacy", async (c) => {
 // author's StoriesDO; the Worker decides who may ask it and joins the names.
 
 /// A story as the author's object hands it out.
-interface StoryOut {
-  id: string; createdAt: number; expiresAt: number; frames: unknown[]; audience: string;
-  code: string | null; seen: boolean; liked: boolean; views: number | null; likes: number | null;
-}
-
-/// `contacts`: the people the author shares a direct chat with. `everyone`:
-/// anyone who has reached the author — through a handle, a contact or the
-/// link. Neither is a feed of the whole service: the list a viewer sees is
-/// always their own peers'.
-const STORY_AUDIENCES = ["everyone", "contacts"];
+/// `contacts`: the people the author shares a direct chat with at the moment
+/// of publishing. There is no wider audience — a story is delivered to a
+/// named set of people, never offered to whoever comes along.
+const STORY_AUDIENCES = ["contacts"];
 /// How long a story may be asked to live. A day is the default; a week is the
 /// ceiling, so nothing published by accident stays for a month.
 const STORY_MAX_HOURS = 24 * 7;
@@ -1643,32 +1637,35 @@ app.post("/api/stories", async (c) => {
   const audience = b.audience ?? "contacts";
   if (!STORY_AUDIENCES.includes(audience)) return err("bad_audience");
   const hours = Math.min(Math.max(b.hours ?? 24, 1), STORY_MAX_HOURS);
+  // who gets it is decided once, here: the author and everyone they share a
+  // direct chat with, minus anyone with a block between them. The author's
+  // object delivers to each of them from its queue
+  const peers = await directPeers(c.env, userId);
+  const br = await userStub(c.env, userId).fetch("https://do/blocks");
+  const bj = (await br.json()) as { blocked: string[]; blockedBy: string[] };
+  const hidden = new Set([...bj.blocked, ...bj.blockedBy]);
+  const recipients = [userId, ...peers.filter((p) => !hidden.has(p))];
+  const author = await cardFor(c.env, userId, userId);
   const r = await storiesStub(c.env, userId).fetch("https://do/publish", {
     method: "POST",
-    body: JSON.stringify({ authorId: userId, frames, audience, hours, link: b.link === true }),
+    body: JSON.stringify({
+      authorId: userId, frames, audience, hours, link: b.link === true,
+      recipients, author, origin: publicOrigin(c),
+    }),
   });
   const j = (await r.json()) as { id: string; code: string | null };
   return json({ ok: true, storyId: j.id, link: j.code ? `${publicOrigin(c)}/s/${j.code}` : null });
 });
 
-/// The author's live stories as one viewer sees them.
-async function liveStories(env: Env, authorId: string, viewerId: string): Promise<StoryOut[]> {
-  const r = await storiesStub(env, authorId).fetch(
-    `https://do/live?author=${encodeURIComponent(authorId)}&viewer=${encodeURIComponent(viewerId)}`,
-  );
-  const j = (await r.json()) as { stories: StoryOut[] };
-  return j.stories;
-}
-
-/// Whether this user may watch the author's stories at all: no block between
-/// them, and — unless the story is open to everyone who reached the author —
-/// a direct chat shared.
-async function canWatchStories(env: Env, userId: string, authorId: string, audience: string): Promise<boolean> {
+/// Whether this user may act on the story: it was delivered into their own
+/// inbox — that is the whole of the right — and no block has come between
+/// them and the author since. The author's own stories are always theirs.
+async function canWatchStory(env: Env, userId: string, authorId: string, storyId: string): Promise<boolean> {
   if (authorId === userId) return true;
   if (await blockedPair(env, userId, authorId)) return false;
-  if (audience === "everyone") return true;
-  const peers = await directPeers(env, userId);
-  return peers.includes(authorId);
+  const r = await userStub(env, userId).fetch(`https://do/story-has?id=${encodeURIComponent(storyId)}`);
+  const j = (await r.json()) as { has: boolean };
+  return j.has;
 }
 
 /// The story a request names, from its author's object, with the access rule
@@ -1677,34 +1674,24 @@ async function watchableStory(env: Env, userId: string, authorId: string, storyI
   const r = await storiesStub(env, authorId).fetch(`https://do/story?id=${encodeURIComponent(storyId)}`);
   if (!r.ok) return null;
   const j = (await r.json()) as { audience: string };
-  return (await canWatchStories(env, userId, authorId, j.audience)) ? j : null;
+  return (await canWatchStory(env, userId, authorId, storyId)) ? j : null;
 }
 
 /// Everything this user may watch right now, newest author first, with their
 /// own stories among them.
 app.get("/api/stories", async (c) => {
   const { userId } = c.get("auth");
-  // the list is the viewer's own peers', the author included, minus anyone
-  // with a block between them; every author's object is asked at once
-  const peers = await directPeers(c.env, userId);
-  const br = await userStub(c.env, userId).fetch("https://do/blocks");
+  // the list is this user's own inbox: every story delivered to them, kept
+  // by their own object as the authors' objects pushed it. Nobody else is
+  // asked; a block that came after the delivery hides the row here
+  const [ir, br] = await Promise.all([
+    userStub(c.env, userId).fetch("https://do/stories-inbox"),
+    userStub(c.env, userId).fetch("https://do/blocks"),
+  ]);
+  const inbox = (await ir.json()) as { stories: StoryItem[] };
   const bj = (await br.json()) as { blocked: string[]; blockedBy: string[] };
   const hidden = new Set([...bj.blocked, ...bj.blockedBy]);
-  const authors = [...new Set([userId, ...peers])].filter((id) => id === userId || !hidden.has(id));
-  const perAuthor = await Promise.all(authors.map((a) => liveStories(c.env, a, userId)));
-  const withStories = authors.filter((_, i) => perAuthor[i].length > 0);
-  const cards = await cardsFor(c.env, userId, withStories);
-  const stories = authors.flatMap((authorId, i) => {
-    const card = cards.get(authorId);
-    if (!card) return [];
-    return perAuthor[i].map((s) => ({
-      id: s.id, authorId, username: card.username, displayName: card.display_name,
-      avatarId: card.avatar_id, createdAt: s.createdAt, expiresAt: s.expiresAt,
-      frames: s.frames, audience: s.audience,
-      link: s.code ? `${publicOrigin(c)}/s/${s.code}` : null,
-      seen: s.seen, liked: s.liked, views: s.views, likes: s.likes,
-    }));
-  }).sort((a, b) => a.createdAt - b.createdAt);
+  const stories = inbox.stories.filter((s) => s.authorId === userId || !hidden.has(s.authorId));
   return json({ ok: true, stories });
 });
 
@@ -1718,6 +1705,10 @@ app.post("/api/stories/:id/seen", async (c) => {
   if (!(await watchableStory(c.env, userId, authorId, id))) return err("not_found", 404);
   await storiesStub(c.env, authorId).fetch("https://do/seen", {
     method: "POST", body: JSON.stringify({ storyId: id, viewer: userId }),
+  });
+  // the viewer's own copy remembers it, and their other devices hear it
+  await userStub(c.env, userId).fetch("https://do/story-mark", {
+    method: "POST", body: JSON.stringify({ storyId: id, seen: true }),
   });
   return json({ ok: true });
 });
@@ -1735,6 +1726,11 @@ app.post("/api/stories/:id/like", async (c) => {
   const r = await storiesStub(c.env, authorId).fetch("https://do/like", {
     method: "POST", body: JSON.stringify({ storyId: id, user: userId, on: b.on !== false }),
   });
+  if (r.ok) {
+    await userStub(c.env, userId).fetch("https://do/story-mark", {
+      method: "POST", body: JSON.stringify({ storyId: id, seen: true, liked: b.on !== false }),
+    });
+  }
   return new Response(r.body, r);
 });
 
@@ -1772,7 +1768,12 @@ app.post("/api/stories/:id", async (c) => {
   if (!r.ok) return new Response(r.body, r);
   const j = (await r.json()) as { code?: string | null };
   if (b.takeDown) return json({ ok: true });
-  return json({ ok: true, link: j.code ? `${publicOrigin(c)}/s/${j.code}` : null });
+  const link = j.code ? `${publicOrigin(c)}/s/${j.code}` : null;
+  // the author's own copy carries the link they see in the list
+  await userStub(c.env, userId).fetch("https://do/story-mark", {
+    method: "POST", body: JSON.stringify({ storyId: id, link }),
+  });
+  return json({ ok: true, link });
 });
 
 export default {
