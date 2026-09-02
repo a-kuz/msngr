@@ -279,7 +279,7 @@ struct AvatarView: View {
                     } else if let image {
                         Image(uiImage: image).resizable().scaledToFill()
                     } else {
-                        initialsView
+                        initialsView(side: geo.size.width)
                     }
                 }
                 .frame(width: geo.size.width, height: geo.size.height)
@@ -307,13 +307,16 @@ struct AvatarView: View {
         }
     }
 
-    private var initialsView: some View {
+    private func initialsView(side: CGFloat) -> some View {
         LinearGradient(colors: AvatarStyle.gradient(for: name), startPoint: .top, endPoint: .bottom)
             .overlay(
                 Text(AvatarStyle.initials(name))
                     .font(.system(size: 100, weight: .semibold))
-                    .minimumScaleFactor(0.1)
-                    .padding(8)
+                    .minimumScaleFactor(0.05)
+                    .lineLimit(1)
+                    // the room around the letters scales with the circle: a
+                    // fixed margin left a ring of 30 points nothing but an ellipsis
+                    .padding(side * 0.18)
                     .foregroundStyle(.white)
             )
     }
