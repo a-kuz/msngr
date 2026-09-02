@@ -849,7 +849,11 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     (unit `testForegroundShowsWhatTheOtherProcessWrote`)
 - The NSE and presentation
   - 🟡 previews from the shared database in the NSE (the extension does not launch on the simulator, a device is needed — docs/research/nse-simulator-experiment.md)
-  - ⬜ the sender's avatar and name through Communication Notifications
+  - ✅ the sender's avatar and name through Communication Notifications: the
+    extension builds an INSendMessageIntent from the avatar the app cached in
+    the shared container (commit 6f2a0ef; live banner with the sender's avatar
+    on the iPhone 17 dev simulator, real APNs through the stand's relay,
+    2026-09-02)
   - ⬜ a group avatar in the notification
   - 🟡 quick reply straight from the push (category, action routing and the
     reply/mute handlers are in — NotificationActionRouteTests; the expanded
