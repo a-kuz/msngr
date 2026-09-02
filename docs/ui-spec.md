@@ -564,6 +564,8 @@ archive. Swipes: archive and mute from the right, pin from the left; «Прин�
 and «Заблокировать» among the requests; «Из архива» in the archive. Every action
 is written to the local database first and goes to the server afterwards.
 
+The tab bar shows only once a folder exists; with none there is no strip, and
+the first folder is made from a row's context menu («New Folder»).
 Tabs are folders: a rule plus the chats put in and taken out by hand. A chat can
 live in any number of them, and the archive and the requests appear only in
 «Все». Membership is computed once per chat-list emission, so switching a tab
