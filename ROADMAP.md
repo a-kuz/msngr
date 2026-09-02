@@ -46,7 +46,15 @@ A ✅ goes in only together with a link to the evidence.
   - ✅ multi-device: two devices of one account receive new messages, the identity
     belongs to the account, the safety number does not change
     (qa/runs/2026-08-16-second-device-run.md)
-  - ⬜ moving the history to a new device (today it starts at the chat's current end)
+  - ✅ moving the history to a new device: the approving device packs the same
+    payload a backup carries (chats, messages, media, folders, settings),
+    encrypts it as an attachment and uploads it, and the pointer with the key
+    rides inside the sealed provisioning bundle; the new device fetches and
+    writes it after its claim, before its first sync, so the chats open on
+    their past while the conversations start fresh (`HistoryTransfer`,
+    HistoryTransferTests; live 2026-09-02: a third simulator linked as bravo
+    came up with all 6 chats and 18 messages, none pending, and a message
+    from it reached charlie's extension — qa/runs/2026-09-02-history-transfer-run)
   - ✅ a QR code instead of typing the code: the device being added shows the
     code as a QR under the digits, and the approving device reads it from a
     picture («Считать код с фото», Vision with a Core Image fallback — the

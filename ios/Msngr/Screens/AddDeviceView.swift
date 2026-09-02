@@ -1,4 +1,5 @@
 import MsngrCore
+import MsngrCrypto
 import PhotosUI
 import SwiftUI
 
@@ -15,6 +16,8 @@ struct AddDeviceView: View {
     @State private var busy = false
     @State private var error: String?
     @State private var approved = false
+    /// The history is being packed and uploaded ahead of the bundle.
+    @State private var preparingHistory = false
     /// A picture of the other device's screen: the QR code in it is the code.
     @State private var qrPhoto: PhotosPickerItem?
 
@@ -95,12 +98,18 @@ struct AddDeviceView: View {
                 .foregroundStyle(Theme.accent)
                 .accessibilityHidden(true)
             Text(found.device.name ?? String(localized: "New device")).font(.title3.bold())
-            Text("The device gets access to the account and can read and send new messages. Old history does not move to it.")
+            Text("The device gets access to the account and can read and send new messages. Your chats and their history move to it; the conversations start fresh there.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             if let error {
                 Text(error).font(.footnote).foregroundStyle(.red)
+            }
+            if preparingHistory {
+                Text("Preparing the history…")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("adddevice.history")
             }
             Button {
                 Task { await approve(found) }
@@ -153,9 +162,25 @@ struct AddDeviceView: View {
         defer { busy = false }
         do {
             let me = try await api.me()
-            try await DeviceLink.approve(api: api, lookup: found, identity: try store.identity(),
+            let identity = try store.identity()
+            // the history goes with the account: packed and uploaded sealed
+            // before the bundle is, so the new device finds it right after its
+            // claim. Nothing to carry, or an upload that fails, links the
+            // device without its past rather than not at all
+            var history: Provisioning.Bundle.History?
+            if let db = app.db, let media = app.media {
+                preparingHistory = true
+                history = await HistoryTransfer.pack(
+                    db: db, media: media, userId: session.userId,
+                    username: me.user.username, displayName: me.user.display_name,
+                    identity: identity,
+                    palette: UserDefaults.standard.string(forKey: "palette"),
+                    showsMessageText: NotificationPreferences.showsMessageText(in: AppGroup.defaults))
+                preparingHistory = false
+            }
+            try await DeviceLink.approve(api: api, lookup: found, identity: identity,
                                          userId: session.userId, username: me.user.username,
-                                         displayName: me.user.display_name)
+                                         displayName: me.user.display_name, history: history)
             approved = true
         } catch let e as APIError {
             error = message(for: e.code)

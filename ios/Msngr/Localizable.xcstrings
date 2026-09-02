@@ -2167,6 +2167,50 @@
         }
       }
     },
+    "The device gets access to the account and can read and send new messages. Your chats and their history move to it; the conversations start fresh there." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Устройство получит доступ к аккаунту и сможет читать и отправлять новые сообщения. Чаты и их история переедут на него; беседы там начнутся заново."
+          }
+        }
+      }
+    },
+    "Preparing the history…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Готовим историю…"
+          }
+        }
+      }
+    },
+    "Moving the history to this device…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переносим историю на это устройство…"
+          }
+        }
+      }
+    },
+    "Your chats and their history move to this device once the login is confirmed." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чаты и их история переедут на это устройство после подтверждения входа."
+          }
+        }
+      }
+    },
     "Sound: mentions and replies" : {
       "extractionState" : "manual",
       "localizations" : {

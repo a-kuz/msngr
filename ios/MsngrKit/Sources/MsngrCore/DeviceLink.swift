@@ -146,7 +146,8 @@ public enum DeviceLink {
     /// Seals the account for the device waiting on `lookup`.
     public static func approve(api: APIClient, lookup: APIClient.ProvisionLookupResponse,
                                identity: IdentityKeyPair, userId: String,
-                               username: String, displayName: String) async throws {
+                               username: String, displayName: String,
+                               history: Provisioning.Bundle.History? = nil) async throws {
         guard let recipient = Data(base64urlEncoded: lookup.ephemeralKey) else {
             throw Provisioning.Failure.badFormat
         }
@@ -154,7 +155,8 @@ public enum DeviceLink {
             Provisioning.Bundle(
                 userId: userId, username: username, displayName: displayName,
                 identityDH: identity.dh.rawRepresentation.base64urlEncodedString(),
-                identitySigning: identity.signing.rawRepresentation.base64urlEncodedString()),
+                identitySigning: identity.signing.rawRepresentation.base64urlEncodedString(),
+                history: history),
             to: recipient, provisionId: lookup.provisionId)
         let envelope = String(data: try JSONEncoder().encode(sealed), encoding: .utf8)!
         try await api.provisionApprove(lookup.provisionId, envelope: envelope)

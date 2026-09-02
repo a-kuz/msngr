@@ -39,15 +39,38 @@ public enum Provisioning {
         public let identityDH: String
         /// Raw Ed25519 private key, base64url.
         public let identitySigning: String
+        /// Where the approving device left the history for this one: a sealed
+        /// blob on the media store, with the key to it. Nil when the account
+        /// arrives without its past.
+        public var history: History?
+
+        /// A backup payload, encrypted the way an attachment is and uploaded
+        /// as one: the server holds ciphertext it cannot open, and the key
+        /// travels only inside this sealed bundle.
+        public struct History: Codable, Sendable, Equatable {
+            public let mediaId: String
+            /// base64 key and SHA-256 of the ciphertext, as `MediaInfo` carries them
+            public let key: String
+            public let hash: String
+            public let size: Int
+
+            public init(mediaId: String, key: String, hash: String, size: Int) {
+                self.mediaId = mediaId
+                self.key = key
+                self.hash = hash
+                self.size = size
+            }
+        }
 
         public init(userId: String, username: String, displayName: String,
-                    identityDH: String, identitySigning: String) {
+                    identityDH: String, identitySigning: String, history: History? = nil) {
             self.v = 1
             self.userId = userId
             self.username = username
             self.displayName = displayName
             self.identityDH = identityDH
             self.identitySigning = identitySigning
+            self.history = history
         }
     }
 

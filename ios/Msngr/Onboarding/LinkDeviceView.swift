@@ -17,6 +17,8 @@ struct LinkDeviceView: View {
         case waiting
         case confirming(username: String, displayName: String)
         case finishing
+        /// the history the approving device packed is being downloaded and written
+        case movingHistory
         case failed(String)
     }
 
@@ -40,6 +42,12 @@ struct LinkDeviceView: View {
                 VStack(spacing: 12) {
                     ProgressView()
                     Text("Setting up this device…").font(.footnote).foregroundStyle(.secondary)
+                }
+            case .movingHistory:
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text("Moving the history to this device…").font(.footnote).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("link.history")
                 }
             case .failed(let message):
                 failed(message)
@@ -82,7 +90,7 @@ struct LinkDeviceView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            Text("The history does not move to this device: older messages stay only where you read them.")
+            Text("Your chats and their history move to this device once the login is confirmed.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -176,10 +184,30 @@ struct LinkDeviceView: View {
             let claimed = try await DeviceLink.claim(api: api, pending: pending, bundle: bundle,
                                                      store: store,
                                                      deviceName: UIDevice.current.name)
-            // the chat list comes over, the history does not: the rows are
-            // written before the engine ever opens a socket, so the first sync
-            // names the end of each journal instead of asking for all of it
             let linked = AppNet.client(token: claimed.token)
+            // the history the approving device packed comes first, the rows
+            // and the media both, so the chats open on what was said before
+            // this device existed; a blob that cannot be fetched leaves the
+            // account linked without its past
+            if let history = bundle.history {
+                stage = .movingHistory
+                let media = MediaManager(api: linked,
+                                         cacheDir: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                                             .appendingPathComponent("media"),
+                                         pendingDir: storage.pendingMediaDir)
+                if let payload = try? await HistoryTransfer.unpack(history, media: media) {
+                    try await AccountBackup.apply(payload, db: db, media: media)
+                    if let palette = payload.palette {
+                        UserDefaults.standard.set(palette, forKey: "palette")
+                    }
+                    if let showsMessageText = payload.showsMessageText {
+                        NotificationPreferences.setShowsMessageText(showsMessageText, in: AppGroup.defaults)
+                    }
+                }
+            }
+            // the chat list is written before the engine ever opens a socket,
+            // so the first sync names the end of each journal instead of asking
+            // for all of it; what the history brought stays below that mark
             let snapshot = try await linked.chatsSnapshot()
             try await db.write { dbc in
                 try DeviceLink.primeChats(dbc, snapshot: snapshot, ownUserId: claimed.userId)
