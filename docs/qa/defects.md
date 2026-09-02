@@ -6,6 +6,24 @@ with the commit that closed it.
 
 ## Open
 
+### Eight defects from the Durable Objects docs check — open
+Found 2026-09-03 by reading our objects against Cloudflare's own Durable
+Objects documentation (`docs/audits/2026-09-03-durable-objects-docs-check.md`,
+D1–D8, with the doc line numbers). In one line each: the phone-hash lookup
+binds 200 parameters where the SQLite backend allows 100, so a discover with
+over 100 matches fails; a people search over ~48 bytes fails on the 50-byte
+LIKE cap; the push drain deletes a job after APNs answered, and an alarm that
+fires twice shows the banner twice; the marks migration flag is set before
+the migration runs, so a mark read in that window is 0; the chat caches the
+block list of another object in an instance field and can miss a block until
+eviction; two concurrent forced remints of the APNs JWT both mint, the gate
+being open across the await; a wiped author's stories object is not
+`deleteAll()`ed and its link pointer objects never are; a socket's close
+handler closes with no code and counts the closing socket as live, so the
+offline presence waits for the alarm. None was seen live; each is a documented
+platform behaviour or limit read off the code, and each needs its reproducing
+test first.
+
 ### A socket that connects mid-fan-out gets a message twice: live and in the catch-up — open
 Found 2026-09-03 while landing T10 of the limits audit, as the smoke check
 «catch-up backfills the whole backlog» counting 222–223 `msg` frames for 210

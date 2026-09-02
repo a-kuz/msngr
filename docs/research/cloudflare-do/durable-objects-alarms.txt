@@ -1,0 +1,1228 @@
+
+Durable Objects Alarms — a wake-up call for your applications | Cloudflare Blog
+Skip to content
+All Categories
+AI
+Developers
+Radar
+Product News
+Security
+Policy & Legal
+Zero Trust
+Speed & Reliability
+Life at Cloudflare
+Partners
+Switch Site Language
+English
+Deutsch
+Español
+Español (Latinoamérica)
+Français
+Italiano
+日本語
+한국어
+繁體中文
+简体中文
+Português
+Русский
+Bahasa Indonesia
+ภาษาไทย
+Tiếng Việt
+Polski
+العربية
+עברית
+Svenska
+Nederlands
+Türkçe
+Login
+Dashboard
+Contact Sales
+Blog
+Cloudflare Workers
+Developer Platform
+Developers
++5
+Show 5 more tags
+8 Tags
+Show 8 tags
+Selected Tags
+Cloudflare Workers
+Developer Platform
+Developers
+Durable Objects
+Notifications
+Platform Week
+Product News
+Serverless
+All tags
+Matching tags
+No tags found
+1.1.1.1
+2FA
+Abuse
+Access
+Access Control Lists (ACLs)
+Accessibility
+Account Takeover
+Acquisitions
+Addressing
+Advanced Certificate Manager
+Advanced DDoS
+Advertising
+Aegis
+AEO
+Africa
+Afroflare
+Agent Cloud
+Agent Development Lifecycle
+Agent Readiness
+Agents
+Agents Week
+Agents Week 2026
+AI
+AI Bots
+AI Gateway
+AI Search
+AI WAF
+AI Week
+AI-SPM
+Alertmanager
+Always Online
+AMD
+AMP
+Analytics
+Anonymous
+Anti Malware
+Anycast
+API
+API Gateway
+API Security
+API Shield
+APJC
+Apple
+Application Security
+Application Services
+Area 1 Security
+Argo Smart Routing
+ASCII
+Asia
+Athenian Project
+Atlassian
+Attacks
+Audit Logs
+Austin
+Australia
+Authentication
+Authy
+Auto Rag
+Automatic HTTPS
+Automatic Platform Optimization
+Automation
+AutoMinify
+Awards
+AWS
+Baidu
+Bandwidth Alliance
+Bandwidth Costs
+Best Practices
+Beta
+Better Internet
+BGP
+Billing
+Birthday Week
+Black Friday
+Blackbird
+Bot Fight Mode
+Bot Management
+Botnet
+Bots
+BPF
+Brand
+Brand Protection
+Brazil
+Browser Insights
+Browser Rendering
+Browser Run
+Bug Bounty
+Bugs
+BYOIP
+Cache
+Cache Purge
+Cache Reserve
+Cache Rules
+California
+Canada
+Cap'n Proto
+CAPTCHA
+Careers
+CASB
+Categories
+CDN
+CDNJS
+Certificate Authority
+Certificate Pinning
+Certificate Transparency
+Certification
+CFSSL
+Challenge Page
+ChatGPT
+China
+China Network
+Christmas
+Chrome
+CIO Week
+CISA
+Claire
+CLI
+ClickHouse
+Clientless
+Clientless Web Isolation
+Cloud Connector
+Cloud Email Security
+Cloudflare Access
+Cloudflare Apps
+Cloudflare Area 1
+Cloudflare Calls
+Cloudflare Email Service
+Cloudflare for Campaigns
+Cloudflare for SaaS
+Cloudflare for Startups
+Cloudflare Gateway
+Cloudflare History
+Cloudflare Images
+Cloudflare Media Platform
+Cloudflare Meetups
+Cloudflare Network
+Cloudflare One
+Cloudflare One Client
+Cloudflare One User Risk Score
+Cloudflare One Week
+Cloudflare OS
+Cloudflare Pages
+Cloudflare Polish
+Cloudflare Queues
+Cloudflare Realtime
+Cloudflare Stream
+Cloudflare Tunnel
+Cloudflare TV
+Cloudflare Workers
+Cloudflare Workers (PT)
+Cloudflare Workers KV
+Cloudflare Workers KV (ES)
+Cloudflare Zero Trust
+Cloudforce One
+Cloudy
+Code Orange
+Coinbase
+Colombia
+Community
+Compliance
+Compression
+Config Rules
+Configuration Management
+Congestion Control
+Connectivity
+Connectivity Cloud
+Consumer Services
+Containers
+Content Independence Day
+Content Scanning
+Context
+Core
+COVID-19
+Crawler Hints
+CrowdStrike
+Crypto Week
+Cryptography
+CSAM Reporting
+Customer Success
+Customer Zero
+Customers
+CVE
+CVE-2023-50387
+Cyber Readiness
+Cybersecurity
+D1
+Dashboard
+Data
+Data Catalog
+Data Center
+Data Localization
+Data Localization Suite
+Data Loss
+Data Loss Prevention
+Data Platform
+Data Privacy Day
+Data Protection
+Data Sovereignty
+Data Transfer Bucket
+Database
+DDoS
+DDoS Alerts
+DDoS Reports
+Debugging
+Deep Dive
+Descaler
+Design
+Deskope
+Developer Documentation
+Developer Platform
+Developer Spotlight
+Developer Week
+Developers
+Developers Storage
+Device Security
+DevOps
+DEX
+Digital Experience Monitoring
+Digital Forensics
+Disrupt
+Distributed
+Distributed Systems
+Distributed Web
+Diversity
+DLP
+DMARC
+DNS
+DNS Filtering
+DNS Flood
+DNS Security
+DNSSEC
+Dogfooding
+DoH
+Domain Rankings
+Domain Scoped Roles
+dosd
+Drupal
+Due Process
+Durable Execution
+Durable Objects
+Early Hints
+Earth Day
+eBPF
+EC2
+eCommerce
+Edge
+Edge Computing
+Edge Database
+Edge Rules
+Education
+Egress
+Elastic
+Election Security
+Elections
+Elliptic Curves
+Email
+Email Routing
+Email Security
+Email Workers
+EmDash
+Emissions
+Employee Resource Groups
+Encrypted SNI
+Encryption
+Engineering
+Enterprise
+Entropy
+EPYC
+Ethereum
+Europe
+European Union
+Events
+Exploit
+Facebook
+Fancy Bear
+Fast Fonts
+FCC
+Feature Flags
+FedRAMP
+FedRAMP High
+FedRAMP Moderate
+Firefox
+Firewall
+Firmware
+Florida
+Football
+Formal Methods
+Forrester
+Fortran
+Foundation DNS
+Founders' Letter
+France
+Fraud
+Free
+Freedom of Speech
+Front End
+Full Stack
+Full Stack Week
+Fun
+GA Week
+Gartner
+Gatebot
+GDPR
+Gen X
+General Availability
+Generative AI
+Geo Key Manager
+Germany
+GitHub
+Go
+Google
+Google Analytics
+Google Cloud
+Google Workspace
+Government Innovation
+Grace Hopper
+Grafana
+GraphQL
+Green
+Grinch
+Growth
+gRPC
+Guest Post
+Hackathon
+Halloween
+Hardware
+HashiCorp
+Hertzbleed
+Heuristics
+History
+Holidays
+Holocaust
+Hong Kong
+Hosting Con
+Hostnames
+HTTP2
+HTTP3
+HTTPS
+Human Rights
+Hurricane
+Hybrid Cloud
+Hyperdrive
+I'm Under Attack Mode
+IBM
+ICANN
+iCloud Private Relay
+Identity
+IETF
+IETF Standards
+IL4
+Image Optimization
+Image Recognition
+Image Resizing
+Image Storage
+Impact
+Impact Week
+Incident Report
+Incident Response
+India
+Indicators of Compromise
+Indonesian
+Inference
+Infrastructure
+Infrastructure as Code
+Insights
+Intel
+Interconnection
+Internal DNS
+Internet Performance
+Internet Quality
+Internet Regulation
+Internet Shutdown
+Internet Summit
+Internet Traffic
+Internet Trends
+Internship Experience
+Intrusion Detection
+Investors
+IoCs
+iOS
+IoT
+IPFS
+IPsec
+IPv4
+IPv6
+IRAP
+Israel
+Italy
+IWD
+JAMstack
+Japan
+JavaScript
+Jengo
+Jengo Policy
+Joomla
+Judeoflare
+Kafka
+Kernel
+Key Value
+Keyless SSL
+KeyTrap
+Killnet
+Korea
+Kubernetes
+LangChain
+Latency
+Latin America
+Latinflare
+LavaRand
+Lazarus group
+Leaked Credential Checks
+Legal
+Legal Patents Sable
+LGBTQIA+
+Life at Cloudflare
+Linux
+Lisbon
+Live Streaming
+Llama
+LLM
+Load Balancing
+Localization
+Log Push
+Log4J
+Log4Shell
+Logging
+Logs
+LUA
+Machine Learning
+Magecart
+Magic Firewall
+Magic Network Monitoring
+Magic Transit
+Magic WAN
+Magic WAN Connector
+Malicious JavaScript
+Malware
+Managed Components
+Managed Rules
+March of Cloudflare
+MASQUE
+MCP
+Meerkat
+MeetUp
+Meris
+Message Protocol
+Mexico
+Micro-frontends
+Microsoft
+Microsoft 365
+Microsoft Azure
+Middle East
+Migration Hub
+Milestones
+Miniflare
+Mirage
+Mirai
+Mitel
+Mitigation
+Mixed Content Errors
+MLops
+Mobile
+Mobile SDK
+Model Context Protocol
+Moldova
+Monitoring
+Multi-Cloud
+Multi-User
+MySQL
+NaaS
+Net Neutrality
+Network
+Network Interconnect
+Network Performance Update
+Network Protection
+Network Services
+Networking
+New Year
+NGINX
+Ninjas
+NIST
+Node.js
+North America
+Notebooks
+Notifications
+NSEC3
+OAuth
+Observability
+Oceania
+OCSP
+Offices
+Okta
+Olympics
+Onboarding
+Open API
+Open Source
+OpenAI
+OpenBMC
+OpenDNS
+OpenSSL
+OpenTelemetry 
+Optimization
+Origin Rules
+Outage
+Oxy
+Pacific Northwest
+Page Rules
+Page Shield
+Parallels
+Partners
+Partnership
+Password-reuse
+Passwords
+Passwords (PT)
+Patents
+Pay Per Crawl
+PAYGO
+Payments
+PCI Certified
+Peering
+Performance
+Performance Optimization
+Phishing
+php
+Phython
+Pingora
+Pipelines
+PlanetScale
+Plans
+Platform Engineering
+Platform Week
+Plesk
+Policy & Legal
+Politics
+Portugal
+Post Mortem
+Post-Quantum
+Postgres
+Precursor
+Prepared Statements
+Prisma
+Privacy
+Privacy Pass
+Privacy Week
+Private IP
+Private Network
+Product Design
+Product News
+Programming
+Programming (PT)
+Project Fair Shot
+Project Galileo
+Project Honey Pot
+Project Pangea
+Project Safekeeping
+Project Turpentine
+Prometheus
+Protocols
+Proudflare
+Proxying
+Public Sector
+Python
+Python Workers
+Quantization
+Queues
+QUIC
+QUICHE
+Quicksilver
+R2
+R2 Super Slurper
+Radar
+Radar Alerts
+Radar API
+Radar Maps
+Railgun
+Randomness
+Ransom Attacks
+Rapid Reset
+Raspberry Pi
+Rate Limiting
+RC4
+RDDoS
+React
+Reading List
+Real-time
+Recruiting
+Regional Services
+Registrar
+Reliability
+Remote Browser Isolation
+Remote Desktop Protocol 
+Remote Work
+Replication
+Research
+Resolver
+Restreaming
+Retreat
+Reverse Engineering
+REvil
+Risk Management
+Road to Zero Trust
+Rocket Loader
+RocksDB
+Routing
+Routing Security
+RPC
+RPKI
+RRDNS
+RSA
+Russia
+Rust
+Rust Workers
+SaaS
+SAAS Security
+Sable
+Salt
+Sampling
+Sandbox
+SASE
+Save The Web
+SDK
+Search Engine
+Secrets Store
+Secure Web Gateway
+Security
+Security Analytics
+Security Center
+Security Posture
+Security Posture Management
+Security Service Edge
+Security Week
+security.txt
+SEO
+Server Push
+Serverless
+Serverless (PT)
+Serverless AI
+Serverless Week
+Servers
+SIEM
+Signed Exchanges (SXG)
+SIM
+Singapore
+Single Sign On (SSO)
+Smart Placement
+Smart Shield
+Snippets
+SOC as a Service
+South Africa
+South America
+Spain
+spdy
+Spectrum
+Speed
+Speed & Reliability
+Speed Brain
+Speed Week
+Spoofing
+Sports
+SQL
+SRE
+SSE
+SSH
+SSL
+Standards
+Startup Enterprise Plan
+Statistics
+StopTheHacker
+Storage
+Sumo Logic
+Super Bowl
+Supercloud
+Supply Chain Attacks
+Support
+Sustainability
+SWAG
+SWG
+Swift
+Switzerland
+SXSW
+SYN
+SYN Flood
+Syria
+TCP
+Team
+Teams Dashboard
+Tech Talks
+TechCrunch
+Technical Writing
+Terraform
+Testimonials
+Testing
+Texas
+Thanksgiving
+The Serverlist Newsletter
+Threat Data
+Threat Feeds
+Threat Intelligence
+Threat Operations
+Threat Report
+Threats
+Tiered Cache
+TikTok
+TLS
+TLS 1.3
+Tools
+Tor
+Tracing
+Traffic
+Transform Rules
+Transparency
+Trends
+Trust & Safety
+TTFB
+TTL
+TURN
+TURN Server
+Turnstile
+TypeScript
+UDP
+Ukraine
+United Kingdom
+Universal SSL
+URL Scanner
+USA
+User Research
+VDI
+Vectorize
+Vetflare
+Video
+Visibility
+Vite
+VoIP
+VPC
+VPN
+Vulnerabilities
+WAF
+WAF Attack Score
+WAF Rules
+Waiting Room
+WARP
+WARP Connector
+WASM
+Web Application Firewall
+Web Asset Discovery
+Web3
+WebAssembly
+Webinars
+WebMCP
+WebP
+WebRTC
+WebSockets
+Wildebeest
+Womenflare
+WordPress
+Workers AI
+Workers Launchpad
+Workers Logs
+Workers Observability
+Workers Sites
+Workers Unbound
+Workers VPC
+Workflows
+World IPv6 Day
+Wrangler
+x402
+Year in Review
+Z3
+Zaraz
+Zero Day Threats
+Zero Trust
+Zero Trust Week
+Zone Versioning
+Durable Objects
+Notifications
+Platform Week
+Product News
+Serverless
+Cloudflare Workers
+Developer Platform
+Developers
+Durable Objects
+Notifications
+Platform Week
+Product News
+Serverless
+May 11, 2022
+Durable Objects Alarms — a wake-up call for your applications
+Matt Alonso
+ and 
+Greg McKeon
+5 minute read
+COPY URL
+Since we launched Durable Objects, developers have leveraged them as a novel building block for distributed applications.
+Durable Objects provide globally unique instances of a JavaScript class a developer writes, accessed via a unique ID. The Durable Object associated with each ID implements some fundamental component of an application — a banking application might have a Durable Object representing each bank account, for example. The bank account object would then expose methods for incrementing a balance, transferring money or any other actions that the application needs to do on the bank account.
+Durable Objects work well as a stateful backend for applications — while Workers can instantiate a new instance of your code in any of Cloudflare’s data centers in response to a request, Durable Objects guarantee that all requests for a given Durable Object will reach the same instance on Cloudflare’s network.
+Each Durable Object is single-threaded and has access to a stateful storage API, making it easy to build consistent and highly-available distributed applications on top of them.
+This system makes distributed systems’ development easier — we’ve seen some impressive applications launched atop Durable Objects, from collaborative whiteboarding tools to conflict-free replicated data type (CRDT) systems for coordinating distributed state launch.
+However, up until now, there’s been a piece missing — how do you invoke a Durable Object when a client Worker is not making requests to it?
+As with any distributed system, Durable Objects can become unavailable and stop running. Perhaps the machine you were running on was unplugged, or the datacenter burned down and is never coming back, or an individual object exceeded its memory limit and was reset. Before today, a subsequent request would reinitialize the Durable Object on another machine, but there was no way to programmatically wake up an Object.
+Durable Objects Alarms are here to change that, unlocking new use cases for Durable Objects like queues and deferred processing.
+What is a Durable Object Alarm?
+Durable Object Alarms allow you, from within your Durable Object, to schedule the object to be woken up at a time in the future. When the alarm’s scheduled time comes, the Durable Object’s 
+alarm()
+ handler will be called. If this handler throws an exception, the alarm will be automatically retried using exponential backoff until it succeeds — alarms have guaranteed at-least-once execution.
+How are Alarms different from Workers Cron Triggers?
+Alarms are more fine-grained than Cron Triggers. While a Workers service can have up to three Cron Triggers configured at once, it can have an unlimited amount of Durable Objects, each of which can have a single alarm active at a time.
+Alarms are directly scheduled from and invoke a function within your Durable Object. Cron Triggers, on the other hand, are not programmatic — they execute based on their schedules, which have to be configured via the Cloudflare Dashboard or centralized configuration APIs.
+How do I use Alarms?
+First, you’ll need to add the 
+durable_object_alarms
+ compatibility flag to your 
+wrangler.toml
+.
+compatibility_flags = ["durable_object_alarms"]
+Next, implement an 
+alarm()
+ handler in your Durable Object that will be called when the alarm executes. From anywhere else in your Durable Object, call 
+state.storage.setAlarm()
+ and pass in a time for the alarm to run at. You can use 
+state.storage.getAlarm()
+ to retrieve the currently set alarm time.
+In this example, we implemented an alarm handler that wakes the Durable Object up once every 10 seconds to batch requests to a single Durable Object, deferring processing until there is enough work in the queue for it to be worthwhile to process them.
+export
+ default
+ {
+  async
+ fetch
+(
+request
+, 
+env
+) {
+    let
+ id 
+=
+ env.
+BATCHER
+.
+idFromName
+(
+"foo"
+);
+    return
+ await
+ env.
+BATCHER
+.
+get
+(id).
+fetch
+(request);
+  },
+};
+const
+ SECONDS
+ =
+ 1000
+;
+export
+ class
+ Batcher
+ {
+  constructor
+(
+state
+, 
+env
+) {
+    this
+.state 
+=
+ state;
+    this
+.storage 
+=
+ state.storage;
+    this
+.state.
+blockConcurrencyWhile
+(
+async
+ () 
+=>
+ {
+      let
+ vals 
+=
+ await
+ this
+.storage.
+list
+({ reverse: 
+true
+, limit: 
+1
+ });
+      this
+.count 
+=
+ vals.size 
+==
+ 0
+ ?
+ 0
+ :
+ parseInt
+(vals.
+keys
+().
+next
+().value);
+    });
+  }
+  async
+ fetch
+(
+request
+) {
+    this
+.count
+++
+;
+    // If there is no alarm currently set, set one for 10 seconds from now
+    // Any further POSTs in the next 10 seconds will be part of this kh.
+    let
+ currentAlarm 
+=
+ await
+ this
+.storage.
+getAlarm
+();
+    if
+ (currentAlarm 
+==
+ null
+) {
+      this
+.storage.
+setAlarm
+(Date.
+now
+() 
++
+ 10
+ *
+ SECONDS
+);
+    }
+    // Add the request to the batch.
+    await
+ this
+.storage.
+put
+(
+this
+.count, 
+await
+ request.
+text
+());
+    return
+ new
+ Response
+(
+JSON
+.
+stringify
+({ queued: 
+this
+.count }), {
+      headers: {
+        "content-type"
+: 
+"application/json;charset=UTF-8"
+,
+      },
+    });
+  }
+  async
+ alarm
+() {
+    let
+ vals 
+=
+ await
+ this
+.storage.
+list
+();
+    await
+ fetch
+(
+"http://example.com/some-upstream-service"
+, {
+      method: 
+"POST"
+,
+      body: Array.
+from
+(vals.
+values
+()),
+    });
+    await
+ this
+.storage.
+deleteAll
+();
+    this
+.count 
+=
+ 0
+;
+  }
+}
+Once every 10 seconds, the 
+alarm()
+ handler will be called. In the event an unexpected error terminates the Durable Object, it will be re-instantiated on another machine, following a short delay, after which it can continue processing.
+Under the hood, Alarms are implemented by making reads and writes to the storage layer. This means Alarm 
+get
+ and 
+set
+ operations follow the same rules as any other storage operation – writes are coalesced with other writes, and reads have a defined ordering. See 
+our blog post
+ on the caching layer we implemented for Durable Objects for more information.
+Durable Objects Alarms guarantee fault-tolerance
+Alarms are designed to have no single point of failure and to run entirely on our edge – every Cloudflare data center running Durable Objects is capable of running alarms, including migrating Durable Objects from unhealthy data centers to healthy ones as necessary to ensure that their Alarm executes. Single failures should resolve in under 30 seconds, while multiple failures may take slightly longer.
+We achieve this by storing alarms in the same distributed datastore that backs the Durable Object storage API. This allows alarm reads and writes to behave identically to storage reads and writes and to be performed atomically with them, and ensures that alarms are replicated across multiple datacenters.
+Within each data center capable of running Durable Objects, there are multiple processes responsible for tracking upcoming alarms and triggering them, providing fault tolerance and scalability within the data center. A single elected leader in each data center is responsible for detecting failure of other data centers and assigning responsibility of those alarms to healthy local processes in its own data center. In the event of leader failure, another leader will be elected and become responsible for executing Alarms in the data center. This allows us to guarantee at-least-once execution for all Alarms.
+How do I get started?
+Alarms are a great way to build new distributed primitives, like queues, atop Durable Objects. They also provide a method for guaranteeing work within a Durable Object will complete, without relying on a client request to “kick” the Object.
+You can get started with Alarms now by enabling Durable Objects in the Cloudflare 
+dashboard
+. For more info, check the developer docs or jump in our Discord.
+On this page
+Discuss Online
+Related tags
+Cloudflare Workers
+Developer Platform
+Developers
+Durable Objects
+Notifications
+Platform Week
+Product News
+Serverless
+Follow on Social Media
+Cloudflare
+Greg McKeon
+Subscribe to receive notifications of new posts
+Email address
+We’ll never share your email address.
+Subscribe
+Thanks for subscribing! Check your inbox to confirm.
+Getting Started
+Plans
+Contact sales
+Partners
+Find a partner
+Startups
+Under attack?
+Domain name search
+Public interest
+Project Galileo
+Athenian Project
+Cloudflare for Campaigns
+Project Fairshot
+Impact/ESG
+Resources
+App innovation report
+Cloudflare Radar
+Case studies
+Status
+Support
+Events
+Blog
+Solutions
+SSE and SASE platform
+Cloudflare AI Cloud
+AI Security
+Frontend Development Platform
+Multi-Tenant Platform Development
+Web Security Platform
+Company
+About
+Careers
+Investors
+Press
+Press kit
+Global network
+Compliance
+Compliance resources
+Trust
+GDPR
+Responsible AI
+Transparency report
+Report abuse
+Developers
+Documentation
+Learning center
+Community
+Start building
+Login
+© 2026 
+Cloudflare, Inc.
+|
+Your privacy choices
+Report security issues
+|
+Privacy Policy
+|
+Terms of use
+|
+GDPR
+|
+Trademark
+Search is temporarily unavailable.
+Products
+Solutions
+Resources
+Pricing
+Login
+ opens in a new tab
+Dashboard
+ opens in a new tab
+Contact Sales
+ opens in a new tab
+Start Building
+ opens in a new tab
+ opens in a new tab
+ opens in a new tab
+ opens in a new tab
+All Categories
+AI
+Developers
+Radar
+Product News
+Security
+Policy & Legal
+Zero Trust
+Speed & Reliability
+Life at Cloudflare
+Partners
+English
+Switch Site Language
+English
+Deutsch
+Español
+Español (Latinoamérica)
+Français
+Italiano
+日本語
+한국어
+繁體中文
+简体中文
+Português
+Русский
+Bahasa Indonesia
+ภาษาไทย
+Tiếng Việt
+Polski
+العربية
+עברית
+Svenska
+Nederlands
+Türkçe
+Light
+Dark
