@@ -23,6 +23,8 @@ does not take those on its own.
 | B1 | Phone-hash lookup binds 200 parameters per `IN`; the backend allows 100 | do D1 | msngr-5e | c29a4f0 · smoke: a 130-hash discover answers 200, ALL PASS on a private stand |
 | B2 | People search puts the query uncut into `LIKE`; the pattern cap is 50 bytes | do D2 | msngr-5e | c29a4f0 · smoke: a 60-byte query answers 200, ALL PASS on a private stand |
 | B60 | After the RPC pass the gate on 609cfb2 went red in the smoke at «stalled recipient catches up after retries»: a recipient whose `event` failed twice never got the third delivery within 20 s, and the chat object then answered no request for five minutes (`GET /api/chats/:id/fanout` died on undici's headers timeout, `.claude/gates/609cfb28b08b.log`); the same head passed the whole smoke on a private stand, and the gate on 6e74443 (before RPC) passed this check. Reproduce section 23 of the smoke in a loop against the RPC delivery path (`withTimeout` over `userStub.event`, the wrapper's retry, the alarm re-arm) | gate | agent-007 | |
+| B61 | The story ring in the tray and the chat list (owner's screenshot, 2026-09-03): a single accent-coloured circle instead of the rainbow, no break per story, watched stories not dimmed per segment, a 5 pt disc of background around your own picture in the folded stack, and the online dot drawn in the corner of the avatar's square so it lies over the ring | owner | story-ring | |
+| B62 | The chat list and the tray stop at the navigation bar's bottom edge instead of running under it (owner's screenshot, 2026-09-03): a row scrolled up is cut by a hard line where the bar begins, the folded tray the same; both should pass under the bar through a blurred fade | owner | story-ring | |
 | B3 | Push drain deletes the job after APNs answered; a second alarm shows the banner twice | do D3 | | |
 | B4 | Marks migration flag is set before the migration runs; a mark read meanwhile is 0 — move it into the constructor under `blockConcurrencyWhile` | do D4 | | |
 | B5 | `this.blockers` caches another object's block list in a field until eviction | do D5, ev T20 | | |
@@ -38,6 +40,7 @@ does not take those on its own.
 | B15 | The chat gallery does not observe; an attachment arriving while it is open never appears | ev D10 | | |
 | B16 | A severed pairwise session never heals: both sides ask, neither answer arrives | qa | | |
 | B17 | The in-app banner does not react to a tap | qa | | |
+| B63 | Chat screen: a tap on a sticker stops opening or folding it at some point, and only leaving and reopening the chat brings the toggle back (the owner, 2026-09-03) | owner | fable-sticker | |
 | B18 | iPad with a hardware keyboard: a tap around the settings sheet crashes the app | qa | | |
 | B19 | The extension's coalescing window delays every banner when pushes arrive one at a time | qa | | |
 | B20 | A row moving up the chat list flies through the rows above it; a held swipe on a row stutters; interaction smoothness below Telegram | qa | | |

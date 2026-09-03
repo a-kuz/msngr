@@ -41,19 +41,20 @@ git; nothing is copied into a second place.
    hollow commit and half an hour of a broken stand on 2026-09-03.
 2. Take the topmost free line of `docs/BACKLOG.md`: put your name in `who`
    and land that one-cell change on `main` at once (commit in the worktree,
-   fast-forward `main`), before any other work — the claim is what keeps two
-   sessions off one line; if `main` moved and the cell is taken, take the
-   next. Add your line to `.claude/tasks.tsv` (name, start, one sentence) so
-   `scripts/progress.py` shows what is in work. Your own simulator, your own
-   stand on its own port; the shared stand is neither restarted nor wiped.
+   then `git push . HEAD:main`), before any other work — the claim is what
+   keeps two sessions off one line; if `main` moved and the cell is taken,
+   take the next. Add your line to `.claude/tasks.tsv` (name, start, one
+   sentence) so `scripts/progress.py` shows what is in work. Your own
+   simulator, your own stand on its own port; the shared stand is neither
+   restarted nor wiped.
 3. One behaviour per change, commits incremental. Delivery is closed by the
    check of the layer you touched — `swift test` for MsngrKit, `node
    test/smoke.mjs` for the server, MsngrTests for the app — plus a live run of
    the scenario on your simulator, watched, not just built. A red check on a
    product number is a defect until proven otherwise and is never answered
    from the test's side.
-4. Merge into `main` yourself (fast-forward or a merge commit; resolve
-   conflicts in your worktree). A server change is then rsynced to the shared
+4. Merge into `main` yourself: `git merge main` in your worktree (resolve
+   conflicts there), then `git push . HEAD:main`. A server change is then rsynced to the shared
    stand (`server/` on adad; `wrangler dev` there reloads on its own), a
    migration applied there by hand. Close the backlog line and the tasks.tsv
    line, update ROADMAP if a feature moved.
@@ -61,6 +62,23 @@ git; nothing is copied into a second place.
    what was not done and why. A defect found in passing becomes a backlog
    line in the same commit.
 6. Remove the worktree and your simulator.
+
+`main` is moved from inside the worktree, never from `main`'s checkout.
+`git push . HEAD:main` fast-forwards the branch and updates the shared
+checkout's files with it (the repository's `receive.denyCurrentBranch` is
+`updateInstead`, set once with `git config receive.denyCurrentBranch
+updateInstead` if a fresh clone ever needs it). A push that is not a
+fast-forward is refused: merge `main` into your branch and push again. A push
+into a shared checkout with uncommitted changes is refused too, and that is
+somebody editing `main` directly, not a reason to force anything.
+
+A worktree-isolated session's harness refuses any command it cannot prove
+stays off git in the shared checkout: `git -C <the main checkout>` is refused
+outright, and so is a chain like `UDID=$(xcrun simctl create …) && xcrun
+simctl boot $UDID`, because the value passed on is computed at runtime.
+Write plain commands, one per call, with the literal id pasted in from the
+previous output; a shell variable or a `$(…)` feeding another command is
+what trips it.
 
 Product decisions (section 5 of the backlog) are not taken by a session; the
 line waits for the owner.
