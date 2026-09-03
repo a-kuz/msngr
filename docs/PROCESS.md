@@ -39,8 +39,11 @@ git; nothing is copied into a second place.
    .claude/worktrees/<name> -b <name>`). Nobody edits `main`'s checkout
    directly, and nobody shares a checkout: two sessions in one tree cost a
    hollow commit and half an hour of a broken stand on 2026-09-03.
-2. Take a line from `docs/BACKLOG.md`, put your name in `who`, and add your
-   line to `.claude/tasks.tsv` (name, start, one sentence) so
+2. Take the topmost free line of `docs/BACKLOG.md`: put your name in `who`
+   and land that one-cell change on `main` at once (commit in the worktree,
+   fast-forward `main`), before any other work — the claim is what keeps two
+   sessions off one line; if `main` moved and the cell is taken, take the
+   next. Add your line to `.claude/tasks.tsv` (name, start, one sentence) so
    `scripts/progress.py` shows what is in work. Your own simulator, your own
    stand on its own port; the shared stand is neither restarted nor wiped.
 3. One behaviour per change, commits incremental. Delivery is closed by the

@@ -3,6 +3,16 @@
 An E2EE messenger: Swift clients (iOS, macOS) + a Cloudflare Worker.
 There is no production and there are no users.
 
+A session that is told nothing more than «продолжай» (or «continue») knows
+what to do: read `docs/PROCESS.md` and `docs/BACKLOG.md`, move into a
+worktree of its own, claim the topmost free line of the backlog (its name in
+`who`, committed to `main` before any other work so two sessions never take
+one line), do it to the end — code, the layer's check, the live run, the
+merge into `main`, the backlog line closed, the report — and take the next.
+It stops for nothing but a product decision, which it leaves in the
+backlog's last section and moves on past. The owner reads
+`scripts/progress.py` and the reports, and does not orchestrate.
+
 ## Layout
 
 ```
