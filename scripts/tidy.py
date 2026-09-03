@@ -14,7 +14,8 @@ happened — that is the whole reason this exists.
 An agent owns a simulator whose name is its own name or starts with it and a
 dash: `perfdb` owns `perfdb-a` and `perfdb-b`. Agents are listed in
 .claude/agents.tsv, and an agent that never got there is still recognised by a
-session writing into a worktree of that name. A name neither of those claims is
+session writing into a worktree of that name, or by the task it claimed in
+.claude/tasks.tsv. A name none of those claims is
 left alone for as long as its app keeps writing, and taken once it stops.
 
 Two things are never touched: the owner's two devices with the gate runner, and
@@ -331,9 +332,16 @@ def kill(pids):
 
 
 def merged_worktrees(agents, working):
-    """Worktrees whose branch is in main, with nothing left in them to lose."""
+    """Worktrees whose branch is in main, with nothing left in them to lose.
+
+    A session claims its backlog line by landing the claim on main first, so
+    right after the claim its branch is in main with nothing uncommitted and
+    its worktree looks finished; the line it wrote into .claude/tasks.tsv is
+    what says it is still at work.
+    """
     owned = {a["worktree"] for a in agents.values() if a["alive"]}
     owned |= {p.name for p in working.values()}
+    owned |= tasks_in_work()
     here = Path.cwd().resolve()
     cwds = process_cwds()
     out = []
@@ -356,6 +364,16 @@ def merged_worktrees(agents, working):
                     "why": "branch merged, nothing uncommitted, nobody in it",
                     "do": lambda p=path: remove_worktree(p)})
     return out
+
+
+def tasks_in_work():
+    """Agent names with a line in .claude/tasks.tsv: a task claimed and not yet
+    delivered, which is a worktree in use whatever git says about its branch."""
+    path = ROOT / ".claude" / "tasks.tsv"
+    if not path.exists():
+        return set()
+    return {line.split("\t")[0].strip() for line in path.read_text().splitlines()
+            if line.strip()}
 
 
 def process_cwds():
