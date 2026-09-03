@@ -40,6 +40,7 @@ does not take those on its own.
 | B15 | The chat gallery does not observe; an attachment arriving while it is open never appears | ev D10 | | |
 | B16 | A severed pairwise session never heals: both sides ask, neither answer arrives | qa | | |
 | B17 | The in-app banner does not react to a tap | qa | | |
+| B63 | Chat screen: a tap on a sticker stops opening or folding it at some point, and only leaving and reopening the chat brings the toggle back (the owner, 2026-09-03) | owner | fable-sticker | |
 | B18 | iPad with a hardware keyboard: a tap around the settings sheet crashes the app | qa | | |
 | B19 | The extension's coalescing window delays every banner when pushes arrive one at a time | qa | | |
 | B20 | A row moving up the chat list flies through the rows above it; a held swipe on a row stutters; interaction smoothness below Telegram | qa | | |
