@@ -1944,6 +1944,21 @@ check("ack while apns still hanging", !!h2 && h2.at - holdT0 < 600,
   `${h2 ? h2.at - holdT0 : "no ack"}ms`);
 const hp2 = await waitPush(pushFor(`eve-sim-${suffix}`, h2), 8000);
 check("push follows its ack", !!hp2 && h2.at < hp2.at, `ack ${h2?.at} push ${hp2?.at}`);
+
+// A drain that repeats while a push is out does not send it again: the job is
+// written as in flight before the APNs call. cm-h3's push sits at the mock for
+// the 1500 ms hold; a second drain forced during the hold through the dev hook
+// finds the job leased and leaves it, and the mock counts one push for the seq.
+ca2.send({ t: "send", chatId: echat.chatId, clientMsgId: "cm-h3", sentAt: Date.now(),
+  body: { v: 1, mode: "pw", msgs: {} } });
+const h3 = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === "cm-h3", 3000);
+check("third held push reaches the mock", !!(await waitPush(pushFor(`eve-sim-${suffix}`, h3), 6000)));
+await api("/api/dev/drain-pushes", { token: eve.token, body: {} });
+await new Promise((r) => setTimeout(r, 2500));
+const h3Pushes = pushes.filter((p) =>
+  p.url === `/3/device/eve-sim-${suffix}` && p.body.chatId === h3.chatId && p.body.seq === h3.seq);
+check("a repeat drain does not send a push in flight again", h3Pushes.length === 1,
+  `pushes=${h3Pushes.length}`);
 hold = { token: null, ms: 0 };
 
 // 23. Reading the APNs answer: 410 drops the token, 429 is retried

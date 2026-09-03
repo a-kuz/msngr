@@ -118,8 +118,16 @@ interface SocketAttachment {
 /// deadline out on a growing pause and never gives it up, with the devices
 /// already served written down so a retry reaches only the ones still owed.
 /// Jobs waiting out a pause hold nothing behind them — banner order and the
-/// badge are kept by seq and badgeStamp, not by the queue.
+/// badge are kept by seq and badgeStamp, not by the queue. A job is written
+/// as in flight, with its deadline moved out by a lease, before its APNs call
+/// and deleted after it: the alarm runs at least once, not exactly once, and a
+/// drain that repeats while the call is out, or after the object died between
+/// the call and the delete, finds the job waiting instead of sending it again.
 const PUSH_PREFIX = "pq:";
+/// How long a job in flight is left alone before another drain may take it:
+/// longer than any APNs answer, so a repeat drain never doubles a banner, and
+/// the price of a crash between the call and the delete is this one wait.
+const PUSH_LEASE_MS = 30_000;
 /// Pushes sent per alarm invocation; the queue re-arms for the rest.
 const PUSH_DRAIN = 10;
 /// Pause before retrying a job whose APNs call failed in transit, by the
@@ -1482,6 +1490,13 @@ export class UserDO extends DurableObject<Env> {
     return { failEvents: this.devFailEvents };
   }
 
+  /// Dev test hook: runs the push drain now, as a repeat of the alarm would,
+  /// which is how the smoke shows a job in flight is not sent a second time.
+  async devDrainPushes(): Promise<{ ok: true }> {
+    await this.drainPushes();
+    return { ok: true };
+  }
+
   async presenceInfo(): Promise<{ online: boolean; lastSeen: number }> {
     const lastSeen = (await this.ctx.storage.get<number>("lastSeen")) ?? 0;
     return { online: this.presenceFresh(), lastSeen };
@@ -1681,19 +1696,21 @@ export class UserDO extends DurableObject<Env> {
         nextWake = nextWake === undefined ? job.nextAt! : Math.min(nextWake, job.nextAt!);
         continue;
       }
+      const attempt = (job.attempt ?? 0) + 1;
+      const leased: PushJob = { ...job, attempt, nextAt: Date.now() + PUSH_LEASE_MS };
+      await this.ctx.storage.put(key, leased);
       const owed = await this.pushToDevices(job, job.pushed ?? []);
       sent++;
       if (!owed.length) {
         await this.ctx.storage.delete(key);
         continue;
       }
-      const attempt = (job.attempt ?? 0) + 1;
       const retryMs = PUSH_RETRY_MS[Math.min(attempt - 1, PUSH_RETRY_MS.length - 1)];
       const nextAt = Date.now() + retryMs;
       const tokens =
         (await this.ctx.storage.get<Record<string, unknown>>("apns")) ?? {};
       const pushed = Object.keys(tokens).filter((d) => !owed.includes(d));
-      await this.ctx.storage.put(key, { ...job, attempt, nextAt, pushed });
+      await this.ctx.storage.put(key, { ...leased, nextAt, pushed });
       nextWake = nextWake === undefined ? nextAt : Math.min(nextWake, nextAt);
     }
     if (skippedReady) await this.armAlarm(Date.now());

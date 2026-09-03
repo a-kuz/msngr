@@ -922,6 +922,14 @@ app.post("/api/dev/fault", async (c) => {
 // caller's object is told every chat it is in with the current roster, which
 // builds its relations and pushes its presence to the peers. Each account
 // relinks for itself; the peers' own relations come from their own call.
+// Dev test hook: the caller's own session object drains its push queue at
+// once, standing in for an alarm that fires a second time.
+app.post("/api/dev/drain-pushes", async (c) => {
+  const { userId } = c.get("auth");
+  await userStub(c.env, userId).devDrainPushes();
+  return json({ ok: true });
+});
+
 app.post("/api/dev/relink", async (c) => {
   const { userId } = c.get("auth");
   const { chats } = await userStub(c.env, userId).chats();
