@@ -44,7 +44,9 @@ git; nothing is copied into a second place.
    then `git push . HEAD:main`), before any other work — the claim is what
    keeps two sessions off one line; if `main` moved and the cell is taken,
    take the next. Add your line to `.claude/tasks.tsv` (name, start, one
-   sentence) so `scripts/progress.py` shows what is in work. Your own
+   sentence) so `scripts/progress.py` shows what is in work; the file is
+   untracked and lives only in the root checkout, so append to it by its
+   absolute path from the shell (`printf '…\n' >>`). Your own
    simulator, your own stand on its own port; the shared stand is neither
    restarted nor wiped.
 3. One behaviour per change, commits incremental. Delivery is closed by the
