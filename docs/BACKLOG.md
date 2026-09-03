@@ -26,7 +26,7 @@ does not take those on its own.
 | B61 | The story ring in the tray and the chat list (owner's screenshot, 2026-09-03): a single accent-coloured circle instead of the rainbow, no break per story, watched stories not dimmed per segment, a 5 pt disc of background around your own picture in the folded stack, and the online dot drawn in the corner of the avatar's square so it lies over the ring | owner | story-ring | |
 | B62 | The chat list and the tray stop at the navigation bar's bottom edge instead of running under it (owner's screenshot, 2026-09-03): a row scrolled up is cut by a hard line where the bar begins, the folded tray the same; both should pass under the bar through a blurred fade | owner | story-ring | |
 | B3 | Push drain deletes the job after APNs answered; a second alarm shows the banner twice | do D3 | agent-007 | 288ed3f · the job is leased (attempt+1, deadline +30 s) before the APNs call and deleted after; smoke «a repeat drain does not send a push in flight again» — 490 ok on a private stand, and the same smoke against the drain without the lease reads `pushes=2` |
-| B4 | Marks migration flag is set before the migration runs; a mark read meanwhile is 0 — move it into the constructor under `blockConcurrencyWhile` | do D4 | agent-007 | |
+| B4 | Marks migration flag is set before the migration runs; a mark read meanwhile is 0 — move it into the constructor under `blockConcurrencyWhile` | do D4 | agent-007 | da52374 · the lazy split is removed rather than moved (B59: a wipe, no lazy conversion; the stand was wiped 2026-09-02 and holds no whole-map record) — smoke 490 ok on a private stand |
 | B5 | `this.blockers` caches another object's block list in a field until eviction | do D5, ev T20 | | |
 | B6 | APNs JWT remint: the gate is open across the mint, two forced remints both mint | do D6 | | |
 | B7 | `StoriesDO /wipe` is `DELETE FROM`, not `deleteAll()`; the `link:` pointer objects are never wiped | do D7 | | |
@@ -78,7 +78,7 @@ does not take those on its own.
 | B42 | `stub.fetch` → RPC methods with one wrapper classifying `overloaded` and `retryable` | do C10 | msngr-5e | c29a4f0 · smoke 490 checks ALL PASS on a private stand, twice; the shared stand runs it |
 | B43 | The wanted next alarm written to storage before a drain in `UserDO` and `StoriesDO`; `alarmInfo.retryCount` read | do C7 | | |
 | B44 | `this.meta` re-read inside the gate window before `journal()` writes; `this.userId` field gone | do | | |
-| B45 | The `ALTER TABLE` in `try/catch` out of `StoriesDO` and the lazy marks conversion out of `ConversationDO` (a schema change wipes the stand, B59); an index on `deliveries(next_at)` | do C3, B59 | | |
+| B45 | The `ALTER TABLE` in `try/catch` out of `StoriesDO` (a schema change wipes the stand, B59; the marks conversion went with B4); an index on `deliveries(next_at)` | do C3, B59 | | |
 | B46 | A length cap before `JSON.parse` on socket frames; `send` failures logged and the socket closed; `GET` checked on the upgrade; frames batched per catch-up portion | do C9 | | |
 | B47 | `DirectoryDO` shard count in config with a resharding plan, an FTS index; location hints for `UserDO` at registration | ev T13, do C11 | | |
 | B48 | `docs/protocol.md`: hibernation, auto-response, the presence trade-off; the docs check repeated after B41 and B42 | do C12 | | |
