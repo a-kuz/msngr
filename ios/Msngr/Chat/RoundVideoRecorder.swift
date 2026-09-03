@@ -2,6 +2,7 @@ import UIKit
 import AVFoundation
 import SwiftUI
 import Combine
+import MsngrCore
 
 /// What a touch of the camera button may do, the same rule MicGate holds for
 /// the microphone: ask first, record after. The camera needs both permissions —
@@ -30,8 +31,21 @@ final class RoundVideoRecorder: NSObject, ObservableObject {
     /// The circle the sender watches while recording; owned here so the preview
     /// survives the SwiftUI view updates around it.
     let session = AVCaptureSession()
+    /// Every touch of the session goes through this one queue: the session is not
+    /// safe to configure from two threads, and startRunning blocks while the
+    /// hardware spins up.
+    private let sessionQueue = DispatchQueue(label: "msngr.round-video.session")
+    /// The layer the live circle draws, made with the session and never pointed
+    /// at it again. The circle appears only once a take is running, and pointing
+    /// a layer at a recording session reconfigures it, which ends the take with
+    /// no file written.
+    let previewLayer: AVCaptureVideoPreviewLayer
 
     private let output = AVCaptureMovieFileOutput()
+    /// Whether a file was asked for. `output.isRecording` turns true only once the
+    /// first sample is written, so it cannot answer this right after the start.
+    /// Touched on the session queue only.
+    private var takeRequested = false
     private var timer: Timer?
     private var configured = false
     private var finish: ((URL?) -> Void)?
@@ -41,6 +55,12 @@ final class RoundVideoRecorder: NSObject, ObservableObject {
     static let minimumTake: TimeInterval = 0.3
 
     static func isAccidental(_ duration: TimeInterval) -> Bool { duration < minimumTake }
+
+    override init() {
+        previewLayer = AVCaptureVideoPreviewLayer(session: session)
+        super.init()
+        previewLayer.videoGravity = .resizeAspectFill
+    }
 
     struct CameraUnavailable: Error {}
 
@@ -52,7 +72,7 @@ final class RoundVideoRecorder: NSObject, ObservableObject {
               let cameraInput = try? AVCaptureDeviceInput(device: camera),
               session.canAddInput(cameraInput) else { throw CameraUnavailable() }
         session.beginConfiguration()
-        session.sessionPreset = .vga640x480
+        session.sessionPreset = .high
         session.addInput(cameraInput)
         if let mic = AVCaptureDevice.default(for: .audio),
            let micInput = try? AVCaptureDeviceInput(device: mic),
@@ -77,20 +97,22 @@ final class RoundVideoRecorder: NSObject, ObservableObject {
     func start() throws {
         try configureIfNeeded()
         try AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .videoRecording,
-                                                        options: [.defaultToSpeaker, .allowBluetooth])
+                                                        options: [.defaultToSpeaker, .allowBluetoothHFP])
         try AVAudioSession.sharedInstance().setActive(true)
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("round-\(UUID().uuidString).mov")
         isRecording = true
         duration = 0
-        // startRunning blocks while the hardware spins up; off the main thread,
-        // with the recording started the moment the session reports running
-        Task.detached { [session, output] in
+        finish = nil
+        // the recording starts the moment the session reports running, from the
+        // session's own queue: startRecording takes the session lock, and the main
+        // thread must never wait on it
+        sessionQueue.async { [session, output] in
             if !session.isRunning { session.startRunning() }
-            await MainActor.run {
-                guard self.isRecording else { return }   // cancelled while spinning up
-                output.startRecording(to: url, recordingDelegate: self)
-            }
+            let stillWanted = DispatchQueue.main.sync { self.isRecording }
+            guard stillWanted else { return }   // cancelled while spinning up
+            self.takeRequested = true
+            output.startRecording(to: url, recordingDelegate: self)
         }
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             guard let self else { return }
@@ -101,6 +123,9 @@ final class RoundVideoRecorder: NSObject, ObservableObject {
 
     /// The cap ends the take the way the finger would: the file is kept and sent.
     var onCap: (() -> Void)?
+    /// A take that ended by itself, before the finger asked: the screen resets
+    /// its gesture and says the video was not recorded.
+    var onFailure: (() -> Void)?
 
     private func hitCap() {
         guard isRecording else { return }
@@ -113,13 +138,8 @@ final class RoundVideoRecorder: NSObject, ObservableObject {
         timer?.invalidate()
         guard isRecording else { completion(nil); return }
         isRecording = false
-        let dur = duration
-        guard !Self.isAccidental(dur), output.isRecording else {
-            if output.isRecording {
-                finish = { url in if let url { try? FileManager.default.removeItem(at: url) } }
-                output.stopRecording()
-            }
-            teardown()
+        if Self.isAccidental(duration) {
+            discardTake()
             completion(nil)
             return
         }
@@ -127,23 +147,43 @@ final class RoundVideoRecorder: NSObject, ObservableObject {
             self?.teardown()
             completion(url)
         }
-        output.stopRecording()
+        // the stop is queued behind the start, so the take is asked to end only
+        // where one was actually asked for
+        sessionQueue.async { [output] in
+            guard self.takeRequested else {
+                DispatchQueue.main.async { [weak self] in
+                    self?.finish = nil
+                    self?.teardown()
+                    completion(nil)
+                }
+                return
+            }
+            self.takeRequested = false
+            output.stopRecording()
+        }
     }
 
-    func cancel() {
-        timer?.invalidate()
-        isRecording = false
-        if output.isRecording {
-            finish = { url in if let url { try? FileManager.default.removeItem(at: url) } }
+    /// Ends a take nobody wants: the file, if one was started, goes with it.
+    private func discardTake() {
+        finish = { url in if let url { try? FileManager.default.removeItem(at: url) } }
+        sessionQueue.async { [output] in
+            guard self.takeRequested else { return }
+            self.takeRequested = false
             output.stopRecording()
         }
         teardown()
     }
 
+    func cancel() {
+        timer?.invalidate()
+        isRecording = false
+        discardTake()
+    }
+
     /// The camera light goes off and the audio session is given back the moment
     /// the take ends; held on, they outlive the bubble the take became.
     private func teardown() {
-        Task.detached { [session] in
+        sessionQueue.async { [session] in
             if session.isRunning { session.stopRunning() }
         }
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
@@ -153,15 +193,38 @@ final class RoundVideoRecorder: NSObject, ObservableObject {
 extension RoundVideoRecorder: AVCaptureFileOutputRecordingDelegate {
     func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL,
                     from connections: [AVCaptureConnection], error: Error?) {
+        let size = (try? FileManager.default.attributesOfItem(atPath: outputFileURL.path)[.size] as? Int) ?? nil
         DispatchQueue.main.async { [weak self] in
             let handler = self?.finish
             self?.finish = nil
-            if error != nil, (try? outputFileURL.checkResourceIsReachable()) != true {
-                handler?(nil)
+            // an errored take can still leave a file behind, empty or truncated:
+            // handing it on turns into a bubble nothing can play
+            if let error {
+                MsngrLog.outbox.error("round video take failed: \(error), file \(size ?? -1) bytes")
+                try? FileManager.default.removeItem(at: outputFileURL)
+                if handler == nil { self?.failedUnasked() } else { handler?(nil) }
+                return
+            }
+            guard let size, size > 0 else {
+                MsngrLog.outbox.error("round video take produced an empty file")
+                try? FileManager.default.removeItem(at: outputFileURL)
+                if handler == nil { self?.failedUnasked() } else { handler?(nil) }
                 return
             }
             handler?(outputFileURL)
         }
+    }
+
+    /// The take ended with nobody waiting for it: the camera failed on its own
+    /// while the finger was still down. The session is given back here; held on,
+    /// its light stays on for as long as the app lives.
+    private func failedUnasked() {
+        guard isRecording else { return }
+        isRecording = false
+        timer?.invalidate()
+        sessionQueue.async { self.takeRequested = false }
+        teardown()
+        onFailure?()
     }
 }
 
@@ -171,7 +234,7 @@ struct RoundRecordingPreview: View {
     @ObservedObject var recorder: RoundVideoRecorder
 
     var body: some View {
-        CameraCircle(session: recorder.session)
+        CameraCircle(previewLayer: recorder.previewLayer)
             .frame(width: BubbleLayout.roundVideoSide * 1.25,
                    height: BubbleLayout.roundVideoSide * 1.25)
             .clipShape(Circle())
@@ -182,21 +245,30 @@ struct RoundRecordingPreview: View {
     }
 }
 
-/// The AVCaptureVideoPreviewLayer wrapped for SwiftUI.
+/// The recorder's preview layer, hosted for SwiftUI. The view only carries the
+/// layer around and gives it its bounds; the layer's session is set once, where
+/// the layer is made.
 private struct CameraCircle: UIViewRepresentable {
-    let session: AVCaptureSession
+    let previewLayer: AVCaptureVideoPreviewLayer
 
     final class PreviewView: UIView {
-        override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
-        var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
+        private let previewLayer: AVCaptureVideoPreviewLayer
+
+        init(previewLayer: AVCaptureVideoPreviewLayer) {
+            self.previewLayer = previewLayer
+            super.init(frame: .zero)
+            layer.addSublayer(previewLayer)
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            previewLayer.frame = bounds
+        }
     }
 
-    func makeUIView(context: Context) -> PreviewView {
-        let v = PreviewView()
-        v.previewLayer.session = session
-        v.previewLayer.videoGravity = .resizeAspectFill
-        return v
-    }
+    func makeUIView(context: Context) -> PreviewView { PreviewView(previewLayer: previewLayer) }
 
     func updateUIView(_ uiView: PreviewView, context: Context) {}
 }

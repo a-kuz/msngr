@@ -195,7 +195,15 @@ struct InputBar: View {
         }
         // the cap ends a take the finger let go of; set here because the
         // recorder outlives no chat screen and the gesture lives in this one
-        .onAppear { videoRecorder.onCap = { handle(gesture.send()) } }
+        .onAppear {
+            videoRecorder.onCap = { handle(gesture.send()) }
+            // the camera can drop a take on its own, with the finger still down:
+            // the bar comes back and the screen says the video was not recorded
+            videoRecorder.onFailure = {
+                handle(gesture.interrupted())
+                model.sendFailure = String(localized: "Video not recorded: camera is unavailable")
+            }
+        }
         // a take is held by this screen and by nothing else: leaving the chat, leaving
         // the app or a call taking the microphone away drops it whole, so that no stump
         // of one goes out unnoticed

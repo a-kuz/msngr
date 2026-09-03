@@ -1483,9 +1483,13 @@ struct ChatScreen: View {
     private func sendRoundVideo(_ url: URL, duration: TimeInterval) {
         Task {
             defer { try? FileManager.default.removeItem(at: url) }
-            guard let clip = await Self.exportRoundClip(AVURLAsset(url: url)),
-                  let data = try? Data(contentsOf: clip),
+            guard let clip = await Self.exportRoundClip(AVURLAsset(url: url)) else {
+                model.sendFailure = String(localized: "Video not sent: could not process the recording")
+                return
+            }
+            guard let data = try? Data(contentsOf: clip),
                   let localName = stash(data, mime: "video/mp4") else {
+                MsngrLog.outbox.error("round video: the exported clip could not be stashed")
                 model.sendFailure = String(localized: "Video not sent: could not process the recording")
                 return
             }
@@ -1543,11 +1547,17 @@ struct ChatScreen: View {
         guard let track = try? await asset.loadTracks(withMediaType: .video).first,
               let natural = try? await track.load(.naturalSize),
               let transform = try? await track.load(.preferredTransform),
-              let duration = try? await asset.load(.duration) else { return nil }
+              let duration = try? await asset.load(.duration) else {
+            MsngrLog.outbox.error("round video: the take carries no readable video track")
+            return nil
+        }
         let oriented = CGRect(origin: .zero, size: natural).applying(transform)
         let w = abs(oriented.width), h = abs(oriented.height)
         let side = min(w, h)
-        guard side > 0 else { return nil }
+        guard side > 0 else {
+            MsngrLog.outbox.error("round video: the take's frame is empty, \(w)x\(h)")
+            return nil
+        }
         let out = CGFloat(roundClipSide)
 
         // orient the frames upright, slide the middle square to the origin, scale it out
@@ -1567,7 +1577,10 @@ struct ChatScreen: View {
         composition.instructions = [instruction]
 
         guard let export = AVAssetExportSession(asset: asset,
-                                                presetName: AVAssetExportPresetMediumQuality) else { return nil }
+                                                presetName: AVAssetExportPresetMediumQuality) else {
+            MsngrLog.outbox.error("round video: no export session for the take")
+            return nil
+        }
         let outURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("round-\(UUID().uuidString).mp4")
         export.outputURL = outURL
@@ -1576,6 +1589,7 @@ struct ChatScreen: View {
         export.shouldOptimizeForNetworkUse = true
         await export.export()
         guard export.status == .completed else {
+            MsngrLog.outbox.error("round video: export ended as \(export.status.rawValue), \(String(describing: export.error))")
             try? FileManager.default.removeItem(at: outURL)
             return nil
         }
