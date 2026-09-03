@@ -1359,8 +1359,6 @@ app.post("/api/block", async (c) => {
   // the block is written in this user's object and mirrored into the peer's,
   // and the presences stop flowing between the two, or start again
   await userStub(c.env, userId).block(b.userId, b.blocked);
-  // drop the cached block state in the pair's direct chat, which may not exist yet
-  await convStub(c.env, directChatName(userId, b.userId)).blockChanged();
   return json({ ok: true });
 });
 

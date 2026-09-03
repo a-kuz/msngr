@@ -221,10 +221,6 @@ export class ConversationDO extends DurableObject<Env> {
   /// requests collect here and the handler arms the nearest one as it leaves.
   private alarmRunning = false;
   private rearmDelay: number | undefined;
-  /// Which side of a direct pair has blocked the other, as the set of blockers. The
-  /// truth lives in the blocks table in D1; this is read lazily and dropped on
-  /// blockChanged().
-  private blockers: Set<string> | null = null;
 
   /// dev measurement (PERF_LOG); never installed otherwise
   private perf: PerfCounters | null = null;
@@ -330,15 +326,13 @@ export class ConversationDO extends DurableObject<Env> {
     if (!members.has(me)) return null;
     const peer = [...members.keys()].find((u) => u !== me);
     if (!peer) return null;
-    if (!this.blockers) {
-      // either side answers for the pair: a block is written in the blocker's
-      // object and mirrored into the blocked one's
-      const { byMe, byPeer } = await this.userStub(me).blockPair(peer);
-      this.blockers = new Set([
-        ...(byMe ? [me] : []), ...(byPeer ? [peer] : []),
-      ]);
-    }
-    return { peer, byMe: this.blockers.has(me), byPeer: this.blockers.has(peer) };
+    // Either side answers for the pair: a block is written in the blocker's
+    // object and mirrored into the blocked one's. The pair is asked every
+    // time: a copy held here would only be as fresh as the call that
+    // invalidated it, and a block the chat never heard of lets a message
+    // through to someone who blocked its author.
+    const { byMe, byPeer } = await this.userStub(me).blockPair(peer);
+    return { peer, byMe, byPeer };
   }
 
   /// Whether a block exists in either direction. Under one, receipts, typing and
@@ -945,12 +939,6 @@ export class ConversationDO extends DurableObject<Env> {
     await this.notifyUserDOsChatList([...this.membersCache.keys()]);
     await this.broadcastChat("created");
     return { chatId: b.chatId };
-  }
-
-  // The blocks in D1 changed, so reread them on the next check. This sits above the
-  // meta check because someone can be blocked before the chat is ever created.
-  async blockChanged(): Promise<void> {
-    this.blockers = null;
   }
 
   async state(): Promise<{ state: ChatState; users: PublicUser[] }> {
