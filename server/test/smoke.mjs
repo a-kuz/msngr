@@ -18,15 +18,30 @@ function check(name, cond, extra = "") {
   else { failures++; console.log(`FAIL ${name} ${extra}`); }
 }
 
+/// Longest any one request may take before the run is called off with the
+/// path in the error. Node's fetch alone waits 300 s for headers, and a stand
+/// that stops answering then shows as five silent minutes and an anonymous
+/// `HeadersTimeoutError`; nothing in the smoke legitimately runs this long.
+const API_TIMEOUT_MS = 30_000;
+
 async function apiRaw(path, { token, body, method } = {}) {
-  return fetch(BASE + path, {
-    method: method ?? (body !== undefined ? "POST" : "GET"),
-    headers: {
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      "content-type": "application/json",
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  const m = method ?? (body !== undefined ? "POST" : "GET");
+  try {
+    return await fetch(BASE + path, {
+      method: m,
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        "content-type": "application/json",
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+  } catch (e) {
+    if (e?.name === "TimeoutError") {
+      throw new Error(`${m} ${path}: no answer in ${API_TIMEOUT_MS / 1000} s`);
+    }
+    throw e;
+  }
 }
 
 async function api(path, opts) {
@@ -2026,6 +2041,19 @@ await fault(0);
 async function fanoutState() {
   return api(`/api/chats/${fgrp.chatId}/fanout`, { token: alice.token });
 }
+// Mallory's chain still holds cm-f2 and cm-f3 from the section above, on the
+// backoff their failures earned: FANOUT_RETRY_MS in ConversationDO, whose
+// ceiling is 10 s per failed pass. The two faults armed next are meant for the
+// head of the burst: armed now, they are spent on those retries instead, and
+// the burst either sails through unstuck (the queue reads empty when asked)
+// or waits out one more ceiling, past the 20 s the catch-up below allows. So
+// the chain drains first; the 20 s stands on the two retries of a clean head,
+// 200 ms and 1 s, not on the ceiling.
+for (let i = 0; i < 80; i++) {
+  if ((await fanoutState()).pending === 0) break;
+  await new Promise((r) => setTimeout(r, 250));
+}
+check("recovered recipient's backlog drained", (await fanoutState()).pending === 0);
 await fault(2); // the head job gets stuck for two retries
 const Q = 6;
 for (let i = 0; i < Q; i++) sendTo(`cm-q${i}`);
