@@ -586,13 +586,14 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         }
     }
 
-    /// A round video is open exactly while its sound runs: starting the sound
-    /// opens it (folding whatever else was open), a pause or the end of the
-    /// clip folds it, and folding it from outside stops the sound.
+    /// A round video is open for as long as it holds the sound: starting it
+    /// opens it (folding whatever else was open), and it stays open through a
+    /// pause and past the end of the clip, where the ring stands full. It
+    /// folds when another message takes the sound, when the chat is left, or
+    /// when a tap outside stops it.
     private func followRoundVideo(_ state: RoundVideoPlayback) {
-        let playing = state.isPlaying ? state.msgId : nil
-        if let playing {
-            if playing != expandedId { expand(playing) }
+        if let holder = state.msgId {
+            if holder != expandedId { expand(holder) }
         } else if let id = expandedId, isRoundVideo(id) {
             expandedId = nil
             relayout(id: id)

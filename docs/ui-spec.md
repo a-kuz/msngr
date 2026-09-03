@@ -320,10 +320,13 @@ camera, keyboard, haptics).
   the plus writes a new one, a long press removes. A sticker is a square with
   no bubble behind it: the shader's `O.a` decides what shows through. A tap
   opens it to the width of the chat and a second tap folds it back; a round
-  video is open exactly while its sound runs: a tap starts the sound and
-  opens it, a tap pauses and folds it, the end of the clip folds it. One is
-  open at a time: opening another folds it, and so does a tap anywhere else
-  in the feed (for a circle that stops the sound). A
+  video grows the same way while it holds the sound: a tap starts it and it
+  grows, the end of the clip leaves it grown with the ring standing full, and
+  a tap plays it again from the top. One is open at a time: opening another
+  folds it, and so does a tap anywhere else in the feed (for a circle that
+  stops the sound). The time of a circle sits in the lower right corner of the
+  square it is drawn in, on a light plate beside the disc rather than in a
+  capsule over the picture. A
   received sticker is saved with «В стикеры»; the pack is local, keyed by the
   hash of the document, so the same sticker saved twice is one tile. A new
   pack starts with the two bundled stickers (`ShaderStickers`), seeded once

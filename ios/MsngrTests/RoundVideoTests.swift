@@ -3,8 +3,8 @@ import AVFoundation
 @testable import Msngr
 import MsngrCore
 
-/// The round video bubble: a circle with no bubble backdrop, the time capsule
-/// centered on its lower edge, and the previews that name the kind.
+/// The round video bubble: a circle with no bubble backdrop, the time in the
+/// corner of its square beside the disc, and the previews that name the kind.
 final class RoundVideoTests: XCTestCase {
     private let width: CGFloat = 390
 
@@ -36,14 +36,18 @@ final class RoundVideoTests: XCTestCase {
                                      floor(width * Theme.bubbleMaxWidthRatio)))
     }
 
-    func testStatusCapsuleSitsOverTheCircle() {
+    func testTimeStandsInTheCornerBesideTheCircle() {
         let p = plan()
-        XCTAssertTrue(p.statusOnMedia, "no bubble backdrop: the time reads over the video")
+        XCTAssertTrue(p.statusOnMedia, "no bubble backdrop behind a circle")
+        XCTAssertTrue(p.statusOutside, "the time is drawn in the feed's colours, not in a capsule")
         let mf = try! XCTUnwrap(p.mediaFrame)
-        // centered horizontally, on the circle's lower edge — the square's
-        // right corner is empty space outside the round shape
-        XCTAssertEqual(p.statusFrame.midX, p.bubbleFrame.width / 2, accuracy: 1.0)
-        XCTAssertLessThan(p.statusFrame.maxY, mf.maxY)
+        // the lower right corner of the circle's square, level with its foot,
+        // where the disc has curved away
+        XCTAssertGreaterThan(p.statusFrame.minX, mf.midX)
+        XCTAssertEqual(p.statusFrame.maxY, mf.maxY, accuracy: 0.5)
+        XCTAssertGreaterThanOrEqual(p.bubbleFrame.width, p.statusFrame.maxX,
+                                    "the time reaches no further than the bubble")
+        XCTAssertGreaterThanOrEqual(p.cellHeight, mf.maxY)
     }
 
     /// The circle grows while its sound runs, and stays inside the width the

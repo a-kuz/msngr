@@ -29,7 +29,8 @@ final class RoundVideoPlayer: NSObject, ObservableObject {
     var onFinish: ((String) -> Void)?
 
     /// A tap on the circle: the message that already has the sound pauses and
-    /// resumes, any other one takes the player over and starts from the top.
+    /// resumes, a clip that has played to its end starts over, and any other
+    /// message takes the player over and starts from the top.
     func toggle(msgId: String, url: URL) {
         guard state.msgId == msgId, let p = player else {
             play(msgId: msgId, url: url)
@@ -38,10 +39,15 @@ final class RoundVideoPlayer: NSObject, ObservableObject {
         if state.isPlaying {
             p.pause()
             state.isPlaying = false
-        } else {
-            p.play()
-            state.isPlaying = true
+            return
         }
+        if state.progress >= 0.999 {
+            p.seek(to: .zero)
+            state.progress = 0
+        }
+        p.play()
+        state.isPlaying = true
+        startTicking()
     }
 
     func play(msgId: String, url: URL) {
@@ -60,15 +66,27 @@ final class RoundVideoPlayer: NSObject, ObservableObject {
             forName: AVPlayerItem.didPlayToEndTimeNotification,
             object: p.currentItem, queue: .main) { [weak self] _ in
             guard let self else { return }
+            // the clip stays the player's: the circle keeps the size it has
+            // while its sound runs and shows the ring filled the whole way
+            // round, until something else takes the sound or it is folded
+            self.displayLink?.invalidate()
+            self.displayLink = nil
+            self.player?.pause()
             let finished = self.state.msgId
-            self.stop()
+            self.state = RoundVideoPlayback(msgId: finished, isPlaying: false, progress: 1)
             if let finished { self.onFinish?(finished) }
         }
         p.playImmediately(atRate: 1)
         player = p
         state = RoundVideoPlayback(msgId: msgId, isPlaying: true, progress: 0)
-        displayLink = CADisplayLink(target: self, selector: #selector(tick))
-        displayLink?.add(to: .main, forMode: .common)
+        startTicking()
+    }
+
+    private func startTicking() {
+        displayLink?.invalidate()
+        let link = CADisplayLink(target: self, selector: #selector(tick))
+        link.add(to: .main, forMode: .common)
+        displayLink = link
     }
 
     func stop() {

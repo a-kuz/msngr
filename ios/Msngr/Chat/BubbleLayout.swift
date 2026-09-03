@@ -11,6 +11,10 @@ struct BubbleLayoutPlan: Equatable {
     /// status (time and ticks): frame in the bubble's coordinates
     var statusFrame: CGRect
     var statusOnMedia: Bool         // capsule laid over the photo or video
+    /// The time stands below the picture in the feed's own colours instead of
+    /// in a capsule over it: what a round video does, whose shape has no
+    /// straight edge to carry a capsule.
+    var statusOutside: Bool
     var mediaFrame: CGRect?
     var albumRects: [MosaicRect]
     var voiceFrame: CGRect?
@@ -196,6 +200,7 @@ enum BubbleLayout {
         var forwardFrame: CGRect?
         var authorNameFrame: CGRect?
         var statusOnMedia = false
+        let statusOutside = msg.kind == .roundVideo
 
         // author name (groups, incoming, first of a series)
         if showName, !msg.isOutgoing {
@@ -424,6 +429,17 @@ enum BubbleLayout {
             let capsuleH = statusH + 4
             statusFrame = CGRect(x: mf.maxX - statusWidth - 16, y: mf.maxY - capsuleH - 6,
                                  width: statusWidth + 10, height: capsuleH)
+            if statusOutside {
+                // out past the circle rather than over it: a round shape has no
+                // straight edge to carry a capsule, and inside its lower edge
+                // the time cut across the picture. It starts a quarter of the
+                // width right of the centre, where the disc has already curved
+                // away, and its baseline sits level with the circle's foot —
+                // the placement Telegram uses for a video message
+                statusFrame = CGRect(x: mf.midX + mf.width * 0.26, y: mf.maxY - statusH,
+                                     width: statusWidth, height: statusH)
+                y = mf.maxY
+            }
             if !chips.isEmpty {
                 var rx = hPadding
                 var ry = mf.maxY + 4
@@ -548,6 +564,10 @@ enum BubbleLayout {
         var bubbleWidth = (mediaFrame != nil && textFrame == nil)
             ? mediaFrame!.width
             : contentWidth + 2 * hPadding
+        // the circle plus however far its time reaches past it
+        if statusOutside, let mf = mediaFrame {
+            bubbleWidth = max(mf.maxX, statusFrame.maxX + 4)
+        }
         bubbleWidth = max(bubbleWidth, statusWidth + 2 * hPadding)
         for r in reactionsFrames { bubbleWidth = max(bubbleWidth, r.3.maxX + hPadding) }
         var bubbleHeight = max(y, mediaFrame?.maxY ?? 0)
@@ -575,10 +595,8 @@ enum BubbleLayout {
             authorNameFrame = nf
         }
         // the status is pinned to the right edge of the bubble
-        if msg.kind == .roundVideo {
-            // centered on the circle's lower edge: the square's corners are
-            // empty, so the right-pinned capsule would float in blank space
-            statusFrame.origin.x = (bubbleWidth - statusFrame.width) / 2
+        if statusOutside {
+            // already placed beside the circle, in the room the bubble keeps for it
         } else if statusOnMedia {
             statusFrame.origin.x = bubbleWidth - statusWidth - 18
         } else {
@@ -589,7 +607,7 @@ enum BubbleLayout {
             cellHeight: bubbleHeight + seriesGap,
             bubbleFrame: bubbleFrame,
             textFrame: textFrame, text: attrText,
-            statusFrame: statusFrame, statusOnMedia: statusOnMedia,
+            statusFrame: statusFrame, statusOnMedia: statusOnMedia, statusOutside: statusOutside,
             mediaFrame: mediaFrame, albumRects: albumRects,
             voiceFrame: voiceFrame,
             shaderFrame: shaderFrame,

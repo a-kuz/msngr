@@ -595,10 +595,20 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
         // status: time and ticks
         timeLabel.text = (plan.edited ? BubbleLayout.editedMark : "") + plan.timeString
-        timeLabel.textColor = plan.statusOnMedia || bubbleShader != nil ? .white
-            : (plan.isOutgoing ? UIColor(Theme.outgoingMeta) : .secondaryLabel)
-        statusBackdrop.isHidden = !(plan.statusOnMedia || bubbleShader != nil)
-        if plan.statusOnMedia || bubbleShader != nil {
+        let statusOverContent = (plan.statusOnMedia && !plan.statusOutside) || bubbleShader != nil
+        // beside a circle the time stands on a light plate on the chat's own
+        // background, so it reads in the feed's colour whoever sent it: the
+        // outgoing meta colour is made for the accent bubble and would vanish
+        timeLabel.textColor = statusOverContent ? .white
+            : (plan.isOutgoing && !plan.statusOutside ? UIColor(Theme.outgoingMeta) : .secondaryLabel)
+        statusBackdrop.isHidden = !(statusOverContent || plan.statusOutside)
+        if statusOverContent || plan.statusOutside {
+            // over a picture the capsule is a dark wash under white digits; in
+            // the corner beside a circle it is a light plate that keeps the
+            // time readable over a chat background
+            statusBackdrop.backgroundColor = statusOverContent
+                ? UIColor.black.withAlphaComponent(0.35)
+                : UIColor.systemBackground.withAlphaComponent(0.85)
             statusBackdrop.frame = plan.statusFrame.insetBy(dx: -6, dy: -1)
             statusBackdrop.layer.cornerRadius = statusBackdrop.bounds.height / 2
         }
@@ -616,7 +626,8 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             // read keeps its own colour over media too: the white the rest of the
             // capsule uses would make a read photo look the same as a delivered one
             tickView.tintColor = msg.status == .read ? UIColor(Theme.outgoingTickRead)
-                : (plan.statusOnMedia || bubbleShader != nil ? .white : UIColor(Theme.outgoingMeta))
+                : (statusOverContent ? .white
+                   : (plan.statusOutside ? .secondaryLabel : UIColor(Theme.outgoingMeta)))
         } else {
             tickView.isHidden = true
         }
@@ -640,7 +651,7 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             }
             noteDots.isHidden = dots.isEmpty
             noteDots.dots = dots
-            noteDots.color = plan.statusOnMedia ? .white
+            noteDots.color = statusOverContent ? .white
                 : (plan.isOutgoing ? UIColor(Theme.outgoingTickRead) : UIColor(Theme.accent))
             noteDots.frame = CGRect(x: plan.statusFrame.minX, y: plan.statusFrame.minY,
                                     width: BubbleLayout.noteDotsSpan, height: plan.statusFrame.height)
