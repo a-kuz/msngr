@@ -16,6 +16,7 @@ gates a given commit instead of main's head.
 import argparse
 import datetime as dt
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -55,6 +56,11 @@ def checkout(sha):
         subprocess.run(["git", "worktree", "remove", "--force", WORKTREE], cwd=ROOT,
                        capture_output=True)
     subprocess.run(["git", "worktree", "prune"], cwd=ROOT, capture_output=True)
+    # a directory git no longer knows as a worktree still blocks `worktree add`:
+    # Finder drops a .DS_Store into the emptied folder and the gate then fails
+    # every run until somebody removes it by hand
+    if os.path.isdir(WORKTREE):
+        shutil.rmtree(WORKTREE)
     git("worktree", "add", "--detach", WORKTREE, sha)
     # the gitignored pieces a build needs: the server's node_modules (the
     # smoke imports `ws`), and the local signing config when it exists
