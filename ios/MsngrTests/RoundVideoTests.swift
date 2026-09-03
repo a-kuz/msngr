@@ -46,6 +46,19 @@ final class RoundVideoTests: XCTestCase {
         XCTAssertLessThan(p.statusFrame.maxY, mf.maxY)
     }
 
+    /// The circle grows while its sound runs, and stays inside the width the
+    /// bubbles have: a circle as wide as the chat crowds out its neighbours.
+    func testExpandedCircleGrowsAndStaysInsideTheBubbleWidth() {
+        let expanded = BubbleLayout.plan(for: roundVideoMessage(), width: width,
+                                         tightGap: false, showTail: true, showName: false,
+                                         authorName: nil, expanded: true)
+        let folded = try! XCTUnwrap(plan().mediaFrame)
+        let grown = try! XCTUnwrap(expanded.mediaFrame)
+        XCTAssertGreaterThan(grown.width, folded.width)
+        XCTAssertEqual(grown.width, grown.height, "still a square frame for a round shape")
+        XCTAssertLessThanOrEqual(grown.width, floor(width * Theme.bubbleMaxWidthRatio))
+    }
+
     func testNoTailOnTheCircle() {
         let p = plan()
         XCTAssertTrue(p.statusOnMedia && p.showTail,

@@ -318,7 +318,12 @@ camera, keyboard, haptics).
   with white text under a shadow and the time in its capsule.
 - **Stickers.** «Стикер» opens the pack: a grid of live tiles, a tap sends,
   the plus writes a new one, a long press removes. A sticker is a square with
-  no bubble behind it: the shader's `O.a` decides what shows through. A
+  no bubble behind it: the shader's `O.a` decides what shows through. A tap
+  opens it to the width of the chat and a second tap folds it back; a round
+  video is open exactly while its sound runs: a tap starts the sound and
+  opens it, a tap pauses and folds it, the end of the clip folds it. One is
+  open at a time: opening another folds it, and so does a tap anywhere else
+  in the feed (for a circle that stops the sound). A
   received sticker is saved with «В стикеры»; the pack is local, keyed by the
   hash of the document, so the same sticker saved twice is one tile. A new
   pack starts with the two bundled stickers (`ShaderStickers`), seeded once

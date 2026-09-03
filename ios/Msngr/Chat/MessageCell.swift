@@ -765,6 +765,13 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             for (iv, (index, rect)) in zip(mediaViews, rects) {
                 iv.frame = rect
                 applyMediaCorners(iv, rect: rect, plan: plan)
+                // the player layers and the ring were sized to the tile once; a
+                // circle opening to the chat's width takes them along
+                for (layer, _) in autoplay where layer.superlayer === iv.layer { layer.frame = iv.bounds }
+                if roundSoundLayer?.superlayer === iv.layer {
+                    roundSoundLayer?.frame = iv.bounds
+                    roundRing.frame = iv.bounds
+                }
                 if index < medias.count, index >= mediaSignatures.count || signatures[index] != mediaSignatures[index] {
                     loadMedia(into: iv, media: medias[index], index: index, rect: rect)
                 }
@@ -1004,12 +1011,25 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
 
     @objc private func mediaTapped(_ g: UITapGestureRecognizer) {
         guard let v = g.view else { return }
-        // a round video answers the tap with sound instead of the viewer
+        // a round video answers the tap with sound instead of the viewer; the
+        // feed opens it to the chat's width for as long as the sound runs
         if msg?.kind == .roundVideo {
             toggleRoundSound()
             return
         }
         onTapMedia?(v.tag, v)
+    }
+
+    /// Whether a point of the cell lies on the sticker or the round video, the
+    /// views whose own tap opens and folds them; a tap anywhere else in the
+    /// feed folds the open one.
+    func expandableContains(_ point: CGPoint) -> Bool {
+        guard let msg else { return false }
+        switch msg.kind {
+        case .sticker: return !stickerView.isHidden && stickerView.frame.contains(bubbleView.convert(point, from: self))
+        case .roundVideo: return mediaViews.first.map { $0.frame.contains(bubbleView.convert(point, from: self)) } ?? false
+        default: return false
+        }
     }
 
     /// A tap on the circle: the decrypted file goes to the shared sound player,
@@ -1057,13 +1077,10 @@ final class MessageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             iv.addSubview(roundRing)
         }
         roundRing.progress = state.progress
-        // the circle swells a little while the sound runs and settles on pause
-        let scale: CGFloat = state.isPlaying ? 1.07 : 1.0
-        if abs(iv.transform.a - scale) > 0.001 {
-            UIView.animate(withDuration: 0.4, delay: 0, usingSpringWithDamping: 0.65,
-                           initialSpringVelocity: 0.4, options: [.allowUserInteraction]) {
-                iv.transform = scale == 1 ? .identity : CGAffineTransform(scaleX: scale, y: scale)
-            }
+        // the circle grows while the sound runs through the layout, not a
+        // transform: a scaled tile spills past the bubble and is clipped
+        if iv.transform != .identity {
+            UIView.animate(withDuration: 0.3) { iv.transform = .identity }
         }
     }
 

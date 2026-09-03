@@ -45,9 +45,11 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     /// The message the chat holds pinned, so the context menu of that one offers
     /// to take the pin off instead of putting it on again.
     var pinnedSeqs: Set<Int> = []
-    /// Stickers opened to the width of the chat by a tap; a second tap folds
-    /// one back. The set is what `BubbleLayout.plan` reads as `expanded`.
-    private var expandedStickers: Set<String> = []
+    /// The sticker opened to the width of the chat by a tap, or the round video
+    /// whose sound is running. One at a time: opening another folds it, and so
+    /// does a tap on the feed away from it. This is what `BubbleLayout.plan`
+    /// reads as `expanded`.
+    private var expandedId: String?
     var onTapMedia: ((Message, Int, UIView) -> Void)?
     var onTapShader: ((Message) -> Void)?
     /// Tap on the quote inside a reply bubble, which jumps to the original.
@@ -158,10 +160,10 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         backSwipe.delegate = self
         view.addGestureRecognizer(backSwipe)
         collectionView.panGestureRecognizer.require(toFail: backSwipe)
-        // a tap on the feed puts the keyboard away; it cancels nothing and
-        // recognises alongside the bubbles' own taps, so a link or a picture
-        // still opens from the same touch
-        let dismissTap = UITapGestureRecognizer(target: self, action: #selector(feedTapped))
+        // a tap on the feed puts the keyboard away and folds the open sticker or
+        // round video; it cancels nothing and recognises alongside the bubbles'
+        // own taps, so a link or a picture still opens from the same touch
+        let dismissTap = UITapGestureRecognizer(target: self, action: #selector(feedTapped(_:)))
         dismissTap.cancelsTouchesInView = false
         dismissTap.delegate = self
         collectionView.addGestureRecognizer(dismissTap)
@@ -197,6 +199,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     /// leaving the screen.
     private func updateRoundDock(_ state: RoundVideoPlayback? = nil) {
         let state = state ?? RoundVideoPlayer.shared.state
+        followRoundVideo(state)
         guard let msgId = state.msgId else {
             roundDock.isHidden = true
             roundDock.attach(nil)
@@ -292,8 +295,17 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         g is UITapGestureRecognizer
     }
 
-    @objc private func feedTapped() {
+    @objc private func feedTapped(_ g: UITapGestureRecognizer) {
         view.window?.endEditing(true)
+        // a tap on any sticker or circle is that cell's own toggle, which
+        // already folds the one that was open; every other tap folds it here
+        let point = g.location(in: collectionView)
+        if let indexPath = collectionView.indexPathForItem(at: point),
+           let cell = collectionView.cellForItem(at: indexPath) as? MessageCell,
+           cell.expandableContains(collectionView.convert(point, to: cell)) {
+            return
+        }
+        foldExpanded()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -557,13 +569,58 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         }
     }
 
-    /// A tap on a sticker opens it to the width of the chat, and a tap on an
-    /// open one folds it back. The cell resizes in place under the same spring
-    /// a reaction uses, so the neighbours slide apart instead of jumping.
+    /// A tap on a sticker opens it to the width of the chat, and a tap on the
+    /// open one folds it back; whatever was open before folds in the same move.
+    /// The cell resizes in place under the same spring a reaction uses, so the
+    /// neighbours slide apart instead of jumping.
     private func toggleSticker(_ msg: Message) {
-        if expandedStickers.contains(msg.id) { expandedStickers.remove(msg.id) } else { expandedStickers.insert(msg.id) }
+        if expandedId == msg.id {
+            foldExpanded()
+        } else {
+            expand(msg.id)
+        }
+    }
+
+    /// A round video is open exactly while its sound runs: starting the sound
+    /// opens it (folding whatever else was open), a pause or the end of the
+    /// clip folds it, and folding it from outside stops the sound.
+    private func followRoundVideo(_ state: RoundVideoPlayback) {
+        let playing = state.isPlaying ? state.msgId : nil
+        if let playing {
+            if playing != expandedId { expand(playing) }
+        } else if let id = expandedId, isRoundVideo(id) {
+            expandedId = nil
+            relayout(id: id)
+        }
+    }
+
+    private func expand(_ id: String) {
+        let previous = expandedId
+        if let previous, isRoundVideo(previous) { RoundVideoPlayer.shared.stop() }
+        expandedId = id
+        if let previous, previous != id { relayout(id: previous) }
+        relayout(id: id)
+    }
+
+    /// Folds whatever is open.
+    private func foldExpanded() {
+        guard let id = expandedId else { return }
+        // the circle's size follows its sound; stopping the sound folds it
+        if isRoundVideo(id) { RoundVideoPlayer.shared.stop(); return }
+        expandedId = nil
+        relayout(id: id)
+    }
+
+    private func isRoundVideo(_ id: String) -> Bool {
+        items.contains {
+            if case .message(let m, _, _, _, _, _, _) = $0 { return m.id == id && m.kind == .roundVideo }
+            return false
+        }
+    }
+
+    private func relayout(id: String) {
         guard let index = items.firstIndex(where: {
-            if case .message(let m, _, _, _, _, _, _) = $0 { return m.id == msg.id }
+            if case .message(let m, _, _, _, _, _, _) = $0 { return m.id == id }
             return false
         }) else { return }
         if collectionView.cellForItem(at: IndexPath(item: index, section: 0)) != nil {
@@ -590,7 +647,7 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
                 let plan = BubbleLayout.plan(for: msg, width: collectionView.bounds.width, tightGap: tightGap,
                                              showTail: showTail, showName: showName, authorName: authorName,
                                              replyAuthorName: replyAuthorName, avatarInset: avatar != nil,
-                                             expanded: expandedStickers.contains(msg.id))
+                                             expanded: expandedId == msg.id)
                 // an inline reaction changes only the width, so the spring wraps every
                 // reconfigure; the batch update joins in only when the height moved. It
                 // re-reads sizeForItemAt, which serves the new plan from the cache;
@@ -1064,7 +1121,7 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             let plan = BubbleLayout.plan(for: msg, width: cv.bounds.width, tightGap: tightGap,
                                          showTail: showTail, showName: showName, authorName: authorName,
                                          replyAuthorName: replyAuthorName, avatarInset: avatar != nil,
-                                         expanded: expandedStickers.contains(msg.id))
+                                         expanded: expandedId == msg.id)
             configureMessageCell(cell, msg: msg, plan: plan, avatar: avatar)
             // the original's cell is created while the scroll to it is under way, and the flash was waiting
             if let id = pendingHighlightId, id == msg.id {
@@ -1101,7 +1158,7 @@ extension MessagesViewController: UICollectionViewDataSource, UICollectionViewDe
             let plan = BubbleLayout.plan(for: msg, width: cv.bounds.width, tightGap: tightGap,
                                          showTail: showTail, showName: showName, authorName: authorName,
                                          replyAuthorName: replyAuthorName, avatarInset: avatar != nil,
-                                         expanded: expandedStickers.contains(msg.id))
+                                         expanded: expandedId == msg.id)
             return CGSize(width: cv.bounds.width, height: plan.cellHeight)
         }
     }

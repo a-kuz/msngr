@@ -230,6 +230,13 @@ final class ShaderCanvas: UIView {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard acceptsTouches else { return super.touchesBegan(touches, with: event) }
+        // a finger whose end UIKit never delivered here is lifted now: the
+        // bubble's single-tap recognizer, failing on a finger that wandered,
+        // drops the touchesEnded it was holding, and without this the canvas
+        // would count that finger as pressed until the cell was rebuilt — every
+        // later tap then read as a second finger and toggled nothing
+        let lifted = fingers.filter { $0.phase == .ended || $0.phase == .cancelled }
+        if !lifted.isEmpty { lift(Set(lifted)) }
         if fingers.isEmpty, touches.count == 1, let t = touches.first {
             tapStart = t.location(in: self)
         } else {

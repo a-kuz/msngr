@@ -150,7 +150,7 @@ enum BubbleLayout {
         return "\(msg.id)|\(Int(width))|\(TypeScale.category.rawValue)|\(tightGap)|\(showTail)|\(showName)|\(avatarInset)|\(expanded)|\(ver.hashValue)" as NSString
     }
 
-    /// `expanded` is a sticker opened to the width of the chat by a tap.
+    /// `expanded` is a sticker or a round video opened to the width of the chat by a tap.
     static func plan(for msg: Message, width: CGFloat, tightGap: Bool, showTail: Bool,
                      showName: Bool, authorName: String?, replyAuthorName: String? = nil,
                      avatarInset: Bool = false, expanded: Bool = false) -> BubbleLayoutPlan {
@@ -325,8 +325,11 @@ enum BubbleLayout {
             statusOnMedia = true
         case .roundVideo:
             // a circle with no bubble behind it; the time capsule sits on the
-            // circle's lower edge, centered, where the round shape leaves room
-            let side = min(roundVideoSide, maxBubbleWidth)
+            // circle's lower edge, centered, where the round shape leaves room.
+            // While its sound runs the circle grows, but not to the chat's full
+            // width: a circle that wide crowds out the messages around it
+            let room = floor(safeWidth) - 2 * sideMargin - (inset ? avatarSpan : 0)
+            let side = min(expanded ? roundVideoSide * 1.35 : roundVideoSide, maxBubbleWidth, room)
             let bare = authorNameFrame == nil && forwardFrame == nil && replyFrame == nil
             mediaFrame = CGRect(x: 0, y: bare ? 0 : y, width: side, height: side)
             contentWidth = side - 2 * hPadding
