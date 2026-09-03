@@ -281,8 +281,9 @@ launchctl load ~/Library/LaunchAgents/com.msngr.msngr.tidy.plist
 
 The sweep only takes what nothing alive is holding: a simulator whose agent has
 finished, a stand no wrangler points at, a wrangler still running for a worktree
-that was deleted, a worktree whose branch is in main with nothing uncommitted,
-derived data of a workspace that is gone, logs older than three days. An agent
+that was deleted, a worktree whose branch is in main with nothing uncommitted
+and no line of its agent's in `.claude/tasks.tsv`, derived data of a workspace
+that is gone, logs older than three days. An agent
 counts as alive while its process is in `ps` or its transcript is still being
 written; a name that is in no registry at all is given the benefit of the doubt
 for as long as its app keeps writing.

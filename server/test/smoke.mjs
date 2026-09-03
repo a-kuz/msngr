@@ -18,15 +18,30 @@ function check(name, cond, extra = "") {
   else { failures++; console.log(`FAIL ${name} ${extra}`); }
 }
 
+/// Longest any one request may take before the run is called off with the
+/// path in the error. Node's fetch alone waits 300 s for headers, and a stand
+/// that stops answering then shows as five silent minutes and an anonymous
+/// `HeadersTimeoutError`; nothing in the smoke legitimately runs this long.
+const API_TIMEOUT_MS = 30_000;
+
 async function apiRaw(path, { token, body, method } = {}) {
-  return fetch(BASE + path, {
-    method: method ?? (body !== undefined ? "POST" : "GET"),
-    headers: {
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      "content-type": "application/json",
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  const m = method ?? (body !== undefined ? "POST" : "GET");
+  try {
+    return await fetch(BASE + path, {
+      method: m,
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        "content-type": "application/json",
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+  } catch (e) {
+    if (e?.name === "TimeoutError") {
+      throw new Error(`${m} ${path}: no answer in ${API_TIMEOUT_MS / 1000} s`);
+    }
+    throw e;
+  }
 }
 
 async function api(path, opts) {
@@ -2026,7 +2041,22 @@ await fault(0);
 async function fanoutState() {
   return api(`/api/chats/${fgrp.chatId}/fanout`, { token: alice.token });
 }
-await fault(2); // the head job gets stuck for two retries
+// Mallory's chain still holds cm-f2 and cm-f3 from the section above, on the
+// backoff their failures earned: FANOUT_RETRY_MS in ConversationDO, whose
+// ceiling is 10 s per failed pass. The fault armed next is meant for the head
+// of the burst, so the chain drains first — armed now, it would be spent on
+// those retries, and the burst would wait out one more ceiling, past the 20 s
+// the catch-up below allows.
+for (let i = 0; i < 80; i++) {
+  if ((await fanoutState()).pending === 0) break;
+  await new Promise((r) => setTimeout(r, 250));
+}
+check("recovered recipient's backlog drained", (await fanoutState()).pending === 0);
+// The head job stays stuck until the fault is lifted below, so the queue is
+// read while it is certainly standing. A fault of a fixed count would give a
+// window instead — two failed passes are 1.2 s of retries — and the six acks
+// of a loaded host arrive after it, with the queue already empty.
+await fault(99);
 const Q = 6;
 for (let i = 0; i < Q; i++) sendTo(`cm-q${i}`);
 // the ack comes only after the fanout has been queued: without this wait the
@@ -2035,6 +2065,10 @@ await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === `cm-q${Q - 1}`);
 const qState = await fanoutState();
 check("fanout is queued, not inline", qState.ok && qState.pending > 0, JSON.stringify(qState));
 check("a queued job reports its wait", typeof qState.oldestMs === "number", JSON.stringify(qState));
+// the recipient recovers; its chain sits on the backoff its failed passes
+// earned (200 ms, 1 s, 2 s, 5 s by now on a slow host) and the catch-up below
+// waits for that one pause
+await fault(0);
 
 const qLast = await ca2.waitFor((f) => f.t === "sent" && f.clientMsgId === `cm-q${Q - 1}`, 10000);
 check("burst acked", !!qLast);
