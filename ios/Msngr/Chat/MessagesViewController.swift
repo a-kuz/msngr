@@ -188,7 +188,13 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
         }
         view.addSubview(roundDock)
         roundDockCancellable = RoundVideoPlayer.shared.$state
-            .sink { [weak self] state in self?.updateRoundDock(state) }
+            .sink { [weak self] state in
+                // the size follows the player only from here, where the new
+                // state is in hand: reading `RoundVideoPlayer.shared.state`
+                // inside this notification still gives the previous value
+                self?.followRoundVideo(state)
+                self?.updateRoundDock(state)
+            }
     }
 
     private let roundDock = RoundVideoDockView()
@@ -199,7 +205,6 @@ final class MessagesViewController: UIViewController, UIGestureRecognizerDelegat
     /// leaving the screen.
     private func updateRoundDock(_ state: RoundVideoPlayback? = nil) {
         let state = state ?? RoundVideoPlayer.shared.state
-        followRoundVideo(state)
         guard let msgId = state.msgId else {
             roundDock.isHidden = true
             roundDock.attach(nil)
