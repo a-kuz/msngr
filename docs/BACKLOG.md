@@ -27,7 +27,7 @@ does not take those on its own.
 | B62 | The chat list and the tray stop at the navigation bar's bottom edge instead of running under it (owner's screenshot, 2026-09-03): a row scrolled up is cut by a hard line where the bar begins, the folded tray the same; both should pass under the bar through a blurred fade | owner | story-ring | |
 | B3 | Push drain deletes the job after APNs answered; a second alarm shows the banner twice | do D3 | agent-007 | 288ed3f · the job is leased (attempt+1, deadline +30 s) before the APNs call and deleted after; smoke «a repeat drain does not send a push in flight again» — 490 ok on a private stand, and the same smoke against the drain without the lease reads `pushes=2` |
 | B4 | Marks migration flag is set before the migration runs; a mark read meanwhile is 0 — move it into the constructor under `blockConcurrencyWhile` | do D4 | agent-007 | da52374 · the lazy split is removed rather than moved (B59: a wipe, no lazy conversion; the stand was wiped 2026-09-02 and holds no whole-map record) — smoke 490 ok on a private stand |
-| B5 | `this.blockers` caches another object's block list in a field until eviction | do D5, ev T20 | | |
+| B5 | `this.blockers` caches another object's block list in a field until eviction | do D5, ev T20 | agent-007 | |
 | B6 | APNs JWT remint: the gate is open across the mint, two forced remints both mint | do D6 | | |
 | B7 | `StoriesDO /wipe` is `DELETE FROM`, not `deleteAll()`; the `link:` pointer objects are never wiped | do D7 | | |
 | B8 | Socket close handler closes with no code and counts the closing socket as live; offline waits for the alarm | do D8 | | |
