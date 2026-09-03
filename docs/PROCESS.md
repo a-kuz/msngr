@@ -80,7 +80,10 @@ outright, and so is a chain like `UDID=$(xcrun simctl create …) && xcrun
 simctl boot $UDID`, because the value passed on is computed at runtime.
 Write plain commands, one per call, with the literal id pasted in from the
 previous output; a shell variable or a `$(…)` feeding another command is
-what trips it.
+what trips it, and so do a `for` loop and a `python3 - <<'EOF'` heredoc.
+Anything bigger than one plain command is a file: write the script into
+your scratchpad and run it by path (`python3 <scratchpad>/probe.py`), which
+the harness passes.
 
 Product decisions (section 5 of the backlog) are not taken by a session; the
 line waits for the owner.
