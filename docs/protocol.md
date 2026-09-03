@@ -434,10 +434,9 @@ Tombstones are skipped as `msg` frames in a page and arrive as `deleted`.
 A block is directed and lives in both objects: `blk:<peerId>` in the blocker's
 says "I blocked them", `blkby:<peerId>` in the blocked one's is the mirror the
 blocker writes. Either side therefore answers for the pair in one read, which
-is what `/block-pair` serves. The `ConversationDO` of a direct chat asks once
-and holds the pair in memory; `POST /api/block` drops that cache with a
-`/block-changed` frame (the chat may not exist yet at that point). Blocks are
-not checked in groups.
+is what `blockPair` serves. The `ConversationDO` of a direct chat asks for the
+pair on every check and holds no copy, so a block written by `POST /api/block`
+is in force from the next message on. Blocks are not checked in groups.
 
 The behaviour inside an existing direct chat is the one messengers have settled
 on: from the server's answers, a blocked user cannot tell a block from a peer who
