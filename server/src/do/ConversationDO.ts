@@ -248,50 +248,23 @@ export class ConversationDO extends DurableObject<Env> {
     return meta;
   }
 
-  /// The three whole-map mark records a chat may have been created with are
-  /// split into per-member keys once; set after the check so it runs one time
-  /// per object life.
-  private marksMigrated = false;
-
+  /// A member's mark is its own key, `mark:<kind>:<userId>`.
   private markKey(kind: "read" | "dlvr" | "seen", userId: string): string {
     return `${MARK_PREFIX}${kind}:${userId}`;
   }
 
   /// One member's mark; zero when it was never set.
   private async markOf(kind: "read" | "dlvr" | "seen", userId: string): Promise<number> {
-    await this.migrateMarks();
     return (await this.ctx.storage.get<number>(this.markKey(kind, userId))) ?? 0;
   }
 
   /// Every member's marks of one kind, for the frames that carry the whole map.
   private async markMap(kind: "read" | "dlvr" | "seen"): Promise<Record<string, number>> {
-    await this.migrateMarks();
     const prefix = `${MARK_PREFIX}${kind}:`;
     const out: Record<string, number> = {};
     for (const [k, v] of await this.ctx.storage.list<number>({ prefix }))
       out[k.slice(prefix.length)] = v;
     return out;
-  }
-
-  private async migrateMarks(): Promise<void> {
-    if (this.marksMigrated) return;
-    this.marksMigrated = true;
-    const legacy: Array<["read" | "dlvr" | "seen", string]> = [
-      ["read", "readMarks"], ["dlvr", "deliveredMarks"], ["seen", "seenMarks"],
-    ];
-    for (const [kind, record] of legacy) {
-      const map = await this.ctx.storage.get<Record<string, number>>(record);
-      if (!map) continue;
-      const entries = Object.entries(map);
-      // storage writes take at most 128 keys per batch
-      for (let i = 0; i < entries.length; i += 100) {
-        const batch: Record<string, number> = {};
-        for (const [userId, seq] of entries.slice(i, i + 100))
-          batch[this.markKey(kind, userId)] = seq;
-        await this.ctx.storage.put(batch);
-      }
-      await this.ctx.storage.delete(record);
-    }
   }
 
   /// Drops idempotency records nothing will ask for again. Runs from send()
@@ -596,7 +569,6 @@ export class ConversationDO extends DurableObject<Env> {
     // read receipts are sent for those alone: sending a message is not a
     // claim that others were read. seq is the new head of the journal, so
     // it is ahead of any mark by construction.
-    await this.migrateMarks();
     const blocked = await this.blockedPeers(b.from);
     const markBatch: Record<string, number> = { [this.markKey("seen", b.from)]: seq };
     for (const u of blocked) {
