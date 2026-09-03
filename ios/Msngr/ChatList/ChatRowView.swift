@@ -15,20 +15,11 @@ struct ChatRowView: View {
 
     var body: some View {
         HStack(spacing: 10) {
+            // a live story puts the story ring around the picture
             AvatarView(name: item.title, avatarId: item.avatarId,
-                       online: item.peer?.online ?? false, glyph: item.avatarGlyph)
+                       online: item.peer?.online ?? false, glyph: item.avatarGlyph,
+                       ring: item.peer.flatMap { stories.ring(for: $0.id) })
                 .frame(width: avatarSide, height: avatarSide)
-                // a live story puts a ring around the picture: full while
-                // something in it is unwatched, faint once it has been seen
-                .overlay {
-                    if let peerId = item.peer?.id, stories.hasStories(peerId) {
-                        Circle()
-                            .strokeBorder(Theme.accent.opacity(stories.ring(for: peerId) ? 1 : 0.3),
-                                          lineWidth: 2)
-                            .padding(-3)
-                            .accessibilityIdentifier("chatlist.storyRing")
-                    }
-                }
                 .contentShape(Circle())
                 .onTapGesture { openStories() }
 
@@ -241,7 +232,10 @@ struct DoubleTick: View {
     }
 }
 
-/// An avatar: a photo, or initials on a gradient, with an online dot.
+/// An avatar: a photo, or initials on a gradient, with an online dot on the
+/// rim and, around a picture with live stories, the story ring just outside
+/// it. The ring and the dot's halo are drawn past the frame; the dot lies over
+/// the ring and its halo of background cuts the ring where they meet.
 ///
 /// The picture comes from `AvatarCache`, not straight off the URL: the blob
 /// sits behind the device token, and the file the cache leaves in the app group
@@ -252,12 +246,18 @@ struct AvatarView: View {
     var online: Bool = false
     /// A system image drawn in place of the picture and the initials.
     var glyph: String? = nil
+    /// The stories behind the ring, one flag per story: watched or not. Nil
+    /// draws no ring.
+    var ring: [Bool]? = nil
+    /// The clear band between the picture and the ring, and the ring's width.
+    var ringGap: CGFloat = 3
+    var ringWidth: CGFloat = 2
     @State private var image: UIImage?
     @State private var shader: ShaderDocument?
 
     var body: some View {
         GeometryReader { geo in
-            ZStack(alignment: .bottomTrailing) {
+            ZStack {
                 if let shader {
                     // The canvas is clipped to the avatar's circle, the same
                     // way the feed clips it: a row sits shoulder to shoulder
@@ -285,14 +285,31 @@ struct AvatarView: View {
                 .frame(width: geo.size.width, height: geo.size.height)
                 .clipShape(Circle())
 
+                if let ring {
+                    StoryRing(seen: ring, lineWidth: ringWidth)
+                        .padding(-ringGap - ringWidth)
+                        .accessibilityIdentifier("chatlist.storyRing")
+                }
+
                 if online {
+                    // the dot sits at the lower right on the ring itself, its
+                    // halo of background cutting the ring around it; with no
+                    // ring it straddles the picture's rim
+                    let side = geo.size.width
+                    let dot = side * 0.2
+                    let halo: CGFloat = 1.5
+                    let reach = ring == nil
+                        ? side / 2 - dot * 0.4
+                        : side / 2 + ringGap + ringWidth / 2
                     Circle()
                         .fill(Color.green)
-                        .frame(width: geo.size.width * 0.26, height: geo.size.width * 0.26)
-                        .overlay(Circle().strokeBorder(Color(.systemBackground), lineWidth: 2))
+                        .frame(width: dot, height: dot)
+                        .background(Circle().fill(Color(.systemBackground)).padding(-halo))
+                        .offset(x: reach * 0.7071, y: reach * 0.7071)
                         .transition(.scale)
                 }
             }
+            .frame(width: geo.size.width, height: geo.size.height)
         }
         .animation(Theme.springFast, value: online)
         .task(id: avatarId) {

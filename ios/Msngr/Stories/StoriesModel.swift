@@ -40,13 +40,12 @@ final class StoriesModel: ObservableObject {
         let unseen: Bool
     }
 
-    /// Whether this person has a story worth a ring right now.
-    func ring(for userId: String) -> Bool {
-        stories.contains { $0.authorId == userId && !$0.seen }
-    }
-
-    func hasStories(_ userId: String) -> Bool {
-        stories.contains { $0.authorId == userId }
+    /// The ring around this person's picture: one flag per live story in the
+    /// order they were published, whether it has been watched. Nil with
+    /// nothing live.
+    func ring(for userId: String) -> [Bool]? {
+        let own = stories.filter { $0.authorId == userId }.sorted { $0.createdAt < $1.createdAt }
+        return own.isEmpty ? nil : own.map(\.seen)
     }
 
     /// Keeps the list in step with the engine until the returned task is

@@ -50,7 +50,7 @@ struct StoriesTray: View {
                     let shown = index < Self.stacked
                     Button { onOpen(author) } label: {
                         cell(name: author.name, avatarId: author.avatarId,
-                             title: author.name, ring: true, unseen: author.unseen)
+                             title: author.name, ring: author.stories.map(\.seen))
                     }
                     .buttonStyle(.plain)
                     .zIndex(Double(others.count - index))
@@ -78,7 +78,7 @@ struct StoriesTray: View {
         } label: {
             cell(name: me?.displayName ?? "", avatarId: me?.avatarId,
                  title: String(localized: "Your story"),
-                 ring: mine != nil, unseen: mine?.unseen ?? false)
+                 ring: mine?.stories.map(\.seen))
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("stories.mine")
@@ -99,22 +99,20 @@ struct StoriesTray: View {
         }
     }
 
+    /// `ring` is one flag per live story, watched or not; nil draws no ring.
     private func cell(name: String, avatarId: String?, title: String,
-                      ring: Bool, unseen: Bool) -> some View {
-        VStack(spacing: 0) {
-            AvatarView(name: name, avatarId: avatarId)
+                      ring: [Bool]?) -> some View {
+        let ringGap = 2 + p
+        let ringWidth = 2 + 0.5 * p
+        // the ring's outer edge, past the picture; nothing when there is no ring
+        let outer = ring == nil ? 0 : ringGap + ringWidth
+        return VStack(spacing: 0) {
+            AvatarView(name: name, avatarId: avatarId, ring: ring,
+                       ringGap: ringGap, ringWidth: ringWidth)
                 .frame(width: side, height: side)
-                .overlay {
-                    if ring {
-                        Circle()
-                            .strokeBorder(Theme.accent.opacity(unseen ? 1 : 0.3),
-                                          lineWidth: 2 + 0.5 * p)
-                            .padding(-3 - p)
-                    }
-                }
-                // a disc of the background behind the picture and its ring:
-                // in the stack it cuts the picture out of the one underneath
-                .background(Circle().fill(Color(.systemBackground)).padding(-5 - p))
+                // a disc of the background just past the picture and its ring:
+                // in the stack it cuts a thin band out of the one underneath
+                .background(Circle().fill(Color(.systemBackground)).padding(-outer - 1.5))
             // the name takes its room as the row unfolds and fades in with it
             Text(title)
                 .font(.caption2)

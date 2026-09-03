@@ -79,28 +79,24 @@ struct ChatListView: View {
                     // list keeps clear at its top: the list's frame then never
                     // changes under a finger, and its own bounce carries the
                     // tray open and shut
-                    ZStack(alignment: .top) {
-                        folderPages
-                        VStack(spacing: 0) {
-                            StoriesTray(progress: tray.progress,
-                                        onCompose: { showStoryComposer = true },
-                                        onOpen: { watchingStories = $0 })
-                            // with no folders there are no tabs to show: the first
-                            // folder is made from a row's context menu
-                            if !model.folders.isEmpty {
-                                ChatFolderBar(folders: model.folders, unread: model.folderUnread,
-                                              selection: tabSelection,
-                                              onManage: { showFolders = true },
-                                              onEdit: { editingFolder = $0 })
-                                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
-                                        folderBarHeight = $0
-                                    }
-                            }
+                    // the list runs under the navigation bar, where the system
+                    // fades its rows out through the bar's soft edge; the
+                    // header stands below the bar and, folded, the tray slides
+                    // up under it through a fade of its own
+                    GeometryReader { geo in
+                        let barBottom = geo.safeAreaInsets.top
+                        ZStack(alignment: .top) {
+                            folderPages
+                            header
+                                .padding(.top, barBottom)
+                                // folded, the tray scrolls out under the bar with
+                                // the top row, and the tabs move up behind it
+                                .offset(y: -tray.hidden)
+                                .modifier(FadeUnderBar(barBottom: barBottom,
+                                                       depth: tray.hidden,
+                                                       full: StoriesTray.foldedHeight))
                         }
-                        .background(Color(.systemBackground))
-                        // folded, the tray scrolls out under the bar with the
-                        // top row, and the tabs move up behind it
-                        .offset(y: -tray.hidden)
+                        .ignoresSafeArea(edges: .top)
                     }
                     // the list now stands right under the bottom search bar, and
                     // the soft edge the system gives a scroll view there fades a
@@ -316,6 +312,30 @@ struct ChatListView: View {
         return ids.indices.contains(next) ? ids[next] : nil
     }
 
+    /// The stories tray and the folder tabs, drawn over the list. Only the
+    /// tabs have a ground: rows scroll under them once the tray is folded
+    /// away, while the tray hidden whole stands in the bar over rows the
+    /// system has already blurred, and a ground there would cut them.
+    private var header: some View {
+        VStack(spacing: 0) {
+            StoriesTray(progress: tray.progress,
+                        onCompose: { showStoryComposer = true },
+                        onOpen: { watchingStories = $0 })
+            // with no folders there are no tabs to show: the first
+            // folder is made from a row's context menu
+            if !model.folders.isEmpty {
+                ChatFolderBar(folders: model.folders, unread: model.folderUnread,
+                              selection: tabSelection,
+                              onManage: { showFolders = true },
+                              onEdit: { editingFolder = $0 })
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+                        folderBarHeight = $0
+                    }
+                    .background(Color(.systemBackground))
+            }
+        }
+    }
+
     private var folderPages: some View {
         page(for: selectedFolder)
             .id(model.selectedFolderId ?? "")
@@ -477,5 +497,61 @@ struct ArchiveView: View {
             }
         }
         .navigationTitle("Archive")
+    }
+}
+
+/// The header's passage under the navigation bar. The view's frame begins at
+/// the top of the screen and `barBottom` is where the bar ends; whatever of the
+/// header stands above that line is drawn blurred and fading out towards the
+/// top, and the sharp header fades in over a short band below the line, the
+/// way the system lets a scroll view's rows out under the bar. `depth` is how
+/// far the header has gone under, `full` the depth at which it is under whole;
+/// at zero nothing is drawn twice, at `full` nothing is drawn at all.
+private struct FadeUnderBar: ViewModifier {
+    let barBottom: CGFloat
+    let depth: CGFloat
+    let full: CGFloat
+
+    /// The band over which the sharp header gives way to the blurred one. It
+    /// ends at the bar's edge: a header hidden whole leaves nothing below it.
+    private let band: CGFloat = 20
+
+    func body(content: Content) -> some View {
+        ZStack(alignment: .top) {
+            content
+                .mask(alignment: .top) { sharpMask }
+            if depth > 0, depth < full {
+                // the blurred header thins out as it goes under and is gone
+                // the moment it is under whole: nothing of it stays in the bar
+                content
+                    .blur(radius: 10)
+                    .mask(alignment: .top) { blurredMask }
+                    .opacity(1 - depth / full)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
+    /// Opaque from the band's bottom down; clear above the bar's edge.
+    private var sharpMask: some View {
+        VStack(spacing: 0) {
+            Color.clear.frame(height: max(0, barBottom - band))
+            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                .frame(height: band)
+            Color.black
+        }
+    }
+
+    /// Opaque through the band, fading to nothing over the header's depth
+    /// under the bar; clear below the band.
+    private var blurredMask: some View {
+        VStack(spacing: 0) {
+            Color.clear.frame(height: max(0, barBottom - band - depth - band))
+            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                .frame(height: min(barBottom - band, depth + band))
+            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                .frame(height: band)
+            Color.clear
+        }
     }
 }

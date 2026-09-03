@@ -548,7 +548,23 @@ state, and once folded whole the inset gives the delta back with nothing on
 screen moving. Folded, the tray is the first thing in the list: scrolling on
 carries it out under the bar with the top row, the tabs move up behind it and
 stay under the bar, and a scroll back brings it down again
-(`StoriesTrayFollower`).
+(`StoriesTrayFollower`). The list itself runs under the navigation bar, where
+the system blurs and fades its rows through the bar's soft edge; the tray has
+no ground of its own and passes under the bar through a fade of its own
+(`FadeUnderBar`): what stands above the bar's edge is drawn blurred and
+thinning out with the depth, and once the tray is under whole nothing of it
+remains in the bar. In the folded stack each picture cuts a 1.5 pt band of
+background out of the one beneath it, just past its ring.
+
+The story ring (`StoryRing`) is the same in the tray and in the chat list: one
+arc per live story, clockwise from the top in the order they were published,
+with a 4 pt break between arcs and a single story drawn as a closed ring. An
+arc of a story not yet watched wears the spectrum (`Theme.storyRainbow`), a
+watched one is grey. The ring stands 3 pt off the picture in the list, 2 pt
+in the folded tray, and is 2 pt wide. The online dot is a fifth of the
+picture's side and sits at the lower right on the ring itself, its 1.5 pt
+halo of background cutting the ring around it; with no ring it straddles the
+picture's rim.
 
 A row holds a 54×54 avatar with an online dot, the title (the peer's name for a
 direct chat), the mute icon, the ticks of the last message (only when it is

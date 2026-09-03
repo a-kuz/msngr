@@ -375,6 +375,14 @@ enum Theme {
         Color(light: palette.accent.opacity(0.55), dark: palette.accent.opacity(0.92))
     }
 
+    /// The ring around a picture with a story not yet watched: the whole
+    /// spectrum around the circle, the same in every palette.
+    static let storyRainbow = AngularGradient(
+        colors: [.red, .orange, .yellow, .green, .cyan, .blue, .purple, .red],
+        center: .center, angle: .degrees(-90))
+    /// A watched story's arc of the ring.
+    static let storyRingSeen = Color(light: Color(white: 0.72), dark: Color(white: 0.36))
+
     // A filled action button, the one thing a screen is for.
     static var controlFill: Color { palette.accent }
     static var controlLabel: Color { palette.accentLabel }
