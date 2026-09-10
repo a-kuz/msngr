@@ -263,6 +263,7 @@ Two commands, both at the root of the repository:
 ```bash
 scripts/disk.py            # what our footprint is made of, from the last snapshot
 scripts/tidy.py            # what would be taken back; --apply to take it
+scripts/tokens.py --write  # tokens spent by the sessions, per day and model → docs/stats/tokens.md
 ```
 
 `scripts/disk.py` prints in a moment because it prints a stored snapshot and
