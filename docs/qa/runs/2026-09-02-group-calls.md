@@ -56,13 +56,13 @@ tunnel as the stand; the Worker mints the room ticket.
 1. The alfa–bravo pair. A message alfa sent sat on bravo as `no_session` and
    its repair was never asked for: bravo's pile of 9749 deferred envelopes is
    swept two hundred at a time, and the newest one waited for the window.
-   With the sweep taking each chat's newest envelope first (432dfdb) the
+   With the sweep taking each chat's newest envelope first (3dc519e) the
    request left on the first pass, alfa answered over a rebuilt session and
    the message opened thirty seconds after it was sent; the next messages
    both ways opened directly, and alfa dialed bravo 1:1 and they talked.
 2. On alfa the delivered message then vanished from the open chat: six
    hundred seq-less «code changed» lines sorted above it and filled the feed
-   window. With system lines anchored to the seq they follow (15645ea) the
+   window. With system lines anchored to the seq they follow (404f78c) the
    chat reads in order: the calls, the invite line, the card, the three
    messages with their ticks at the bottom.
 3. The microphone on the second simulator. Reproduced with the permission
@@ -71,11 +71,11 @@ tunnel as the stand; the Worker mints the room ticket.
    after which the same simulator publishes. The host's microphone belongs to
    one simulator at a time. What was the product's: the mute control read
    live with no track up; it now reads muted and the unmute retries the
-   input (0125f25). On bravo's screen the button and the self tile both show
+   input (e9c809c). On bravo's screen the button and the self tile both show
    the microphone off.
 4. A member removed from the chat mid-call. In a throwaway group alfa+bravo,
    alfa called, bravo joined, the API removed bravo from the group: the
-   Worker took bravo out of the room through the SFU (fcd278f), bravo's
+   Worker took bravo out of the room through the SFU (b036da6), bravo's
    client logged `room disconnected` in the same second and the SFU logged
    `SERVICE_REQUEST_REMOVE_PARTICIPANT`. The first attempt did nothing: from
    adad the tunnel's hostname answers 404 over IPv6 and the Worker took that

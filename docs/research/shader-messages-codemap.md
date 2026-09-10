@@ -1,7 +1,7 @@
 # Code map: adding a message kind (for shader messages)
 
 Collected 2026-08-28 before designing the `shader` kind. Paths and line
-numbers are as of commit 7d69262.
+numbers are as of commit 8cb9096.
 
 ## Content kinds on the wire and in the database
 

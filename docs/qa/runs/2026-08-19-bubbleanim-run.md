@@ -27,8 +27,8 @@ Telegram on the same simulator.
   the pressed scale off the presentation layer and starts its snapshot there,
   so the press flows into the lift without a cut.
 
-Commits: `71cb811` (resize in place), `581c8a3` (press dip and lift),
-`d55a29b` (width-only inline reaction).
+Commits: `d2d347d` (resize in place), `57bc179` (press dip and lift),
+`ef402aa` (width-only inline reaction).
 
 ## Stand
 
@@ -53,7 +53,7 @@ One direct chat, a three-line message and a short one. Every step is in
 - **Width-only inline reaction.** 👍 on the short «42»: the capsule sits
   inline, only the bubble width changes, and that path animates through the
   same spring (initially it did not — caught in this run, fixed in
-  `d55a29b`).
+  `ef402aa`).
 - **Incoming reaction.** ❤️ from the peer device landed on an open chat and
   grew the bubble through the same animated path; the feed did not move.
 - **The press dip.** `dip-frames.png`: the bubble visibly sits at 0.96 before

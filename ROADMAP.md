@@ -900,7 +900,7 @@ Screenshot-level tools, not a photo editor: the point is to point at something.
     qa/runs/2026-09-02-nse-simulator-run)
   - ✅ the sender's avatar and name through Communication Notifications: the
     extension builds an INSendMessageIntent from the avatar the app cached in
-    the shared container (commit 6f2a0ef; live banner with the sender's avatar
+    the shared container (commit 7917d21; live banner with the sender's avatar
     on the iPhone 17 dev simulator, real APNs through the stand's relay,
     2026-09-02)
   - ✅ a group avatar in the notification: the intent carries the group's
@@ -1410,7 +1410,7 @@ Decided in `docs/research/2026-08-19-per-user-do.md`; the queue orders the steps
   independent chains, the push in its own persisted queue (run-delivery,
   `runs/2026-08-19-delivery-run.md`)
 - ✅ a receipt writes one per-member mark key; the cmid idempotency records are
-  swept behind the sender's delivered mark (`17354b3`, smoke holds the rule)
+  swept behind the sender's delivered mark (`ad83e5b`, smoke holds the rule)
 - ✅ identity keys, one-time prekeys and the device list live in `UserDO`; a
   first message costs 2 D1 statements instead of 7 (run-userdo,
   `runs/2026-08-21-userdo-run.md`)

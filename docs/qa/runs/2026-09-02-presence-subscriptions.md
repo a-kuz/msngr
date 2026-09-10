@@ -1,9 +1,9 @@
 # Presence by subscription between user objects — live run, 2026-09-02
 
-Branch main at a41770f plus the two fixes below, on the shared stand
+Branch main at 784158c plus the two fixes below, on the shared stand
 (`msngr.a-kuz.online`, code rsynced, D1 migration 0019 applied, the trio
 relinked with `POST /api/dev/relink`). Two simulators of mine, `fable-a` and
-`fable-b`, on the fixture homes; the client build is main at a8937ed.
+`fable-b`, on the fixture homes; the client build is main at 57f588b.
 
 ## What changed on the server
 

@@ -28,11 +28,11 @@ the message had in fact left on time.
 
 - `journal()` now puts the clientMsgId (which the journal already stores) into
   the msg frame, so the author's own echo names the outbox row it closes
-  (9afd933). The client finalizes from it on the socket path and the history
+  (5340bfe). The client finalizes from it on the socket path and the history
   pull alike; `testOwnEchoClosesAParkedSend`.
 - The WS catch-up replay in UserDO rebuilt msg frames from `/history` and
   dropped the field — the exact transport the offline author comes back
-  through. Fixed in 584b087; the smoke asserts the replayed frames carry it.
+  through. Fixed in e8f8fcc; the smoke asserts the replayed frames carry it.
 
 ## Checks
 

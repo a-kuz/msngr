@@ -1,7 +1,7 @@
 # Shader messages, live run
 
 2026-08-28, simulators `msngr-b5` (alfa) and `msngr-b5-b` (bravo3), iPhone 17,
-iOS 26.5, the shared stand on :8787. Build from `a3df340` plus the fixes below.
+iOS 26.5, the shared stand on :8787. Build from `818fce2` plus the fixes below.
 
 ## What was run
 

@@ -1,6 +1,6 @@
 # The notification extension on the simulator — live run, 2026-09-02
 
-Main at 63205d7 plus the mute-queue and photo-preview changes committed right
+Main at 4a88adf plus the mute-queue and photo-preview changes committed right
 after this run, against the shared stand (`msngr.a-kuz.online`, real APNs
 through the relay on adad). Two simulators: `gate-runner` as bravo,
 `fable-charlie` (28CE558E) as charlie, both on a fresh fixture trio
@@ -95,7 +95,7 @@ Every push was answered with the message written first; the rows were in
   sender's name»), and the extension writes an unknown direct chat between
   this user and the author as the request it is, decrypts the message into it
   and shows «<name> / Новая заявка» (`RequestPushAdoptionTests`). Re-run with
-  the stand on 0872a16 and the client rebuilt: a knock from «Echo Service» to
+  the stand on 8655ebd and the client rebuilt: a knock from «Echo Service» to
   the killed app gave `received envelope → stored → show`, the row
   `direct:… isRequest=1 iAccepted=0` with the author's name in `user`, and the
   banner «Echo Service / Новая заявка».

@@ -68,7 +68,7 @@ Line numbers below refer to `durable-objects.txt`.
 
 Three sweeps, each reading the doc sections above and then our objects; the
 sharpest claims were read back in the code before being written down.
-`file:line` is as of c0c614b.
+`file:line` is as of 1503c04.
 
 ### What we do the way the docs want
 

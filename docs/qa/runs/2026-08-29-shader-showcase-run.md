@@ -1,7 +1,7 @@
 # The shader showcase, live run
 
 2026-08-29, simulator `showcase` (iPhone 17, iOS 26.5), the shared stand at
-msngr.a-kuz.online, build from `6b60939`. The demo accounts are `demo`,
+msngr.a-kuz.online, build from `683aa27`. The demo accounts are `demo`,
 `nova`, `iris` (`msngrfixture showcase`), the presenter's home installed with
 `scripts/fixture.py install demo <udid> --launch`.
 
@@ -14,7 +14,7 @@ msngr.a-kuz.online, build from `6b60939`. The demo accounts are `demo`,
    light theme, a night with stars and green ribbons after switching the
    appearance to dark, back and forth without reopening the chat. The first
    open draws over the theme background while the shaders compile (no black
-   flash), and since `6b60939` the bubble shaders and the header's avatar are
+   flash), and since `683aa27` the bubble shaders and the header's avatar are
    there without a scroll.
 3. **The stickers, each answering a tap.** Pond: rings from the finger and
    from its own rain over a sandy rim. Fireworks: a rocket to the tapped
@@ -29,20 +29,20 @@ msngr.a-kuz.online, build from `6b60939`. The demo accounts are `demo`,
    lifted bubble (the owner's report; the overlay lays a live canvas over the
    snapshot). The action card and the reaction bar sit around it as usual.
 6. **The pack and the send.** The sticker panel shows all seven tiles drawn
-   (before `6b60939` every tile was black); the heart sent from it lands in
+   (before `683aa27` every tile was black); the heart sent from it lands in
    the feed and animates.
 
 ## Defects found and fixed during the run
 
 - A canvas denied a budget slot could stay empty until the next layout
   (black panel tiles, empty bubble shaders on first open, the black header
-  avatar earlier); closed in `6b60939`, the held frame retries until the
+  avatar earlier); closed in `683aa27`, the held frame retries until the
   drawable produces one.
 - The first open of a chat with a shader background held a black screen while
   the program compiled: the background canvas is transparent now
-  (`51389df`).
+  (`ae15327`).
 - The owner's two reports — the bubble shader missing under a long press and
-  the pond's grid-like bottom — closed in `51389df` and `a646e5d`; the pond
+  the pond's grid-like bottom — closed in `ae15327` and `6eafdc5`; the pond
   was retuned twice more after being seen live (calmer waves, sand at the
   rim, dimmer in the dark theme).
 
@@ -57,7 +57,7 @@ msngr.a-kuz.online, build from `6b60939`. The demo accounts are `demo`,
 
 - `swift test` (MsngrKit): ShaderGalleryTests compile every pass of all
   eleven documents; NotificationContentTests 24/24 after the stale
-  unknown-kind fixture was retargeted (`0b2f56f`).
+  unknown-kind fixture was retargeted (`ee7158e`).
 - `make check` started in the background after the commits; its log is
   `.claude/gates/main-showcase.log`.
 

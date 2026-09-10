@@ -1,6 +1,6 @@
 # The history moves to a linked device — live run, 2026-09-02
 
-Main at f1c060d plus the history-transfer change committed right after this
+Main at 578c57b plus the history-transfer change committed right after this
 run, against the shared stand freshly reseeded after the D1 merge (`alfa`,
 `bravo`, `charlie`). Simulators: `gate-runner` as bravo (the approving
 device), `fable-charlie` as charlie, a fresh `fable-link` (B8B5C726) with no

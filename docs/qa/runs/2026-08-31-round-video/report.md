@@ -51,7 +51,7 @@ home was handed to the second simulator).
 ## Found in passing
 
 - The synthetic seed video had always decoded as green noise (BGRA frames
-  written into NV12 buffers) — replaced with a bundled stock clip, c627fec.
+  written into NV12 buffers) — replaced with a bundled stock clip, b6705d7.
 - The play glyph could come back over a playing tile on any reconfigure
   (`syncProgressRings` unhides the glyphs it knows) — the autoplay path now
   removes the glyph instead of hiding it.

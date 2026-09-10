@@ -1,7 +1,7 @@
-# B60: the gate's red on 609cfb2 at «stalled recipient catches up after retries» — 2026-09-03
+# B60: the gate's red on e254d08 at «stalled recipient catches up after retries» — 2026-09-03
 
 The server smoke in a loop against throwaway stands on this host, main at
-fceae6b (the RPC pass merged, no server change since 609cfb2), wrangler 4.86
+91549fd (the RPC pass merged, no server change since e254d08), wrangler 4.86
 from `server/node_modules`, each run on a fresh `--persist-to` directory with
 its own port pair. Two loops: six runs on an otherwise idle host, then runs
 with seven `yes` processes pinned to cores while other agents' builds took the
@@ -38,7 +38,7 @@ burst went out behind it: about 8 s after `fault(2)` on an idle host, inside
 the 20 s the check allows. On the gate's loaded host the acks and the fault
 posts land later against the same retry schedule, one pause further along the
 `FANOUT_RETRY_MS` ladder (200 ms, 1 s, 2 s, 5 s, 10 s), and the burst arrives
-after the 20 s. The same race was in the smoke before the RPC pass; 6e74443
+after the 20 s. The same race was in the smoke before the RPC pass; 9c48a0b
 passed it by timing.
 
 Under load the race showed a second face (run 5, seven cores busy): the drain
